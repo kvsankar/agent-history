@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 # ============================================================================
@@ -609,24 +609,68 @@ def get_claude_projects_dir():
     projects_dir = Path.home() / ".claude" / "projects"
 
     if not projects_dir.exists():
-        print(f"Error: Claude projects directory not found at {projects_dir}")
-        print("\nMake sure:")
-        print("  1. Claude Code is installed")
-        print("  2. You have logged in with 'claude login'")
-        print("  3. You have created at least one project/conversation")
+        sys.stderr.write(f"Error: Claude projects directory not found at {projects_dir}\n")
         sys.exit(1)
 
     return projects_dir
 
 
-def normalize_workspace_name(workspace_dir_name: str) -> str:
-    """Convert workspace directory name to readable path."""
-    # Remove leading dash and convert dashes to slashes
-    if workspace_dir_name.startswith('-'):
-        workspace_dir_name = workspace_dir_name[1:]
+def normalize_workspace_name(workspace_dir_name: str, verify_local: bool = True) -> str:
+    """Convert workspace directory name to readable path.
 
-    # Replace single dashes with slashes
-    return workspace_dir_name.replace('-', '/')
+    Args:
+        workspace_dir_name: Encoded workspace name (e.g., '-home-user-my-project')
+        verify_local: If True, verify against local filesystem to handle dashes correctly
+
+    Returns:
+        Decoded path (e.g., 'home/user/my-project')
+    """
+    # Remove leading dash
+    if workspace_dir_name.startswith('-'):
+        encoded = workspace_dir_name[1:]
+    else:
+        encoded = workspace_dir_name
+
+    # If not verifying, just replace all dashes (legacy behavior)
+    if not verify_local:
+        return '/' + encoded.replace('-', '/')
+
+    # Try to reconstruct the original path by checking filesystem
+    # Split by dashes and try to build the path, preferring longer matches
+    parts = encoded.split('-')
+    path_segments = []
+    i = 0
+
+    while i < len(parts):
+        # Try progressively longer combinations
+        best_match = None
+        best_match_len = 0
+
+        for j in range(i + 1, len(parts) + 1):
+            # Try combining parts[i:j] with dashes
+            candidate_segment = '-'.join(parts[i:j])
+            test_path = '/' + '/'.join(path_segments + [candidate_segment])
+
+            if Path(test_path).exists():
+                # This path exists - remember it as a candidate
+                best_match = candidate_segment
+                best_match_len = j - i
+                # Keep trying longer matches
+
+        if best_match:
+            # Use the longest match that exists
+            path_segments.append(best_match)
+            i += best_match_len
+        else:
+            # No match found, use single part and move on
+            path_segments.append(parts[i])
+            i += 1
+
+    # If we couldn't build a valid path, fall back to simple replacement
+    if len(path_segments) == 0:
+        return '/' + encoded.replace('-', '/')
+
+    return '/' + '/'.join(path_segments)
 
 
 def get_current_workspace_pattern():
@@ -665,9 +709,6 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
         if match_all or workspace_pattern in workspace_dir.name:
             readable_name = normalize_workspace_name(workspace_dir.name)
 
-            if not quiet:
-                print(f"✓ Found workspace: {readable_name}")
-
             # Get all .jsonl files in this workspace
             for jsonl_file in workspace_dir.glob("*.jsonl"):
                 # Get file stats
@@ -687,8 +728,6 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
                     with open(jsonl_file) as f:
                         message_count = sum(1 for _ in f)
                 except Exception as e:
-                    if not quiet:
-                        print(f"  ⚠ Warning: Couldn't read {jsonl_file.name}: {e}")
                     message_count = 0
 
                 sessions.append({
@@ -701,13 +740,379 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
                     'message_count': message_count
                 })
 
-                if not quiet:
-                    print(f"  • {jsonl_file.name}: {message_count} messages, {size_kb:.1f} KB, {modified.strftime('%Y-%m-%d %H:%M')}")
-
     # Sort by modification time
     sessions.sort(key=lambda s: s['modified'])
 
     return sessions
+
+
+# ============================================================================
+# Remote Fetching
+# ============================================================================
+
+def parse_remote_host(remote_spec: str) -> tuple:
+    """Parse remote host specification.
+
+    Args:
+        remote_spec: Remote host in format 'user@hostname' or 'hostname'
+
+    Returns:
+        Tuple of (user, hostname, full_spec) or (None, hostname, hostname)
+    """
+    if '@' in remote_spec:
+        user, hostname = remote_spec.split('@', 1)
+        return (user, hostname, remote_spec)
+    else:
+        # Just hostname, SSH will use current user
+        return (None, remote_spec, remote_spec)
+
+
+def check_ssh_connection(remote_host: str) -> bool:
+    """Check if passwordless SSH connection is possible.
+
+    Args:
+        remote_host: Full remote spec (user@hostname or hostname)
+
+    Returns:
+        True if connection successful, False otherwise
+    """
+    import subprocess
+
+    try:
+        # Try SSH with BatchMode (no password prompts) and short timeout
+        result = subprocess.run(
+            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+             remote_host, 'echo ok'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        return result.returncode == 0 and result.stdout.strip() == 'ok'
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def get_remote_hostname(remote_host: str) -> str:
+    """Extract hostname from remote spec for use in directory prefix.
+
+    Args:
+        remote_host: Remote spec (user@hostname or hostname)
+
+    Returns:
+        Hostname portion only
+    """
+    _, hostname, _ = parse_remote_host(remote_host)
+    # Clean hostname for use in directory names (remove dots, etc.)
+    return hostname.replace('.', '-')
+
+
+def get_remote_workspaces_batch(remote_host: str) -> list:
+    """Get all workspace info from remote in one batch operation.
+
+    Creates and runs a script on remote to gather all info efficiently.
+
+    Returns:
+        List of dicts with workspace info including decoded paths
+    """
+    import subprocess
+    import json
+
+    # Create a shell script that will run on remote
+    script = '''#!/bin/bash
+cd ~/.claude/projects/ 2>/dev/null || exit 1
+
+for dir in -*/ ; do
+    dir=${dir%/}  # Remove trailing slash
+    [ -d "$dir" ] || continue
+
+    # Decode the workspace name by testing paths
+    encoded="${dir#-}"  # Remove leading dash
+
+    # Try to find the actual path
+    IFS='-' read -ra PARTS <<< "$encoded"
+    best_path=""
+
+    # Build path by testing combinations
+    current=""
+    for part in "${PARTS[@]}"; do
+        if [ -z "$current" ]; then
+            current="$part"
+        else
+            # Try with dash
+            test_with_dash="$current-$part"
+            # Try as separate segment
+            test_separate="$current/$part"
+
+            if [ -d "/$test_with_dash" ]; then
+                current="$test_with_dash"
+            elif [ -d "/$current/$part" ]; then
+                current="$current/$part"
+            else
+                current="$test_separate"
+            fi
+        fi
+    done
+
+    # Get session count
+    session_count=$(find "$dir" -maxdepth 1 -name "*.jsonl" 2>/dev/null | wc -l)
+
+    # Output: encoded_name|decoded_path|session_count
+    echo "$dir|/$current|$session_count"
+done
+'''
+
+    try:
+        # Run the script on remote via SSH
+        result = subprocess.run(
+            ['ssh', remote_host, 'bash -s'],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            return []
+
+        # Parse results
+        workspaces = []
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('|')
+            if len(parts) >= 3:
+                workspaces.append({
+                    'encoded': parts[0],
+                    'decoded': parts[1],
+                    'session_count': int(parts[2]) if parts[2].isdigit() else 0
+                })
+
+        return workspaces
+
+    except Exception as e:
+        return []
+
+
+def normalize_remote_workspace_name(remote_host: str, workspace_dir_name: str) -> str:
+    """Convert remote workspace directory name to readable path by verifying via SSH.
+
+    Args:
+        remote_host: Remote host specification
+        workspace_dir_name: Encoded workspace name
+
+    Returns:
+        Decoded path
+    """
+    import subprocess
+
+    # Remove leading dash
+    if workspace_dir_name.startswith('-'):
+        encoded = workspace_dir_name[1:]
+    else:
+        encoded = workspace_dir_name
+
+    # Generate possible decodings by trying different dash positions
+    parts = encoded.split('-')
+
+    # Generate all reasonable path combinations (limit to avoid exponential explosion)
+    # We'll try keeping dashes together in common patterns
+    candidates = []
+
+    # Strategy: Build path greedily, trying longer segments first
+    def generate_paths(parts, start_idx, current_path):
+        if start_idx >= len(parts):
+            candidates.append('/'.join(current_path))
+            return
+
+        # Try combining 1 to 3 parts (limit to keep it reasonable)
+        for length in range(1, min(4, len(parts) - start_idx + 1)):
+            segment = '-'.join(parts[start_idx:start_idx + length])
+            generate_paths(parts, start_idx + length, current_path + [segment])
+
+    generate_paths(parts, 0, [])
+
+    # Limit candidates to reasonable number
+    candidates = candidates[:20]
+
+    # Test all candidates in ONE SSH call
+    test_commands = ' || '.join([f'test -e "/{path}" && echo "/{path}"' for path in candidates])
+
+    try:
+        result = subprocess.run(
+            ['ssh', remote_host, test_commands],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.stdout.strip():
+            # Return the first (longest) match
+            return result.stdout.strip().split('\n')[0]
+    except:
+        pass
+
+    # Fallback to simple replacement
+    return '/' + encoded.replace('-', '/')
+
+
+def list_remote_workspaces(remote_host: str) -> list:
+    """List workspace directories on remote host.
+
+    Args:
+        remote_host: Remote host specification
+
+    Returns:
+        List of workspace directory names (e.g., ['-home-user-project', ...])
+    """
+    import subprocess
+
+    try:
+        # List directories in remote ~/.claude/projects/ (simple and fast)
+        result = subprocess.run(
+            ['ssh', remote_host,
+             'ls -1 ~/.claude/projects/ | grep "^-"'],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            return []
+
+        # Parse output - one directory name per line
+        workspaces = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+        return workspaces
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
+    """Get session file information from remote workspace without downloading.
+
+    Args:
+        remote_host: Remote host specification
+        remote_workspace: Remote workspace directory name
+
+    Returns:
+        List of session info dicts with filename, size_kb, modified, message_count
+    """
+    import subprocess
+    import json
+
+    try:
+        # Get file stats from remote using find and stat
+        # Output format: filename|size_bytes|mtime_epoch|line_count
+        cmd = f'''cd ~/.claude/projects/{remote_workspace} && \
+                  for f in *.jsonl; do \
+                      [ -f "$f" ] || continue; \
+                      size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null); \
+                      mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null); \
+                      lines=$(wc -l < "$f"); \
+                      echo "$f|$size|$mtime|$lines"; \
+                  done'''
+
+        result = subprocess.run(
+            ['ssh', remote_host, cmd],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            return []
+
+        sessions = []
+        for line in result.stdout.strip().split('\n'):
+            if not line or '|' not in line:
+                continue
+
+            parts = line.split('|')
+            if len(parts) != 4:
+                continue
+
+            filename, size_bytes, mtime_epoch, line_count = parts
+
+            try:
+                size_kb = int(size_bytes) / 1024
+                modified = datetime.fromtimestamp(int(mtime_epoch))
+                message_count = int(line_count)
+
+                sessions.append({
+                    'filename': filename,
+                    'size_kb': size_kb,
+                    'modified': modified,
+                    'message_count': message_count
+                })
+            except (ValueError, OSError):
+                continue
+
+        return sessions
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def fetch_workspace_files(remote_host: str, remote_workspace: str,
+                          local_projects_dir: Path, hostname: str) -> dict:
+    """Fetch all files from a remote workspace using rsync.
+
+    Args:
+        remote_host: Remote host specification
+        remote_workspace: Remote workspace directory name (e.g., '-home-user-project')
+        local_projects_dir: Local ~/.claude/projects/ directory
+        hostname: Clean hostname for prefix
+
+    Returns:
+        Dict with stats: {'success': bool, 'files_copied': int, 'bytes': int}
+    """
+    import subprocess
+
+    # Generate local directory name with remote prefix
+    local_workspace = f"-remote-{hostname}{remote_workspace}"
+    local_dir = local_projects_dir / local_workspace
+
+    # Create local directory
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build rsync command
+    # -a: archive mode (preserves timestamps, permissions, etc.)
+    # -v: verbose
+    # -h: human-readable
+    # --include='*.jsonl': only sync .jsonl files
+    # --exclude='*': exclude everything else
+    remote_path = f"{remote_host}:~/.claude/projects/{remote_workspace}/"
+
+    try:
+        result = subprocess.run(
+            ['rsync', '-avh',
+             '--include=*.jsonl', '--exclude=*',
+             remote_path, str(local_dir) + '/'],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+
+        if result.returncode != 0:
+            return {'success': False, 'files_copied': 0, 'bytes': 0, 'error': result.stderr}
+
+        # Parse rsync output to count files
+        # Look for lines that don't start with special characters
+        lines = result.stdout.split('\n')
+        files_copied = sum(1 for line in lines if line.strip() and
+                          not line.startswith(('sending', 'sent', 'total', 'building')))
+
+        return {
+            'success': True,
+            'files_copied': files_copied,
+            'local_dir': local_workspace,
+            'output': result.stdout
+        }
+
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'files_copied': 0, 'bytes': 0, 'error': 'Timeout'}
+    except FileNotFoundError:
+        return {'success': False, 'files_copied': 0, 'bytes': 0, 'error': 'rsync not found'}
 
 
 # ============================================================================
@@ -716,6 +1121,9 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
 
 def cmd_list(args):
     """List sessions for a workspace."""
+    # Check if remote flag is set
+    remote_host = getattr(args, 'remote', None)
+
     # Parse date filters
     since_str = getattr(args, 'since', None)
     until_str = getattr(args, 'until', None)
@@ -725,94 +1133,201 @@ def cmd_list(args):
 
     # Validate date formats
     if since_str and since_date is None:
-        print(f"❌ Error: Invalid date format for --since: '{since_str}'")
-        print("   Use YYYY-MM-DD format (e.g., 2025-11-01)")
+        sys.stderr.write(f"Error: Invalid date format for --since: '{since_str}'\n")
+        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-01)\n")
         sys.exit(1)
 
     if until_str and until_date is None:
-        print(f"❌ Error: Invalid date format for --until: '{until_str}'")
-        print("   Use YYYY-MM-DD format (e.g., 2025-11-30)")
+        sys.stderr.write(f"Error: Invalid date format for --until: '{until_str}'\n")
+        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-30)\n")
         sys.exit(1)
 
     if since_date and until_date and since_date > until_date:
-        print("❌ Error: --since date must be before --until date")
+        sys.stderr.write("Error: --since date must be before --until date\n")
         sys.exit(1)
 
-    print(f"🔍 Searching for workspaces matching: '{args.workspace}'")
-    if since_date:
-        print(f"   Since: {since_date.date()}")
-    if until_date:
-        print(f"   Until: {until_date.date()}")
-    print()
+    # Handle remote listing
+    if remote_host:
+        # Check SSH connectivity
+        if not check_ssh_connection(remote_host):
+            sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+            sys.exit(1)
 
-    sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+        workspace_pattern = args.workspace
+        workspaces_only = getattr(args, 'workspaces_only', False)
 
-    if not sessions:
-        print(f"❌ No sessions found matching '{args.workspace}'")
-        print("\nTips:")
-        print("  • Try a partial workspace name (e.g., 'myproject' instead of full path)")
-        print("  • List all workspaces: ls ~/.claude/projects/")
-        return
+        # Use fast batch approach for workspaces-only mode
+        if workspaces_only:
+            batch_workspaces = get_remote_workspaces_batch(remote_host)
 
-    print()
-    print("=" * 80)
-    print(f"📊 Summary")
-    print("=" * 80)
+            if not batch_workspaces:
+                sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
+                sys.exit(1)
 
-    # Show summary
-    total_size = sum(s['size_kb'] for s in sessions)
-    total_messages = sum(s['message_count'] for s in sessions)
+            # Filter by pattern
+            if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
+                batch_workspaces = [ws for ws in batch_workspaces if workspace_pattern in ws['encoded']]
 
-    print(f"Sessions found:    {len(sessions)}")
-    print(f"Total size:        {total_size:.1f} KB ({total_size/1024:.2f} MB)")
-    print(f"Total messages:    {total_messages:,}")
-    if sessions:
-        print(f"Date range:        {sessions[0]['modified'].date()} to {sessions[-1]['modified'].date()}")
+            if not batch_workspaces:
+                sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
+                sys.exit(1)
 
-    # Group by workspace
-    print()
-    print("=" * 80)
-    print(f"📁 Workspaces")
-    print("=" * 80)
+            # Just print workspace names, one per line
+            for ws_info in sorted(batch_workspaces, key=lambda x: x['decoded']):
+                print(ws_info['decoded'])
 
-    workspaces = {}
-    for session in sessions:
-        ws = session['workspace_readable']
-        if ws not in workspaces:
-            workspaces[ws] = []
-        workspaces[ws].append(session)
+        else:
+            # Detailed mode - get full session info
+            remote_workspaces = list_remote_workspaces(remote_host)
 
-    for ws, ws_sessions in workspaces.items():
-        print(f"\n{ws}")
-        print(f"  Sessions: {len(ws_sessions)}")
-        print(f"  Size: {sum(s['size_kb'] for s in ws_sessions):.1f} KB")
+            if not remote_workspaces:
+                sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
+                sys.exit(1)
+
+            # Filter by pattern
+            if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
+                remote_workspaces = [ws for ws in remote_workspaces if workspace_pattern in ws]
+
+            if not remote_workspaces:
+                sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
+                sys.exit(1)
+
+            # Get session info for each workspace
+            sessions = []
+
+            for remote_workspace in remote_workspaces:
+                readable_name = normalize_remote_workspace_name(remote_host, remote_workspace)
+
+                # Get session files from this workspace
+                workspace_sessions = get_remote_session_info(remote_host, remote_workspace)
+
+                for session_info in workspace_sessions:
+                    # Apply date filtering
+                    modified_date = session_info['modified'].replace(hour=0, minute=0, second=0, microsecond=0)
+                    if since_date and modified_date < since_date:
+                        continue
+                    if until_date and modified_date > until_date:
+                        continue
+
+                    sessions.append({
+                        'workspace': remote_workspace,
+                        'workspace_readable': readable_name,
+                        'filename': session_info['filename'],
+                        'size_kb': session_info['size_kb'],
+                        'modified': session_info['modified'],
+                        'message_count': session_info['message_count']
+                    })
+
+            if not sessions:
+                sys.stderr.write(f"Error: No sessions found\n")
+                sys.exit(1)
+
+            # Print header and sessions in simple format
+            print("WORKSPACE\tFILE\tMESSAGES\tDATE")
+            for session in sessions:
+                print(f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}")
+
+    else:
+        # Local listing
+        sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+
+        if not sessions:
+            sys.stderr.write(f"Error: No sessions found matching '{args.workspace}'\n")
+            sys.exit(1)
+
+        # Check if workspaces-only mode
+        workspaces_only = getattr(args, 'workspaces_only', False)
+
+        if workspaces_only:
+            # Just print workspace names, one per line
+            workspaces = set()
+            for session in sessions:
+                workspaces.add(session['workspace_readable'])
+
+            for ws in sorted(workspaces):
+                print(ws)
+
+        else:
+            # Print header and sessions in simple format
+            print("WORKSPACE\tFILE\tMESSAGES\tDATE")
+            for session in sessions:
+                print(f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}")
 
 
 def cmd_convert(args):
     """Convert a single .jsonl file to markdown."""
-    jsonl_file = Path(args.jsonl_file)
+    remote_host = getattr(args, 'remote', None)
 
-    if not jsonl_file.exists():
-        print(f"❌ Error: {jsonl_file} not found")
-        sys.exit(1)
+    if remote_host:
+        # Handle remote file conversion
+        import subprocess
+        import tempfile
 
-    output_file = Path(args.output) if args.output else jsonl_file.with_suffix('.md')
+        # Check SSH connectivity
+        if not check_ssh_connection(remote_host):
+            sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+            sys.exit(1)
 
-    print(f"🔄 Converting {jsonl_file.name} to markdown...")
+        # Download file to temporary location
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as tmp:
+            tmp_path = Path(tmp.name)
 
-    try:
-        markdown = parse_jsonl_to_markdown(jsonl_file)
-        output_file.write_text(markdown)
+        try:
+            # Use scp to download the file
+            result = subprocess.run(
+                ['scp', f"{remote_host}:{args.jsonl_file}", str(tmp_path)],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
 
-        print(f"✅ Saved to {output_file}")
-        print(f"   Size: {len(markdown) / 1024:.1f} KB")
-    except Exception as e:
-        print(f"❌ Error converting file: {e}")
-        sys.exit(1)
+            if result.returncode != 0:
+                sys.stderr.write(f"Error downloading file: {result.stderr}\n")
+                tmp_path.unlink()
+                sys.exit(1)
+
+            # Convert the downloaded file
+            jsonl_file = tmp_path
+            filename = Path(args.jsonl_file).name
+            output_file = Path(args.output) if args.output else Path(filename).with_suffix('.md')
+
+            markdown = parse_jsonl_to_markdown(jsonl_file)
+            output_file.write_text(markdown)
+
+            print(output_file)
+
+        finally:
+            # Clean up temporary file
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+    else:
+        # Handle local file conversion
+        jsonl_file = Path(args.jsonl_file)
+
+        if not jsonl_file.exists():
+            sys.stderr.write(f"Error: {jsonl_file} not found\n")
+            sys.exit(1)
+
+        output_file = Path(args.output) if args.output else jsonl_file.with_suffix('.md')
+
+        try:
+            markdown = parse_jsonl_to_markdown(jsonl_file)
+            output_file.write_text(markdown)
+
+            print(output_file)
+        except Exception as e:
+            sys.stderr.write(f"Error converting file: {e}\n")
+            sys.exit(1)
 
 
 def cmd_batch(args):
     """Batch convert all sessions from a workspace."""
+    # Check if remote flag is set
+    remote_host = getattr(args, 'remote', None)
+
     # Parse date filters
     since_str = getattr(args, 'since', None)
     until_str = getattr(args, 'until', None)
@@ -822,78 +1337,100 @@ def cmd_batch(args):
 
     # Validate date formats
     if since_str and since_date is None:
-        print(f"❌ Error: Invalid date format for --since: '{since_str}'")
-        print("   Use YYYY-MM-DD format (e.g., 2025-11-01)")
+        sys.stderr.write(f"Error: Invalid date format for --since: '{since_str}'\n")
+        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-01)\n")
         sys.exit(1)
 
     if until_str and until_date is None:
-        print(f"❌ Error: Invalid date format for --until: '{until_str}'")
-        print("   Use YYYY-MM-DD format (e.g., 2025-11-30)")
+        sys.stderr.write(f"Error: Invalid date format for --until: '{until_str}'\n")
+        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-30)\n")
         sys.exit(1)
 
     if since_date and until_date and since_date > until_date:
-        print("❌ Error: --since date must be before --until date")
+        sys.stderr.write("Error: --since date must be before --until date\n")
         sys.exit(1)
 
     output_dir = Path(args.output_dir)
 
-    print(f"🔍 Finding all '{args.workspace}' sessions...")
-    if since_date:
-        print(f"   Since: {since_date.date()}")
-    if until_date:
-        print(f"   Until: {until_date.date()}")
-    print()
+    # Handle remote export (fetch first, then export)
+    if remote_host:
+        # Check SSH connectivity
+        if not check_ssh_connection(remote_host):
+            sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+            sys.exit(1)
 
-    sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+        # Get remote workspaces
+        remote_workspaces = list_remote_workspaces(remote_host)
+
+        if not remote_workspaces:
+            sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
+            sys.exit(1)
+
+        # Filter by pattern
+        workspace_pattern = args.workspace
+        if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
+            remote_workspaces = [ws for ws in remote_workspaces if workspace_pattern in ws]
+
+        if not remote_workspaces:
+            sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
+            sys.exit(1)
+
+        # Fetch each workspace to local cache (silent)
+        local_projects_dir = get_claude_projects_dir()
+        hostname = get_remote_hostname(remote_host)
+
+        for remote_workspace in remote_workspaces:
+            result = fetch_workspace_files(remote_host, remote_workspace,
+                                          local_projects_dir, hostname)
+
+            if not result['success']:
+                sys.stderr.write(f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n")
+
+        # Now export from cached location
+        cached_pattern = f"remote-{hostname}"
+        if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
+            cached_pattern += f"-{workspace_pattern}"
+
+        sessions = get_workspace_sessions(cached_pattern, quiet=True, since_date=since_date, until_date=until_date)
+
+    else:
+        # Local export
+        sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
 
     if not sessions:
-        print(f"❌ No sessions found matching '{args.workspace}'")
-        return
-
-    print(f"✓ Found {len(sessions)} sessions")
-    print(f"📁 Output directory: {output_dir}/")
-    print()
+        sys.stderr.write(f"Error: No sessions found matching '{args.workspace}'\n")
+        sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Convert each session
-    exported = 0
-    skipped = 0
-    failed = 0
     force = getattr(args, 'force', False)
 
-    for i, session in enumerate(sessions, 1):
+    for session in sessions:
         jsonl_file = session['file']
 
         # Extract first timestamp and create timestamped filename
         first_ts = get_first_timestamp(jsonl_file)
         if first_ts:
-            # Parse ISO 8601 timestamp and format as yyyymmddhhmmss
             try:
                 dt = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
                 ts_prefix = dt.strftime('%Y%m%d%H%M%S')
                 output_name = f"{ts_prefix}_{jsonl_file.stem}.md"
             except Exception:
-                # Fallback to original name if timestamp parsing fails
                 output_name = f"{jsonl_file.stem}.md"
         else:
-            # No timestamp found, use original name
             output_name = f"{jsonl_file.stem}.md"
 
         output_file = output_dir / output_name
 
         # Check if we should skip (incremental export)
         if not force and output_file.exists():
-            # Compare timestamps: skip if output is newer than source
             source_mtime = jsonl_file.stat().st_mtime
             output_mtime = output_file.stat().st_mtime
 
             if output_mtime >= source_mtime:
-                print(f"[{i}/{len(sessions)}] {jsonl_file.name} ⊘ (already exported)")
-                skipped += 1
                 continue
-
-        print(f"[{i}/{len(sessions)}] {jsonl_file.name} ", end='')
 
         try:
             minimal = getattr(args, 'minimal', False)
@@ -909,12 +1446,11 @@ def cmd_batch(args):
                 if parts:
                     # Save multiple part files
                     for part_num, total_parts, part_md, start_msg, end_msg in parts:
-                        # Create filename with part number
                         base_name = output_name.rsplit('.md', 1)[0]
                         part_filename = f"{base_name}_part{part_num}.md"
                         part_file = output_dir / part_filename
 
-                        # Add navigation footer
+                        # Add navigation footer (remove emoji)
                         nav_lines = ["\n---\n"]
                         nav_parts = [f"**Part {part_num} of {total_parts}**"]
 
@@ -926,53 +1462,80 @@ def cmd_batch(args):
                             next_filename = f"{base_name}_part{part_num + 1}.md"
                             nav_parts.append(f"[Part {part_num + 1} →]({next_filename})")
 
-                        nav_lines.append("> 📄 " + " | ".join(nav_parts))
+                        nav_lines.append("> " + " | ".join(nav_parts))
 
                         # Write part file with navigation
                         part_file.write_text(part_md + "\n".join(nav_lines))
 
-                    print(f"✓ (split into {total_parts} parts)")
-                    exported += 1
+                    # Print all part files
+                    for part_num in range(1, total_parts + 1):
+                        part_filename = f"{base_name}_part{part_num}.md"
+                        print(output_dir / part_filename)
                 else:
                     # Splitting not needed, use single file
                     markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
                     output_file.write_text(markdown)
-                    print(f"✓")
-                    exported += 1
+                    print(output_file)
             else:
                 # No splitting, use single file
                 markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
                 output_file.write_text(markdown)
-                print(f"✓")
-                exported += 1
+                print(output_file)
         except Exception as e:
-            print(f"✗ ({e})")
-            failed += 1
-
-    print()
-    print("=" * 80)
-    print(f"📊 Export Complete")
-    print("=" * 80)
-    print(f"Exported:   {exported}/{len(sessions)}")
-    if skipped > 0:
-        print(f"Skipped:    {skipped}/{len(sessions)} (already up-to-date)")
-    if failed > 0:
-        print(f"Failed:     {failed}/{len(sessions)}")
-
-    # Show summary
-    if exported > 0 or skipped > 0:
-        total_size = sum(f.stat().st_size for f in output_dir.glob("*.md")) / 1024
-        print(f"Total size: {total_size:.1f} KB")
-        print(f"Location:   {output_dir.absolute()}")
+            sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
 
 
 def cmd_version(args):
     """Show version information."""
-    print(f"claude-sessions version {__version__}")
-    print("Manage and export Claude Code conversation sessions by workspace")
-    print()
-    print("Author: Built with Claude Code")
-    print("License: MIT")
+    print(f"claude-sessions {__version__}")
+
+
+def cmd_fetch(args):
+    """Fetch remote conversation sessions via SSH."""
+    remote_host = args.remote_host
+    workspace_pattern = getattr(args, 'pattern', None) or ''
+
+    # Check SSH connectivity
+    if not check_ssh_connection(remote_host):
+        sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+        sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+        sys.exit(1)
+
+    # Get hostname for directory prefix
+    hostname = get_remote_hostname(remote_host)
+
+    # List remote workspaces
+    remote_workspaces = list_remote_workspaces(remote_host)
+
+    if not remote_workspaces:
+        sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
+        sys.exit(1)
+
+    # Filter by pattern if specified
+    if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
+        filtered = [ws for ws in remote_workspaces if workspace_pattern in ws]
+        if not filtered:
+            sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
+            sys.exit(1)
+        remote_workspaces = filtered
+
+    # Get local projects directory
+    local_projects_dir = get_claude_projects_dir()
+
+    # Fetch each workspace (silent on success)
+    for remote_workspace in remote_workspaces:
+        readable_name = normalize_remote_workspace_name(remote_host, remote_workspace)
+        local_name = f"remote-{hostname}{remote_workspace}"
+
+        result = fetch_workspace_files(remote_host, remote_workspace,
+                                       local_projects_dir, hostname)
+
+        if result['success']:
+            # Print the local path where it was cached
+            print(normalize_workspace_name(local_name, verify_local=False))
+        else:
+            error = result.get('error', 'Unknown error')
+            sys.stderr.write(f"Error fetching {readable_name}: {error}\n")
 
 
 # ============================================================================
@@ -996,6 +1559,10 @@ EXAMPLES:
   List all sessions from all workspaces:
     claude-sessions list --all
 
+  List only workspace names (no session details):
+    claude-sessions list --workspaces-only
+    claude-sessions list --all --workspaces-only
+
   Export current project (default):
     claude-sessions export
 
@@ -1012,6 +1579,12 @@ EXAMPLES:
   Export a single conversation file:
     claude-sessions convert ~/.claude/projects/.../session.jsonl
     claude-sessions convert session.jsonl --output my-conversation.md
+
+  Work with remote sessions:
+    claude-sessions list -r user@workstation               # List remote sessions
+    claude-sessions export -r user@workstation             # Export remote sessions (caches locally)
+    claude-sessions convert -r user@workstation /path/to/file.jsonl
+    claude-sessions fetch user@workstation myproject       # Pre-cache remote sessions
 
 More info: https://github.com/yourusername/claude-workspace-extract
         '''
@@ -1047,6 +1620,16 @@ More info: https://github.com/yourusername/claude-workspace-extract
     parser_list.add_argument('--until',
         metavar='DATE',
         help='Only include sessions modified on or before this date (YYYY-MM-DD)')
+
+    # Remote access for list
+    parser_list.add_argument('-r', '--remote',
+        metavar='HOST',
+        help='List sessions from remote host via SSH (format: user@hostname or hostname)')
+
+    # Workspaces only mode
+    parser_list.add_argument('--workspaces-only',
+        action='store_true',
+        help='List only workspace names with summary stats (no individual sessions)')
 
     # ========== export command ==========
     parser_export = subparsers.add_parser('export',
@@ -1092,6 +1675,11 @@ More info: https://github.com/yourusername/claude-workspace-extract
         metavar='DATE',
         help='Only include sessions modified on or before this date (YYYY-MM-DD)')
 
+    # Remote access for export
+    parser_export.add_argument('-r', '--remote',
+        metavar='HOST',
+        help='Export sessions from remote host via SSH (caches files locally first)')
+
     # ========== convert command ==========
     parser_convert = subparsers.add_parser('convert',
         help='Convert a single .jsonl file',
@@ -1102,6 +1690,22 @@ More info: https://github.com/yourusername/claude-workspace-extract
     parser_convert.add_argument('--output', '-o',
         metavar='FILE',
         help='Output markdown filename (default: same name with .md extension)')
+
+    # Remote access for convert
+    parser_convert.add_argument('-r', '--remote',
+        metavar='HOST',
+        help='Convert file from remote host via SSH (caches file locally first)')
+
+    # ========== fetch command ==========
+    parser_fetch = subparsers.add_parser('fetch',
+        help='Fetch remote sessions via SSH',
+        description='Fetch conversation sessions from a remote host via passwordless SSH (one-way sync)')
+
+    parser_fetch.add_argument('remote_host',
+        help='Remote host in format user@hostname or hostname')
+    parser_fetch.add_argument('pattern',
+        nargs='?',
+        help='Optional workspace pattern to filter which remote workspaces to fetch')
 
     # Parse arguments
     args = parser.parse_args()
@@ -1125,6 +1729,8 @@ More info: https://github.com/yourusername/claude-workspace-extract
             workspace = workspace_pattern
             since = args.since
             until = args.until
+            remote = getattr(args, 'remote', None)
+            workspaces_only = getattr(args, 'workspaces_only', False)
         cmd_list(ListArgs())
 
     elif args.command == 'export':
@@ -1137,21 +1743,29 @@ More info: https://github.com/yourusername/claude-workspace-extract
             force = args.force
             minimal = args.minimal
             split = args.split
+            remote = getattr(args, 'remote', None)
         cmd_batch(ExportArgs())
 
     elif args.command == 'convert':
         class ConvertArgs:
             jsonl_file = args.jsonl_file
             output = args.output
+            remote = getattr(args, 'remote', None)
         cmd_convert(ConvertArgs())
+
+    elif args.command == 'fetch':
+        class FetchArgs:
+            remote_host = args.remote_host
+            pattern = args.pattern
+        cmd_fetch(FetchArgs())
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n⚠ Interrupted by user")
+        sys.stderr.write("\nInterrupted\n")
         sys.exit(130)
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}", file=sys.stderr)
+        sys.stderr.write(f"\nError: {e}\n")
         sys.exit(1)
