@@ -1544,49 +1544,36 @@ def cmd_fetch(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog='claude-sessions',
-        description='Manage and export Claude Code conversation sessions by workspace',
+        prog='claude-history',
+        description='Browse and export Claude Code conversation history',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 EXAMPLES:
 
-  List sessions from current project (default):
-    claude-sessions list
+  List workspaces:
+    claude-history lsw                        # all local workspaces
+    claude-history lsw myproject              # filter by pattern
+    claude-history lsw -r user@server         # remote workspaces
 
-  List sessions from a specific workspace:
-    claude-sessions list myproject
+  List sessions:
+    claude-history lss                        # current workspace
+    claude-history lss myproject              # specific workspace
+    claude-history lss myproject -r user@server    # remote sessions
 
-  List all sessions from all workspaces:
-    claude-sessions list --all
+  Export:
+    claude-history export myproject           # export workspace
+    claude-history export -a                  # export all workspaces
+    claude-history export file.jsonl         # export single file
+    claude-history export myproject -r user@server  # remote export
 
-  List only workspace names (no session details):
-    claude-sessions list --workspaces-only
-    claude-sessions list --all --workspaces-only
+  Date filtering:
+    claude-history lss myproject --since 2025-11-01
+    claude-history export myproject --since 2025-11-01 --until 2025-11-30
 
-  Export current project (default):
-    claude-sessions export
-
-  Export with custom output directory:
-    claude-sessions export --output-dir ./output
-
-  Export with date filtering:
-    claude-sessions list myproject --since 2025-11-01
-    claude-sessions export myproject --since 2025-11-01 --until 2025-11-30
-
-  Export all workspaces:
-    claude-sessions export --all
-
-  Export a single conversation file:
-    claude-sessions convert ~/.claude/projects/.../session.jsonl
-    claude-sessions convert session.jsonl --output my-conversation.md
-
-  Work with remote sessions:
-    claude-sessions list -r user@workstation               # List remote sessions
-    claude-sessions export -r user@workstation             # Export remote sessions (caches locally)
-    claude-sessions convert -r user@workstation /path/to/file.jsonl
-    claude-sessions fetch user@workstation myproject       # Pre-cache remote sessions
-
-More info: https://github.com/yourusername/claude-workspace-extract
+  Export options:
+    claude-history export myproject --minimal       # minimal mode
+    claude-history export myproject --split 500     # split long conversations
+    claude-history export myproject ./output        # custom output directory
         '''
     )
 
@@ -1596,168 +1583,139 @@ More info: https://github.com/yourusername/claude-workspace-extract
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
     subparsers.required = True
 
-    # ========== list command ==========
-    parser_list = subparsers.add_parser('list',
-        help='List conversation sessions',
-        description='Show available conversation sessions for a workspace (defaults to current project)')
+    # ========== lsw - list workspaces ==========
+    parser_lsw = subparsers.add_parser('lsw',
+        help='List workspaces',
+        description='List all workspaces (local or remote)')
 
-    # Pattern argument group (mutually exclusive)
-    pattern_group = parser_list.add_mutually_exclusive_group()
-    pattern_group.add_argument('pattern',
+    parser_lsw.add_argument('pattern',
         nargs='?',
-        help='Workspace name pattern to filter sessions (default: current project)')
-    pattern_group.add_argument('--this',
-        action='store_true',
-        help='List sessions from current project workspace (explicit)')
-    pattern_group.add_argument('--all',
-        action='store_true',
-        help='List sessions from all workspaces')
+        help='Optional pattern to filter workspaces')
 
-    # Date filtering for list
-    parser_list.add_argument('--since',
+    parser_lsw.add_argument('-r', '--remote',
+        metavar='HOST',
+        help='List workspaces from remote host via SSH (user@hostname or hostname)')
+
+    # ========== lss - list sessions ==========
+    parser_lss = subparsers.add_parser('lss',
+        help='List sessions',
+        description='List sessions in a workspace (defaults to current workspace)')
+
+    parser_lss.add_argument('workspace',
+        nargs='?',
+        help='Workspace name (default: current workspace)')
+
+    parser_lss.add_argument('-r', '--remote',
+        metavar='HOST',
+        help='List sessions from remote host via SSH (user@hostname or hostname)')
+
+    parser_lss.add_argument('--since',
         metavar='DATE',
         help='Only include sessions modified on or after this date (YYYY-MM-DD)')
-    parser_list.add_argument('--until',
+
+    parser_lss.add_argument('--until',
         metavar='DATE',
         help='Only include sessions modified on or before this date (YYYY-MM-DD)')
 
-    # Remote access for list
-    parser_list.add_argument('-r', '--remote',
-        metavar='HOST',
-        help='List sessions from remote host via SSH (format: user@hostname or hostname)')
-
-    # Workspaces only mode
-    parser_list.add_argument('--workspaces-only',
-        action='store_true',
-        help='List only workspace names with summary stats (no individual sessions)')
-
     # ========== export command ==========
     parser_export = subparsers.add_parser('export',
-        help='Export sessions to markdown',
-        description='Export sessions from a workspace to markdown files (defaults to current project)')
+        help='Export to markdown',
+        description='Export workspace or single file to markdown')
 
-    # Pattern argument group (mutually exclusive)
-    pattern_group_export = parser_export.add_mutually_exclusive_group()
-    pattern_group_export.add_argument('pattern',
+    parser_export.add_argument('target',
+        help='Workspace name or file.jsonl (detects file by .jsonl extension)')
+
+    parser_export.add_argument('output_dir',
         nargs='?',
-        help='Workspace name pattern to filter sessions (default: current project)')
-    pattern_group_export.add_argument('--this',
-        action='store_true',
-        help='Export sessions from current project workspace (explicit)')
-    pattern_group_export.add_argument('--all',
-        action='store_true',
-        help='Export sessions from all workspaces')
-
-    # Output options for export
-    parser_export.add_argument('--output-dir', '-o',
-        metavar='DIR',
         default='./claude-conversations',
-        help='Output directory for exported files (default: ./claude-conversations)')
+        help='Output directory (default: ./claude-conversations)')
 
-    parser_export.add_argument('--force', '-f',
+    parser_export.add_argument('-a', '--all',
         action='store_true',
-        help='Force re-export all sessions, even if already exported (default: incremental)')
+        help='Export all workspaces (target is ignored)')
+
+    parser_export.add_argument('-r', '--remote',
+        metavar='HOST',
+        help='Export from remote host via SSH (user@hostname or hostname)')
+
+    parser_export.add_argument('--force',
+        action='store_true',
+        help='Force re-export (default: incremental)')
 
     parser_export.add_argument('--minimal',
         action='store_true',
-        help='Minimal export mode: omit all metadata, keep only conversation content, timestamps, and tool execution details')
+        help='Minimal export: omit metadata, keep only conversation content')
 
     parser_export.add_argument('--split',
         metavar='LINES',
         type=int,
-        help='Split long conversations into multiple parts at approximately LINES per file (e.g., 500). Breaks at smart points like message boundaries.')
+        help='Split long conversations into parts (e.g., --split 500)')
 
-    # Date filtering for export
     parser_export.add_argument('--since',
         metavar='DATE',
         help='Only include sessions modified on or after this date (YYYY-MM-DD)')
+
     parser_export.add_argument('--until',
         metavar='DATE',
         help='Only include sessions modified on or before this date (YYYY-MM-DD)')
 
-    # Remote access for export
-    parser_export.add_argument('-r', '--remote',
-        metavar='HOST',
-        help='Export sessions from remote host via SSH (caches files locally first)')
-
-    # ========== convert command ==========
-    parser_convert = subparsers.add_parser('convert',
-        help='Convert a single .jsonl file',
-        description='Convert a single conversation file to markdown')
-
-    parser_convert.add_argument('jsonl_file',
-        help='Path to .jsonl conversation file')
-    parser_convert.add_argument('--output', '-o',
-        metavar='FILE',
-        help='Output markdown filename (default: same name with .md extension)')
-
-    # Remote access for convert
-    parser_convert.add_argument('-r', '--remote',
-        metavar='HOST',
-        help='Convert file from remote host via SSH (caches file locally first)')
-
-    # ========== fetch command ==========
-    parser_fetch = subparsers.add_parser('fetch',
-        help='Fetch remote sessions via SSH',
-        description='Fetch conversation sessions from a remote host via passwordless SSH (one-way sync)')
-
-    parser_fetch.add_argument('remote_host',
-        help='Remote host in format user@hostname or hostname')
-    parser_fetch.add_argument('pattern',
-        nargs='?',
-        help='Optional workspace pattern to filter which remote workspaces to fetch')
-
     # Parse arguments
     args = parser.parse_args()
 
-    # Determine workspace pattern based on flags
-    def get_workspace_pattern(args):
-        if hasattr(args, 'this') and args.this:
-            return get_current_workspace_pattern()
-        elif hasattr(args, 'all') and args.all:
-            return ''
-        elif hasattr(args, 'pattern') and args.pattern:
-            return args.pattern
-        else:
-            # Default to current workspace if no pattern specified
-            return get_current_workspace_pattern()
-
     # Dispatch to command handlers
-    if args.command == 'list':
-        workspace_pattern = get_workspace_pattern(args)
-        class ListArgs:
-            workspace = workspace_pattern
+    if args.command == 'lsw':
+        # List workspaces
+        pattern = args.pattern if args.pattern else ''
+        class LswArgs:
+            workspace = pattern
+            remote = getattr(args, 'remote', None)
+            workspaces_only = True  # lsw always lists workspaces
+        cmd_list(LswArgs())
+
+    elif args.command == 'lss':
+        # List sessions
+        workspace_val = args.workspace if args.workspace else get_current_workspace_pattern()
+        class LssArgs:
+            workspace = workspace_val
             since = args.since
             until = args.until
             remote = getattr(args, 'remote', None)
-            workspaces_only = getattr(args, 'workspaces_only', False)
-        cmd_list(ListArgs())
+            workspaces_only = False  # lss always lists sessions
+        cmd_list(LssArgs())
 
     elif args.command == 'export':
-        workspace_pattern = get_workspace_pattern(args)
-        class ExportArgs:
-            workspace = workspace_pattern
-            output_dir = args.output_dir
-            since = args.since
-            until = args.until
-            force = args.force
-            minimal = args.minimal
-            split = args.split
-            remote = getattr(args, 'remote', None)
-        cmd_batch(ExportArgs())
-
-    elif args.command == 'convert':
-        class ConvertArgs:
-            jsonl_file = args.jsonl_file
-            output = args.output
-            remote = getattr(args, 'remote', None)
-        cmd_convert(ConvertArgs())
-
-    elif args.command == 'fetch':
-        class FetchArgs:
-            remote_host = args.remote_host
-            pattern = args.pattern
-        cmd_fetch(FetchArgs())
+        # Export - handle file vs workspace
+        if args.all:
+            # Export all workspaces
+            class ExportArgs:
+                workspace = ''  # empty means all
+                output_dir = args.output_dir
+                since = args.since
+                until = args.until
+                force = args.force
+                minimal = args.minimal
+                split = args.split
+                remote = getattr(args, 'remote', None)
+            cmd_batch(ExportArgs())
+        elif args.target.endswith('.jsonl'):
+            # Single file export
+            class ConvertArgs:
+                jsonl_file = args.target
+                output = None  # Use default
+                remote = getattr(args, 'remote', None)
+            cmd_convert(ConvertArgs())
+        else:
+            # Workspace export
+            class ExportArgs:
+                workspace = args.target
+                output_dir = args.output_dir
+                since = args.since
+                until = args.until
+                force = args.force
+                minimal = args.minimal
+                split = args.split
+                remote = getattr(args, 'remote', None)
+            cmd_batch(ExportArgs())
 
 
 if __name__ == "__main__":

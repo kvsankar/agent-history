@@ -4,9 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`claude-sessions` is a single-file Python CLI tool that extracts and converts Claude Code conversation history by workspace. It provides a stable, file-path-based approach to exporting conversations, unlike session-ID-based tools which are brittle and change between runs.
+`claude-history` is a single-file Python CLI tool that browses and exports Claude Code conversation history. It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
 
-**Key differentiator:** Filters conversations by workspace/project path instead of session IDs, making it easy to export all conversations for a specific project.
+**Design principles:**
+- Simple object-verb structure: `lsw` (list workspaces), `lss` (list sessions), `export`
+- Minimal output: tab-separated data, no decoration, errors to stderr
+- Remote access via SSH with `-r` flag
+- Smart path handling for directories with dashes
 
 ## Commands
 
@@ -14,24 +18,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Make script executable (if needed)
-chmod +x claude-sessions
+chmod +x claude-history
 
-# Test listing sessions (defaults to current project)
-./claude-sessions list [PATTERN|--all]
+# List workspaces
+./claude-history lsw                        # all local workspaces
+./claude-history lsw myproject              # filter by pattern
+./claude-history lsw -r user@server         # remote workspaces
 
-# Test export (defaults to current project)
-./claude-sessions export [PATTERN|--all] --output-dir ./test-output
+# List sessions
+./claude-history lss                        # current workspace
+./claude-history lss myproject              # specific workspace
+./claude-history lss myproject -r user@server    # remote sessions
 
-# Test single file conversion
-./claude-sessions convert ~/.claude/projects/.../session.jsonl
+# Export
+./claude-history export myproject           # export workspace
+./claude-history export -a                  # export all workspaces
+./claude-history export file.jsonl         # export single file
+./claude-history export myproject ./output  # custom output directory
+./claude-history export myproject -r user@server  # remote export
 
 # Show version
-./claude-sessions --version
+./claude-history --version
 
-# Examples
-./claude-sessions list                  # Current project (default)
-./claude-sessions list --all            # All workspaces
-./claude-sessions export myproject      # Pattern matching
+# Examples with date filtering
+./claude-history lss myproject --since 2025-11-01
+./claude-history export myproject --since 2025-11-01 --until 2025-11-30
+
+# Export options
+./claude-history export myproject --minimal       # minimal mode
+./claude-history export myproject --split 500     # split long conversations
 ```
 
 ### Testing Workflow
@@ -39,18 +54,21 @@ chmod +x claude-sessions
 Manual testing is required since this tool operates on local Claude Code data:
 
 ```bash
-# Test with your own Claude Code data (defaults to current project)
-./claude-sessions list
-./claude-sessions export --output-dir ./test
+# Test with your own Claude Code data
+./claude-history lsw
+./claude-history lss
+./claude-history export myproject ./test
 
-# Test with specific workspace pattern
-./claude-sessions list myproject
-./claude-sessions export myproject --output-dir ./test
+# Test remote access
+./claude-history lsw -r user@server
+./claude-history lss myproject -r user@server
+./claude-history export myproject ./test -r user@server
 
 # Test edge cases:
 # - Empty workspace patterns
 # - Non-existent workspaces
 # - Large conversation files
+# - Paths with dashes (e.g., moon-phase)
 # - Corrupted .jsonl files
 ```
 
@@ -90,14 +108,23 @@ The file is organized into six main sections:
    - `get_current_workspace_pattern()`: Detects current workspace based on working directory
    - `get_workspace_sessions()`: Scans workspaces matching a pattern, filters by date range if specified, returns session metadata
 
-6. **Commands**
-   - `cmd_list()`: Shows all sessions for a workspace with stats
-   - `cmd_convert()`: Converts single .jsonl file to markdown
-   - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports splitting with `--split`)
+6. **Remote Operations**
+   - `parse_remote_host()`: Parses user@hostname format
+   - `check_ssh_connection()`: Verifies passwordless SSH connectivity
+   - `get_remote_hostname()`: Extracts hostname for directory prefix
+   - `list_remote_workspaces()`: Lists workspace directories on remote host via SSH
+   - `get_remote_session_info()`: Gets remote file stats (size, mtime, message count) without downloading
+   - `fetch_workspace_files()`: Fetches files from one remote workspace using rsync
+
+7. **Commands**
+   - `cmd_list()`: Shows all sessions for a workspace with stats (supports `-r` for remote)
+   - `cmd_convert()`: Converts single .jsonl file to markdown (supports `-r` for remote)
+   - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote, `--split` for splitting)
+   - `cmd_fetch()`: Pre-caches remote sessions via SSH (one-way sync)
    - `cmd_version()`: Displays version info
 
-7. **Main**
-   - Argument parsing with `argparse` (including --since, --until, --minimal, --split flags)
+8. **Main**
+   - Argument parsing with `argparse` (including -r/--remote, --since, --until, --minimal, --split flags)
    - Command dispatch to appropriate handler
    - Error handling (KeyboardInterrupt, general exceptions)
 
@@ -509,7 +536,85 @@ Workspace pattern matching is substring-based:
 - Empty pattern (`""`, `"*"`, or `"all"`) matches all workspaces
 - Case-sensitive matching
 
+### Remote Operations
+
+All commands support remote operations via the `-r/--remote` flag:
+
+**Requirements:**
+- Passwordless SSH access (key-based authentication)
+- `rsync` installed on both local and remote machines
+- Claude Code installed on remote machine with existing sessions
+
+**Usage:**
+```bash
+# List remote sessions (direct access, no caching)
+./claude-sessions list -r user@hostname
+./claude-sessions list -r user@hostname myproject
+
+# Export remote sessions (caches locally first, then exports)
+./claude-sessions export -r user@hostname
+./claude-sessions export -r user@hostname --output-dir ./output
+
+# Convert remote file (downloads temporarily, then converts)
+./claude-sessions convert -r user@hostname /path/to/file.jsonl
+
+# Pre-cache remote sessions for offline access
+./claude-sessions fetch user@hostname
+./claude-sessions fetch user@hostname myproject
+```
+
+**Storage Strategy:**
+- Remote sessions cached with prefix: `-remote-{hostname}-{workspace}`
+- Example: `-home-user-project` on remote `workstation` becomes `-remote-workstation-home-user-project` locally
+- Keeps remote and local sessions completely separate (no conflicts)
+
+**Caching Behavior:**
+- **`list -r`**: Direct remote access via SSH (no caching) - fast, real-time view
+- **`export -r`**: Caches files locally first using rsync, then exports - efficient for repeated operations
+- **`convert -r`**: Downloads file temporarily, converts, then cleans up
+- **`fetch`**: Explicit pre-caching for offline access or batch operations
+
+**Implementation:**
+- `check_ssh_connection()`: Verifies SSH connectivity with `BatchMode=yes` (no password prompts)
+- `get_remote_session_info()`: Gets remote file stats without downloading (for list)
+- `list_remote_workspaces()`: Lists remote workspace directories via SSH
+- `fetch_workspace_files()`: Uses `rsync -avh` to sync .jsonl files
+- One-way sync only (remote → local), never modifies remote machine
+- Incremental by default (rsync only transfers new/changed files)
+
+**SSH Setup:**
+```bash
+# Generate SSH key (if needed)
+ssh-keygen -t ed25519
+
+# Copy key to remote
+ssh-copy-id user@hostname
+
+# Test connection
+ssh -o BatchMode=yes user@hostname echo ok
+```
+
 ## Recent Changes
+
+**Workspace-Only Listing (v1.1.0+)**
+- Added `--workspaces-only` flag to `list` command for simplified workspace overview
+- Shows only workspace names with aggregate stats (sessions, size, messages, date range)
+- Useful for quickly seeing all available workspaces without session details
+- Works with both local and remote listings: `./claude-sessions list --workspaces-only` or `./claude-sessions list -r user@host --workspaces-only`
+- Output is sorted alphabetically by workspace name for easy scanning
+
+**Remote Operations with -r Flag (v1.1.0+)**
+- Added `-r/--remote HOST` flag to all commands (list, export, convert) for unified remote access
+- **`list -r`**: Direct remote listing via SSH (no caching) - fast, real-time view of remote sessions
+- **`export -r`**: Caches remote files locally first, then exports - efficient for repeated operations
+- **`convert -r`**: Downloads remote file temporarily, converts, then cleans up
+- **`fetch`**: Pre-cache remote sessions for offline access or batch operations
+- Remote sessions stored with prefix: `-remote-{hostname}-{workspace}` (no conflicts with local)
+- Hybrid caching strategy: list is direct, export/convert cache for reuse
+- One-way sync (remote → local) using passwordless SSH and rsync
+- Requirements: passwordless SSH (key-based auth), rsync on both machines
+- Use case: Work with conversations from multiple development machines seamlessly
+- Example: `./claude-sessions list -r user@workstation` or `./claude-sessions export -r user@server`
 
 **Agent Conversation Detection (v1.0.0+)**
 - Agent conversations (spawned via Task tool) are automatically detected via `isSidechain` flag
