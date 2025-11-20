@@ -62,31 +62,42 @@ Manual testing is required since this tool operates on local Claude Code data:
 
 ### Code Structure
 
-The file is organized into five main sections:
+The file is organized into six main sections:
 
-1. **Date Parsing** (lines 23-39)
+1. **Date Parsing**
    - `parse_date_string()`: Parses ISO 8601 date strings (YYYY-MM-DD format) into datetime objects
 
-2. **JSONL Parsing and Markdown Conversion** (lines 41-250)
+2. **Content Extraction and Utilities**
    - `decode_content()`: Base64 decoding for encoded content
    - `extract_content()`: Extracts all content from message objects with full information preservation (text, tool use inputs with JSON, tool results with output)
    - `get_first_timestamp()`: Extracts first message timestamp for filename generation
-   - `parse_jsonl_to_markdown()`: Main conversion logic that reads .jsonl and generates markdown with complete metadata preservation
 
-3. **Workspace Scanning** (lines 136-248)
+3. **Conversation Splitting Helpers**
+   - `estimate_message_lines()`: Estimates line count for a message (~27-47 lines)
+   - `is_tool_result_message()`: Detects tool result messages
+   - `calculate_time_gap()`: Calculates time gap between messages in seconds
+   - `find_best_split_point()`: Priority-based scoring to find optimal break points
+   - `generate_markdown_parts()`: Orchestrates splitting into multiple parts
+   - `generate_markdown_for_messages()`: Generates markdown for message subsets with part indicators
+
+4. **JSONL Parsing and Markdown Conversion**
+   - `read_jsonl_messages()`: Reads and parses messages from JSONL file (refactored for reuse)
+   - `parse_jsonl_to_markdown()`: Main conversion logic that generates markdown with complete metadata preservation
+
+5. **Workspace Scanning**
    - `get_claude_projects_dir()`: Locates `~/.claude/projects/` with error handling
    - `normalize_workspace_name()`: Converts directory names (e.g., `-home-alice-projects-django-app`) to readable paths (`home/alice/projects/django-app`)
-   - `get_current_workspace_pattern()`: Detects current workspace based on working directory (used by `--this` flag)
+   - `get_current_workspace_pattern()`: Detects current workspace based on working directory
    - `get_workspace_sessions()`: Scans workspaces matching a pattern, filters by date range if specified, returns session metadata
 
-4. **Commands** (lines 232-408)
+6. **Commands**
    - `cmd_list()`: Shows all sessions for a workspace with stats
    - `cmd_convert()`: Converts single .jsonl file to markdown
-   - `cmd_export()`: Exports all sessions from a workspace to markdown
+   - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports splitting with `--split`)
    - `cmd_version()`: Displays version info
 
-5. **Main** (lines 410-550)
-   - Argument parsing with `argparse` (including --since and --until flags)
+7. **Main**
+   - Argument parsing with `argparse` (including --since, --until, --minimal, --split flags)
    - Command dispatch to appropriate handler
    - Error handling (KeyboardInterrupt, general exceptions)
 
@@ -401,6 +412,79 @@ Date filtering is implemented inline during session scanning for efficiency:
 - Validation ensures `--since` date is before `--until` date
 - Both filters are optional and can be used independently
 
+### Conversation Splitting
+
+The `--split` flag enables splitting long conversations into multiple manageable parts:
+
+**Smart Break Point Detection:**
+
+The tool uses a priority-based scoring system to find optimal split points:
+
+```python
+def find_best_split_point(messages, target_lines: int, minimal: bool) -> int:
+    """Find the best message index to split at, near target_lines."""
+    min_lines = int(target_lines * 0.8)  # Buffer zone: 80%-130%
+    max_lines = int(target_lines * 1.3)
+
+    # Score each potential break point:
+    # +100: Next message is User (cleanest break)
+    # +50: Current message is tool result
+    # +30: Time gap > 5 minutes
+    # +10: Time gap > 1 minute
+    # -0.05 per line away from target (prefer closer)
+```
+
+**Line Estimation:**
+
+Messages are estimated at ~27-47 lines depending on content and metadata:
+- Message header and timestamp: ~4 lines
+- Content: actual line count of text
+- Metadata section: ~20 lines (if not minimal mode)
+- Separator: ~2 lines
+
+**Multi-Part File Generation:**
+
+Implementation in `cmd_batch()`:
+```python
+if split_lines and len(messages) > 0:
+    parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+
+    if parts:
+        for part_num, total_parts, part_md, start_msg, end_msg in parts:
+            # Create filename: timestamp_session_part1.md
+            part_filename = f"{base_name}_part{part_num}.md"
+
+            # Add navigation footer
+            nav = f"**Part {part_num} of {total_parts}**"
+            if part_num > 1:
+                nav += f" | [← Part {part_num - 1}](filename_part{part_num-1}.md)"
+            if part_num < total_parts:
+                nav += f" | [Part {part_num + 1} →](filename_part{part_num+1}.md)"
+```
+
+**Helper Functions:**
+- `read_jsonl_messages(jsonl_file)`: Extracts messages from JSONL (refactored for reuse)
+- `estimate_message_lines(msg_content, has_metadata)`: Estimates line count
+- `is_tool_result_message(msg_content)`: Detects tool results
+- `calculate_time_gap(msg1, msg2)`: Calculates seconds between messages
+- `find_best_split_point()`: Scoring-based break point finder
+- `generate_markdown_parts()`: Orchestrates splitting into multiple parts
+- `generate_markdown_for_messages()`: Generates markdown for message subsets
+
+**Part Headers:**
+
+Each part includes:
+- Title: `# Claude Conversation - Part N of M`
+- Part number: `**Part:** N of M`
+- Message range: `**Messages in this part:** 16 (#26-#41)`
+- Timestamps for first and last message in part
+
+**Benefits:**
+- Makes very long conversations (>500 messages) more manageable
+- Preserves conversation flow with smart breaks
+- Easy navigation between parts
+- Maintains message numbering continuity across parts
+
 ## Key Concepts
 
 ### Workspace Directory Naming
@@ -434,6 +518,20 @@ Workspace pattern matching is substring-based:
 - First message labeled as `🔧 Task Prompt (from Parent Claude)` when applicable
 - Includes parent session ID and agent ID in header for traceability
 - Prevents confusion when reading exported agent conversations
+
+**Conversation Splitting (v1.0.0+)**
+- Added `--split LINES` flag to split long conversations into multiple parts
+- Smart break point detection with priority-based scoring system:
+  1. Prefers breaks before User messages (cleanest conversation flow)
+  2. Prefers breaks after tool result messages
+  3. Prefers breaks after time gaps (>5 minutes between messages)
+- Flexible buffer zone (80%-130% of target) to prioritize clean breaks over exact line counts
+- Line estimation accounts for message content and metadata sections
+- Multi-part file generation with consistent naming: `timestamp_session_partN.md`
+- Navigation links between parts: "Part N of M" with clickable previous/next links
+- Each part header shows message range and part information
+- Automatic detection - only splits when necessary
+- Use `claude-sessions export --split 500` to split at ~500 lines per part
 
 **Minimal Export Mode (v1.0.0+)**
 - Added `--minimal` flag for cleaner exports suitable for sharing or blog posts

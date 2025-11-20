@@ -173,6 +173,7 @@ $ claude-sessions export --all -o ./all-conversations
 - `--output-dir`, `-o DIR`: Output directory (default: `./claude-conversations`)
 - `--force`, `-f`: Force re-export all sessions, even if already exported
 - `--minimal`: Minimal mode - omit all metadata, keep only conversation content, timestamps, and tool execution details
+- `--split LINES`: Split long conversations into multiple parts at approximately LINES per file (e.g., `--split 500`)
 
 **Export Modes:**
 
@@ -196,6 +197,35 @@ $ claude-sessions export --minimal
 - All metadata (UUIDs, session IDs, working directory, git branch, version, etc.)
 - HTML anchors and navigation links
 - Model information and token usage statistics
+
+**Conversation Splitting:**
+
+For very long conversations, you can split them into multiple parts for easier reading:
+
+```bash
+# Split conversations into ~500 lines per part
+$ claude-sessions export --split 500
+
+# Combine with other options
+$ claude-sessions export --split 500 --minimal
+```
+
+**How splitting works:**
+- Automatically detects when conversations exceed the target line count
+- Uses smart break points to avoid splitting in awkward places
+- Prioritizes breaks:
+  1. Before User messages (cleanest breaks)
+  2. After tool result messages
+  3. After time gaps (>5 minutes between messages)
+- Flexible on exact line count (±20-30%) to get cleaner breaks
+- Creates multiple files: `timestamp_session_part1.md`, `timestamp_session_part2.md`, etc.
+- Adds navigation links between parts for easy browsing
+- Each part shows: "Part N of M" and message range (#X-#Y)
+
+**When to use splitting:**
+- Conversations with >500 messages
+- Very long sessions that are hard to scroll through
+- When you want to read conversations in manageable chunks
 
 ### Convert Single File
 

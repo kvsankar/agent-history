@@ -124,12 +124,97 @@ def get_first_timestamp(jsonl_file: Path) -> str:
     return None
 
 
-def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
-    """Parse a .jsonl file and convert to markdown.
+def estimate_message_lines(msg_content: str, has_metadata: bool) -> int:
+    """Estimate number of lines a message will take in markdown."""
+    lines = 0
+    lines += 1  # Message header (## Message N)
+    lines += 1  # Empty line
+    lines += 1  # Timestamp
+    lines += 1  # Empty line
+    lines += len(msg_content.split('\n'))  # Content
+    lines += 1  # Empty line
+    if has_metadata:
+        lines += 20  # Approximate metadata section
+        lines += 1  # Empty line
+    lines += 1  # Separator (---)
+    lines += 1  # Empty line
+    return lines
 
-    Args:
-        jsonl_file: Path to the JSONL file to convert
-        minimal: If True, omit metadata and only include conversation content
+
+def is_tool_result_message(msg_content: str) -> bool:
+    """Check if message content contains a tool result."""
+    return '**[Tool Result:' in msg_content
+
+
+def calculate_time_gap(msg1, msg2) -> float:
+    """Calculate time gap in seconds between two messages."""
+    try:
+        from datetime import datetime
+        ts1 = datetime.fromisoformat(msg1['timestamp'].replace('Z', '+00:00'))
+        ts2 = datetime.fromisoformat(msg2['timestamp'].replace('Z', '+00:00'))
+        return abs((ts2 - ts1).total_seconds())
+    except:
+        return 0
+
+
+def find_best_split_point(messages, target_lines: int, minimal: bool) -> int:
+    """Find the best message index to split at, near target_lines.
+
+    Returns message index to start part 2 (exclusive end of part 1).
+    Returns None if no split needed.
+    """
+    min_lines = int(target_lines * 0.8)  # 80% of target
+    max_lines = int(target_lines * 1.3)  # 130% of target (more flexible)
+
+    current_lines = 30  # Approximate header lines
+    best_split = None
+    best_score = -1
+
+    for i in range(len(messages)):
+        msg = messages[i]
+        msg_lines = estimate_message_lines(msg['content'], not minimal)
+        current_lines += msg_lines
+
+        # If we're past max_lines, must break before this message
+        if current_lines > max_lines:
+            return i if i > 0 else 1
+
+        # If we're in the sweet spot, evaluate this as a break point
+        if current_lines >= min_lines:
+            score = 0
+
+            # Priority 1: Next message is User (best - starting new topic)
+            if i + 1 < len(messages) and messages[i + 1]['role'] == 'user':
+                score += 100
+
+            # Priority 2: Current message is tool result (action complete)
+            if is_tool_result_message(msg['content']):
+                score += 50
+
+            # Priority 3: Time gap > 5 minutes before next message
+            if i + 1 < len(messages):
+                time_gap = calculate_time_gap(msg, messages[i + 1])
+                if time_gap > 300:  # 5 minutes
+                    score += 30
+                elif time_gap > 60:  # 1 minute
+                    score += 10
+
+            # Slight preference for being closer to target
+            distance_from_target = abs(current_lines - target_lines)
+            score -= distance_from_target * 0.05
+
+            if score > best_score:
+                best_score = score
+                best_split = i + 1  # Split after this message
+
+    return best_split
+
+
+def read_jsonl_messages(jsonl_file: Path):
+    """Read and parse messages from a JSONL file.
+
+    Returns:
+        List of message dictionaries with role, content, timestamp, and metadata.
     """
     messages = []
 
@@ -170,6 +255,18 @@ def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
             except json.JSONDecodeError as e:
                 print(f"Warning: Couldn't parse line: {e}", file=sys.stderr)
                 continue
+
+    return messages
+
+
+def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
+    """Parse a .jsonl file and convert to markdown.
+
+    Args:
+        jsonl_file: Path to the JSONL file to convert
+        minimal: If True, omit metadata and only include conversation content
+    """
+    messages = read_jsonl_messages(jsonl_file)
 
     # Check if this is an agent conversation
     is_agent = any(msg.get('isSidechain') for msg in messages)
@@ -290,6 +387,202 @@ def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
                 md_lines.append(f"- **Stop Sequence:** `{msg['stop_sequence']}`")
 
             # Usage stats (for assistant messages)
+            if msg.get('usage'):
+                usage = msg['usage']
+                md_lines.append(f"- **Usage:**")
+                md_lines.append(f"  - Input tokens: {usage.get('input_tokens', 0)}")
+                md_lines.append(f"  - Output tokens: {usage.get('output_tokens', 0)}")
+                if usage.get('cache_creation_input_tokens'):
+                    md_lines.append(f"  - Cache creation tokens: {usage['cache_creation_input_tokens']}")
+                if usage.get('cache_read_input_tokens'):
+                    md_lines.append(f"  - Cache read tokens: {usage['cache_read_input_tokens']}")
+
+            md_lines.append(f"")
+        md_lines.append("---")
+        md_lines.append(f"")
+
+    return "\n".join(md_lines)
+
+
+def generate_markdown_parts(messages, jsonl_file: Path, minimal: bool, split_lines: int):
+    """Generate multiple markdown parts from messages, split at smart break points.
+
+    Returns list of (part_num, total_parts, markdown_content, start_msg, end_msg) tuples.
+    """
+    if not split_lines or len(messages) == 0:
+        return None
+
+    # Find all split points
+    split_points = [0]  # Start with message 0
+    remaining_messages = messages
+
+    while True:
+        # Find next split point in remaining messages
+        split_idx = find_best_split_point(remaining_messages, split_lines, minimal)
+
+        if split_idx is None or split_idx >= len(remaining_messages):
+            # No more splits needed
+            break
+
+        # Add this split point (adjusted for global message index)
+        global_idx = split_points[-1] + split_idx
+        split_points.append(global_idx)
+        remaining_messages = messages[global_idx:]
+
+    # Add end point
+    split_points.append(len(messages))
+
+    # If only one part, no splitting needed
+    if len(split_points) <= 2:
+        return None
+
+    total_parts = len(split_points) - 1
+    parts = []
+
+    for part_num in range(total_parts):
+        start_idx = split_points[part_num]
+        end_idx = split_points[part_num + 1]
+        part_messages = messages[start_idx:end_idx]
+
+        # Generate markdown for this part
+        part_md = generate_markdown_for_messages(
+            part_messages, jsonl_file, minimal,
+            part_num=part_num + 1, total_parts=total_parts,
+            start_msg_num=start_idx + 1, end_msg_num=end_idx
+        )
+
+        parts.append((part_num + 1, total_parts, part_md, start_idx + 1, end_idx))
+
+    return parts
+
+
+def generate_markdown_for_messages(part_messages, jsonl_file, minimal, part_num=None, total_parts=None, start_msg_num=1, end_msg_num=None):
+    """Generate markdown for a subset of messages (used for splitting)."""
+    # Similar logic to parse_jsonl_to_markdown but for a message subset
+    # This is a simplified version - we'll call the full function and then extract messages
+
+    # Check if this is an agent conversation
+    is_agent = any(msg.get('isSidechain') for msg in part_messages)
+    parent_session_id = None
+    agent_id = None
+    if is_agent and part_messages:
+        parent_session_id = part_messages[0].get('sessionId')
+        agent_id = part_messages[0].get('agentId')
+
+    md_lines = []
+
+    # Add title with part indicator
+    if part_num and total_parts:
+        if is_agent:
+            md_lines.append(f"# Claude Conversation (Agent) - Part {part_num} of {total_parts}")
+        else:
+            md_lines.append(f"# Claude Conversation - Part {part_num} of {total_parts}")
+    else:
+        if is_agent:
+            md_lines.append(f"# Claude Conversation (Agent)")
+        else:
+            md_lines.append(f"# Claude Conversation")
+
+    md_lines.append(f"")
+    md_lines.append(f"**File:** {jsonl_file.name}")
+
+    if part_num and total_parts:
+        md_lines.append(f"**Part:** {part_num} of {total_parts}")
+        md_lines.append(f"**Messages in this part:** {len(part_messages)} (#{start_msg_num}-#{end_msg_num})")
+    else:
+        md_lines.append(f"**Messages:** {len(part_messages)}")
+
+    if part_messages:
+        first_ts = part_messages[0]['timestamp']
+        last_ts = part_messages[-1]['timestamp']
+        md_lines.append(f"**First message:** {first_ts}")
+        md_lines.append(f"**Last message:** {last_ts}")
+
+    # Add agent conversation notice
+    if is_agent:
+        md_lines.append(f"")
+        md_lines.append("> ⚠️ **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation.")
+        md_lines.append(">")
+        md_lines.append("> - Messages labeled 'User' represent task instructions from the parent Claude session")
+        md_lines.append("> - Messages labeled 'Assistant' are responses from this agent")
+        if parent_session_id:
+            md_lines.append(f"> - **Parent Session ID:** `{parent_session_id}`")
+        if agent_id:
+            md_lines.append(f"> - **Agent ID:** `{agent_id}`")
+
+    md_lines.append(f"")
+    md_lines.append("---")
+    md_lines.append(f"")
+
+    # Build UUID to message index map
+    uuid_to_index = {}
+    for i, msg in enumerate(part_messages, start_msg_num):
+        if msg.get('uuid'):
+            uuid_to_index[msg['uuid']] = i
+
+    # Generate messages
+    for i, msg in enumerate(part_messages, start_msg_num):
+        # Determine message label
+        if is_agent and i == start_msg_num and msg['role'] == 'user':
+            role_emoji = "🔧"
+            role_label = "Task Prompt (from Parent Claude)"
+        else:
+            role_emoji = "👤" if msg['role'] == 'user' else "🤖"
+            role_label = msg['role'].title()
+
+        # Add HTML anchor (skip in minimal mode)
+        if not minimal and msg.get('uuid'):
+            md_lines.append(f'<a name="msg-{msg["uuid"]}"></a>')
+            md_lines.append(f"")
+
+        md_lines.append(f"## Message {i} - {role_emoji} {role_label}")
+        md_lines.append(f"")
+        md_lines.append(f"*{msg['timestamp']}*")
+        md_lines.append(f"")
+        md_lines.append(msg['content'])
+        md_lines.append(f"")
+
+        # Add metadata section (skip in minimal mode)
+        if not minimal:
+            md_lines.append("### Metadata")
+            md_lines.append("")
+
+            if msg.get('uuid'):
+                md_lines.append(f"- **UUID:** `{msg['uuid']}`")
+
+            if msg.get('parentUuid'):
+                parent_uuid = msg['parentUuid']
+                if parent_uuid in uuid_to_index:
+                    parent_msg_num = uuid_to_index[parent_uuid]
+                    md_lines.append(f"- **Parent UUID:** [`{parent_uuid}`](#msg-{parent_uuid}) *(→ Message {parent_msg_num})*")
+                else:
+                    md_lines.append(f"- **Parent UUID:** `{parent_uuid}` *(in different session)*")
+            if msg.get('sessionId'):
+                md_lines.append(f"- **Session ID:** `{msg['sessionId']}`")
+            if msg.get('agentId'):
+                md_lines.append(f"- **Agent ID:** `{msg['agentId']}`")
+            if msg.get('requestId'):
+                md_lines.append(f"- **Request ID:** `{msg['requestId']}`")
+
+            if msg.get('cwd'):
+                md_lines.append(f"- **Working Directory:** `{msg['cwd']}`")
+            if msg.get('gitBranch'):
+                md_lines.append(f"- **Git Branch:** `{msg['gitBranch']}`")
+            if msg.get('version'):
+                md_lines.append(f"- **Version:** `{msg['version']}`")
+
+            if msg.get('userType'):
+                md_lines.append(f"- **User Type:** `{msg['userType']}`")
+            if msg.get('isSidechain') is not None:
+                md_lines.append(f"- **Is Sidechain:** `{msg['isSidechain']}`")
+
+            if msg.get('model'):
+                md_lines.append(f"- **Model:** `{msg['model']}`")
+            if msg.get('stop_reason'):
+                md_lines.append(f"- **Stop Reason:** `{msg['stop_reason']}`")
+            if msg.get('stop_sequence'):
+                md_lines.append(f"- **Stop Sequence:** `{msg['stop_sequence']}`")
+
             if msg.get('usage'):
                 usage = msg['usage']
                 md_lines.append(f"- **Usage:**")
@@ -604,10 +897,54 @@ def cmd_batch(args):
 
         try:
             minimal = getattr(args, 'minimal', False)
-            markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
-            output_file.write_text(markdown)
-            print(f"✓")
-            exported += 1
+            split_lines = getattr(args, 'split', None)
+
+            # Read messages from JSONL
+            messages = read_jsonl_messages(jsonl_file)
+
+            # Check if we should split into multiple parts
+            if split_lines and len(messages) > 0:
+                parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+
+                if parts:
+                    # Save multiple part files
+                    for part_num, total_parts, part_md, start_msg, end_msg in parts:
+                        # Create filename with part number
+                        base_name = output_name.rsplit('.md', 1)[0]
+                        part_filename = f"{base_name}_part{part_num}.md"
+                        part_file = output_dir / part_filename
+
+                        # Add navigation footer
+                        nav_lines = ["\n---\n"]
+                        nav_parts = [f"**Part {part_num} of {total_parts}**"]
+
+                        if part_num > 1:
+                            prev_filename = f"{base_name}_part{part_num - 1}.md"
+                            nav_parts.append(f"[← Part {part_num - 1}]({prev_filename})")
+
+                        if part_num < total_parts:
+                            next_filename = f"{base_name}_part{part_num + 1}.md"
+                            nav_parts.append(f"[Part {part_num + 1} →]({next_filename})")
+
+                        nav_lines.append("> 📄 " + " | ".join(nav_parts))
+
+                        # Write part file with navigation
+                        part_file.write_text(part_md + "\n".join(nav_lines))
+
+                    print(f"✓ (split into {total_parts} parts)")
+                    exported += 1
+                else:
+                    # Splitting not needed, use single file
+                    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+                    output_file.write_text(markdown)
+                    print(f"✓")
+                    exported += 1
+            else:
+                # No splitting, use single file
+                markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+                output_file.write_text(markdown)
+                print(f"✓")
+                exported += 1
         except Exception as e:
             print(f"✗ ({e})")
             failed += 1
@@ -742,6 +1079,11 @@ More info: https://github.com/yourusername/claude-workspace-extract
         action='store_true',
         help='Minimal export mode: omit all metadata, keep only conversation content, timestamps, and tool execution details')
 
+    parser_export.add_argument('--split',
+        metavar='LINES',
+        type=int,
+        help='Split long conversations into multiple parts at approximately LINES per file (e.g., 500). Breaks at smart points like message boundaries.')
+
     # Date filtering for export
     parser_export.add_argument('--since',
         metavar='DATE',
@@ -794,6 +1136,7 @@ More info: https://github.com/yourusername/claude-workspace-extract
             until = args.until
             force = args.force
             minimal = args.minimal
+            split = args.split
         cmd_batch(ExportArgs())
 
     elif args.command == 'convert':
