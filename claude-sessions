@@ -1,0 +1,769 @@
+#!/usr/bin/env python3
+"""
+claude-sessions - Manage and export Claude Code conversation sessions by workspace
+
+A tool to list, filter, and export Claude Code conversation sessions from specific
+workspaces, bypassing the brittle session-ID-based approach of other tools.
+
+Author: Built with Claude Code
+Version: 1.0.0
+License: MIT
+"""
+
+import argparse
+import base64
+import json
+import sys
+from pathlib import Path
+from datetime import datetime
+
+__version__ = "1.0.0"
+
+
+# ============================================================================
+# Date Parsing
+# ============================================================================
+
+def parse_date_string(date_str):
+    """
+    Parse ISO date string (YYYY-MM-DD) into datetime object.
+    Returns datetime object or None if parsing fails.
+    """
+    if not date_str:
+        return None
+
+    try:
+        return datetime.strptime(date_str.strip(), '%Y-%m-%d')
+    except ValueError:
+        return None
+
+
+# ============================================================================
+# JSONL Parsing and Markdown Conversion
+# ============================================================================
+
+def decode_content(encoded_str):
+    """Decode base64 content."""
+    try:
+        return base64.b64decode(encoded_str).decode('utf-8')
+    except Exception as e:
+        return f"[Error decoding content: {e}]"
+
+
+def extract_content(message_obj):
+    """Extract text content from message object, preserving all information."""
+    content_parts = []
+
+    if 'content' in message_obj:
+        content = message_obj['content']
+
+        # User messages have simple string content
+        if isinstance(content, str):
+            return content
+
+        # Assistant messages have array of content blocks
+        if isinstance(content, list):
+            for block in content:
+                if block.get('type') == 'text':
+                    content_parts.append(block.get('text', ''))
+
+                elif block.get('type') == 'tool_use':
+                    tool_name = block.get('name', 'unknown')
+                    tool_id = block.get('id', '')
+                    tool_input = block.get('input', {})
+
+                    content_parts.append(f"\n**[Tool Use: {tool_name}]**")
+                    if tool_id:
+                        content_parts.append(f"Tool ID: `{tool_id}`")
+                    content_parts.append("\nInput:")
+                    content_parts.append("```json")
+                    content_parts.append(json.dumps(tool_input, indent=2))
+                    content_parts.append("```\n")
+
+                elif block.get('type') == 'tool_result':
+                    tool_use_id = block.get('tool_use_id', '')
+                    is_error = block.get('is_error', False)
+                    result_content = block.get('content', '')
+
+                    # Handle both string and list content in tool results
+                    if isinstance(result_content, list):
+                        result_text = '\n'.join(
+                            item.get('text', '') if isinstance(item, dict) else str(item)
+                            for item in result_content
+                        )
+                    else:
+                        result_text = result_content
+
+                    status = "ERROR" if is_error else "Success"
+                    content_parts.append(f"\n**[Tool Result: {status}]**")
+                    if tool_use_id:
+                        content_parts.append(f"Tool Use ID: `{tool_use_id}`")
+                    content_parts.append("\n```")
+                    content_parts.append(result_text)
+                    content_parts.append("```\n")
+
+    return '\n'.join(content_parts) if content_parts else '[No content]'
+
+
+def get_first_timestamp(jsonl_file: Path) -> str:
+    """Extract the first message timestamp from a .jsonl file."""
+    try:
+        with open(jsonl_file) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    entry_type = entry.get('type')
+                    if entry_type in ('user', 'assistant'):
+                        timestamp = entry.get('timestamp', '')
+                        if timestamp:
+                            return timestamp
+                except json.JSONDecodeError:
+                    continue
+    except Exception:
+        pass
+    return None
+
+
+def parse_jsonl_to_markdown(jsonl_file: Path) -> str:
+    """Parse a .jsonl file and convert to markdown."""
+    messages = []
+
+    with open(jsonl_file) as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+
+                # Look for user or assistant message types
+                entry_type = entry.get('type')
+                if entry_type in ('user', 'assistant'):
+                    message_obj = entry.get('message', {})
+                    role = message_obj.get('role', entry_type)
+                    timestamp = entry.get('timestamp', '')
+                    content = extract_content(message_obj)
+
+                    # Preserve all metadata from the entry
+                    messages.append({
+                        'role': role,
+                        'content': content,
+                        'timestamp': timestamp,
+                        'uuid': entry.get('uuid', ''),
+                        'parentUuid': entry.get('parentUuid'),
+                        'sessionId': entry.get('sessionId', ''),
+                        'agentId': entry.get('agentId'),
+                        'requestId': entry.get('requestId'),
+                        'cwd': entry.get('cwd', ''),
+                        'version': entry.get('version', ''),
+                        'gitBranch': entry.get('gitBranch'),
+                        'isSidechain': entry.get('isSidechain'),
+                        'userType': entry.get('userType'),
+                        'model': message_obj.get('model'),
+                        'usage': message_obj.get('usage'),
+                        'stop_reason': message_obj.get('stop_reason'),
+                        'stop_sequence': message_obj.get('stop_sequence'),
+                    })
+
+            except json.JSONDecodeError as e:
+                print(f"Warning: Couldn't parse line: {e}", file=sys.stderr)
+                continue
+
+    # Generate markdown
+    md_lines = []
+    md_lines.append(f"# Claude Conversation")
+    md_lines.append(f"")
+    md_lines.append(f"**File:** {jsonl_file.name}")
+    md_lines.append(f"**Messages:** {len(messages)}")
+
+    if messages:
+        first_ts = messages[0]['timestamp']
+        last_ts = messages[-1]['timestamp']
+        md_lines.append(f"**First message:** {first_ts}")
+        md_lines.append(f"**Last message:** {last_ts}")
+
+    md_lines.append(f"")
+    md_lines.append("---")
+    md_lines.append(f"")
+
+    # Build UUID to message index map for internal linking
+    uuid_to_index = {}
+    for i, msg in enumerate(messages, 1):
+        if msg.get('uuid'):
+            uuid_to_index[msg['uuid']] = i
+
+    for i, msg in enumerate(messages, 1):
+        role_emoji = "👤" if msg['role'] == 'user' else "🤖"
+
+        # Add HTML anchor for this message's UUID
+        if msg.get('uuid'):
+            md_lines.append(f'<a name="msg-{msg["uuid"]}"></a>')
+            md_lines.append(f"")
+
+        md_lines.append(f"## Message {i} - {role_emoji} {msg['role'].title()}")
+        md_lines.append(f"")
+        md_lines.append(f"*{msg['timestamp']}*")
+        md_lines.append(f"")
+        md_lines.append(msg['content'])
+        md_lines.append(f"")
+
+        # Add metadata section
+        md_lines.append("### Metadata")
+        md_lines.append("")
+
+        # Core identifiers with navigation links
+        if msg.get('uuid'):
+            md_lines.append(f"- **UUID:** `{msg['uuid']}`")
+
+        if msg.get('parentUuid'):
+            parent_uuid = msg['parentUuid']
+            # Check if parent is in the same file
+            if parent_uuid in uuid_to_index:
+                parent_msg_num = uuid_to_index[parent_uuid]
+                md_lines.append(f"- **Parent UUID:** [`{parent_uuid}`](#msg-{parent_uuid}) *(→ Message {parent_msg_num})*")
+            else:
+                # Parent is in a different file (e.g., main session when this is an agent)
+                md_lines.append(f"- **Parent UUID:** `{parent_uuid}` *(in different session)*")
+        if msg.get('sessionId'):
+            md_lines.append(f"- **Session ID:** `{msg['sessionId']}`")
+        if msg.get('agentId'):
+            md_lines.append(f"- **Agent ID:** `{msg['agentId']}`")
+        if msg.get('requestId'):
+            md_lines.append(f"- **Request ID:** `{msg['requestId']}`")
+
+        # Environment info
+        if msg.get('cwd'):
+            md_lines.append(f"- **Working Directory:** `{msg['cwd']}`")
+        if msg.get('gitBranch'):
+            md_lines.append(f"- **Git Branch:** `{msg['gitBranch']}`")
+        if msg.get('version'):
+            md_lines.append(f"- **Version:** `{msg['version']}`")
+
+        # User/session info
+        if msg.get('userType'):
+            md_lines.append(f"- **User Type:** `{msg['userType']}`")
+        if msg.get('isSidechain') is not None:
+            md_lines.append(f"- **Is Sidechain:** `{msg['isSidechain']}`")
+
+        # Model info (for assistant messages)
+        if msg.get('model'):
+            md_lines.append(f"- **Model:** `{msg['model']}`")
+        if msg.get('stop_reason'):
+            md_lines.append(f"- **Stop Reason:** `{msg['stop_reason']}`")
+        if msg.get('stop_sequence'):
+            md_lines.append(f"- **Stop Sequence:** `{msg['stop_sequence']}`")
+
+        # Usage stats (for assistant messages)
+        if msg.get('usage'):
+            usage = msg['usage']
+            md_lines.append(f"- **Usage:**")
+            md_lines.append(f"  - Input tokens: {usage.get('input_tokens', 0)}")
+            md_lines.append(f"  - Output tokens: {usage.get('output_tokens', 0)}")
+            if usage.get('cache_creation_input_tokens'):
+                md_lines.append(f"  - Cache creation tokens: {usage['cache_creation_input_tokens']}")
+            if usage.get('cache_read_input_tokens'):
+                md_lines.append(f"  - Cache read tokens: {usage['cache_read_input_tokens']}")
+
+        md_lines.append(f"")
+        md_lines.append("---")
+        md_lines.append(f"")
+
+    return "\n".join(md_lines)
+
+
+# ============================================================================
+# Workspace Scanning
+# ============================================================================
+
+def get_claude_projects_dir():
+    """Get the Claude projects directory, with error handling."""
+    projects_dir = Path.home() / ".claude" / "projects"
+
+    if not projects_dir.exists():
+        print(f"Error: Claude projects directory not found at {projects_dir}")
+        print("\nMake sure:")
+        print("  1. Claude Code is installed")
+        print("  2. You have logged in with 'claude login'")
+        print("  3. You have created at least one project/conversation")
+        sys.exit(1)
+
+    return projects_dir
+
+
+def normalize_workspace_name(workspace_dir_name: str) -> str:
+    """Convert workspace directory name to readable path."""
+    # Remove leading dash and convert dashes to slashes
+    if workspace_dir_name.startswith('-'):
+        workspace_dir_name = workspace_dir_name[1:]
+
+    # Replace single dashes with slashes
+    return workspace_dir_name.replace('-', '/')
+
+
+def get_current_workspace_pattern():
+    """
+    Detect the current workspace based on the current working directory.
+    Returns a pattern that can be used to match the workspace directory.
+    """
+    cwd = Path.cwd()
+    # Convert path to the format used in workspace directory names
+    # e.g., /home/user/projects/myapp -> home-user-projects-myapp
+    workspace_pattern = str(cwd).lstrip('/').replace('/', '-')
+    return workspace_pattern
+
+
+def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_date=None, until_date=None):
+    """Find all sessions in workspaces matching the pattern.
+
+    Args:
+        workspace_pattern: Pattern to match workspace names
+        quiet: Suppress output if True
+        since_date: Only include sessions modified on or after this date (datetime object)
+        until_date: Only include sessions modified on or before this date (datetime object)
+    """
+    projects_dir = get_claude_projects_dir()
+    sessions = []
+
+    # If pattern is empty, "*", or "all", match everything
+    match_all = workspace_pattern in ("", "*", "all")
+
+    # Scan each workspace directory
+    for workspace_dir in projects_dir.iterdir():
+        if not workspace_dir.is_dir():
+            continue
+
+        # Check if workspace path matches our pattern
+        if match_all or workspace_pattern in workspace_dir.name:
+            readable_name = normalize_workspace_name(workspace_dir.name)
+
+            if not quiet:
+                print(f"✓ Found workspace: {readable_name}")
+
+            # Get all .jsonl files in this workspace
+            for jsonl_file in workspace_dir.glob("*.jsonl"):
+                # Get file stats
+                stat = jsonl_file.stat()
+                size_kb = stat.st_size / 1024
+                modified = datetime.fromtimestamp(stat.st_mtime)
+                modified_date = modified.replace(hour=0, minute=0, second=0, microsecond=0)
+
+                # Check date range filter
+                if since_date and modified_date < since_date:
+                    continue
+                if until_date and modified_date > until_date:
+                    continue
+
+                # Count messages (each line is a message)
+                try:
+                    with open(jsonl_file) as f:
+                        message_count = sum(1 for _ in f)
+                except Exception as e:
+                    if not quiet:
+                        print(f"  ⚠ Warning: Couldn't read {jsonl_file.name}: {e}")
+                    message_count = 0
+
+                sessions.append({
+                    'workspace': workspace_dir.name,
+                    'workspace_readable': readable_name,
+                    'file': jsonl_file,
+                    'filename': jsonl_file.name,
+                    'size_kb': size_kb,
+                    'modified': modified,
+                    'message_count': message_count
+                })
+
+                if not quiet:
+                    print(f"  • {jsonl_file.name}: {message_count} messages, {size_kb:.1f} KB, {modified.strftime('%Y-%m-%d %H:%M')}")
+
+    # Sort by modification time
+    sessions.sort(key=lambda s: s['modified'])
+
+    return sessions
+
+
+# ============================================================================
+# Commands
+# ============================================================================
+
+def cmd_list(args):
+    """List sessions for a workspace."""
+    # Parse date filters
+    since_str = getattr(args, 'since', None)
+    until_str = getattr(args, 'until', None)
+
+    since_date = parse_date_string(since_str) if since_str else None
+    until_date = parse_date_string(until_str) if until_str else None
+
+    # Validate date formats
+    if since_str and since_date is None:
+        print(f"❌ Error: Invalid date format for --since: '{since_str}'")
+        print("   Use YYYY-MM-DD format (e.g., 2025-11-01)")
+        sys.exit(1)
+
+    if until_str and until_date is None:
+        print(f"❌ Error: Invalid date format for --until: '{until_str}'")
+        print("   Use YYYY-MM-DD format (e.g., 2025-11-30)")
+        sys.exit(1)
+
+    if since_date and until_date and since_date > until_date:
+        print("❌ Error: --since date must be before --until date")
+        sys.exit(1)
+
+    print(f"🔍 Searching for workspaces matching: '{args.workspace}'")
+    if since_date:
+        print(f"   Since: {since_date.date()}")
+    if until_date:
+        print(f"   Until: {until_date.date()}")
+    print()
+
+    sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+
+    if not sessions:
+        print(f"❌ No sessions found matching '{args.workspace}'")
+        print("\nTips:")
+        print("  • Try a partial workspace name (e.g., 'myproject' instead of full path)")
+        print("  • List all workspaces: ls ~/.claude/projects/")
+        return
+
+    print()
+    print("=" * 80)
+    print(f"📊 Summary")
+    print("=" * 80)
+
+    # Show summary
+    total_size = sum(s['size_kb'] for s in sessions)
+    total_messages = sum(s['message_count'] for s in sessions)
+
+    print(f"Sessions found:    {len(sessions)}")
+    print(f"Total size:        {total_size:.1f} KB ({total_size/1024:.2f} MB)")
+    print(f"Total messages:    {total_messages:,}")
+    if sessions:
+        print(f"Date range:        {sessions[0]['modified'].date()} to {sessions[-1]['modified'].date()}")
+
+    # Group by workspace
+    print()
+    print("=" * 80)
+    print(f"📁 Workspaces")
+    print("=" * 80)
+
+    workspaces = {}
+    for session in sessions:
+        ws = session['workspace_readable']
+        if ws not in workspaces:
+            workspaces[ws] = []
+        workspaces[ws].append(session)
+
+    for ws, ws_sessions in workspaces.items():
+        print(f"\n{ws}")
+        print(f"  Sessions: {len(ws_sessions)}")
+        print(f"  Size: {sum(s['size_kb'] for s in ws_sessions):.1f} KB")
+
+
+def cmd_convert(args):
+    """Convert a single .jsonl file to markdown."""
+    jsonl_file = Path(args.jsonl_file)
+
+    if not jsonl_file.exists():
+        print(f"❌ Error: {jsonl_file} not found")
+        sys.exit(1)
+
+    output_file = Path(args.output) if args.output else jsonl_file.with_suffix('.md')
+
+    print(f"🔄 Converting {jsonl_file.name} to markdown...")
+
+    try:
+        markdown = parse_jsonl_to_markdown(jsonl_file)
+        output_file.write_text(markdown)
+
+        print(f"✅ Saved to {output_file}")
+        print(f"   Size: {len(markdown) / 1024:.1f} KB")
+    except Exception as e:
+        print(f"❌ Error converting file: {e}")
+        sys.exit(1)
+
+
+def cmd_batch(args):
+    """Batch convert all sessions from a workspace."""
+    # Parse date filters
+    since_str = getattr(args, 'since', None)
+    until_str = getattr(args, 'until', None)
+
+    since_date = parse_date_string(since_str) if since_str else None
+    until_date = parse_date_string(until_str) if until_str else None
+
+    # Validate date formats
+    if since_str and since_date is None:
+        print(f"❌ Error: Invalid date format for --since: '{since_str}'")
+        print("   Use YYYY-MM-DD format (e.g., 2025-11-01)")
+        sys.exit(1)
+
+    if until_str and until_date is None:
+        print(f"❌ Error: Invalid date format for --until: '{until_str}'")
+        print("   Use YYYY-MM-DD format (e.g., 2025-11-30)")
+        sys.exit(1)
+
+    if since_date and until_date and since_date > until_date:
+        print("❌ Error: --since date must be before --until date")
+        sys.exit(1)
+
+    output_dir = Path(args.output_dir)
+
+    print(f"🔍 Finding all '{args.workspace}' sessions...")
+    if since_date:
+        print(f"   Since: {since_date.date()}")
+    if until_date:
+        print(f"   Until: {until_date.date()}")
+    print()
+
+    sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+
+    if not sessions:
+        print(f"❌ No sessions found matching '{args.workspace}'")
+        return
+
+    print(f"✓ Found {len(sessions)} sessions")
+    print(f"📁 Output directory: {output_dir}/")
+    print()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Convert each session
+    exported = 0
+    skipped = 0
+    failed = 0
+    force = getattr(args, 'force', False)
+
+    for i, session in enumerate(sessions, 1):
+        jsonl_file = session['file']
+
+        # Extract first timestamp and create timestamped filename
+        first_ts = get_first_timestamp(jsonl_file)
+        if first_ts:
+            # Parse ISO 8601 timestamp and format as yyyymmddhhmmss
+            try:
+                dt = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
+                ts_prefix = dt.strftime('%Y%m%d%H%M%S')
+                output_name = f"{ts_prefix}_{jsonl_file.stem}.md"
+            except Exception:
+                # Fallback to original name if timestamp parsing fails
+                output_name = f"{jsonl_file.stem}.md"
+        else:
+            # No timestamp found, use original name
+            output_name = f"{jsonl_file.stem}.md"
+
+        output_file = output_dir / output_name
+
+        # Check if we should skip (incremental export)
+        if not force and output_file.exists():
+            # Compare timestamps: skip if output is newer than source
+            source_mtime = jsonl_file.stat().st_mtime
+            output_mtime = output_file.stat().st_mtime
+
+            if output_mtime >= source_mtime:
+                print(f"[{i}/{len(sessions)}] {jsonl_file.name} ⊘ (already exported)")
+                skipped += 1
+                continue
+
+        print(f"[{i}/{len(sessions)}] {jsonl_file.name} ", end='')
+
+        try:
+            markdown = parse_jsonl_to_markdown(jsonl_file)
+            output_file.write_text(markdown)
+            print(f"✓")
+            exported += 1
+        except Exception as e:
+            print(f"✗ ({e})")
+            failed += 1
+
+    print()
+    print("=" * 80)
+    print(f"📊 Export Complete")
+    print("=" * 80)
+    print(f"Exported:   {exported}/{len(sessions)}")
+    if skipped > 0:
+        print(f"Skipped:    {skipped}/{len(sessions)} (already up-to-date)")
+    if failed > 0:
+        print(f"Failed:     {failed}/{len(sessions)}")
+
+    # Show summary
+    if exported > 0 or skipped > 0:
+        total_size = sum(f.stat().st_size for f in output_dir.glob("*.md")) / 1024
+        print(f"Total size: {total_size:.1f} KB")
+        print(f"Location:   {output_dir.absolute()}")
+
+
+def cmd_version(args):
+    """Show version information."""
+    print(f"claude-sessions version {__version__}")
+    print("Manage and export Claude Code conversation sessions by workspace")
+    print()
+    print("Author: Built with Claude Code")
+    print("License: MIT")
+
+
+# ============================================================================
+# Main
+# ============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='claude-sessions',
+        description='Manage and export Claude Code conversation sessions by workspace',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+EXAMPLES:
+
+  List sessions from current project (default):
+    claude-sessions list
+
+  List sessions from a specific workspace:
+    claude-sessions list myproject
+
+  List all sessions from all workspaces:
+    claude-sessions list --all
+
+  Export current project (default):
+    claude-sessions export
+
+  Export with custom output directory:
+    claude-sessions export --output-dir ./output
+
+  Export with date filtering:
+    claude-sessions list myproject --since 2025-11-01
+    claude-sessions export myproject --since 2025-11-01 --until 2025-11-30
+
+  Export all workspaces:
+    claude-sessions export --all
+
+  Export a single conversation file:
+    claude-sessions convert ~/.claude/projects/.../session.jsonl
+    claude-sessions convert session.jsonl --output my-conversation.md
+
+More info: https://github.com/yourusername/claude-workspace-extract
+        '''
+    )
+
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+
+    # Create subparsers for commands
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+    subparsers.required = True
+
+    # ========== list command ==========
+    parser_list = subparsers.add_parser('list',
+        help='List conversation sessions',
+        description='Show available conversation sessions for a workspace (defaults to current project)')
+
+    # Pattern argument group (mutually exclusive)
+    pattern_group = parser_list.add_mutually_exclusive_group()
+    pattern_group.add_argument('pattern',
+        nargs='?',
+        help='Workspace name pattern to filter sessions (default: current project)')
+    pattern_group.add_argument('--this',
+        action='store_true',
+        help='List sessions from current project workspace (explicit)')
+    pattern_group.add_argument('--all',
+        action='store_true',
+        help='List sessions from all workspaces')
+
+    # Date filtering for list
+    parser_list.add_argument('--since',
+        metavar='DATE',
+        help='Only include sessions modified on or after this date (YYYY-MM-DD)')
+    parser_list.add_argument('--until',
+        metavar='DATE',
+        help='Only include sessions modified on or before this date (YYYY-MM-DD)')
+
+    # ========== export command ==========
+    parser_export = subparsers.add_parser('export',
+        help='Export sessions to markdown',
+        description='Export sessions from a workspace to markdown files (defaults to current project)')
+
+    # Pattern argument group (mutually exclusive)
+    pattern_group_export = parser_export.add_mutually_exclusive_group()
+    pattern_group_export.add_argument('pattern',
+        nargs='?',
+        help='Workspace name pattern to filter sessions (default: current project)')
+    pattern_group_export.add_argument('--this',
+        action='store_true',
+        help='Export sessions from current project workspace (explicit)')
+    pattern_group_export.add_argument('--all',
+        action='store_true',
+        help='Export sessions from all workspaces')
+
+    # Output options for export
+    parser_export.add_argument('--output-dir', '-o',
+        metavar='DIR',
+        default='./claude-conversations',
+        help='Output directory for exported files (default: ./claude-conversations)')
+
+    parser_export.add_argument('--force', '-f',
+        action='store_true',
+        help='Force re-export all sessions, even if already exported (default: incremental)')
+
+    # Date filtering for export
+    parser_export.add_argument('--since',
+        metavar='DATE',
+        help='Only include sessions modified on or after this date (YYYY-MM-DD)')
+    parser_export.add_argument('--until',
+        metavar='DATE',
+        help='Only include sessions modified on or before this date (YYYY-MM-DD)')
+
+    # ========== convert command ==========
+    parser_convert = subparsers.add_parser('convert',
+        help='Convert a single .jsonl file',
+        description='Convert a single conversation file to markdown')
+
+    parser_convert.add_argument('jsonl_file',
+        help='Path to .jsonl conversation file')
+    parser_convert.add_argument('--output', '-o',
+        metavar='FILE',
+        help='Output markdown filename (default: same name with .md extension)')
+
+    # Parse arguments
+    args = parser.parse_args()
+
+    # Determine workspace pattern based on flags
+    def get_workspace_pattern(args):
+        if hasattr(args, 'this') and args.this:
+            return get_current_workspace_pattern()
+        elif hasattr(args, 'all') and args.all:
+            return ''
+        elif hasattr(args, 'pattern') and args.pattern:
+            return args.pattern
+        else:
+            # Default to current workspace if no pattern specified
+            return get_current_workspace_pattern()
+
+    # Dispatch to command handlers
+    if args.command == 'list':
+        workspace_pattern = get_workspace_pattern(args)
+        class ListArgs:
+            workspace = workspace_pattern
+            since = args.since
+            until = args.until
+        cmd_list(ListArgs())
+
+    elif args.command == 'export':
+        workspace_pattern = get_workspace_pattern(args)
+        class ExportArgs:
+            workspace = workspace_pattern
+            output_dir = args.output_dir
+            since = args.since
+            until = args.until
+            force = args.force
+        cmd_batch(ExportArgs())
+
+    elif args.command == 'convert':
+        class ConvertArgs:
+            jsonl_file = args.jsonl_file
+            output = args.output
+        cmd_convert(ConvertArgs())
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n⚠ Interrupted by user")
+        sys.exit(130)
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {e}", file=sys.stderr)
+        sys.exit(1)
