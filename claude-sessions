@@ -124,8 +124,13 @@ def get_first_timestamp(jsonl_file: Path) -> str:
     return None
 
 
-def parse_jsonl_to_markdown(jsonl_file: Path) -> str:
-    """Parse a .jsonl file and convert to markdown."""
+def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
+    """Parse a .jsonl file and convert to markdown.
+
+    Args:
+        jsonl_file: Path to the JSONL file to convert
+        minimal: If True, omit metadata and only include conversation content
+    """
     messages = []
 
     with open(jsonl_file) as f:
@@ -166,9 +171,23 @@ def parse_jsonl_to_markdown(jsonl_file: Path) -> str:
                 print(f"Warning: Couldn't parse line: {e}", file=sys.stderr)
                 continue
 
+    # Check if this is an agent conversation
+    is_agent = any(msg.get('isSidechain') for msg in messages)
+    parent_session_id = None
+    agent_id = None
+    if is_agent and messages:
+        parent_session_id = messages[0].get('sessionId')
+        agent_id = messages[0].get('agentId')
+
     # Generate markdown
     md_lines = []
-    md_lines.append(f"# Claude Conversation")
+
+    # Add title with agent indicator
+    if is_agent:
+        md_lines.append(f"# Claude Conversation (Agent)")
+    else:
+        md_lines.append(f"# Claude Conversation")
+
     md_lines.append(f"")
     md_lines.append(f"**File:** {jsonl_file.name}")
     md_lines.append(f"**Messages:** {len(messages)}")
@@ -178,6 +197,18 @@ def parse_jsonl_to_markdown(jsonl_file: Path) -> str:
         last_ts = messages[-1]['timestamp']
         md_lines.append(f"**First message:** {first_ts}")
         md_lines.append(f"**Last message:** {last_ts}")
+
+    # Add agent conversation notice
+    if is_agent:
+        md_lines.append(f"")
+        md_lines.append("> ⚠️ **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation.")
+        md_lines.append(">")
+        md_lines.append("> - Messages labeled 'User' represent task instructions from the parent Claude session")
+        md_lines.append("> - Messages labeled 'Assistant' are responses from this agent")
+        if parent_session_id:
+            md_lines.append(f"> - **Parent Session ID:** `{parent_session_id}`")
+        if agent_id:
+            md_lines.append(f"> - **Agent ID:** `{agent_id}`")
 
     md_lines.append(f"")
     md_lines.append("---")
@@ -190,78 +221,86 @@ def parse_jsonl_to_markdown(jsonl_file: Path) -> str:
             uuid_to_index[msg['uuid']] = i
 
     for i, msg in enumerate(messages, 1):
-        role_emoji = "👤" if msg['role'] == 'user' else "🤖"
+        # Determine message label based on context
+        if is_agent and i == 1 and msg['role'] == 'user':
+            # First message in agent conversation is the task prompt from parent Claude
+            role_emoji = "🔧"
+            role_label = "Task Prompt (from Parent Claude)"
+        else:
+            role_emoji = "👤" if msg['role'] == 'user' else "🤖"
+            role_label = msg['role'].title()
 
-        # Add HTML anchor for this message's UUID
-        if msg.get('uuid'):
+        # Add HTML anchor for this message's UUID (skip in minimal mode)
+        if not minimal and msg.get('uuid'):
             md_lines.append(f'<a name="msg-{msg["uuid"]}"></a>')
             md_lines.append(f"")
 
-        md_lines.append(f"## Message {i} - {role_emoji} {msg['role'].title()}")
+        md_lines.append(f"## Message {i} - {role_emoji} {role_label}")
         md_lines.append(f"")
         md_lines.append(f"*{msg['timestamp']}*")
         md_lines.append(f"")
         md_lines.append(msg['content'])
         md_lines.append(f"")
 
-        # Add metadata section
-        md_lines.append("### Metadata")
-        md_lines.append("")
+        # Add metadata section (skip in minimal mode)
+        if not minimal:
+            md_lines.append("### Metadata")
+            md_lines.append("")
 
-        # Core identifiers with navigation links
-        if msg.get('uuid'):
-            md_lines.append(f"- **UUID:** `{msg['uuid']}`")
+            # Core identifiers with navigation links
+            if msg.get('uuid'):
+                md_lines.append(f"- **UUID:** `{msg['uuid']}`")
 
-        if msg.get('parentUuid'):
-            parent_uuid = msg['parentUuid']
-            # Check if parent is in the same file
-            if parent_uuid in uuid_to_index:
-                parent_msg_num = uuid_to_index[parent_uuid]
-                md_lines.append(f"- **Parent UUID:** [`{parent_uuid}`](#msg-{parent_uuid}) *(→ Message {parent_msg_num})*")
-            else:
-                # Parent is in a different file (e.g., main session when this is an agent)
-                md_lines.append(f"- **Parent UUID:** `{parent_uuid}` *(in different session)*")
-        if msg.get('sessionId'):
-            md_lines.append(f"- **Session ID:** `{msg['sessionId']}`")
-        if msg.get('agentId'):
-            md_lines.append(f"- **Agent ID:** `{msg['agentId']}`")
-        if msg.get('requestId'):
-            md_lines.append(f"- **Request ID:** `{msg['requestId']}`")
+            if msg.get('parentUuid'):
+                parent_uuid = msg['parentUuid']
+                # Check if parent is in the same file
+                if parent_uuid in uuid_to_index:
+                    parent_msg_num = uuid_to_index[parent_uuid]
+                    md_lines.append(f"- **Parent UUID:** [`{parent_uuid}`](#msg-{parent_uuid}) *(→ Message {parent_msg_num})*")
+                else:
+                    # Parent is in a different file (e.g., main session when this is an agent)
+                    md_lines.append(f"- **Parent UUID:** `{parent_uuid}` *(in different session)*")
+            if msg.get('sessionId'):
+                md_lines.append(f"- **Session ID:** `{msg['sessionId']}`")
+            if msg.get('agentId'):
+                md_lines.append(f"- **Agent ID:** `{msg['agentId']}`")
+            if msg.get('requestId'):
+                md_lines.append(f"- **Request ID:** `{msg['requestId']}`")
 
-        # Environment info
-        if msg.get('cwd'):
-            md_lines.append(f"- **Working Directory:** `{msg['cwd']}`")
-        if msg.get('gitBranch'):
-            md_lines.append(f"- **Git Branch:** `{msg['gitBranch']}`")
-        if msg.get('version'):
-            md_lines.append(f"- **Version:** `{msg['version']}`")
+            # Environment info
+            if msg.get('cwd'):
+                md_lines.append(f"- **Working Directory:** `{msg['cwd']}`")
+            if msg.get('gitBranch'):
+                md_lines.append(f"- **Git Branch:** `{msg['gitBranch']}`")
+            if msg.get('version'):
+                md_lines.append(f"- **Version:** `{msg['version']}`")
 
-        # User/session info
-        if msg.get('userType'):
-            md_lines.append(f"- **User Type:** `{msg['userType']}`")
-        if msg.get('isSidechain') is not None:
-            md_lines.append(f"- **Is Sidechain:** `{msg['isSidechain']}`")
+            # User/session info
+            if msg.get('userType'):
+                md_lines.append(f"- **User Type:** `{msg['userType']}`")
+            if msg.get('isSidechain') is not None:
+                md_lines.append(f"- **Is Sidechain:** `{msg['isSidechain']}`")
 
-        # Model info (for assistant messages)
-        if msg.get('model'):
-            md_lines.append(f"- **Model:** `{msg['model']}`")
-        if msg.get('stop_reason'):
-            md_lines.append(f"- **Stop Reason:** `{msg['stop_reason']}`")
-        if msg.get('stop_sequence'):
-            md_lines.append(f"- **Stop Sequence:** `{msg['stop_sequence']}`")
+            # Model info (for assistant messages)
+            if msg.get('model'):
+                md_lines.append(f"- **Model:** `{msg['model']}`")
+            if msg.get('stop_reason'):
+                md_lines.append(f"- **Stop Reason:** `{msg['stop_reason']}`")
+            if msg.get('stop_sequence'):
+                md_lines.append(f"- **Stop Sequence:** `{msg['stop_sequence']}`")
 
-        # Usage stats (for assistant messages)
-        if msg.get('usage'):
-            usage = msg['usage']
-            md_lines.append(f"- **Usage:**")
-            md_lines.append(f"  - Input tokens: {usage.get('input_tokens', 0)}")
-            md_lines.append(f"  - Output tokens: {usage.get('output_tokens', 0)}")
-            if usage.get('cache_creation_input_tokens'):
-                md_lines.append(f"  - Cache creation tokens: {usage['cache_creation_input_tokens']}")
-            if usage.get('cache_read_input_tokens'):
-                md_lines.append(f"  - Cache read tokens: {usage['cache_read_input_tokens']}")
+            # Usage stats (for assistant messages)
+            if msg.get('usage'):
+                usage = msg['usage']
+                md_lines.append(f"- **Usage:**")
+                md_lines.append(f"  - Input tokens: {usage.get('input_tokens', 0)}")
+                md_lines.append(f"  - Output tokens: {usage.get('output_tokens', 0)}")
+                if usage.get('cache_creation_input_tokens'):
+                    md_lines.append(f"  - Cache creation tokens: {usage['cache_creation_input_tokens']}")
+                if usage.get('cache_read_input_tokens'):
+                    md_lines.append(f"  - Cache read tokens: {usage['cache_read_input_tokens']}")
 
-        md_lines.append(f"")
+            md_lines.append(f"")
         md_lines.append("---")
         md_lines.append(f"")
 
@@ -564,7 +603,8 @@ def cmd_batch(args):
         print(f"[{i}/{len(sessions)}] {jsonl_file.name} ", end='')
 
         try:
-            markdown = parse_jsonl_to_markdown(jsonl_file)
+            minimal = getattr(args, 'minimal', False)
+            markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
             output_file.write_text(markdown)
             print(f"✓")
             exported += 1
@@ -698,6 +738,10 @@ More info: https://github.com/yourusername/claude-workspace-extract
         action='store_true',
         help='Force re-export all sessions, even if already exported (default: incremental)')
 
+    parser_export.add_argument('--minimal',
+        action='store_true',
+        help='Minimal export mode: omit all metadata, keep only conversation content, timestamps, and tool execution details')
+
     # Date filtering for export
     parser_export.add_argument('--since',
         metavar='DATE',
@@ -749,6 +793,7 @@ More info: https://github.com/yourusername/claude-workspace-extract
             since = args.since
             until = args.until
             force = args.force
+            minimal = args.minimal
         cmd_batch(ExportArgs())
 
     elif args.command == 'convert':

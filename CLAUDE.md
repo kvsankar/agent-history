@@ -203,6 +203,74 @@ if parent_uuid in uuid_to_index:
     md_lines.append(f"[`{parent_uuid}`](#msg-{parent_uuid}) *(→ Message {uuid_to_index[parent_uuid]})*")
 ```
 
+### Agent Conversation Detection
+
+**Purpose:** Clearly identify agent conversations (Task tool sub-tasks) to prevent confusion about who the "User" is.
+
+**Detection:**
+```python
+# Check if this is an agent conversation
+is_agent = any(msg.get('isSidechain') for msg in messages)
+```
+
+**Implementation:**
+1. **Title differentiation:**
+   - Normal: `# Claude Conversation`
+   - Agent: `# Claude Conversation (Agent)`
+
+2. **Warning notice in header:**
+   ```markdown
+   > ⚠️ **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation.
+   >
+   > - Messages labeled 'User' represent task instructions from the parent Claude session
+   > - Messages labeled 'Assistant' are responses from this agent
+   > - **Parent Session ID:** `{session_id}`
+   > - **Agent ID:** `{agent_id}`
+   ```
+
+3. **First message labeling:**
+   ```python
+   if is_agent and i == 1 and msg['role'] == 'user':
+       role_emoji = "🔧"
+       role_label = "Task Prompt (from Parent Claude)"
+   ```
+
+**Why this matters:**
+- Prevents confusion: "User" in agent files means parent Claude, not human
+- Enables traceability back to parent conversation
+- Makes exported markdown self-documenting
+
+### Minimal Export Mode
+
+**Purpose:** Create cleaner exports suitable for sharing, blog posts, or documentation.
+
+**Usage:** `claude-sessions export --minimal`
+
+**Implementation:**
+```python
+def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
+    # Skip metadata section when minimal=True
+    if not minimal:
+        md_lines.append("### Metadata")
+        # ... add all metadata fields
+
+    # Skip HTML anchors when minimal=True
+    if not minimal and msg.get('uuid'):
+        md_lines.append(f'<a name="msg-{msg["uuid"]}"></a>')
+```
+
+**What's included:**
+- Message text content
+- Tool use inputs (full JSON)
+- Tool results (complete output)
+- Timestamps
+
+**What's omitted:**
+- All metadata sections (UUIDs, session IDs, etc.)
+- HTML anchors and navigation links
+- Model information
+- Token usage statistics
+
 ## Development Guidelines
 
 ### When Adding Features
@@ -358,6 +426,21 @@ Workspace pattern matching is substring-based:
 - Case-sensitive matching
 
 ## Recent Changes
+
+**Agent Conversation Detection (v1.0.0+)**
+- Agent conversations (spawned via Task tool) are automatically detected via `isSidechain` flag
+- Clear visual distinction with `# Claude Conversation (Agent)` title
+- Warning notice explains that "User" messages are from parent Claude, not human user
+- First message labeled as `🔧 Task Prompt (from Parent Claude)` when applicable
+- Includes parent session ID and agent ID in header for traceability
+- Prevents confusion when reading exported agent conversations
+
+**Minimal Export Mode (v1.0.0+)**
+- Added `--minimal` flag for cleaner exports suitable for sharing or blog posts
+- Omits all metadata (UUIDs, session IDs, token usage, navigation links, etc.)
+- Keeps only conversation content, timestamps, and tool execution details
+- Use `claude-sessions export --minimal` for simplified output
+- Default mode still preserves complete information
 
 **Complete Information Preservation (v1.0.0+)**
 - Zero data loss: ALL fields from JSONL files are now preserved in markdown

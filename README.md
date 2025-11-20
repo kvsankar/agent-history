@@ -172,6 +172,30 @@ $ claude-sessions export --all -o ./all-conversations
 **Options:**
 - `--output-dir`, `-o DIR`: Output directory (default: `./claude-conversations`)
 - `--force`, `-f`: Force re-export all sessions, even if already exported
+- `--minimal`: Minimal mode - omit all metadata, keep only conversation content, timestamps, and tool execution details
+
+**Export Modes:**
+
+By default, exports include complete information (all metadata, UUIDs, token usage, etc.). Use `--minimal` for cleaner output suitable for sharing or blog posts:
+
+```bash
+# Full export (default) - complete information preservation
+$ claude-sessions export
+
+# Minimal export - conversation content only
+$ claude-sessions export --minimal
+```
+
+**Minimal mode includes:**
+- Message text content
+- Tool use inputs (full JSON)
+- Tool results (complete output)
+- Timestamps
+
+**Minimal mode omits:**
+- All metadata (UUIDs, session IDs, working directory, git branch, version, etc.)
+- HTML anchors and navigation links
+- Model information and token usage statistics
 
 ### Convert Single File
 
@@ -319,6 +343,23 @@ This format makes it easy to:
 - Parent UUID links jump directly to the parent message
 - Within-file links: `[parent-uuid](#msg-parent-uuid) (→ Message 5)`
 - Cross-file links: `parent-uuid (in different session)` for agent spawning
+
+**Agent Conversation Detection:** Agent conversations (spawned via the Task tool) are clearly identified:
+- Title shows `# Claude Conversation (Agent)` instead of `# Claude Conversation`
+- Warning notice explains that "User" messages are from parent Claude, not human user
+- First message labeled as `🔧 Task Prompt (from Parent Claude)` when applicable
+- Includes parent session ID and agent ID in the header
+- Example:
+  ```markdown
+  # Claude Conversation (Agent)
+
+  > ⚠️ **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation.
+  >
+  > - Messages labeled 'User' represent task instructions from the parent Claude session
+  > - Messages labeled 'Assistant' are responses from this agent
+  > - **Parent Session ID:** `aec67da6-f741-49ac-bca9-cd2b2c89fa15`
+  > - **Agent ID:** `79885a3c`
+  ```
 
 Generated markdown files include:
 
