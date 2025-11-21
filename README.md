@@ -1,8 +1,8 @@
 # claude-sessions
 
-Extract and convert Claude Code conversation history by workspace.
+Extract and convert Claude Code conversation history by workspace with multi-environment support.
 
-> **TL;DR:** A better way to export Claude Code conversations. Filter by workspace/project instead of juggling brittle session IDs.
+> **TL;DR:** A better way to export Claude Code conversations. Filter by workspace/project, export from local + WSL + remote sources, with automatic circular fetching prevention.
 
 ## Why This Tool?
 
@@ -14,8 +14,10 @@ When you use [Claude Code](https://claude.com/claude-code), your conversations a
 | ❌ Can't filter by workspace/repo | ✅ Search by workspace pattern |
 | ❌ Manual session number selection | ✅ Automatic batch processing |
 | ❌ Mixed conversations from different projects | ✅ Workspace-filtered extraction |
+| ❌ No multi-environment support | ✅ Export from local + WSL + remote in one command |
+| ❌ Circular syncing issues | ✅ Automatic circular fetching prevention |
 
-This tool extracts conversations **by workspace**, making it easy to get conversation history for a specific project.
+This tool extracts conversations **by workspace** and supports **multi-environment consolidation**, making it easy to get conversation history from local machines, WSL distributions, and remote servers.
 
 ## Quick Start
 
@@ -762,6 +764,101 @@ Share development process with collaborators or for portfolios:
 claude-sessions export portfolio-site --output-dir showcase/
 ```
 
+### 🌐 Multi-Environment Consolidation
+
+Consolidate conversations from multiple development environments (local, WSL, remote servers):
+
+```bash
+# Export all sources: local Windows + all WSL distributions + SSH remotes
+python claude-history export-all myproject -r user@vm01 user@vm02
+
+# Perfect for:
+# - Backing up all Claude sessions across environments
+# - Analyzing conversations across different machines
+# - Creating comprehensive project history
+```
+
+**Circular Fetching Prevention:** When P1 fetches from P2 and P2 fetches from P1, the tool automatically filters out cached remote data (`remote_*` and `wsl_*` directories) to prevent infinite loops. Only native workspaces are fetched from each source.
+
+## Remote Operations
+
+The tool supports accessing Claude Code conversations from remote machines via SSH and WSL distributions.
+
+### SSH Remote Access
+
+Access conversations from remote development machines:
+
+```bash
+# List remote workspaces
+claude-history lsw -r user@server
+
+# List sessions from remote
+claude-history lss myproject -r user@server
+
+# Export from remote
+claude-history export myproject -r user@server
+```
+
+**Requirements:**
+- Passwordless SSH key setup (`ssh-copy-id user@server`)
+- `rsync` installed on both local and remote machines
+
+**Setup:**
+```bash
+# Generate SSH key (if needed)
+ssh-keygen -t ed25519
+
+# Copy key to remote
+ssh-copy-id user@server
+
+# Test connection
+ssh -o BatchMode=yes user@server echo ok
+```
+
+### WSL Access (Windows)
+
+Access conversations from WSL distributions directly from Windows:
+
+```bash
+# List available WSL distributions
+python claude-history --list-wsl
+
+# List WSL workspaces
+python claude-history lsw -r wsl://Ubuntu
+
+# Export from WSL
+python claude-history export myproject -r wsl://Ubuntu
+```
+
+**How it works:**
+- Direct filesystem access via `\\wsl.localhost\DistroName\` paths
+- No SSH or rsync needed
+- Native Windows file operations
+
+### Circular Fetching Prevention
+
+When syncing conversations between multiple machines, the tool prevents circular dependencies:
+
+**Problem:**
+- P1 fetches from P2 → creates `remote_p2_*` cache on P1
+- P2 fetches from P1 → would fetch `remote_p2_*` (which is P2's own data)
+
+**Solution:**
+- Automatically filters out `remote_*` and `wsl_*` directories when listing/exporting from remote sources
+- Only native workspaces are fetched, not cached remote data
+- Enables safe bidirectional syncing between machines
+
+### Cache Storage
+
+**Remote caches:**
+- Format: `remote_hostname_workspace`
+- Location: `~/.claude/projects/remote_hostname_workspace`
+- Example: `remote_vm01_home-alice-myproject`
+
+**WSL caches:**
+- WSL uses direct filesystem access (no caching)
+- Remote caches on Windows use same format as SSH remotes
+
 ## Command Reference
 
 ### `--list-wsl`
@@ -1237,6 +1334,53 @@ MIT License - See [LICENSE](LICENSE) file for details.
 - Built with [Claude Code](https://claude.com/claude-code)
 - Inspired by Simon Willison's [claude-conversation-extractor](https://github.com/simonw/claude-conversation-extractor)
 - Thanks to the Claude Code community
+
+## What's New
+
+### Version 1.2.0 (Latest)
+
+**🎉 Export-All Command:**
+- Export from all sources in one command: local + all WSL distributions + SSH remotes
+- Automatic WSL distribution discovery
+- Generates index.md manifest with per-source statistics
+- Example: `python claude-history export-all myproject -r vm01 vm02`
+
+**🔒 Circular Fetching Prevention:**
+- Prevents infinite loops when machines fetch from each other
+- Automatically filters `remote_*` and `wsl_*` cached directories
+- Safe bidirectional syncing between P1 ↔ P2
+
+**🐧 WSL Support:**
+- Native Windows support for WSL distributions
+- Direct filesystem access via `\\wsl.localhost\` paths
+- List, export, and access WSL conversations from Windows
+- Example: `python claude-history export myproject -r wsl://Ubuntu`
+
+**📁 Organized Export Structure (Default):**
+- Workspace subdirectories with source-tagged filenames
+- Source tags: `wsl_ubuntu_`, `remote_hostname_`, or no prefix for local
+- Use `--flat` for backward-compatible flat structure
+
+**🔧 Windows Path Handling:**
+- Fixed current workspace detection for Windows (C:\ drive support)
+- Consistent underscore separators for source tags
+
+### Version 1.1.0
+
+**Remote Operations:**
+- SSH remote access with `-r user@hostname`
+- Workspace-only listing with `--workspaces-only` flag
+- Remote caching for efficient repeated operations
+
+### Version 1.0.0
+
+**Core Features:**
+- Workspace-based extraction
+- Date filtering with `--since` and `--until`
+- Conversation splitting with `--split`
+- Complete metadata preservation
+- Agent conversation detection
+- Incremental export (only new/modified sessions)
 
 ## Links
 
