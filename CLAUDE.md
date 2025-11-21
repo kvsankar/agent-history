@@ -49,6 +49,12 @@ chmod +x claude-history
 ./claude-history export myproject --split 500     # split long conversations
 ./claude-history export myproject --flat          # flat structure (no workspace subdirs)
 
+# Export from all sources (local + WSL + remote)
+./claude-history export-all                       # all sources, all workspaces
+./claude-history export-all myproject             # filter by workspace pattern
+./claude-history export-all -r user@vm01          # include SSH remote
+./claude-history export-all ./backups --split 500 # custom dir + splitting
+
 # WSL access (Windows)
 ./claude-history --list-wsl                       # list WSL distributions
 ./claude-history lsw -r wsl://Ubuntu              # list WSL workspaces
@@ -202,6 +208,8 @@ The file is organized into eight main sections:
    - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote/WSL, `--split` for splitting, organized export by default)
    - `cmd_list_wsl()`: Lists WSL distributions with Claude Code workspaces
    - `cmd_fetch()`: Pre-caches remote sessions via SSH (one-way sync)
+   - `cmd_export_all()`: Exports from all sources (local + all WSL + optional SSH remotes) in one command
+   - `generate_index_manifest()`: Generates index.md summary file with per-source and per-workspace statistics
    - `cmd_version()`: Displays version info
 
 9. **Main**
@@ -731,6 +739,20 @@ ssh -o BatchMode=yes user@hostname echo ok
 - Fixed current workspace detection for Windows paths (C:\ drive handling)
 - Windows workspace encoding: `C--sankar-projects-myapp` for `C:\sankar\projects\myapp`
 - Consistent underscore separators for source tags throughout
+
+**Export-All Command (v1.2.0+)**
+- New `export-all` command exports from all sources in a single command
+- Automatically discovers and exports from: local Windows + all WSL distributions + optional SSH remotes
+- Generates `index.md` manifest with per-source and per-workspace statistics
+- Supports all standard export options: `--minimal`, `--split`, `--since`, `--until`, `--force`
+- Use `-r` flag to include additional SSH remote hosts
+- Perfect for backups and multi-environment consolidation
+- Example: `./claude-history export-all myproject -r user@vm01 user@vm02`
+
+**Cache Naming Consistency (v1.2.0+)**
+- Updated remote cache naming: `remote_{hostname}_{workspace}` (was `-remote-hostname-...`)
+- Consistent with export source tag naming throughout
+- Improves clarity and maintains naming patterns
 
 **Workspace-Only Listing (v1.1.0+)**
 - Added `--workspaces-only` flag to `list` command for simplified workspace overview

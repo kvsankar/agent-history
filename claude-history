@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 # ============================================================================
@@ -1314,7 +1314,10 @@ def fetch_workspace_files(remote_host: str, remote_workspace: str,
     import subprocess
 
     # Generate local directory name with remote prefix
-    local_workspace = f"-remote-{hostname}{remote_workspace}"
+    # New naming: remote_hostname_path (consistent with export tags)
+    # Strip leading dash from remote_workspace if present
+    workspace_path = remote_workspace.lstrip('-')
+    local_workspace = f"remote_{hostname}_{workspace_path}"
     local_dir = local_projects_dir / local_workspace
 
     # Create local directory
@@ -1737,9 +1740,10 @@ def cmd_batch(args):
                     sys.stderr.write(f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n")
 
             # Now export from cached location
-            cached_pattern = f"remote-{hostname}"
+            # New naming: remote_hostname_
+            cached_pattern = f"remote_{hostname}_"
             if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
-                cached_pattern += f"-{workspace_pattern}"
+                cached_pattern += workspace_pattern
 
             sessions = get_workspace_sessions(cached_pattern, quiet=True, since_date=since_date, until_date=until_date)
 
@@ -1920,7 +1924,9 @@ def cmd_fetch(args):
     # Fetch each workspace (silent on success)
     for remote_workspace in remote_workspaces:
         readable_name = normalize_remote_workspace_name(remote_host, remote_workspace)
-        local_name = f"remote-{hostname}{remote_workspace}"
+        # New naming: remote_hostname_path
+        workspace_path = remote_workspace.lstrip('-')
+        local_name = f"remote_{hostname}_{workspace_path}"
 
         result = fetch_workspace_files(remote_host, remote_workspace,
                                        local_projects_dir, hostname)
@@ -1931,6 +1937,221 @@ def cmd_fetch(args):
         else:
             error = result.get('error', 'Unknown error')
             sys.stderr.write(f"Error fetching {readable_name}: {error}\n")
+
+
+def cmd_export_all(args):
+    """Export from all sources: local, WSL distributions, and optionally remotes."""
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Track export statistics
+    sources_processed = []
+    total_sessions = 0
+    total_errors = 0
+
+    # 1. Export from local Windows
+    print("[Local] Exporting from local Windows...")
+    try:
+        output_dir_str = str(output_dir)
+        workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
+        class LocalExportArgs:
+            workspace = workspace_val
+            output_dir = output_dir_str
+            since = getattr(args, 'since', None)
+            until = getattr(args, 'until', None)
+            force = getattr(args, 'force', False)
+            minimal = getattr(args, 'minimal', False)
+            split = getattr(args, 'split', None)
+            flat = False  # Always organized for export-all
+            remote = None  # Local
+
+        # Get local sessions count before export
+        local_sessions = get_workspace_sessions(LocalExportArgs.workspace, quiet=True)
+        cmd_batch(LocalExportArgs())
+
+        sources_processed.append({
+            'source': 'Local Windows',
+            'sessions': len(local_sessions)
+        })
+        total_sessions += len(local_sessions)
+        print(f"[OK] Local: {len(local_sessions)} sessions exported\n")
+    except Exception as e:
+        print(f"[ERROR] Local export failed: {e}\n")
+        total_errors += 1
+
+    # 2. Export from all WSL distributions
+    print("[WSL] Checking WSL distributions...")
+    try:
+        wsl_distros = get_wsl_distributions()
+        claude_distros = [d for d in wsl_distros if d['has_claude']]
+
+        if claude_distros:
+            for distro in claude_distros:
+                print(f"  Exporting from WSL: {distro['name']}...")
+                try:
+                    output_dir_str = str(output_dir)
+                    workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
+                    distro_name = distro['name']
+                    class WslExportArgs:
+                        workspace = workspace_val
+                        output_dir = output_dir_str
+                        since = getattr(args, 'since', None)
+                        until = getattr(args, 'until', None)
+                        force = getattr(args, 'force', False)
+                        minimal = getattr(args, 'minimal', False)
+                        split = getattr(args, 'split', None)
+                        flat = False  # Always organized
+                        remote = f"wsl://{distro_name}"
+
+                    cmd_batch(WslExportArgs())
+
+                    # Count sessions (approximation)
+                    projects_dir = get_wsl_projects_dir(distro['name'])
+                    original_get_claude = get_claude_projects_dir
+                    def temp_override():
+                        return projects_dir
+                    current_module = sys.modules[__name__]
+                    setattr(current_module, 'get_claude_projects_dir', temp_override)
+                    try:
+                        wsl_sessions = get_workspace_sessions(WslExportArgs.workspace, quiet=True)
+                        session_count = len(wsl_sessions)
+                    finally:
+                        setattr(current_module, 'get_claude_projects_dir', original_get_claude)
+
+                    sources_processed.append({
+                        'source': f"WSL: {distro['name']}",
+                        'sessions': session_count
+                    })
+                    total_sessions += session_count
+                    print(f"  [OK] {distro['name']}: {session_count} sessions exported")
+                except Exception as e:
+                    print(f"  [ERROR] {distro['name']} failed: {e}")
+                    total_errors += 1
+            print()
+        else:
+            print("  No WSL distributions with Claude Code found\n")
+    except Exception as e:
+        print(f"[ERROR] WSL export failed: {e}\n")
+
+    # 3. Export from remote hosts (if specified)
+    if hasattr(args, 'remotes') and args.remotes:
+        print("[Remote] Exporting from remote hosts...")
+        for remote_host in args.remotes:
+            print(f"  Exporting from {remote_host}...")
+            try:
+                output_dir_str = str(output_dir)
+                workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
+                class RemoteExportArgs:
+                    workspace = workspace_val
+                    output_dir = output_dir_str
+                    since = getattr(args, 'since', None)
+                    until = getattr(args, 'until', None)
+                    force = getattr(args, 'force', False)
+                    minimal = getattr(args, 'minimal', False)
+                    split = getattr(args, 'split', None)
+                    flat = False
+                    remote = remote_host
+
+                cmd_batch(RemoteExportArgs())
+
+                # Count sessions (cached)
+                hostname = get_remote_hostname(remote_host)
+                cached_pattern = f"remote_{hostname}_"
+                cached_sessions = get_workspace_sessions(cached_pattern, quiet=True)
+                session_count = len(cached_sessions)
+
+                sources_processed.append({
+                    'source': f"Remote: {remote_host}",
+                    'sessions': session_count
+                })
+                total_sessions += session_count
+                print(f"  [OK] {remote_host}: {session_count} sessions exported")
+            except Exception as e:
+                print(f"  [ERROR] {remote_host} failed: {e}")
+                total_errors += 1
+        print()
+
+    # Print summary
+    print("=" * 80)
+    print("Export-All Summary")
+    print("=" * 80)
+    for source_info in sources_processed:
+        print(f"{source_info['source']:.<40} {source_info['sessions']:>5} sessions")
+    print("-" * 80)
+    print(f"Total sessions exported: {total_sessions}")
+    if total_errors > 0:
+        print(f"Errors encountered: {total_errors}")
+    print(f"Output directory: {output_dir.absolute()}")
+    print("=" * 80)
+
+    # Generate index.md if requested
+    if getattr(args, 'index', True):  # Default to true
+        generate_index_manifest(output_dir, sources_processed)
+
+
+def generate_index_manifest(output_dir: Path, sources_info: list):
+    """Generate index.md manifest file summarizing all exported sessions."""
+    from datetime import datetime
+
+    index_path = output_dir / "index.md"
+
+    # Scan all workspace directories
+    workspaces = {}
+    for item in output_dir.iterdir():
+        if item.is_dir():
+            workspace_name = item.name
+            sessions = list(item.glob("*.md"))
+
+            # Group by source
+            sources = {'local': 0, 'wsl': 0, 'remote': 0}
+            for session_file in sessions:
+                if session_file.name.startswith('wsl_'):
+                    sources['wsl'] += 1
+                elif session_file.name.startswith('remote_'):
+                    sources['remote'] += 1
+                else:
+                    sources['local'] += 1
+
+            workspaces[workspace_name] = {
+                'total': len(sessions),
+                'sources': sources,
+                'sessions': sessions
+            }
+
+    # Generate markdown
+    lines = [
+        "# Claude Conversation Export Index",
+        "",
+        f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"**Total Workspaces:** {len(workspaces)}",
+        f"**Total Sessions:** {sum(ws['total'] for ws in workspaces.values())}",
+        "",
+        "## Sources",
+        ""
+    ]
+
+    # Add sources summary
+    for source_info in sources_info:
+        lines.append(f"- **{source_info['source']}**: {source_info['sessions']} sessions")
+
+    lines.extend(["", "## Workspaces", ""])
+
+    # Add workspace details
+    for workspace_name in sorted(workspaces.keys()):
+        ws_info = workspaces[workspace_name]
+        lines.append(f"### {workspace_name} ({ws_info['total']} sessions)")
+        lines.append("")
+        if ws_info['sources']['local'] > 0:
+            lines.append(f"- **Local:** {ws_info['sources']['local']} sessions")
+        if ws_info['sources']['wsl'] > 0:
+            lines.append(f"- **WSL:** {ws_info['sources']['wsl']} sessions")
+        if ws_info['sources']['remote'] > 0:
+            lines.append(f"- **Remote:** {ws_info['sources']['remote']} sessions")
+        lines.append("")
+
+    # Write index
+    index_path.write_text('\n'.join(lines), encoding='utf-8')
+    print(f"\n[Index] Generated: {index_path}")
 
 
 # ============================================================================
@@ -1969,6 +2190,13 @@ EXAMPLES:
     claude-history export myproject --minimal       # minimal mode
     claude-history export myproject --split 500     # split long conversations
     claude-history export myproject ./output        # custom output directory
+    claude-history export myproject --flat          # flat structure (no subdirs)
+
+  Export from all sources:
+    claude-history export-all                       # local + all WSL distros
+    claude-history export-all myproject             # filter by workspace pattern
+    claude-history export-all -r vm01 vm02          # include SSH remotes
+    claude-history export-all ./backups --split 500 # custom dir + splitting
 
   WSL access (Windows):
     claude-history --list-wsl                       # list WSL distributions
@@ -2065,6 +2293,51 @@ EXAMPLES:
         action='store_true',
         help='Use flat directory structure (default: organized by workspace with source tags)')
 
+    # ========== export-all command ==========
+    parser_export_all = subparsers.add_parser('export-all',
+        help='Export from all sources',
+        description='Export from all sources: local, WSL distributions, and optionally SSH remotes')
+
+    parser_export_all.add_argument('workspace',
+        nargs='?',
+        default='',
+        help='Optional workspace pattern to filter (default: all workspaces)')
+
+    parser_export_all.add_argument('output_dir',
+        nargs='?',
+        default='./claude-conversations',
+        help='Output directory (default: ./claude-conversations)')
+
+    parser_export_all.add_argument('-r', '--remotes',
+        metavar='HOST',
+        nargs='+',
+        help='Additional remote hosts to include via SSH (user@hostname)')
+
+    parser_export_all.add_argument('--force',
+        action='store_true',
+        help='Force re-export (default: incremental)')
+
+    parser_export_all.add_argument('--minimal',
+        action='store_true',
+        help='Minimal export: omit metadata, keep only conversation content')
+
+    parser_export_all.add_argument('--split',
+        metavar='LINES',
+        type=int,
+        help='Split long conversations into parts (e.g., --split 500)')
+
+    parser_export_all.add_argument('--since',
+        metavar='DATE',
+        help='Only include sessions modified on or after this date (YYYY-MM-DD)')
+
+    parser_export_all.add_argument('--until',
+        metavar='DATE',
+        help='Only include sessions modified on or before this date (YYYY-MM-DD)')
+
+    parser_export_all.add_argument('--no-index',
+        action='store_true',
+        help='Skip index.md manifest generation')
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -2131,6 +2404,20 @@ EXAMPLES:
                 flat = args.flat
                 remote = getattr(args, 'remote', None)
             cmd_batch(ExportArgs())
+
+    elif args.command == 'export-all':
+        # Export from all sources
+        class ExportAllArgs:
+            workspace = args.workspace
+            output_dir = args.output_dir
+            remotes = getattr(args, 'remotes', None)
+            since = args.since
+            until = args.until
+            force = args.force
+            minimal = args.minimal
+            split = args.split
+            index = not args.no_index
+        cmd_export_all(ExportAllArgs())
 
 
 if __name__ == "__main__":

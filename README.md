@@ -855,6 +855,61 @@ python claude-history export django-app -r wsl://Ubuntu ./my-exports
 python claude-history export -r wsl://Ubuntu --minimal --split 500
 ```
 
+### `export-all`
+
+Export conversations from all sources in a single command: local Windows, all WSL distributions, and optionally remote SSH hosts.
+
+```bash
+claude-history export-all [WORKSPACE_PATTERN] [OUTPUT_DIR] [OPTIONS]
+```
+
+**Arguments:**
+- `WORKSPACE_PATTERN`: Optional workspace pattern to filter (default: all workspaces)
+- `OUTPUT_DIR`: Output directory (default: `./claude-conversations`)
+
+**Options:**
+- `--force`, `-f`: Force re-export all sessions (default: incremental)
+- `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
+- `--until DATE`: Only include sessions modified on or before this date (YYYY-MM-DD)
+- `--minimal`: Export minimal mode (conversation content only, no metadata)
+- `--split LINES`: Split long conversations into parts of approximately LINES per file
+- `-r HOST [HOST ...]`, `--remotes HOST [HOST ...]`: Additional SSH remote hosts to include
+- `--no-index`: Skip index.md manifest generation
+
+**Output:**
+- Organized workspace subdirectories with source-tagged filenames:
+  - Local Windows: `20251120_session.md` (no prefix)
+  - WSL: `wsl_ubuntu_20251120_session.md`
+  - SSH Remote: `remote_hostname_20251120_session.md`
+- `index.md` manifest file with summary statistics
+
+**Features:**
+- Automatically discovers and exports from all WSL distributions with Claude Code
+- Consolidates sessions from multiple sources into one location
+- Generates index.md with per-source and per-workspace statistics
+- Organized by workspace with source tags for easy analysis
+
+**Examples:**
+```powershell
+# Export all workspaces from local Windows + all WSL distributions
+python claude-history export-all
+
+# Filter by workspace pattern
+python claude-history export-all myproject
+
+# Include SSH remote hosts
+python claude-history export-all -r user@vm01 user@vm02
+
+# Custom output directory with splitting
+python claude-history export-all ./backups --split 500
+
+# Minimal mode without index
+python claude-history export-all --minimal --no-index
+```
+
+**Use Case:**
+Perfect for backing up all Claude Code conversations across multiple environments, or consolidating sessions for analysis across local Windows, WSL distributions, and remote development machines.
+
 ### `convert`
 
 Convert a single conversation file to markdown.
