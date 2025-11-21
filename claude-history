@@ -1208,6 +1208,7 @@ def list_remote_workspaces(remote_host: str) -> list:
 
     Returns:
         List of workspace directory names (e.g., ['-home-user-project', ...])
+        Excludes remote caches (remote_* and wsl_*) to prevent circular fetching
     """
     import subprocess
 
@@ -1225,7 +1226,17 @@ def list_remote_workspaces(remote_host: str) -> list:
             return []
 
         # Parse output - one directory name per line
-        workspaces = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+        all_workspaces = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+
+        # Filter out remote caches to prevent circular fetching:
+        # - remote_* = SSH remote caches
+        # - wsl_* = WSL caches
+        # These are already fetched data and shouldn't be re-fetched
+        workspaces = [
+            ws for ws in all_workspaces
+            if not ws.startswith('remote_') and not ws.startswith('wsl_')
+        ]
+
         return workspaces
 
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -1439,10 +1450,17 @@ def cmd_list(args):
 
             try:
                 # Use local session listing with WSL path
-                sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+                all_sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+
+                # Filter out remote caches to prevent showing cached data
+                # Only show native WSL workspaces, not cached remote/wsl data
+                sessions = [
+                    s for s in all_sessions
+                    if not s['workspace'].startswith('remote_') and not s['workspace'].startswith('wsl_')
+                ]
 
                 if not sessions:
-                    sys.stderr.write(f"Error: No sessions found in WSL '{distro_name}'\n")
+                    sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
                     sys.exit(1)
 
                 workspaces_only = getattr(args, 'workspaces_only', False)
@@ -1694,13 +1712,20 @@ def cmd_batch(args):
 
             try:
                 # Use local session listing with WSL path
-                sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+                all_sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+
+                # Filter out remote caches to prevent circular fetching
+                # Only export native WSL workspaces, not cached remote/wsl data
+                sessions = [
+                    s for s in all_sessions
+                    if not s['workspace'].startswith('remote_') and not s['workspace'].startswith('wsl_')
+                ]
             finally:
                 # Restore original function
                 setattr(current_module, 'get_claude_projects_dir', original_get_claude_projects_dir)
 
             if not sessions:
-                sys.stderr.write(f"Error: No sessions found in WSL '{distro_name}'\n")
+                sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
                 sys.exit(1)
 
             # Continue with export processing below (same as local)

@@ -689,9 +689,15 @@ All commands support remote operations via the `-r/--remote` flag:
 ```
 
 **Storage Strategy:**
-- Remote sessions cached with prefix: `-remote-{hostname}-{workspace}`
-- Example: `-home-user-project` on remote `workstation` becomes `-remote-workstation-home-user-project` locally
+- Remote sessions cached with prefix: `remote_{hostname}_{workspace}`
+- Example: `-home-user-project` on remote `workstation` becomes `remote_workstation_home-user-project` locally
 - Keeps remote and local sessions completely separate (no conflicts)
+
+**Circular Fetching Prevention:**
+- Remote operations automatically filter out `remote_*` and `wsl_*` directories
+- Prevents circular dependency: P1 fetches P2 → P2 fetches P1 → infinite loop
+- Only native workspaces are fetched/exported from remote/WSL sources
+- Example: When P1 fetches from P2, it skips P2's `remote_p1_*` cache (which is P1's own data)
 
 **Caching Behavior:**
 - **`list -r`**: Direct remote access via SSH (no caching) - fast, real-time view
@@ -702,7 +708,7 @@ All commands support remote operations via the `-r/--remote` flag:
 **Implementation:**
 - `check_ssh_connection()`: Verifies SSH connectivity with `BatchMode=yes` (no password prompts)
 - `get_remote_session_info()`: Gets remote file stats without downloading (for list)
-- `list_remote_workspaces()`: Lists remote workspace directories via SSH
+- `list_remote_workspaces()`: Lists remote workspace directories via SSH (filters out remote_* and wsl_*)
 - `fetch_workspace_files()`: Uses `rsync -avh` to sync .jsonl files
 - One-way sync only (remote → local), never modifies remote machine
 - Incremental by default (rsync only transfers new/changed files)
@@ -753,6 +759,12 @@ ssh -o BatchMode=yes user@hostname echo ok
 - Updated remote cache naming: `remote_{hostname}_{workspace}` (was `-remote-hostname-...`)
 - Consistent with export source tag naming throughout
 - Improves clarity and maintains naming patterns
+
+**Circular Fetching Prevention (v1.2.0+)**
+- Remote and WSL operations automatically filter out `remote_*` and `wsl_*` directories
+- Prevents circular dependency loops when multiple machines fetch from each other
+- Only native workspaces are fetched/exported from remote/WSL sources
+- Example: P1 fetches P2 → P2 fetches P1 works correctly (skips cached data)
 
 **Workspace-Only Listing (v1.1.0+)**
 - Added `--workspaces-only` flag to `list` command for simplified workspace overview
