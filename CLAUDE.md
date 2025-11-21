@@ -155,7 +155,7 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ### Single-File Design
 
-**Critical:** The tool is intentionally a single Python file (`claude-sessions`) for easy distribution. All code must remain in one file with **no external dependencies** (stdlib only).
+**Critical:** The tool is intentionally a single Python file (`claude-history`) for easy distribution. All code must remain in one file with **no external dependencies** (stdlib only).
 
 ### Code Structure
 
@@ -407,7 +407,7 @@ is_agent = any(msg.get('isSidechain') for msg in messages)
 
 **Purpose:** Create cleaner exports suitable for sharing, blog posts, or documentation.
 
-**Usage:** `claude-sessions export --minimal`
+**Usage:** `claude-history export --minimal`
 
 **Implementation:**
 ```python
@@ -672,20 +672,19 @@ All commands support remote operations via the `-r/--remote` flag:
 
 **Usage:**
 ```bash
+# List remote workspaces
+./claude-history lsw -r user@hostname
+
 # List remote sessions (direct access, no caching)
-./claude-sessions list -r user@hostname
-./claude-sessions list -r user@hostname myproject
+./claude-history lss -r user@hostname
+./claude-history lss myproject -r user@hostname
 
 # Export remote sessions (caches locally first, then exports)
-./claude-sessions export -r user@hostname
-./claude-sessions export -r user@hostname --output-dir ./output
+./claude-history export myproject -r user@hostname
+./claude-history export myproject ./output -r user@hostname
 
 # Convert remote file (downloads temporarily, then converts)
-./claude-sessions convert -r user@hostname /path/to/file.jsonl
-
-# Pre-cache remote sessions for offline access
-./claude-sessions fetch user@hostname
-./claude-sessions fetch user@hostname myproject
+./claude-history export /path/to/file.jsonl -r user@hostname
 ```
 
 **Storage Strategy:**
@@ -700,10 +699,8 @@ All commands support remote operations via the `-r/--remote` flag:
 - Example: When P1 fetches from P2, it skips P2's `remote_p1_*` cache (which is P1's own data)
 
 **Caching Behavior:**
-- **`list -r`**: Direct remote access via SSH (no caching) - fast, real-time view
+- **`lsw -r` / `lss -r`**: Direct remote access via SSH (no caching) - fast, real-time view
 - **`export -r`**: Caches files locally first using rsync, then exports - efficient for repeated operations
-- **`convert -r`**: Downloads file temporarily, converts, then cleans up
-- **`fetch`**: Explicit pre-caching for offline access or batch operations
 
 **Implementation:**
 - `check_ssh_connection()`: Verifies SSH connectivity with `BatchMode=yes` (no password prompts)
@@ -726,6 +723,12 @@ ssh -o BatchMode=yes user@hostname echo ok
 ```
 
 ## Recent Changes
+
+**Bug Fixes (v1.2.0)**
+- Fixed version output to display `claude-history` instead of `claude-sessions`
+- Fixed split file location: Split files now correctly placed in workspace subdirectories
+  - Previously split files were placed in root output directory
+  - Now follows organized export structure with workspace subdirectories
 
 **WSL Support (v1.2.0+)**
 - Added WSL (Windows Subsystem for Linux) integration with `wsl://DistroName` syntax
@@ -766,25 +769,25 @@ ssh -o BatchMode=yes user@hostname echo ok
 - Only native workspaces are fetched/exported from remote/WSL sources
 - Example: P1 fetches P2 → P2 fetches P1 works correctly (skips cached data)
 
-**Workspace-Only Listing (v1.1.0+)**
-- Added `--workspaces-only` flag to `list` command for simplified workspace overview
-- Shows only workspace names with aggregate stats (sessions, size, messages, date range)
-- Useful for quickly seeing all available workspaces without session details
-- Works with both local and remote listings: `./claude-sessions list --workspaces-only` or `./claude-sessions list -r user@host --workspaces-only`
-- Output is sorted alphabetically by workspace name for easy scanning
+**Command Structure Redesign (v1.2.0)**
+- Refactored from subcommands (list/export/convert/fetch) to simple object-verb structure
+- **`lsw`**: List workspaces - explicit, no arbitrary defaults
+- **`lss`**: List sessions in a workspace (defaults to current workspace)
+- **`export`**: Export workspace, file, or all (with `-a` flag)
+- Removed separate convert/fetch commands - merged into export
+- All commands support `-r HOST` for remote operations (SSH)
+- Tool renamed from `claude-sessions` to `claude-history` (broader, more accurate)
+- Example: `./claude-history lsw`, `./claude-history lss myproject`, `./claude-history export myproject`
 
-**Remote Operations with -r Flag (v1.1.0+)**
-- Added `-r/--remote HOST` flag to all commands (list, export, convert) for unified remote access
-- **`list -r`**: Direct remote listing via SSH (no caching) - fast, real-time view of remote sessions
+**Remote Operations with -r Flag (v1.1.0+, enhanced in v1.2.0)**
+- `-r/--remote HOST` flag works with all commands (lsw, lss, export) for unified remote access
+- **`lsw -r` / `lss -r`**: Direct remote listing via SSH (no caching) - fast, real-time view
 - **`export -r`**: Caches remote files locally first, then exports - efficient for repeated operations
-- **`convert -r`**: Downloads remote file temporarily, converts, then cleans up
-- **`fetch`**: Pre-cache remote sessions for offline access or batch operations
-- Remote sessions stored with prefix: `-remote-{hostname}-{workspace}` (no conflicts with local)
-- Hybrid caching strategy: list is direct, export/convert cache for reuse
+- Remote sessions stored with prefix: `remote_{hostname}_{workspace}` (consistent naming, no conflicts)
 - One-way sync (remote → local) using passwordless SSH and rsync
 - Requirements: passwordless SSH (key-based auth), rsync on both machines
 - Use case: Work with conversations from multiple development machines seamlessly
-- Example: `./claude-sessions list -r user@workstation` or `./claude-sessions export -r user@server`
+- Example: `./claude-history lss myproject -r user@workstation`
 
 **Agent Conversation Detection (v1.0.0+)**
 - Agent conversations (spawned via Task tool) are automatically detected via `isSidechain` flag
@@ -806,13 +809,13 @@ ssh -o BatchMode=yes user@hostname echo ok
 - Navigation links between parts: "Part N of M" with clickable previous/next links
 - Each part header shows message range and part information
 - Automatic detection - only splits when necessary
-- Use `claude-sessions export --split 500` to split at ~500 lines per part
+- Use `claude-history export --split 500` to split at ~500 lines per part
 
 **Minimal Export Mode (v1.0.0+)**
 - Added `--minimal` flag for cleaner exports suitable for sharing or blog posts
 - Omits all metadata (UUIDs, session IDs, token usage, navigation links, etc.)
 - Keeps only conversation content, timestamps, and tool execution details
-- Use `claude-sessions export --minimal` for simplified output
+- Use `claude-history export --minimal` for simplified output
 - Default mode still preserves complete information
 
 **Complete Information Preservation (v1.0.0+)**
@@ -825,12 +828,11 @@ ssh -o BatchMode=yes user@hostname echo ok
 - HTML anchors enable jumping directly to parent messages
 - Enables full conversation reconstruction, token analysis, and debugging from markdown
 
-**Default to Current Workspace (v1.0.0+)**
-- Commands now default to current project workspace when no arguments provided
-- `./claude-sessions list` defaults to current workspace (previously required `--this`)
-- `./claude-sessions export` defaults to current workspace (previously required `--this`)
-- `--all` must be explicitly specified to list/export all workspaces
-- Removed need for `--this` flag in most common use cases (still supported for explicitness)
+**Smart Defaults (v1.0.0+, enhanced in v1.2.0)**
+- `lss` command defaults to current workspace when no workspace argument provided
+- `lsw` command lists all workspaces (no default filtering)
+- `export -a` must be explicitly specified to export all workspaces
+- Explicit workspace names avoid ambiguity: `./claude-history lss myproject`
 
 **Timestamped Filenames (v1.0.0+)**
 - Exported markdown files now include timestamp prefix: `yyyymmddhhmmss_original-stem.md`
