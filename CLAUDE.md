@@ -47,6 +47,13 @@ chmod +x claude-history
 # Export options
 ./claude-history export myproject --minimal       # minimal mode
 ./claude-history export myproject --split 500     # split long conversations
+./claude-history export myproject --flat          # flat structure (no workspace subdirs)
+
+# WSL access (Windows)
+./claude-history --list-wsl                       # list WSL distributions
+./claude-history lsw -r wsl://Ubuntu              # list WSL workspaces
+./claude-history lss myproject -r wsl://Ubuntu    # list WSL sessions
+./claude-history export myproject -r wsl://Ubuntu # export from WSL
 ```
 
 ### Testing Workflow
@@ -146,7 +153,7 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ### Code Structure
 
-The file is organized into six main sections:
+The file is organized into eight main sections:
 
 1. **Date Parsing**
    - `parse_date_string()`: Parses ISO 8601 date strings (YYYY-MM-DD format) into datetime objects
@@ -171,10 +178,17 @@ The file is organized into six main sections:
 5. **Workspace Scanning**
    - `get_claude_projects_dir()`: Locates `~/.claude/projects/` with error handling
    - `normalize_workspace_name()`: Converts directory names (e.g., `-home-alice-projects-django-app`) to readable paths (`home/alice/projects/django-app`)
-   - `get_current_workspace_pattern()`: Detects current workspace based on working directory
+   - `get_current_workspace_pattern()`: Detects current workspace based on working directory (handles Windows C:\ paths)
    - `get_workspace_sessions()`: Scans workspaces matching a pattern, filters by date range if specified, returns session metadata
 
-6. **Remote Operations**
+6. **WSL Access (Windows)**
+   - `is_wsl_remote()`: Checks if remote spec is a WSL distribution (wsl://DistroName)
+   - `get_source_tag()`: Generates source tag for filename/directory prefixes (wsl_{distro}_, remote_{host}_, or empty for local)
+   - `get_workspace_name_from_path()`: Extracts clean workspace name from directory name, removing source tags
+   - `get_wsl_distributions()`: Gets list of available WSL distributions with Claude workspaces
+   - `get_wsl_projects_dir()`: Gets Claude projects directory for a WSL distribution via \\wsl.localhost\ path
+
+7. **Remote Operations (SSH)**
    - `parse_remote_host()`: Parses user@hostname format
    - `check_ssh_connection()`: Verifies passwordless SSH connectivity
    - `get_remote_hostname()`: Extracts hostname for directory prefix
@@ -182,15 +196,16 @@ The file is organized into six main sections:
    - `get_remote_session_info()`: Gets remote file stats (size, mtime, message count) without downloading
    - `fetch_workspace_files()`: Fetches files from one remote workspace using rsync
 
-7. **Commands**
-   - `cmd_list()`: Shows all sessions for a workspace with stats (supports `-r` for remote)
-   - `cmd_convert()`: Converts single .jsonl file to markdown (supports `-r` for remote)
-   - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote, `--split` for splitting)
+8. **Commands**
+   - `cmd_list()`: Shows all sessions for a workspace with stats (supports `-r` for remote/WSL)
+   - `cmd_convert()`: Converts single .jsonl file to markdown (supports `-r` for remote/WSL)
+   - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote/WSL, `--split` for splitting, organized export by default)
+   - `cmd_list_wsl()`: Lists WSL distributions with Claude Code workspaces
    - `cmd_fetch()`: Pre-caches remote sessions via SSH (one-way sync)
    - `cmd_version()`: Displays version info
 
-8. **Main**
-   - Argument parsing with `argparse` (including -r/--remote, --since, --until, --minimal, --split flags)
+9. **Main**
+   - Argument parsing with `argparse` (including -r/--remote, --since, --until, --minimal, --split, --flat flags)
    - Command dispatch to appropriate handler
    - Error handling (KeyboardInterrupt, general exceptions)
 
@@ -198,16 +213,52 @@ The file is organized into six main sections:
 
 ```
 ~/.claude/projects/                     (Claude Code storage)
-    └── -home-user-projects-myapp/      (workspace directory)
-        ├── <uuid>.jsonl                (main conversation)
-        └── agent-<id>.jsonl            (task subagents)
+    ├── C--sankar-projects-myapp/       (local Windows workspace)
+    │   ├── <uuid>.jsonl                (main conversation)
+    │   └── agent-<id>.jsonl            (task subagents)
+    ├── wsl_ubuntu_home-sankar-myapp/   (WSL workspace - if cached)
+    └── remote_vm01_home-user-myapp/    (SSH remote - if cached)
                 ↓
     get_workspace_sessions()            (scan & filter)
                 ↓
     parse_jsonl_to_markdown()           (convert)
                 ↓
-    ./claude-conversations/<uuid>.md    (output)
+    ./exports/                          (organized output - default)
+        └── myapp/                      (workspace subdirectory)
+            ├── 20251120_<uuid>.md      (local Windows - no prefix)
+            ├── wsl_ubuntu_20251120_<uuid>.md  (WSL)
+            └── remote_vm01_20251120_<uuid>.md (SSH remote)
+
+    OR with --flat flag:
+    ./exports/                          (flat output)
+        └── 20251120_<uuid>.md          (all files in one directory)
 ```
+
+### Organized Export Structure (Default)
+
+**Default behavior:** Exports are organized by workspace with source-tagged filenames.
+
+**Directory structure:**
+```
+exports/
+  ├── workspace-name/
+  │   ├── 20251120_session.md              ← Local (no prefix)
+  │   ├── wsl_ubuntu_20251120_session.md   ← WSL Ubuntu
+  │   └── remote_vm01_20251120_session.md  ← SSH remote
+  └── another-workspace/
+      └── ...
+```
+
+**Source tagging:**
+- **Local Windows**: No prefix (e.g., `20251120_session.md`)
+- **WSL**: `wsl_{distro}_` prefix (e.g., `wsl_ubuntu_20251120_session.md`)
+- **SSH Remote**: `remote_{hostname}_` prefix (e.g., `remote_vm01_20251120_session.md`)
+
+**Rationale:**
+- Workspace organization enables per-project analysis
+- Source tags identify where each session originated
+- Supports multi-source consolidation (local + WSL + remote)
+- Use `--flat` flag for backward-compatible flat structure
 
 ### JSONL Format Details
 
@@ -661,6 +712,25 @@ ssh -o BatchMode=yes user@hostname echo ok
 ```
 
 ## Recent Changes
+
+**WSL Support (v1.2.0+)**
+- Added WSL (Windows Subsystem for Linux) integration with `wsl://DistroName` syntax
+- Direct filesystem access via `\\wsl.localhost\` paths (no SSH/rsync needed)
+- `--list-wsl` command to discover WSL distributions with Claude workspaces
+- Full support for `lsw`, `lss`, and `export` commands with WSL
+- Seamless access from Windows to WSL Claude sessions
+
+**Organized Export Structure (v1.2.0+)**
+- **Now default**: Exports organized by workspace subdirectories with source-tagged filenames
+- Source prefixes: `wsl_{distro}_` for WSL, `remote_{hostname}_` for SSH, no prefix for local
+- Example: `exports/myproject/wsl_ubuntu_20251120_session.md`
+- Use `--flat` flag for backward-compatible flat structure
+- Enables multi-source consolidation (local + WSL + remote sessions in one organized structure)
+
+**Windows Path Handling (v1.2.0+)**
+- Fixed current workspace detection for Windows paths (C:\ drive handling)
+- Windows workspace encoding: `C--sankar-projects-myapp` for `C:\sankar\projects\myapp`
+- Consistent underscore separators for source tags throughout
 
 **Workspace-Only Listing (v1.1.0+)**
 - Added `--workspaces-only` flag to `list` command for simplified workspace overview
