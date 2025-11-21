@@ -72,6 +72,72 @@ Manual testing is required since this tool operates on local Claude Code data:
 # - Corrupted .jsonl files
 ```
 
+## Windows Compatibility
+
+The tool runs natively on Windows with the following considerations:
+
+### Running on Windows
+
+Use `python` or `python3` to execute the script:
+
+```powershell
+# Instead of ./claude-history (Unix/Linux)
+python claude-history lsw
+python claude-history lss myproject
+python claude-history export myproject ./output
+```
+
+### Local Operations
+
+All local operations work perfectly on Windows:
+- ✅ List workspaces (`lsw`)
+- ✅ List sessions (`lss`)
+- ✅ Export conversations (`export`)
+- ✅ Convert single files
+- ✅ Date filtering
+- ✅ Minimal mode
+- ✅ Conversation splitting
+
+**Encoding:** The script explicitly uses UTF-8 encoding for all file operations, ensuring proper handling of Unicode characters on Windows.
+
+**Paths:** Uses `pathlib.Path` which handles Windows paths (backslashes) correctly.
+
+### Remote Operations
+
+Remote operations (`-r` flag) require additional setup on Windows:
+
+**OpenSSH Client:**
+- Windows 10/11 includes OpenSSH client by default
+- Verify: `ssh -V` in PowerShell/CMD
+- If missing, install via: Settings → Apps → Optional Features → OpenSSH Client
+
+**rsync (for fetch/export -r):**
+- Not included in Windows by default
+- Install options:
+  - **WSL (Recommended):** Use Windows Subsystem for Linux with `wsl ssh ...` and `wsl rsync ...`
+  - **Chocolatey:** `choco install rsync`
+  - **Cygwin:** Install rsync package
+  - **Git Bash:** Includes rsync
+
+**Passwordless SSH:**
+```powershell
+# Generate SSH key (if needed)
+ssh-keygen -t ed25519
+
+# Copy to remote (requires password once)
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh user@hostname "cat >> .ssh/authorized_keys"
+
+# Test connection
+ssh -o BatchMode=yes user@hostname echo ok
+```
+
+### Platform-Specific Notes
+
+- **Line endings:** Python handles CRLF/LF automatically
+- **Home directory:** `~/.claude/projects/` resolves to `C:\Users\<username>\.claude\projects\` on Windows
+- **Temp files:** Uses system temp directory via `tempfile` module
+- **Path separators:** All path operations use `pathlib.Path` for cross-platform compatibility
+
 ## Architecture
 
 ### Single-File Design

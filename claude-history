@@ -108,7 +108,7 @@ def extract_content(message_obj):
 def get_first_timestamp(jsonl_file: Path) -> str:
     """Extract the first message timestamp from a .jsonl file."""
     try:
-        with open(jsonl_file) as f:
+        with open(jsonl_file, encoding='utf-8') as f:
             for line in f:
                 try:
                     entry = json.loads(line)
@@ -218,7 +218,7 @@ def read_jsonl_messages(jsonl_file: Path):
     """
     messages = []
 
-    with open(jsonl_file) as f:
+    with open(jsonl_file, encoding='utf-8') as f:
         for line in f:
             try:
                 entry = json.loads(line)
@@ -615,12 +615,13 @@ def get_claude_projects_dir():
     return projects_dir
 
 
-def normalize_workspace_name(workspace_dir_name: str, verify_local: bool = True) -> str:
+def normalize_workspace_name(workspace_dir_name: str, verify_local: bool = True, base_path: Path = None) -> str:
     """Convert workspace directory name to readable path.
 
     Args:
         workspace_dir_name: Encoded workspace name (e.g., '-home-user-my-project')
         verify_local: If True, verify against local filesystem to handle dashes correctly
+        base_path: Base path to prepend when verifying (for WSL: //wsl.localhost/Ubuntu)
 
     Returns:
         Decoded path (e.g., 'home/user/my-project')
@@ -642,23 +643,40 @@ def normalize_workspace_name(workspace_dir_name: str, verify_local: bool = True)
     i = 0
 
     while i < len(parts):
-        # Try progressively longer combinations
+        # Build current path to check children against
+        if path_segments:
+            current_path_str = '/' + '/'.join(path_segments)
+            if base_path:
+                current_path = base_path / current_path_str.lstrip('/')
+            else:
+                current_path = Path(current_path_str)
+        else:
+            # Starting from root
+            if base_path:
+                current_path = base_path
+            else:
+                current_path = Path('/')
+
+        # Try progressively longer combinations (longest first for better matching)
         best_match = None
         best_match_len = 0
 
-        for j in range(i + 1, len(parts) + 1):
+        # Try from longest to shortest to prefer longer directory names with dashes
+        for j in range(len(parts), i, -1):
             # Try combining parts[i:j] with dashes
             candidate_segment = '-'.join(parts[i:j])
-            test_path = '/' + '/'.join(path_segments + [candidate_segment])
 
-            if Path(test_path).exists():
-                # This path exists - remember it as a candidate
+            # Check if this directory name exists as a child of current_path
+            candidate_path = current_path / candidate_segment
+
+            if candidate_path.exists() and candidate_path.is_dir():
+                # This exact directory exists - use it
                 best_match = candidate_segment
                 best_match_len = j - i
-                # Keep trying longer matches
+                break  # Found the longest match, stop searching
 
         if best_match:
-            # Use the longest match that exists
+            # Use the match we found
             path_segments.append(best_match)
             i += best_match_len
         else:
@@ -679,9 +697,20 @@ def get_current_workspace_pattern():
     Returns a pattern that can be used to match the workspace directory.
     """
     cwd = Path.cwd()
-    # Convert path to the format used in workspace directory names
-    # e.g., /home/user/projects/myapp -> home-user-projects-myapp
-    workspace_pattern = str(cwd).lstrip('/').replace('/', '-')
+    cwd_str = str(cwd)
+
+    # Handle Windows paths (C:\path\to\project -> C--path-to-project)
+    if sys.platform == 'win32' and len(cwd_str) >= 2 and cwd_str[1] == ':':
+        # Extract drive letter and path
+        drive = cwd_str[0]
+        path_part = cwd_str[2:].lstrip('\\').lstrip('/')
+        # Convert backslashes and forward slashes to dashes
+        path_part = path_part.replace('\\', '-').replace('/', '-')
+        workspace_pattern = f"{drive}--{path_part}"
+    else:
+        # Unix/Linux paths (/home/user/projects/myapp -> home-user-projects-myapp)
+        workspace_pattern = cwd_str.lstrip('/').replace('/', '-')
+
     return workspace_pattern
 
 
@@ -700,6 +729,24 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
     # If pattern is empty, "*", or "all", match everything
     match_all = workspace_pattern in ("", "*", "all")
 
+    # Detect if using WSL path (for proper dash handling in workspace names)
+    projects_dir_str = str(projects_dir)
+    is_wsl = projects_dir_str.startswith('\\\\wsl.localhost\\') or projects_dir_str.startswith('//wsl.localhost/')
+
+    # For WSL, extract the base path for filesystem verification
+    if is_wsl:
+        # Extract distro name and construct base path for verification
+        # Path format: //wsl.localhost/Ubuntu/home/user/.claude/projects
+        # For UNC paths, parts[0] contains '\\wsl.localhost\Ubuntu\' (includes distro)
+        parts = projects_dir.parts
+        if len(parts) >= 1:
+            # parts[0] is '\\wsl.localhost\Ubuntu\' - this is our base
+            wsl_base = Path(parts[0].rstrip('\\').rstrip('/'))
+        else:
+            wsl_base = None
+    else:
+        wsl_base = None
+
     # Scan each workspace directory
     for workspace_dir in projects_dir.iterdir():
         if not workspace_dir.is_dir():
@@ -707,7 +754,7 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
 
         # Check if workspace path matches our pattern
         if match_all or workspace_pattern in workspace_dir.name:
-            readable_name = normalize_workspace_name(workspace_dir.name)
+            readable_name = normalize_workspace_name(workspace_dir.name, base_path=wsl_base)
 
             # Get all .jsonl files in this workspace
             for jsonl_file in workspace_dir.glob("*.jsonl"):
@@ -725,7 +772,7 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
 
                 # Count messages (each line is a message)
                 try:
-                    with open(jsonl_file) as f:
+                    with open(jsonl_file, encoding='utf-8') as f:
                         message_count = sum(1 for _ in f)
                 except Exception as e:
                     message_count = 0
@@ -744,6 +791,199 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
     sessions.sort(key=lambda s: s['modified'])
 
     return sessions
+
+
+# ============================================================================
+# WSL Access
+# ============================================================================
+
+def is_wsl_remote(remote_spec: str) -> bool:
+    """Check if remote spec is a WSL distribution (wsl://DistroName)."""
+    return remote_spec.startswith('wsl://')
+
+
+def get_source_tag(remote_spec: str = None) -> str:
+    """
+    Generate source tag for filename/directory prefixes.
+
+    Args:
+        remote_spec: Remote specification (None for local, 'wsl://Ubuntu', 'user@host')
+
+    Returns:
+        Source tag string:
+        - '' for local Windows (no tag)
+        - 'wsl_{distro}_' for WSL
+        - 'remote_{hostname}_' for SSH remotes
+    """
+    if not remote_spec:
+        # Local Windows - no tag
+        return ''
+
+    if is_wsl_remote(remote_spec):
+        # WSL: wsl_ubuntu_
+        distro = remote_spec[6:]  # Remove 'wsl://' prefix
+        return f"wsl_{distro.lower()}_"
+
+    # SSH Remote: remote_hostname_
+    # Extract hostname from user@hostname or hostname
+    if '@' in remote_spec:
+        hostname = remote_spec.split('@')[1]
+    else:
+        hostname = remote_spec
+
+    # Take first part if FQDN (e.g., dev.example.com -> dev)
+    hostname = hostname.split('.')[0].lower()
+
+    return f"remote_{hostname}_"
+
+
+def get_workspace_name_from_path(workspace_dir_name: str) -> str:
+    """
+    Extract clean workspace name from directory name.
+    Removes source tags and normalizes path.
+
+    Examples:
+        'C--sankar-projects-claude-sessions' -> 'claude-sessions'
+        'remote_ubuntuvm01_home-sankar-projects-claude-skills' -> 'claude-skills'
+        'wsl_ubuntu_home-sankar-projects-auth' -> 'auth'
+    """
+    # Remove source tags if present
+    if workspace_dir_name.startswith('remote_'):
+        # remote_hostname_path -> path
+        parts = workspace_dir_name.split('_', 2)
+        if len(parts) >= 3:
+            workspace_dir_name = parts[2]
+    elif workspace_dir_name.startswith('wsl_'):
+        # wsl_distro_path -> path
+        parts = workspace_dir_name.split('_', 2)
+        if len(parts) >= 3:
+            workspace_dir_name = parts[2]
+
+    # Get the last path component (workspace name)
+    # home-sankar-projects-claude-sessions -> claude-sessions
+    # C--sankar-projects-claude-sessions -> claude-sessions
+    path_parts = workspace_dir_name.split('-')
+
+    # Find the workspace name (usually last component or last few)
+    # Simple heuristic: take last part, or last 2 if hyphenated (e.g., claude-sessions)
+    if len(path_parts) >= 2:
+        # Check if last 2 parts form a common pattern
+        last_two = '-'.join(path_parts[-2:])
+        # If the second-to-last part is short (likely part of name like "claude-sessions")
+        if len(path_parts[-2]) <= 10:
+            return last_two
+
+    return path_parts[-1] if path_parts else workspace_dir_name
+
+
+def get_wsl_distributions() -> list:
+    """Get list of available WSL distributions.
+
+    Returns:
+        List of dicts with distro info: {'name': str, 'username': str, 'has_claude': bool}
+    """
+    import subprocess
+    import platform
+
+    # WSL only available on Windows
+    if platform.system() != 'Windows':
+        return []
+
+    try:
+        # Get list of WSL distributions
+        result = subprocess.run(
+            ['wsl', '--list', '--quiet'],
+            capture_output=True,
+            timeout=5
+        )
+
+        if result.returncode != 0:
+            return []
+
+        # Parse distribution names (output is UTF-16 LE with BOM and null terminators)
+        output = result.stdout.decode('utf-16-le', errors='ignore')
+        distros_raw = [line.strip().rstrip('\x00') for line in output.split('\n') if line.strip()]
+
+        distributions = []
+        for distro_name in distros_raw:
+            if not distro_name:
+                continue
+
+            # Get username for this distro
+            try:
+                user_result = subprocess.run(
+                    ['wsl', '-d', distro_name, 'whoami'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+
+                if user_result.returncode != 0:
+                    continue
+
+                username = user_result.stdout.strip()
+
+                # Check if .claude/projects exists
+                claude_path = Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects")
+                has_claude = claude_path.exists()
+
+                distributions.append({
+                    'name': distro_name,
+                    'username': username,
+                    'has_claude': has_claude,
+                    'path': str(claude_path) if has_claude else None
+                })
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+
+        return distributions
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def get_wsl_projects_dir(distro_name: str) -> Path:
+    """Get Claude projects directory for a WSL distribution.
+
+    Args:
+        distro_name: WSL distribution name (e.g., 'Ubuntu', 'Debian')
+
+    Returns:
+        Path to .claude/projects in WSL, accessible from Windows
+    """
+    import subprocess
+
+    # Get username from WSL
+    try:
+        result = subprocess.run(
+            ['wsl', '-d', distro_name, 'whoami'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0:
+            sys.stderr.write(f"Error: Could not get username for WSL distribution '{distro_name}'\n")
+            sys.exit(1)
+
+        username = result.stdout.strip()
+
+        # Construct Windows path to WSL filesystem
+        projects_dir = Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects")
+
+        if not projects_dir.exists():
+            sys.stderr.write(f"Error: Claude projects directory not found in WSL '{distro_name}'\n")
+            sys.stderr.write(f"Expected path: {projects_dir}\n")
+            sys.exit(1)
+
+        return projects_dir
+
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(f"Error: Timeout accessing WSL distribution '{distro_name}'\n")
+        sys.exit(1)
+    except FileNotFoundError:
+        sys.stderr.write(f"Error: WSL not found. Is it installed?\n")
+        sys.exit(1)
 
 
 # ============================================================================
@@ -863,20 +1103,25 @@ done
 
     try:
         # Run the script on remote via SSH
+        # Ensure Unix line endings (important on Windows)
+        # Replace both \r\n and standalone \r with \n
+        script_unix = script.replace('\r\n', '\n').replace('\r', '\n')
+        script_bytes = script_unix.encode('utf-8')
+
         result = subprocess.run(
             ['ssh', remote_host, 'bash -s'],
-            input=script,
+            input=script_bytes,
             capture_output=True,
-            text=True,
             timeout=30
         )
 
         if result.returncode != 0:
             return []
 
+        stdout_text = result.stdout.decode('utf-8', errors='replace')
         # Parse results
         workspaces = []
-        for line in result.stdout.strip().split('\n'):
+        for line in stdout_text.strip().split('\n'):
             if not line:
                 continue
             parts = line.split('|')
@@ -1084,10 +1329,32 @@ def fetch_workspace_files(remote_host: str, remote_workspace: str,
     remote_path = f"{remote_host}:~/.claude/projects/{remote_workspace}/"
 
     try:
+        # Convert Windows path to Unix-style for rsync (even on Windows)
+        # rsync expects forward slashes
+        local_path_posix = str(local_dir).replace('\\', '/')
+
+        # On Windows, rsync interprets "C:" as a remote host
+        # Convert to /cygdrive/c/ notation which rsync understands
+        import re
+        if ':' in local_path_posix and not local_path_posix.startswith('/'):
+            # Windows absolute path with drive letter (e.g., C:/Users/...)
+            # Convert to Cygwin-style: /cygdrive/c/Users/...
+            drive_match = re.match(r'([A-Za-z]):(.*)', local_path_posix)
+            if drive_match:
+                drive_letter = drive_match.group(1).lower()
+                path_part = drive_match.group(2)
+                local_path_str = f'/cygdrive/{drive_letter}{path_part}/'
+            else:
+                local_path_str = local_path_posix + '/'
+        else:
+            local_path_str = local_path_posix + '/'
+
+        rsync_cmd = ['rsync', '-avh',
+                     '--include=*.jsonl', '--exclude=*',
+                     remote_path, local_path_str]
+
         result = subprocess.run(
-            ['rsync', '-avh',
-             '--include=*.jsonl', '--exclude=*',
-             remote_path, str(local_dir) + '/'],
+            rsync_cmd,
             capture_output=True,
             text=True,
             timeout=300  # 5 minute timeout
@@ -1146,8 +1413,57 @@ def cmd_list(args):
         sys.stderr.write("Error: --since date must be before --until date\n")
         sys.exit(1)
 
-    # Handle remote listing
+    # Handle WSL or remote listing
     if remote_host:
+        # Check if this is a WSL remote (wsl://DistroName)
+        if is_wsl_remote(remote_host):
+            # Extract distro name from wsl://DistroName
+            distro_name = remote_host[6:]  # Remove 'wsl://' prefix
+
+            # Get WSL projects directory (uses Windows path //wsl.localhost/...)
+            projects_dir = get_wsl_projects_dir(distro_name)
+
+            # Use local file operations on WSL filesystem
+            # Temporarily override get_claude_projects_dir to return WSL path
+            original_get_claude_projects_dir = get_claude_projects_dir
+
+            def get_wsl_override():
+                return projects_dir
+
+            # Replace function temporarily
+            current_module = sys.modules[__name__]
+            setattr(current_module, 'get_claude_projects_dir', get_wsl_override)
+
+            try:
+                # Use local session listing with WSL path
+                sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+
+                if not sessions:
+                    sys.stderr.write(f"Error: No sessions found in WSL '{distro_name}'\n")
+                    sys.exit(1)
+
+                workspaces_only = getattr(args, 'workspaces_only', False)
+
+                if workspaces_only:
+                    # Just print workspace names
+                    workspaces = set()
+                    for session in sessions:
+                        workspaces.add(session['workspace_readable'])
+
+                    for ws in sorted(workspaces):
+                        print(ws)
+                else:
+                    # Print header and sessions
+                    print("WORKSPACE\tFILE\tMESSAGES\tDATE")
+                    for session in sessions:
+                        print(f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}")
+            finally:
+                # Restore original function
+                setattr(current_module, 'get_claude_projects_dir', original_get_claude_projects_dir)
+
+            return  # Done with WSL handling
+
+        # SSH remote handling
         # Check SSH connectivity
         if not check_ssh_connection(remote_host):
             sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
@@ -1294,7 +1610,7 @@ def cmd_convert(args):
             output_file = Path(args.output) if args.output else Path(filename).with_suffix('.md')
 
             markdown = parse_jsonl_to_markdown(jsonl_file)
-            output_file.write_text(markdown)
+            output_file.write_text(markdown, encoding='utf-8')
 
             print(output_file)
 
@@ -1315,7 +1631,7 @@ def cmd_convert(args):
 
         try:
             markdown = parse_jsonl_to_markdown(jsonl_file)
-            output_file.write_text(markdown)
+            output_file.write_text(markdown, encoding='utf-8')
 
             print(output_file)
         except Exception as e:
@@ -1352,47 +1668,80 @@ def cmd_batch(args):
 
     output_dir = Path(args.output_dir)
 
-    # Handle remote export (fetch first, then export)
+    # Handle WSL or remote export
     if remote_host:
-        # Check SSH connectivity
-        if not check_ssh_connection(remote_host):
-            sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
-            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
-            sys.exit(1)
+        # Check if this is a WSL remote (wsl://DistroName)
+        if is_wsl_remote(remote_host):
+            # Extract distro name from wsl://DistroName
+            distro_name = remote_host[6:]  # Remove 'wsl://' prefix
 
-        # Get remote workspaces
-        remote_workspaces = list_remote_workspaces(remote_host)
+            # Get WSL projects directory (uses Windows path //wsl.localhost/...)
+            projects_dir = get_wsl_projects_dir(distro_name)
 
-        if not remote_workspaces:
-            sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
-            sys.exit(1)
+            # Use local file operations on WSL filesystem
+            # Temporarily override get_claude_projects_dir to return WSL path
+            original_get_claude_projects_dir = get_claude_projects_dir
 
-        # Filter by pattern
-        workspace_pattern = args.workspace
-        if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
-            remote_workspaces = [ws for ws in remote_workspaces if workspace_pattern in ws]
+            def get_wsl_override():
+                return projects_dir
 
-        if not remote_workspaces:
-            sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
-            sys.exit(1)
+            # Replace function temporarily
+            current_module = sys.modules[__name__]
+            setattr(current_module, 'get_claude_projects_dir', get_wsl_override)
 
-        # Fetch each workspace to local cache (silent)
-        local_projects_dir = get_claude_projects_dir()
-        hostname = get_remote_hostname(remote_host)
+            try:
+                # Use local session listing with WSL path
+                sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+            finally:
+                # Restore original function
+                setattr(current_module, 'get_claude_projects_dir', original_get_claude_projects_dir)
 
-        for remote_workspace in remote_workspaces:
-            result = fetch_workspace_files(remote_host, remote_workspace,
-                                          local_projects_dir, hostname)
+            if not sessions:
+                sys.stderr.write(f"Error: No sessions found in WSL '{distro_name}'\n")
+                sys.exit(1)
 
-            if not result['success']:
-                sys.stderr.write(f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n")
+            # Continue with export processing below (same as local)
 
-        # Now export from cached location
-        cached_pattern = f"remote-{hostname}"
-        if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
-            cached_pattern += f"-{workspace_pattern}"
+        else:
+            # SSH remote handling - Check SSH connectivity
+            if not check_ssh_connection(remote_host):
+                sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+                sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+                sys.exit(1)
 
-        sessions = get_workspace_sessions(cached_pattern, quiet=True, since_date=since_date, until_date=until_date)
+            # Get remote workspaces
+            remote_workspaces = list_remote_workspaces(remote_host)
+
+            if not remote_workspaces:
+                sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
+                sys.exit(1)
+
+            # Filter by pattern
+            workspace_pattern = args.workspace
+            if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
+                remote_workspaces = [ws for ws in remote_workspaces if workspace_pattern in ws]
+
+            if not remote_workspaces:
+                sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
+                sys.exit(1)
+
+            # Fetch each workspace to local cache (silent)
+            local_projects_dir = get_claude_projects_dir()
+            hostname = get_remote_hostname(remote_host)
+
+            for remote_workspace in remote_workspaces:
+                result = fetch_workspace_files(remote_host, remote_workspace,
+                                              local_projects_dir, hostname)
+
+                if not result['success']:
+                    sys.stderr.write(f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n")
+
+            # Now export from cached location
+            cached_pattern = f"remote-{hostname}"
+            if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
+                cached_pattern += f"-{workspace_pattern}"
+
+            sessions = get_workspace_sessions(cached_pattern, quiet=True, since_date=since_date, until_date=until_date)
 
     else:
         # Local export
@@ -1406,6 +1755,8 @@ def cmd_batch(args):
 
     # Convert each session
     force = getattr(args, 'force', False)
+    flat = getattr(args, 'flat', False)
+    remote_host = getattr(args, 'remote', None)
 
     for session in sessions:
         jsonl_file = session['file']
@@ -1416,13 +1767,35 @@ def cmd_batch(args):
             try:
                 dt = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
                 ts_prefix = dt.strftime('%Y%m%d%H%M%S')
-                output_name = f"{ts_prefix}_{jsonl_file.stem}.md"
             except Exception:
-                output_name = f"{jsonl_file.stem}.md"
+                ts_prefix = None
         else:
-            output_name = f"{jsonl_file.stem}.md"
+            ts_prefix = None
 
-        output_file = output_dir / output_name
+        # Generate filename with optional source tag
+        if not flat:
+            # Organized structure (default) - workspace subdirectories with source tags
+            # Get source tag
+            source_tag = get_source_tag(remote_host)
+
+            # Generate filename: [source_]timestamp_sessionid.md
+            if ts_prefix:
+                output_name = f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
+            else:
+                output_name = f"{source_tag}{jsonl_file.stem}.md"
+
+            # Create workspace subdirectory
+            workspace_name = get_workspace_name_from_path(session['workspace'])
+            workspace_subdir = output_dir / workspace_name
+            workspace_subdir.mkdir(parents=True, exist_ok=True)
+            output_file = workspace_subdir / output_name
+        else:
+            # Flat structure - all files in one directory, no source tags
+            if ts_prefix:
+                output_name = f"{ts_prefix}_{jsonl_file.stem}.md"
+            else:
+                output_name = f"{jsonl_file.stem}.md"
+            output_file = output_dir / output_name
 
         # Check if we should skip (incremental export)
         if not force and output_file.exists():
@@ -1465,7 +1838,7 @@ def cmd_batch(args):
                         nav_lines.append("> " + " | ".join(nav_parts))
 
                         # Write part file with navigation
-                        part_file.write_text(part_md + "\n".join(nav_lines))
+                        part_file.write_text(part_md + "\n".join(nav_lines), encoding='utf-8')
 
                     # Print all part files
                     for part_num in range(1, total_parts + 1):
@@ -1474,12 +1847,12 @@ def cmd_batch(args):
                 else:
                     # Splitting not needed, use single file
                     markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
-                    output_file.write_text(markdown)
+                    output_file.write_text(markdown, encoding='utf-8')
                     print(output_file)
             else:
                 # No splitting, use single file
                 markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
-                output_file.write_text(markdown)
+                output_file.write_text(markdown, encoding='utf-8')
                 print(output_file)
         except Exception as e:
             sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
@@ -1488,6 +1861,28 @@ def cmd_batch(args):
 def cmd_version(args):
     """Show version information."""
     print(f"claude-sessions {__version__}")
+
+
+def cmd_list_wsl(args):
+    """List available WSL distributions with Claude Code workspaces."""
+    distributions = get_wsl_distributions()
+
+    if not distributions:
+        sys.stderr.write("No WSL distributions found or WSL is not available.\n")
+        sys.stderr.write("Make sure WSL is installed on Windows.\n")
+        sys.exit(1)
+
+    # Filter to only distributions with Claude Code
+    claude_distros = [d for d in distributions if d['has_claude']]
+
+    if not claude_distros:
+        sys.stderr.write("No WSL distributions with Claude Code workspaces found.\n")
+        sys.exit(1)
+
+    # Print tab-separated output
+    print("DISTRO\tUSERNAME\tPATH")
+    for distro in claude_distros:
+        print(f"{distro['name']}\t{distro['username']}\t{distro['path']}")
 
 
 def cmd_fetch(args):
@@ -1574,14 +1969,21 @@ EXAMPLES:
     claude-history export myproject --minimal       # minimal mode
     claude-history export myproject --split 500     # split long conversations
     claude-history export myproject ./output        # custom output directory
+
+  WSL access (Windows):
+    claude-history --list-wsl                       # list WSL distributions
+    claude-history lsw -r wsl://Ubuntu              # list WSL workspaces
+    claude-history lss myproject -r wsl://Ubuntu    # list WSL sessions
+    claude-history export myproject -r wsl://Ubuntu # export from WSL
         '''
     )
 
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+    parser.add_argument('--list-wsl', action='store_true',
+        help='List available WSL distributions with Claude Code workspaces')
 
     # Create subparsers for commands
-    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
-    subparsers.required = True
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute', required=False)
 
     # ========== lsw - list workspaces ==========
     parser_lsw = subparsers.add_parser('lsw',
@@ -1594,7 +1996,7 @@ EXAMPLES:
 
     parser_lsw.add_argument('-r', '--remote',
         metavar='HOST',
-        help='List workspaces from remote host via SSH (user@hostname or hostname)')
+        help='List workspaces from remote host via SSH (user@hostname) or WSL (wsl://DistroName)')
 
     # ========== lss - list sessions ==========
     parser_lss = subparsers.add_parser('lss',
@@ -1607,7 +2009,7 @@ EXAMPLES:
 
     parser_lss.add_argument('-r', '--remote',
         metavar='HOST',
-        help='List sessions from remote host via SSH (user@hostname or hostname)')
+        help='List sessions from remote host via SSH (user@hostname) or WSL (wsl://DistroName)')
 
     parser_lss.add_argument('--since',
         metavar='DATE',
@@ -1636,7 +2038,7 @@ EXAMPLES:
 
     parser_export.add_argument('-r', '--remote',
         metavar='HOST',
-        help='Export from remote host via SSH (user@hostname or hostname)')
+        help='Export from remote host via SSH (user@hostname) or WSL (wsl://DistroName)')
 
     parser_export.add_argument('--force',
         action='store_true',
@@ -1659,8 +2061,19 @@ EXAMPLES:
         metavar='DATE',
         help='Only include sessions modified on or before this date (YYYY-MM-DD)')
 
+    parser_export.add_argument('--flat',
+        action='store_true',
+        help='Use flat directory structure (default: organized by workspace with source tags)')
+
     # Parse arguments
     args = parser.parse_args()
+
+    # Handle --list-wsl flag (runs before subcommand check)
+    if hasattr(args, 'list_wsl') and args.list_wsl:
+        class ListWslArgs:
+            pass
+        cmd_list_wsl(ListWslArgs())
+        return
 
     # Dispatch to command handlers
     if args.command == 'lsw':
@@ -1695,6 +2108,7 @@ EXAMPLES:
                 force = args.force
                 minimal = args.minimal
                 split = args.split
+                flat = args.flat
                 remote = getattr(args, 'remote', None)
             cmd_batch(ExportArgs())
         elif args.target.endswith('.jsonl'):
@@ -1714,6 +2128,7 @@ EXAMPLES:
                 force = args.force
                 minimal = args.minimal
                 split = args.split
+                flat = args.flat
                 remote = getattr(args, 'remote', None)
             cmd_batch(ExportArgs())
 

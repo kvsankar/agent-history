@@ -19,15 +19,27 @@ This tool extracts conversations **by workspace**, making it easy to get convers
 
 ## Quick Start
 
+**Unix/Linux/Mac:**
 ```bash
 # Make executable
-chmod +x claude-sessions
+chmod +x claude-history
 
 # List sessions from current project (default)
-./claude-sessions list
+./claude-history lss
 
 # Export sessions from current project to markdown (default)
-./claude-sessions export
+./claude-history export
+
+# Output goes to ./claude-conversations/ by default
+```
+
+**Windows:**
+```powershell
+# List sessions from current project (default)
+python claude-history lss
+
+# Export sessions from current project to markdown (default)
+python claude-history export
 
 # Output goes to ./claude-conversations/ by default
 ```
@@ -60,9 +72,231 @@ ln -s $(pwd)/claude-sessions /usr/local/bin/claude-sessions
 
 ### Requirements
 
+**All Platforms:**
 - Python 3.6 or higher (uses only stdlib, no external dependencies)
-- Claude Code installed and logged in (`claude login`)
+- Claude Code installed and logged in
 - At least one Claude Code conversation/session
+
+**For Remote Operations:**
+- OpenSSH client (included in Windows 10/11, macOS, and most Linux distributions)
+- rsync (for remote export - see Windows Installation below)
+- Passwordless SSH key setup
+
+### Windows Installation
+
+The tool works natively on Windows with a few platform-specific considerations:
+
+#### 1. Install Python
+
+Download and install Python from [python.org](https://www.python.org/downloads/) (version 3.6 or higher).
+
+Verify installation:
+```powershell
+python --version
+```
+
+#### 2. Download the Tool
+
+```powershell
+# Download the script
+curl -O https://raw.githubusercontent.com/yourusername/claude-history/main/claude-history
+
+# Or clone the repository
+git clone https://github.com/yourusername/claude-history.git
+cd claude-history
+```
+
+#### 3. Running the Tool
+
+On Windows, run the script using `python`:
+
+```powershell
+# Instead of ./claude-history (Unix), use:
+python claude-history lsw
+python claude-history lss myproject
+python claude-history export myproject
+```
+
+#### 4. Local Operations (Work Out of the Box)
+
+All local operations work perfectly on Windows without additional setup:
+- ✅ `python claude-history lsw` - List workspaces
+- ✅ `python claude-history lss` - List sessions
+- ✅ `python claude-history export` - Export conversations
+- ✅ Date filtering with `--since` and `--until`
+- ✅ Minimal mode with `--minimal`
+- ✅ Conversation splitting with `--split`
+
+#### 5. Remote Operations (Require Additional Setup)
+
+To use remote features (`-r` flag) on Windows, you need SSH and rsync:
+
+**OpenSSH Client (Usually Pre-installed):**
+
+Windows 10/11 includes OpenSSH client by default. Verify:
+```powershell
+ssh -V
+```
+
+If not installed, enable it via:
+- Settings → Apps → Optional Features → Add a feature → OpenSSH Client
+
+**rsync (Required for remote export):**
+
+rsync is NOT included in Windows by default and has limited compatibility with Windows OpenSSH.
+
+**Recommended Solution: WSL (Windows Subsystem for Linux)**
+```powershell
+# Use Windows Subsystem for Linux (most reliable)
+wsl python claude-history export -r user@hostname
+```
+
+**Alternative Options (May Have SSH Compatibility Issues):**
+
+**Option B: Chocolatey**
+```powershell
+# Install via Chocolatey
+choco install rsync
+
+# Note: May encounter "dup() in/out/err failed" error with Windows OpenSSH
+# If this happens, use WSL instead
+```
+
+**Option C: Git Bash**
+
+Git for Windows includes rsync. Download from [git-scm.com](https://git-scm.com/). May have same SSH integration issues.
+
+**Option D: cwRsync**
+
+Download from [itefix.net/cwrsync](https://www.itefix.net/cwrsync) - specifically designed for Windows but requires configuration.
+
+**Why WSL is Recommended:**
+- Full rsync compatibility with SSH
+- No path conversion issues (C: drive not interpreted as remote host)
+- Native Linux environment for rsync
+- Your SSH keys from Windows are accessible in WSL via `/mnt/c/Users/...`
+
+### WSL (Windows Subsystem for Linux) Access
+
+If you have Claude Code installed in WSL distributions, you can access those workspaces directly from Windows without SSH or rsync setup.
+
+#### Prerequisites
+
+1. **Windows 10/11 with WSL installed:**
+   ```powershell
+   # Check if WSL is installed
+   wsl --version
+
+   # If not installed, install WSL:
+   wsl --install
+   ```
+
+2. **Claude Code installed in WSL:**
+   ```bash
+   # Inside WSL
+   claude login
+   # Create at least one conversation
+   ```
+
+#### List Available WSL Distributions
+
+Find which WSL distributions have Claude Code workspaces:
+
+```powershell
+python claude-history --list-wsl
+```
+
+**Output:**
+```
+DISTRO          USERNAME        PATH
+Ubuntu          alice           /home/alice/.claude/projects
+Ubuntu-22.04    alice           /home/alice/.claude/projects
+```
+
+#### Access WSL Workspaces
+
+Use the `wsl://` prefix with the `-r` flag to access WSL workspaces:
+
+```powershell
+# List workspaces in WSL
+python claude-history lsw -r wsl://Ubuntu
+
+# List sessions from a WSL workspace
+python claude-history lss myproject -r wsl://Ubuntu
+
+# Export WSL conversations to Windows
+python claude-history export myproject -r wsl://Ubuntu
+python claude-history export myproject -r wsl://Ubuntu ./wsl-conversations
+```
+
+**Key Benefits:**
+- ✅ No SSH setup required
+- ✅ No rsync installation needed
+- ✅ Direct filesystem access via `\\wsl.localhost\` paths
+- ✅ Works seamlessly from Windows PowerShell or Command Prompt
+- ✅ Export to Windows filesystem for easy access
+
+#### Example Workflow
+
+```powershell
+# 1. Find WSL distributions with Claude workspaces
+PS C:\> python claude-history --list-wsl
+DISTRO          USERNAME        PATH
+Ubuntu          alice           /home/alice/.claude/projects
+
+# 2. List all workspaces in Ubuntu WSL
+PS C:\> python claude-history lsw -r wsl://Ubuntu
+
+# 3. List sessions from a specific workspace
+PS C:\> python claude-history lss django-app -r wsl://Ubuntu
+
+🔍 Searching for workspaces matching: 'django-app'
+
+✓ Found workspace: home/alice/projects/django-app
+  • c7e6fbcb-6a8a-4637-ab33-6075d83060a8.jsonl: 2112 messages, 6206.8 KB, 2025-11-12 20:28
+  • agent-c17c2c4d.jsonl: 41 messages, 698.0 KB, 2025-11-12 20:03
+
+# 4. Export to Windows filesystem
+PS C:\> python claude-history export django-app -r wsl://Ubuntu ./wsl-exports
+
+✓ Found 2 sessions
+📁 Output directory: C:\Users\alice\wsl-exports\
+
+[1/2] c7e6fbcb-6a8a-4637-ab33-6075d83060a8.jsonl ✓
+[2/2] agent-c17c2c4d.jsonl ✓
+```
+
+#### Tips
+
+- **Multiple WSL Distributions:** If you have multiple WSL distributions, specify the exact name: `wsl://Ubuntu-22.04`
+- **Combine with Other Flags:** Use `--since`, `--until`, `--minimal`, `--split` with WSL access
+- **Fast Performance:** Direct filesystem access is faster than SSH/rsync
+- **No Network Required:** Works completely offline
+
+#### 6. SSH Key Setup (For Remote Access)
+
+```powershell
+# Generate SSH key (if you don't have one)
+ssh-keygen -t ed25519
+
+# Copy key to remote server (requires password once)
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh user@hostname "cat >> .ssh/authorized_keys"
+
+# Test passwordless connection
+ssh -o BatchMode=yes user@hostname echo ok
+```
+
+If you have SSH keys in WSL, copy them to Windows:
+```powershell
+wsl cp ~/.ssh/id_* /mnt/c/Users/$env:USERNAME/.ssh/
+```
+
+#### Windows-Specific Notes
+
+- **File Encoding:** The tool automatically uses UTF-8 encoding on Windows to handle Unicode characters correctly
+- **Path Handling:** Windows paths (with backslashes) are handled automatically via Python's `pathlib`
+- **Line Endings:** Remote bash scripts are automatically converted to Unix line endings
+- **Home Directory:** `~/.claude/projects/` resolves to `C:\Users\<username>\.claude\projects\` on Windows
 
 ## Usage
 
@@ -530,12 +764,33 @@ claude-sessions export portfolio-site --output-dir showcase/
 
 ## Command Reference
 
-### `list`
+### `--list-wsl`
+
+List available WSL distributions with Claude Code workspaces.
+
+```powershell
+python claude-history --list-wsl
+```
+
+**Output:**
+- Tab-separated table of WSL distributions
+- Distribution name, username, and Claude projects path
+- Only shows distributions with Claude Code installed
+
+**Example:**
+```powershell
+PS C:\> python claude-history --list-wsl
+DISTRO          USERNAME        PATH
+Ubuntu          alice           /home/alice/.claude/projects
+Ubuntu-22.04    bob             /home/bob/.claude/projects
+```
+
+### `list` (alias: `lss`)
 
 Show all sessions for a workspace.
 
 ```bash
-claude-sessions list [PATTERN|--this|--all] [--since DATE] [--until DATE]
+claude-sessions list [PATTERN|--this|--all] [--since DATE] [--until DATE] [-r HOST]
 ```
 
 **Arguments:**
@@ -547,10 +802,21 @@ claude-sessions list [PATTERN|--this|--all] [--since DATE] [--until DATE]
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
 - `--until DATE`: Only include sessions modified on or before this date (YYYY-MM-DD)
 
+**Remote Access:**
+- `-r HOST`, `--remote HOST`: Access remote or WSL workspaces
+  - SSH: `-r user@hostname`
+  - WSL: `-r wsl://DistroName`
+
 **Output:**
 - List of sessions with metadata
 - Total size, message count, date range
 - Grouped by workspace
+
+**WSL Example:**
+```powershell
+# List sessions from WSL workspace
+python claude-history lss myproject -r wsl://Ubuntu
+```
 
 ### `export`
 
@@ -570,17 +836,31 @@ claude-sessions export [PATTERN|--this|--all] [OPTIONS]
 - `--force`, `-f`: Force re-export all sessions, even if already exported (default: incremental)
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
 - `--until DATE`: Only include sessions modified on or before this date (YYYY-MM-DD)
+- `--minimal`: Export minimal mode (conversation content only, no metadata)
+- `--split LINES`: Split long conversations into parts of approximately LINES per file
+- `-r HOST`, `--remote HOST`: Access remote or WSL workspaces
+  - SSH: `-r user@hostname`
+  - WSL: `-r wsl://DistroName`
 
 **Output:**
-- Markdown files named `{session-id}.md`
+- Markdown files named `{timestamp}_{session-id}.md`
 - Conversion summary with statistics
+
+**WSL Example:**
+```powershell
+# Export from WSL workspace to Windows filesystem
+python claude-history export django-app -r wsl://Ubuntu ./my-exports
+
+# Export with minimal mode and splitting
+python claude-history export -r wsl://Ubuntu --minimal --split 500
+```
 
 ### `convert`
 
 Convert a single conversation file to markdown.
 
 ```bash
-claude-sessions convert JSONL_FILE [--output FILE]
+claude-sessions convert JSONL_FILE [--output FILE] [-r HOST]
 ```
 
 **Arguments:**
@@ -588,10 +868,20 @@ claude-sessions convert JSONL_FILE [--output FILE]
 
 **Options:**
 - `--output`, `-o FILE`: Output markdown filename (default: same name with `.md`)
+- `--minimal`: Export minimal mode (conversation content only, no metadata)
+- `-r HOST`, `--remote HOST`: Access remote or WSL file
+  - SSH: `-r user@hostname`
+  - WSL: `-r wsl://DistroName`
 
 **Output:**
 - Single markdown file
 - File size information
+
+**WSL Example:**
+```powershell
+# Convert a specific WSL session file
+python claude-history convert /home/alice/.claude/projects/-home-alice-django/session.jsonl -r wsl://Ubuntu
+```
 
 ## FAQ
 
@@ -662,6 +952,38 @@ claude-sessions export myproject --since 2025-11-01
 
 See the Date Filtering section for more examples.
 
+---
+
+**Q: How do I access Claude Code workspaces in WSL from Windows?**
+
+A: Use the `wsl://` prefix with the `-r` flag:
+```powershell
+# First, find WSL distributions with Claude workspaces
+python claude-history --list-wsl
+
+# Then access the workspace
+python claude-history lss myproject -r wsl://Ubuntu
+python claude-history export myproject -r wsl://Ubuntu
+```
+
+This works without SSH or rsync setup - it uses direct filesystem access via Windows' built-in WSL integration.
+
+---
+
+**Q: Can I access workspaces from multiple sources (local Windows, WSL, remote servers)?**
+
+A: Yes! You can work with all of them:
+```powershell
+# Local Windows workspaces
+python claude-history lss myproject
+
+# WSL workspaces
+python claude-history lss myproject -r wsl://Ubuntu
+
+# Remote SSH workspaces
+python claude-history lss myproject -r user@server
+```
+
 ## Troubleshooting
 
 ### "Claude projects directory not found"
@@ -709,6 +1031,120 @@ chmod 700 ~/.claude/projects/
 1. Check the source `.jsonl` file isn't corrupted
 2. Ensure the conversation wasn't interrupted mid-session
 3. Try converting individual files with `convert` command for better error messages
+
+---
+
+### Windows: "python: command not found"
+
+**Problem:** Windows can't find Python
+
+**Solution:**
+1. Install Python from [python.org](https://www.python.org/downloads/)
+2. During installation, check "Add Python to PATH"
+3. Restart your terminal/PowerShell
+4. Verify: `python --version`
+
+---
+
+### Windows: UnicodeEncodeError or codec errors
+
+**Problem:** Encoding errors when exporting conversations
+
+**Solution:**
+This should be fixed in the latest version. If you still encounter issues:
+1. Ensure you're using the latest version of the tool
+2. The tool automatically uses UTF-8 encoding on all platforms
+3. Report the issue if it persists
+
+---
+
+### Windows: Remote operations fail with "rsync not found"
+
+**Problem:** Remote export requires rsync, which isn't included in Windows
+
+**Solution:**
+Use WSL (Windows Subsystem for Linux) which has full rsync compatibility:
+```powershell
+wsl python claude-history export -r user@host
+```
+
+Alternative options (Chocolatey, Git Bash, Cygwin) may have SSH integration issues.
+
+---
+
+### Windows: "dup() in/out/err failed" rsync error
+
+**Problem:** rsync fails with "dup() in/out/err failed" when using Chocolatey or Git Bash rsync
+
+**Root Cause:** These Windows rsync builds don't properly integrate with Windows OpenSSH client
+
+**Solution:**
+Use WSL instead, which has native rsync with full SSH support:
+```powershell
+wsl python claude-history export -r user@host ./output
+```
+
+---
+
+### Windows: SSH connection fails
+
+**Problem:** Can't connect to remote host
+
+**Solution:**
+1. Verify OpenSSH client is installed: `ssh -V`
+2. If missing: Settings → Apps → Optional Features → OpenSSH Client
+3. Set up SSH key: `ssh-keygen -t ed25519`
+4. Copy key to remote: `type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh user@host "cat >> .ssh/authorized_keys"`
+5. Test connection: `ssh user@host echo ok`
+
+---
+
+### WSL: "No WSL distributions found"
+
+**Problem:** `--list-wsl` returns no distributions or error
+
+**Solution:**
+1. Check if WSL is installed: `wsl --version`
+2. If not installed, install WSL: `wsl --install` (requires restart)
+3. After installation, install a distribution from Microsoft Store (Ubuntu recommended)
+4. Launch WSL at least once to complete setup
+
+---
+
+### WSL: "WSL distribution not found"
+
+**Problem:** Error when using `-r wsl://Ubuntu`
+
+**Solution:**
+1. List available distributions: `python claude-history --list-wsl`
+2. Use exact distribution name from the list (case-sensitive)
+3. Common names: `Ubuntu`, `Ubuntu-22.04`, `Ubuntu-20.04`, `Debian`, `kali-linux`
+4. Verify the distribution has Claude Code installed: `wsl -d Ubuntu -- test -d ~/.claude/projects && echo "Found" || echo "Not found"`
+
+---
+
+### WSL: "Claude projects directory not found" (in WSL)
+
+**Problem:** WSL distribution has no Claude Code workspaces
+
+**Solution:**
+1. Launch WSL: `wsl -d Ubuntu`
+2. Install Claude Code (if not installed)
+3. Log in: `claude login`
+4. Create at least one conversation to initialize `~/.claude/projects/`
+5. Verify: `ls ~/.claude/projects/`
+
+---
+
+### WSL: Permission denied or access errors
+
+**Problem:** Can't access WSL filesystem from Windows
+
+**Solution:**
+1. Ensure WSL distribution is running: `wsl -d Ubuntu echo ok`
+2. Check Windows has WSL integration enabled
+3. Try accessing via File Explorer: `\\wsl.localhost\Ubuntu\home\yourusername\.claude\projects`
+4. If still failing, restart WSL: `wsl --shutdown` then `wsl -d Ubuntu`
 
 ## Contributing
 
