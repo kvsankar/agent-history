@@ -46,6 +46,36 @@ python claude-history export
 # Output goes to ./claude-conversations/ by default
 ```
 
+## What's New in v1.3.0
+
+**🆕 Semantic Flags for Cleaner Multi-Environment Access:**
+
+```bash
+# New lsh command - discover all Claude Code installations
+./claude-history lsh                 # all hosts (local + WSL + Windows)
+./claude-history lsh --wsl           # only WSL distributions
+./claude-history lsh --windows       # only Windows users
+
+# New --wsl and --windows flags work across all commands
+./claude-history lsw --wsl           # list WSL workspaces
+./claude-history lss --windows       # list Windows sessions
+./claude-history export proj --wsl   # export from WSL
+```
+
+**Why the change?**
+- **Cleaner**: `--wsl` instead of `-r wsl://DistroName`
+- **More intuitive**: Semantic flags that clearly indicate local OS integration
+- **Consistent**: Works across all commands (lsw, lss, export)
+- **Conceptual clarity**: `--wsl`/`--windows` = same machine different environments; `-r user@host` = network remotes
+
+**Old syntax still works** (with deprecation warnings):
+```bash
+./claude-history lsw -r wsl://Ubuntu   # ⚠️ deprecated, use: --wsl Ubuntu
+./claude-history lsw -r windows        # ⚠️ deprecated, use: --windows
+```
+
+See [CLAUDE.md](CLAUDE.md) for complete documentation.
+
 ## Installation
 
 ### Option 1: Direct Download
@@ -205,30 +235,35 @@ If you have Claude Code installed in WSL distributions, you can access those wor
 Find which WSL distributions have Claude Code workspaces:
 
 ```powershell
-python claude-history --list-wsl
+python claude-history lsh --wsl
 ```
 
 **Output:**
 ```
-DISTRO          USERNAME        PATH
-Ubuntu          alice           /home/alice/.claude/projects
-Ubuntu-22.04    alice           /home/alice/.claude/projects
+WSL Distributions:
+  Ubuntu          alice           5 workspaces     \\wsl.localhost\Ubuntu\home\alice\.claude\projects
+  Ubuntu-22.04    alice           3 workspaces     \\wsl.localhost\Ubuntu-22.04\home\alice\.claude\projects
 ```
 
 #### Access WSL Workspaces
 
-Use the `wsl://` prefix with the `-r` flag to access WSL workspaces:
+Use the `--wsl` flag to access WSL workspaces:
 
 ```powershell
 # List workspaces in WSL
-python claude-history lsw -r wsl://Ubuntu
+python claude-history lsw --wsl
+
+# List workspaces from specific WSL distribution
+python claude-history lsw --wsl Ubuntu
 
 # List sessions from a WSL workspace
-python claude-history lss myproject -r wsl://Ubuntu
+python claude-history lss myproject --wsl
 
 # Export WSL conversations to Windows
-python claude-history export myproject -r wsl://Ubuntu
-python claude-history export myproject -r wsl://Ubuntu ./wsl-conversations
+python claude-history export myproject --wsl
+
+# Specify output directory
+python claude-history export myproject --wsl -o ./wsl-conversations
 ```
 
 **Key Benefits:**
@@ -242,15 +277,15 @@ python claude-history export myproject -r wsl://Ubuntu ./wsl-conversations
 
 ```powershell
 # 1. Find WSL distributions with Claude workspaces
-PS C:\> python claude-history --list-wsl
-DISTRO          USERNAME        PATH
-Ubuntu          alice           /home/alice/.claude/projects
+PS C:\> python claude-history lsh --wsl
+WSL Distributions:
+  Ubuntu          alice           5 workspaces     \\wsl.localhost\Ubuntu\home\alice\.claude\projects
 
-# 2. List all workspaces in Ubuntu WSL
-PS C:\> python claude-history lsw -r wsl://Ubuntu
+# 2. List all workspaces in WSL
+PS C:\> python claude-history lsw --wsl
 
 # 3. List sessions from a specific workspace
-PS C:\> python claude-history lss django-app -r wsl://Ubuntu
+PS C:\> python claude-history lss django-app --wsl
 
 🔍 Searching for workspaces matching: 'django-app'
 
@@ -259,7 +294,7 @@ PS C:\> python claude-history lss django-app -r wsl://Ubuntu
   • agent-c17c2c4d.jsonl: 41 messages, 698.0 KB, 2025-11-12 20:03
 
 # 4. Export to Windows filesystem
-PS C:\> python claude-history export django-app -r wsl://Ubuntu ./wsl-exports
+PS C:\> python claude-history export django-app --wsl -o ./wsl-exports
 
 ✓ Found 2 sessions
 📁 Output directory: C:\Users\alice\wsl-exports\
@@ -270,8 +305,8 @@ PS C:\> python claude-history export django-app -r wsl://Ubuntu ./wsl-exports
 
 #### Tips
 
-- **Multiple WSL Distributions:** If you have multiple WSL distributions, specify the exact name: `wsl://Ubuntu-22.04`
-- **Combine with Other Flags:** Use `--since`, `--until`, `--minimal`, `--split` with WSL access
+- **Multiple WSL Distributions:** If you have multiple WSL distributions, specify the exact name: `--wsl Ubuntu-22.04`
+- **Combine with Other Flags:** Use `--since`, `--until`, `--minimal`, `--split` with `--wsl`
 - **Fast Performance:** Direct filesystem access is faster than SSH/rsync
 - **No Network Required:** Works completely offline
 
@@ -844,16 +879,16 @@ Access conversations from Windows directly from WSL:
 
 ```bash
 # List available Windows users with Claude
-./claude-history --list-windows
+./claude-history lsh --windows
 
 # List Windows workspaces
-./claude-history lsw -r windows
+./claude-history lsw --windows
 
 # Export from Windows
-./claude-history export myproject -r windows
+./claude-history export myproject --windows
 
 # Specify Windows user (if multiple users)
-./claude-history lss -r windows://username
+./claude-history lsw --windows username
 ```
 
 **How it works:**
@@ -866,16 +901,16 @@ Access conversations from Windows directly from WSL:
 
 **Example output:**
 ```bash
-$ ./claude-history --list-windows
-USERNAME    DRIVE    WORKSPACES    PATH
-alice       c        16            /mnt/c/Users/alice
+$ ./claude-history lsh --windows
+Windows Users:
+  alice       c        16 workspaces    /mnt/c/Users/alice
 
-$ ./claude-history lsw -r windows
+$ ./claude-history lsw --windows
 /C//alice/projects/claude-sessions
 /C//alice/projects/astromcp
 ...
 
-$ ./claude-history export claude-sessions -r windows
+$ ./claude-history export claude-sessions --windows
 /tmp/export/claude-sessions/windows_20251120_session.md
 ...
 ```
@@ -906,56 +941,70 @@ When syncing conversations between multiple machines, the tool prevents circular
 
 ## Command Reference
 
-### `--list-wsl`
+### `lsh` - List Hosts
+
+List all Claude Code installations across local, WSL, and Windows environments.
+
+```bash
+./claude-history lsh [--local|--wsl|--windows]
+```
+
+**Options:**
+- No flags: Show all hosts (local + WSL + Windows)
+- `--local`: Show only local installation
+- `--wsl [DISTRO]`: Show only WSL distributions (optionally filter by distro name)
+- `--windows [USER]`: Show only Windows users (optionally filter by username)
+
+**Examples:**
+```bash
+# Show all hosts
+$ ./claude-history lsh
+Local:
+  /home/alice/.claude	10 workspaces
+
+WSL Distributions:
+  Ubuntu          alice           5 workspaces     \\wsl.localhost\Ubuntu\home\alice\.claude\projects
+
+Windows Users:
+  alice       c        16 workspaces    /mnt/c/Users/alice
+
+# Show only WSL distributions
+$ ./claude-history lsh --wsl
+WSL Distributions:
+  Ubuntu          alice           5 workspaces     \\wsl.localhost\Ubuntu\home\alice\.claude\projects
+
+# Filter by specific WSL distribution
+$ ./claude-history lsh --wsl Ubuntu
+```
+
+### `--list-wsl` (deprecated)
+
+> **⚠️ Deprecated:** Use `lsh --wsl` instead. This flag still works but will be removed in a future version.
 
 List available WSL distributions with Claude Code workspaces.
 
 ```powershell
-python claude-history --list-wsl
+python claude-history --list-wsl    # Old syntax
+python claude-history lsh --wsl     # New syntax (recommended)
 ```
 
-**Output:**
-- Tab-separated table of WSL distributions
-- Distribution name, username, and Claude projects path
-- Only shows distributions with Claude Code installed
+### `--list-windows` (deprecated)
 
-**Example:**
-```powershell
-PS C:\> python claude-history --list-wsl
-DISTRO          USERNAME        PATH
-Ubuntu          alice           /home/alice/.claude/projects
-Ubuntu-22.04    bob             /home/bob/.claude/projects
-```
-
-### `--list-windows`
+> **⚠️ Deprecated:** Use `lsh --windows` instead. This flag still works but will be removed in a future version.
 
 List available Windows users with Claude Code workspaces (from WSL).
 
 ```bash
-./claude-history --list-windows
+./claude-history --list-windows     # Old syntax
+./claude-history lsh --windows      # New syntax (recommended)
 ```
-
-**Output:**
-- Tab-separated table of Windows users
-- Username, drive letter, workspace count, and path
-- Only shows users with Claude Code installed
-
-**Example:**
-```bash
-$ ./claude-history --list-windows
-USERNAME    DRIVE    WORKSPACES    PATH
-alice       c        16            /mnt/c/Users/alice
-bob         d        8             /mnt/d/Users/bob
-```
-
-**Note:** This command is only available when running from WSL.
 
 ### `list` (alias: `lss`)
 
 Show all sessions for a workspace.
 
 ```bash
-claude-sessions list [PATTERN|--this|--all] [--since DATE] [--until DATE] [-r HOST]
+claude-sessions list [PATTERN|--this|--all] [--since DATE] [--until DATE] [--wsl|--windows|-r HOST]
 ```
 
 **Arguments:**
@@ -967,20 +1016,29 @@ claude-sessions list [PATTERN|--this|--all] [--since DATE] [--until DATE] [-r HO
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
 - `--until DATE`: Only include sessions modified on or before this date (YYYY-MM-DD)
 
-**Remote Access:**
-- `-r HOST`, `--remote HOST`: Access remote or WSL workspaces
-  - SSH: `-r user@hostname`
-  - WSL: `-r wsl://DistroName`
+**Multi-Environment Access:**
+- `--wsl [DISTRO]`: Access WSL distribution (optionally filter by distro name)
+- `--windows [USER]`: Access Windows user (optionally filter by username)
+- `-r HOST`, `--remote HOST`: Access SSH remote server (`user@hostname`)
 
 **Output:**
 - List of sessions with metadata
 - Total size, message count, date range
 - Grouped by workspace
 
-**WSL Example:**
-```powershell
-# List sessions from WSL workspace
-python claude-history lss myproject -r wsl://Ubuntu
+**Examples:**
+```bash
+# List sessions from WSL
+./claude-history lss myproject --wsl
+
+# List sessions from specific WSL distribution
+./claude-history lss myproject --wsl Ubuntu
+
+# List sessions from Windows
+./claude-history lss myproject --windows
+
+# List sessions from SSH remote (old -r syntax still works)
+./claude-history lss myproject -r user@hostname
 ```
 
 ### `export`
@@ -1001,10 +1059,9 @@ claude-history export [WORKSPACE] [OPTIONS]
 
 **Options:**
 - `-o, --output DIR`: Output directory (overrides positional, default: `./claude-conversations`)
-- `-r, --remote HOST`: Add remote source - can be used multiple times
-  - SSH: `-r user@hostname`
-  - WSL: `-r wsl://DistroName`
-  - Windows: `-r windows`
+- `--wsl [DISTRO]`: Export from WSL distribution (optionally filter by distro name)
+- `--windows [USER]`: Export from Windows user (optionally filter by username)
+- `-r, --remote HOST`: Add SSH remote source - can be used multiple times (`user@hostname`)
 - `--force`, `-f`: Force re-export all sessions (default: incremental)
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
 - `--until DATE`: Only include sessions modified on or before this date (YYYY-MM-DD)
@@ -1043,6 +1100,15 @@ export myproject --as -o /tmp/backup
 
 # All workspaces matching pattern, all sources
 export astro --as --aw
+
+# Export from WSL
+export myproject --wsl
+
+# Export from Windows
+export myproject --windows
+
+# Export from specific WSL distribution
+export myproject --wsl Ubuntu
 
 # Current workspace, all sources + specific SSH remote
 export --as -r user@vm01 -r user@vm02
@@ -1241,32 +1307,43 @@ See the Date Filtering section for more examples.
 
 **Q: How do I access Claude Code workspaces in WSL from Windows?**
 
-A: Use the `wsl://` prefix with the `-r` flag:
+A: Use the `--wsl` flag:
 ```powershell
 # First, find WSL distributions with Claude workspaces
-python claude-history --list-wsl
+python claude-history lsh --wsl
 
 # Then access the workspace
-python claude-history lss myproject -r wsl://Ubuntu
-python claude-history export myproject -r wsl://Ubuntu
+python claude-history lss myproject --wsl
+python claude-history export myproject --wsl
+
+# Or specify a specific distribution
+python claude-history lss myproject --wsl Ubuntu
 ```
 
 This works without SSH or rsync setup - it uses direct filesystem access via Windows' built-in WSL integration.
+
+**Note:** The old `-r wsl://` syntax still works but is deprecated.
 
 ---
 
 **Q: Can I access workspaces from multiple sources (local Windows, WSL, remote servers)?**
 
 A: Yes! You can work with all of them:
-```powershell
-# Local Windows workspaces
-python claude-history lss myproject
+```bash
+# Discover all hosts
+./claude-history lsh
+
+# Local workspaces
+./claude-history lss myproject
 
 # WSL workspaces
-python claude-history lss myproject -r wsl://Ubuntu
+./claude-history lss myproject --wsl
+
+# Windows workspaces (from WSL)
+./claude-history lss myproject --windows
 
 # Remote SSH workspaces
-python claude-history lss myproject -r user@server
+./claude-history lss myproject -r user@server
 ```
 
 ## Troubleshooting
@@ -1386,7 +1463,7 @@ wsl python claude-history export -r user@host ./output
 
 ### WSL: "No WSL distributions found"
 
-**Problem:** `--list-wsl` returns no distributions or error
+**Problem:** `lsh --wsl` returns no distributions or error
 
 **Solution:**
 1. Check if WSL is installed: `wsl --version`
@@ -1398,10 +1475,10 @@ wsl python claude-history export -r user@host ./output
 
 ### WSL: "WSL distribution not found"
 
-**Problem:** Error when using `-r wsl://Ubuntu`
+**Problem:** Error when using `--wsl Ubuntu`
 
 **Solution:**
-1. List available distributions: `python claude-history --list-wsl`
+1. List available distributions: `python claude-history lsh --wsl`
 2. Use exact distribution name from the list (case-sensitive)
 3. Common names: `Ubuntu`, `Ubuntu-22.04`, `Ubuntu-20.04`, `Debian`, `kali-linux`
 4. Verify the distribution has Claude Code installed: `wsl -d Ubuntu -- test -d ~/.claude/projects && echo "Found" || echo "Not found"`
@@ -1470,7 +1547,27 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ## What's New
 
-### Version 1.2.0 (Latest)
+### Version 1.3.0 (Latest)
+
+**🆕 Semantic Flags for Multi-Environment Access:**
+- New `lsh` command to discover all Claude Code installations
+  - `lsh` - show all hosts (local + WSL + Windows)
+  - `lsh --wsl` - only WSL distributions
+  - `lsh --windows` - only Windows users
+- Universal `--wsl` and `--windows` flags across all commands
+  - `lsw --wsl` - list WSL workspaces
+  - `lss --windows` - list Windows sessions
+  - `export myproject --wsl` - export from WSL
+- **Cleaner syntax**: `--wsl` instead of `-r wsl://DistroName`
+- **Conceptual clarity**: WSL/Windows = same machine; `-r` = network SSH
+- **Backward compatible**: Old `-r wsl://` syntax still works with deprecation warnings
+
+**🔍 Improved Workspace Filtering:**
+- Automatically excludes cached remote/WSL workspaces
+- Prevents showing duplicate data in multi-environment setups
+- Better circular fetching prevention
+
+### Version 1.2.0
 
 **🚀 Unified Export Interface:**
 - Orthogonal scope flags: `--as` (all sources) and `--aw` (all workspaces)
@@ -1497,7 +1594,7 @@ MIT License - See [LICENSE](LICENSE) file for details.
 - Native Windows support for WSL distributions
 - Direct filesystem access via `\\wsl.localhost\` paths
 - List, export, and access WSL conversations from Windows
-- Example: `python claude-history export myproject -r wsl://Ubuntu`
+- Example: `python claude-history export myproject --wsl`
 
 **📁 Organized Export Structure (Default):**
 - Workspace subdirectories with source-tagged filenames

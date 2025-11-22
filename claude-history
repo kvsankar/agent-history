@@ -752,6 +752,13 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
         if not workspace_dir.is_dir():
             continue
 
+        # Skip cached remote/WSL workspaces to prevent circular fetching
+        # These are already fetched data from other sources
+        dir_name = workspace_dir.name
+        if (dir_name.startswith('remote_') or dir_name.startswith('wsl_') or
+            dir_name.startswith('-remote-') or dir_name.startswith('--wsl-')):
+            continue
+
         # Check if workspace path matches our pattern
         if match_all or workspace_pattern in workspace_dir.name:
             readable_name = normalize_workspace_name(workspace_dir.name, base_path=wsl_base)
@@ -2192,6 +2199,81 @@ def cmd_list_windows(args):
         print(f"{user['username']}\t{user['drive']}\t{user['workspace_count']}\t{user['path']}")
 
 
+def cmd_lsh(args):
+    """List all home folders with Claude Code installations."""
+    in_wsl = is_running_in_wsl()
+
+    # Determine what to show based on flags
+    # If no flags are specified, show all
+    # If any flag is specified, show only that one
+    show_local = args.local or (args.wsl is None and args.windows is None)
+    show_wsl = args.wsl is not None
+    show_windows = args.windows is not None
+
+    # 1. Show local home folder
+    if show_local:
+        try:
+            projects_dir = get_claude_projects_dir()
+            if projects_dir.exists():
+                # Count workspaces
+                workspace_count = len([d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith('.')])
+
+                print("Local:")
+                print(f"  {projects_dir.parent}\t{workspace_count} workspaces")
+                print()
+        except Exception as e:
+            sys.stderr.write(f"Error accessing local: {e}\n")
+
+    # 2. Show WSL distributions (when on Windows)
+    if show_wsl and not in_wsl:
+        print("WSL Distributions:")
+        try:
+            wsl_distros = get_wsl_distributions()
+            claude_distros = [d for d in wsl_distros if d['has_claude']]
+
+            if claude_distros:
+                # Filter by specific distro if provided
+                if args.wsl:
+                    claude_distros = [d for d in claude_distros if args.wsl.lower() in d['name'].lower()]
+
+                if claude_distros:
+                    for distro in claude_distros:
+                        # Count workspaces
+                        projects_dir = get_wsl_projects_dir(distro['name'])
+                        workspace_count = len([d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith('.')])
+
+                        print(f"  {distro['name']}\t{distro['username']}\t{workspace_count} workspaces\t{projects_dir}")
+                else:
+                    print(f"  No WSL distributions matching '{args.wsl}' found")
+            else:
+                print("  No WSL distributions with Claude Code found")
+            print()
+        except Exception as e:
+            sys.stderr.write(f"Error accessing WSL: {e}\n")
+
+    # 3. Show Windows users (when on WSL)
+    if show_windows and in_wsl:
+        print("Windows Users:")
+        try:
+            windows_users = get_windows_users_with_claude()
+
+            if windows_users:
+                # Filter by specific user if provided
+                if args.windows:
+                    windows_users = [u for u in windows_users if args.windows.lower() in u['username'].lower()]
+
+                if windows_users:
+                    for user in windows_users:
+                        print(f"  {user['username']}\t{user['path']}\t{user['workspace_count']} workspaces")
+                else:
+                    print(f"  No Windows users matching '{args.windows}' found")
+            else:
+                print("  No Windows users with Claude Code found")
+            print()
+        except Exception as e:
+            sys.stderr.write(f"Error accessing Windows: {e}\n")
+
+
 def cmd_fetch(args):
     """Fetch remote conversation sessions via SSH."""
     remote_host = args.remote_host
@@ -2686,6 +2768,18 @@ EXAMPLES:
         metavar='HOST',
         help='List workspaces from remote host via SSH (user@hostname) or WSL (wsl://DistroName)')
 
+    parser_lsw.add_argument('--wsl',
+        nargs='?',
+        const='',
+        metavar='DISTRO',
+        help='List workspaces from WSL distribution (optionally filter by distro name)')
+
+    parser_lsw.add_argument('--windows',
+        nargs='?',
+        const='',
+        metavar='USER',
+        help='List workspaces from Windows user (optionally filter by username)')
+
     # ========== lss - list sessions ==========
     parser_lss = subparsers.add_parser('lss',
         help='List sessions',
@@ -2699,6 +2793,18 @@ EXAMPLES:
         metavar='HOST',
         help='List sessions from remote host via SSH (user@hostname) or WSL (wsl://DistroName)')
 
+    parser_lss.add_argument('--wsl',
+        nargs='?',
+        const='',
+        metavar='DISTRO',
+        help='List sessions from WSL distribution (optionally filter by distro name)')
+
+    parser_lss.add_argument('--windows',
+        nargs='?',
+        const='',
+        metavar='USER',
+        help='List sessions from Windows user (optionally filter by username)')
+
     parser_lss.add_argument('--since',
         metavar='DATE',
         help='Only include sessions modified on or after this date (YYYY-MM-DD)')
@@ -2706,6 +2812,27 @@ EXAMPLES:
     parser_lss.add_argument('--until',
         metavar='DATE',
         help='Only include sessions modified on or before this date (YYYY-MM-DD)')
+
+    # ========== lsh - list hosts ==========
+    parser_lsh = subparsers.add_parser('lsh',
+        help='List hosts',
+        description='List all home folders with Claude Code (.claude directories)')
+
+    parser_lsh.add_argument('--wsl',
+        nargs='?',
+        const='',
+        metavar='DISTRO',
+        help='Show WSL distributions only (optionally filter by distro name)')
+
+    parser_lsh.add_argument('--windows',
+        nargs='?',
+        const='',
+        metavar='USER',
+        help='Show Windows users only (optionally filter by username)')
+
+    parser_lsh.add_argument('--local',
+        action='store_true',
+        help='Show local home folder only')
 
     # ========== export command ==========
     parser_export = subparsers.add_parser('export',
@@ -2742,6 +2869,18 @@ EXAMPLES:
         action='append',
         dest='remotes',
         help='Export from remote host via SSH (user@hostname), WSL (wsl://DistroName), or Windows (windows) - can be used multiple times')
+
+    parser_export.add_argument('--wsl',
+        nargs='?',
+        const='',
+        metavar='DISTRO',
+        help='Export from WSL distribution (optionally filter by distro name)')
+
+    parser_export.add_argument('--windows',
+        nargs='?',
+        const='',
+        metavar='USER',
+        help='Export from Windows user (optionally filter by username)')
 
     parser_export.add_argument('--force',
         action='store_true',
@@ -2817,6 +2956,74 @@ EXAMPLES:
     # Parse arguments
     args = parser.parse_args()
 
+    # Helper function to resolve remote flags
+    def resolve_remote_flag(args):
+        """Convert --wsl and --windows flags to remote format, add deprecation warnings."""
+        remote = getattr(args, 'remote', None)
+        wsl_flag = getattr(args, 'wsl', None)
+        windows_flag = getattr(args, 'windows', None)
+
+        # Check for deprecated -r wsl:// or -r windows syntax
+        if remote:
+            if remote.startswith('wsl://'):
+                sys.stderr.write("⚠️  Warning: '-r wsl://DistroName' is deprecated. Use '--wsl DistroName' instead.\n")
+            elif remote == 'windows':
+                sys.stderr.write("⚠️  Warning: '-r windows' is deprecated. Use '--windows' instead.\n")
+
+        # Convert new flags to remote format for backward compatibility
+        if wsl_flag is not None:
+            if wsl_flag:  # Specific distro specified
+                return f'wsl://{wsl_flag}'
+            else:  # No distro specified, use first available
+                wsl_distros = get_wsl_distributions()
+                if wsl_distros:
+                    claude_distros = [d for d in wsl_distros if d['has_claude']]
+                    if claude_distros:
+                        return f'wsl://{claude_distros[0]["name"]}'
+                sys.stderr.write("❌ Error: No WSL distributions with Claude Code found\n")
+                sys.exit(1)
+
+        if windows_flag is not None:
+            if windows_flag:  # Specific user specified
+                return f'windows:{windows_flag}'
+            else:  # No user specified
+                return 'windows'
+
+        return remote
+
+    def resolve_remote_list(args):
+        """Convert --wsl and --windows flags to remote list for export command."""
+        remotes = getattr(args, 'remotes', None) or []
+        wsl_flag = getattr(args, 'wsl', None)
+        windows_flag = getattr(args, 'windows', None)
+
+        # Check for deprecated syntax in remotes list
+        for remote in remotes:
+            if remote.startswith('wsl://'):
+                sys.stderr.write("⚠️  Warning: '-r wsl://DistroName' is deprecated. Use '--wsl DistroName' instead.\n")
+            elif remote == 'windows':
+                sys.stderr.write("⚠️  Warning: '-r windows' is deprecated. Use '--windows' instead.\n")
+
+        # Add --wsl to remotes list
+        if wsl_flag is not None:
+            if wsl_flag:  # Specific distro
+                remotes.append(f'wsl://{wsl_flag}')
+            else:  # Use first available
+                wsl_distros = get_wsl_distributions()
+                if wsl_distros:
+                    claude_distros = [d for d in wsl_distros if d['has_claude']]
+                    if claude_distros:
+                        remotes.append(f'wsl://{claude_distros[0]["name"]}')
+
+        # Add --windows to remotes list
+        if windows_flag is not None:
+            if windows_flag:  # Specific user
+                remotes.append(f'windows:{windows_flag}')
+            else:  # Default
+                remotes.append('windows')
+
+        return remotes if remotes else None
+
     # Handle --list-wsl flag (runs before subcommand check)
     if hasattr(args, 'list_wsl') and args.list_wsl:
         class ListWslArgs:
@@ -2837,7 +3044,7 @@ EXAMPLES:
         pattern = args.pattern if args.pattern else ''
         class LswArgs:
             workspace = pattern
-            remote = getattr(args, 'remote', None)
+            remote = resolve_remote_flag(args)
             workspaces_only = True  # lsw always lists workspaces
         cmd_list(LswArgs())
 
@@ -2848,9 +3055,13 @@ EXAMPLES:
             workspace = workspace_val
             since = args.since
             until = args.until
-            remote = getattr(args, 'remote', None)
+            remote = resolve_remote_flag(args)
             workspaces_only = False  # lss always lists sessions
         cmd_list(LssArgs())
+
+    elif args.command == 'lsh':
+        # List hosts
+        cmd_lsh(args)
 
     elif args.command == 'export':
         # Determine output directory (-o overrides positional)
@@ -2859,11 +3070,13 @@ EXAMPLES:
         # Determine workspace (default to current if empty)
         target = args.target if args.target else get_current_workspace_pattern()
 
+        # Resolve remotes (including --wsl and --windows flags)
+        final_remotes = resolve_remote_list(args)
+
         # Handle --all-sources flag (export from all sources)
         if args.all_sources:
             # Export from all sources (local + WSL + Windows + remotes)
             final_workspace = '' if args.all_workspaces else target
-            final_remotes = args.remotes if hasattr(args, 'remotes') and args.remotes else None
             class ExportAllArgs:
                 workspace = final_workspace
                 output_dir = final_output_dir
@@ -2876,7 +3089,7 @@ EXAMPLES:
             cmd_export_all(ExportAllArgs())
         elif target.endswith('.jsonl'):
             # Single file export
-            final_remote = args.remotes[0] if hasattr(args, 'remotes') and args.remotes else None
+            final_remote = final_remotes[0] if final_remotes else None
             class ConvertArgs:
                 jsonl_file = target
                 output = None  # Use default
@@ -2885,7 +3098,7 @@ EXAMPLES:
         else:
             # Regular export - single source
             final_workspace = '' if args.all_workspaces else target
-            final_remote = args.remotes[0] if hasattr(args, 'remotes') and args.remotes else None
+            final_remote = final_remotes[0] if final_remotes else None
             class ExportArgs:
                 workspace = final_workspace
                 output_dir = final_output_dir

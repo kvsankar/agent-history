@@ -20,15 +20,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Make script executable (if needed)
 chmod +x claude-history
 
+# List hosts (all Claude Code installations)
+./claude-history lsh                        # all hosts (local + WSL + Windows)
+./claude-history lsh --local                # only local
+./claude-history lsh --wsl                  # only WSL distributions
+./claude-history lsh --windows              # only Windows users
+
 # List workspaces
 ./claude-history lsw                        # all local workspaces
 ./claude-history lsw myproject              # filter by pattern
-./claude-history lsw -r user@server         # remote workspaces
+./claude-history lsw --wsl                  # WSL workspaces
+./claude-history lsw --windows              # Windows workspaces
+./claude-history lsw -r user@server         # SSH remote workspaces
 
 # List sessions
 ./claude-history lss                        # current workspace
 ./claude-history lss myproject              # specific workspace
-./claude-history lss myproject -r user@server    # remote sessions
+./claude-history lss --wsl                  # from WSL
+./claude-history lss --windows              # from Windows
+./claude-history lss myproject -r user@server    # SSH remote sessions
 
 # Export (unified command with orthogonal scope flags)
 ./claude-history export                     # current workspace, local source
@@ -43,7 +53,9 @@ chmod +x claude-history
 ./claude-history export -o /tmp/backup      # current workspace, custom output
 ./claude-history export myproject -o ./out  # specific workspace, custom output
 
-./claude-history export -r user@server      # current workspace, specific remote
+./claude-history export --wsl               # current workspace, WSL
+./claude-history export --windows           # current workspace, Windows
+./claude-history export -r user@server      # current workspace, SSH remote
 ./claude-history export --as -r user@vm01   # current workspace, all sources + SSH remote
 
 # Show version
@@ -62,18 +74,21 @@ chmod +x claude-history
 ./claude-history export-all                       # all sources, all workspaces
 ./claude-history export-all myproject             # filter by workspace pattern
 
-# WSL access (Windows)
-./claude-history --list-wsl                       # list WSL distributions
-./claude-history lsw -r wsl://Ubuntu              # list WSL workspaces
-./claude-history lss myproject -r wsl://Ubuntu    # list WSL sessions
-./claude-history export myproject -r wsl://Ubuntu # export from WSL
+# WSL and Windows access (new semantic flags)
+./claude-history lsw --wsl                  # list WSL workspaces
+./claude-history lsw --wsl Ubuntu           # filter by distro name
+./claude-history lss myproject --wsl        # list WSL sessions
+./claude-history export myproject --wsl     # export from WSL
 
-# Windows access (from WSL)
-./claude-history --list-windows                   # list Windows users with Claude
-./claude-history lsw -r windows                   # list Windows workspaces
-./claude-history lss myproject -r windows         # list Windows sessions
-./claude-history export myproject -r windows      # export from Windows
-./claude-history lss -r windows://username        # specify Windows user
+./claude-history lsw --windows              # list Windows workspaces
+./claude-history lss myproject --windows    # list Windows sessions
+./claude-history export myproject --windows # export from Windows
+
+# Old syntax (deprecated but still works)
+./claude-history lsw -r wsl://Ubuntu        # deprecated: use --wsl Ubuntu
+./claude-history lsw -r windows             # deprecated: use --windows
+./claude-history --list-wsl                 # deprecated: use lsh --wsl
+./claude-history --list-windows             # deprecated: use lsh --windows
 ```
 
 ### Testing Workflow
@@ -737,6 +752,23 @@ ssh -o BatchMode=yes user@hostname echo ok
 ```
 
 ## Recent Changes
+
+**Semantic Flags for WSL/Windows Access (v1.3.0+)**
+- Added `lsh` (list hosts) command to discover all Claude Code installations
+  - `lsh` - show all hosts (local + WSL + Windows)
+  - `lsh --local` - only local installation
+  - `lsh --wsl` - only WSL distributions
+  - `lsh --windows` - only Windows users
+- Added universal `--wsl` and `--windows` flags that work across all commands
+  - `lsw --wsl` - list workspaces from WSL
+  - `lss --windows` - list sessions from Windows
+  - `export myproject --wsl` - export from WSL
+- Cleaner, more intuitive interface compared to `-r wsl://` syntax
+- **Deprecation notices**: Old syntax (`-r wsl://`, `-r windows`, `--list-wsl`, `--list-windows`) still works but shows warnings
+- **Conceptual separation**:
+  - `--wsl` and `--windows` = same machine, different OS environments (local integration)
+  - `-r user@host` = different machine over network (SSH remotes)
+- Improved workspace filtering: Automatically excludes cached remote/WSL workspaces to prevent circular fetching
 
 **Unified Export Interface (v1.2.0+)**
 - Consolidated `export` command with orthogonal scope flags
