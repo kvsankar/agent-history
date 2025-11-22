@@ -769,12 +769,18 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 **Export-All Command (v1.2.0+)**
 - New `export-all` command exports from all sources in a single command
-- Automatically discovers and exports from: local Windows + all WSL distributions + optional SSH remotes
+- Environment-aware: automatically detects whether running on Windows or WSL
+- **On Windows**: Exports from local Windows + all WSL distributions + optional SSH remotes
+- **On WSL**: Exports from local WSL + all Windows users + optional SSH remotes
+- Automatically discovers and exports from all available sources
 - Generates `index.md` manifest with per-source and per-workspace statistics
 - Supports all standard export options: `--minimal`, `--split`, `--since`, `--until`, `--force`
 - Use `-r` flag to include additional SSH remote hosts
 - Perfect for backups and multi-environment consolidation
-- Example: `./claude-history export-all myproject -r user@vm01 user@vm02`
+- Examples:
+  - Windows: `./claude-history export-all myproject` (exports Windows + WSL + remote)
+  - WSL: `./claude-history export-all myproject` (exports WSL + Windows + remote)
+  - With remote: `./claude-history export-all myproject -r user@vm01 user@vm02`
 
 **Cache Naming Consistency (v1.2.0+)**
 - Updated remote cache naming: `remote_{hostname}_{workspace}` (was `-remote-hostname-...`)

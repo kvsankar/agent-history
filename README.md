@@ -1019,7 +1019,7 @@ python claude-history export -r wsl://Ubuntu --minimal --split 500
 
 ### `export-all`
 
-Export conversations from all sources in a single command: local Windows, all WSL distributions, and optionally remote SSH hosts.
+Export conversations from all sources in a single command. Environment-aware: automatically detects whether running on Windows or WSL and exports from all available sources.
 
 ```bash
 claude-history export-all [WORKSPACE_PATTERN] [OUTPUT_DIR] [OPTIONS]
@@ -1040,18 +1040,23 @@ claude-history export-all [WORKSPACE_PATTERN] [OUTPUT_DIR] [OPTIONS]
 
 **Output:**
 - Organized workspace subdirectories with source-tagged filenames:
-  - Local Windows: `20251120_session.md` (no prefix)
+  - Local: `20251120_session.md` (no prefix)
   - WSL: `wsl_ubuntu_20251120_session.md`
+  - Windows (from WSL): `windows_username_20251120_session.md`
   - SSH Remote: `remote_hostname_20251120_session.md`
 - `index.md` manifest file with summary statistics
 
 **Features:**
-- Automatically discovers and exports from all WSL distributions with Claude Code
+- **Environment-aware**: Automatically detects Windows or WSL environment
+  - **On Windows**: Exports from local Windows + all WSL distributions + remote SSH hosts
+  - **On WSL**: Exports from local WSL + all Windows users + remote SSH hosts
 - Consolidates sessions from multiple sources into one location
 - Generates index.md with per-source and per-workspace statistics
 - Organized by workspace with source tags for easy analysis
 
 **Examples:**
+
+**On Windows:**
 ```powershell
 # Export all workspaces from local Windows + all WSL distributions
 python claude-history export-all
@@ -1064,13 +1069,25 @@ python claude-history export-all -r user@vm01 user@vm02
 
 # Custom output directory with splitting
 python claude-history export-all ./backups --split 500
+```
 
-# Minimal mode without index
-python claude-history export-all --minimal --no-index
+**On WSL:**
+```bash
+# Export all workspaces from local WSL + all Windows users
+./claude-history export-all
+
+# Filter by workspace pattern
+./claude-history export-all myproject
+
+# Include SSH remote hosts
+./claude-history export-all -r user@vm01 user@vm02
+
+# Custom output directory with minimal mode
+./claude-history export-all ./backups --minimal
 ```
 
 **Use Case:**
-Perfect for backing up all Claude Code conversations across multiple environments, or consolidating sessions for analysis across local Windows, WSL distributions, and remote development machines.
+Perfect for backing up all Claude Code conversations across multiple environments, or consolidating sessions for analysis across local systems (Windows/WSL), WSL distributions, Windows users, and remote development machines.
 
 ### `convert`
 

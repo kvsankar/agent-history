@@ -2243,7 +2243,7 @@ def cmd_fetch(args):
 
 
 def cmd_export_all(args):
-    """Export from all sources: local, WSL distributions, and optionally remotes."""
+    """Export from all sources: local, WSL distributions (Windows), Windows (WSL), and optionally remotes."""
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2252,8 +2252,12 @@ def cmd_export_all(args):
     total_sessions = 0
     total_errors = 0
 
-    # 1. Export from local Windows
-    print("[Local] Exporting from local Windows...")
+    # Detect environment
+    in_wsl = is_running_in_wsl()
+    local_label = "Local WSL" if in_wsl else "Local Windows"
+
+    # 1. Export from local (WSL or Windows depending on environment)
+    print(f"[Local] Exporting from {local_label}...")
     try:
         output_dir_str = str(output_dir)
         workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
@@ -2273,7 +2277,7 @@ def cmd_export_all(args):
         cmd_batch(LocalExportArgs())
 
         sources_processed.append({
-            'source': 'Local Windows',
+            'source': local_label,
             'sessions': len(local_sessions)
         })
         total_sessions += len(local_sessions)
@@ -2282,59 +2286,118 @@ def cmd_export_all(args):
         print(f"[ERROR] Local export failed: {e}\n")
         total_errors += 1
 
-    # 2. Export from all WSL distributions
-    print("[WSL] Checking WSL distributions...")
-    try:
-        wsl_distros = get_wsl_distributions()
-        claude_distros = [d for d in wsl_distros if d['has_claude']]
+    # 2a. Export from Windows (when running in WSL)
+    if in_wsl:
+        print("[Windows] Checking Windows users with Claude...")
+        try:
+            windows_users = get_windows_users_with_claude()
 
-        if claude_distros:
-            for distro in claude_distros:
-                print(f"  Exporting from WSL: {distro['name']}...")
-                try:
-                    output_dir_str = str(output_dir)
-                    workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
-                    distro_name = distro['name']
-                    class WslExportArgs:
-                        workspace = workspace_val
-                        output_dir = output_dir_str
-                        since = getattr(args, 'since', None)
-                        until = getattr(args, 'until', None)
-                        force = getattr(args, 'force', False)
-                        minimal = getattr(args, 'minimal', False)
-                        split = getattr(args, 'split', None)
-                        flat = False  # Always organized
-                        remote = f"wsl://{distro_name}"
-
-                    cmd_batch(WslExportArgs())
-
-                    # Count sessions (approximation)
-                    projects_dir = get_wsl_projects_dir(distro['name'])
-                    original_get_claude = get_claude_projects_dir
-                    def temp_override():
-                        return projects_dir
-                    current_module = sys.modules[__name__]
-                    setattr(current_module, 'get_claude_projects_dir', temp_override)
+            if windows_users:
+                for user in windows_users:
+                    print(f"  Exporting from Windows: {user['username']}...")
                     try:
-                        wsl_sessions = get_workspace_sessions(WslExportArgs.workspace, quiet=True)
-                        session_count = len(wsl_sessions)
-                    finally:
-                        setattr(current_module, 'get_claude_projects_dir', original_get_claude)
+                        output_dir_str = str(output_dir)
+                        workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
+                        username = user['username']
+                        class WindowsExportArgs:
+                            workspace = workspace_val
+                            output_dir = output_dir_str
+                            since = getattr(args, 'since', None)
+                            until = getattr(args, 'until', None)
+                            force = getattr(args, 'force', False)
+                            minimal = getattr(args, 'minimal', False)
+                            split = getattr(args, 'split', None)
+                            flat = False  # Always organized
+                            remote = f"windows://{username}"
 
-                    sources_processed.append({
-                        'source': f"WSL: {distro['name']}",
-                        'sessions': session_count
-                    })
-                    total_sessions += session_count
-                    print(f"  [OK] {distro['name']}: {session_count} sessions exported")
-                except Exception as e:
-                    print(f"  [ERROR] {distro['name']} failed: {e}")
-                    total_errors += 1
-            print()
-        else:
-            print("  No WSL distributions with Claude Code found\n")
-    except Exception as e:
-        print(f"[ERROR] WSL export failed: {e}\n")
+                        cmd_batch(WindowsExportArgs())
+
+                        # Count sessions
+                        projects_dir = get_windows_projects_dir(username)
+                        original_get_claude = get_claude_projects_dir
+                        def temp_override():
+                            return projects_dir
+                        current_module = sys.modules[__name__]
+                        setattr(current_module, 'get_claude_projects_dir', temp_override)
+                        try:
+                            win_sessions = get_workspace_sessions(WindowsExportArgs.workspace, quiet=True)
+                            # Filter out cached data
+                            native_sessions = [s for s in win_sessions
+                                             if not s['workspace'].startswith('remote_')
+                                             and not s['workspace'].startswith('wsl_')]
+                            session_count = len(native_sessions)
+                        finally:
+                            setattr(current_module, 'get_claude_projects_dir', original_get_claude)
+
+                        sources_processed.append({
+                            'source': f"Windows: {username}",
+                            'sessions': session_count
+                        })
+                        total_sessions += session_count
+                        print(f"  [OK] {username}: {session_count} sessions exported")
+                    except Exception as e:
+                        print(f"  [ERROR] {username} failed: {e}")
+                        total_errors += 1
+                print()
+            else:
+                print("  No Windows users with Claude Code found\n")
+        except Exception as e:
+            print(f"[ERROR] Windows export failed: {e}\n")
+
+    # 2b. Export from all WSL distributions (when running on Windows)
+    if not in_wsl:
+        print("[WSL] Checking WSL distributions...")
+        try:
+            wsl_distros = get_wsl_distributions()
+            claude_distros = [d for d in wsl_distros if d['has_claude']]
+
+            if claude_distros:
+                for distro in claude_distros:
+                    print(f"  Exporting from WSL: {distro['name']}...")
+                    try:
+                        output_dir_str = str(output_dir)
+                        workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
+                        distro_name = distro['name']
+                        class WslExportArgs:
+                            workspace = workspace_val
+                            output_dir = output_dir_str
+                            since = getattr(args, 'since', None)
+                            until = getattr(args, 'until', None)
+                            force = getattr(args, 'force', False)
+                            minimal = getattr(args, 'minimal', False)
+                            split = getattr(args, 'split', None)
+                            flat = False  # Always organized
+                            remote = f"wsl://{distro_name}"
+
+                        cmd_batch(WslExportArgs())
+
+                        # Count sessions (approximation)
+                        projects_dir = get_wsl_projects_dir(distro['name'])
+                        original_get_claude = get_claude_projects_dir
+                        def temp_override():
+                            return projects_dir
+                        current_module = sys.modules[__name__]
+                        setattr(current_module, 'get_claude_projects_dir', temp_override)
+                        try:
+                            wsl_sessions = get_workspace_sessions(WslExportArgs.workspace, quiet=True)
+                            session_count = len(wsl_sessions)
+                        finally:
+                            setattr(current_module, 'get_claude_projects_dir', original_get_claude)
+
+                        sources_processed.append({
+                            'source': f"WSL: {distro['name']}",
+                            'sessions': session_count
+                        })
+                        total_sessions += session_count
+                        print(f"  [OK] {distro['name']}: {session_count} sessions exported")
+                    except Exception as e:
+                        print(f"  [ERROR] {distro['name']} failed: {e}")
+                        total_errors += 1
+                print()
+            else:
+                print("  No WSL distributions with Claude Code found\n")
+        except Exception as e:
+            print(f"[ERROR] WSL export failed: {e}\n")
 
     # 3. Export from remote hosts (if specified)
     if hasattr(args, 'remotes') and args.remotes:
@@ -2406,10 +2469,12 @@ def generate_index_manifest(output_dir: Path, sources_info: list):
             sessions = list(item.glob("*.md"))
 
             # Group by source
-            sources = {'local': 0, 'wsl': 0, 'remote': 0}
+            sources = {'local': 0, 'wsl': 0, 'windows': 0, 'remote': 0}
             for session_file in sessions:
                 if session_file.name.startswith('wsl_'):
                     sources['wsl'] += 1
+                elif session_file.name.startswith('windows_'):
+                    sources['windows'] += 1
                 elif session_file.name.startswith('remote_'):
                     sources['remote'] += 1
                 else:
@@ -2448,6 +2513,8 @@ def generate_index_manifest(output_dir: Path, sources_info: list):
             lines.append(f"- **Local:** {ws_info['sources']['local']} sessions")
         if ws_info['sources']['wsl'] > 0:
             lines.append(f"- **WSL:** {ws_info['sources']['wsl']} sessions")
+        if ws_info['sources']['windows'] > 0:
+            lines.append(f"- **Windows:** {ws_info['sources']['windows']} sessions")
         if ws_info['sources']['remote'] > 0:
             lines.append(f"- **Remote:** {ws_info['sources']['remote']} sessions")
         lines.append("")
