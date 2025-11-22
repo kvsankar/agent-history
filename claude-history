@@ -797,9 +797,122 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
 # WSL Access
 # ============================================================================
 
+def is_running_in_wsl() -> bool:
+    """Detect if we're running inside WSL."""
+    try:
+        with open('/proc/version', 'r') as f:
+            return 'microsoft' in f.read().lower() or 'wsl' in f.read().lower()
+    except:
+        return False
+
+
+def get_windows_home_from_wsl(username: str = None):
+    """
+    Get Windows user home directory from WSL.
+
+    Args:
+        username: Optional Windows username. If None, uses USERPROFILE.
+
+    Returns:
+        Path to Windows home directory, or None if not found.
+    """
+    import subprocess
+
+    if username:
+        # Try specific username across all drives
+        mnt = Path('/mnt')
+        if mnt.exists():
+            for drive in sorted(mnt.iterdir()):
+                if drive.is_dir() and drive.name not in ['wsl', 'wslg']:
+                    user_path = drive / 'Users' / username
+                    if user_path.exists() and (user_path / '.claude' / 'projects').exists():
+                        return user_path
+        return None
+
+    # Primary approach: use Windows USERPROFILE
+    try:
+        result = subprocess.run(
+            ['cmd.exe', '/c', 'echo %USERPROFILE%'],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5
+        )
+        win_path = result.stdout.strip()
+
+        if win_path and win_path != '%USERPROFILE%':
+            # Convert Windows path to WSL path
+            result = subprocess.run(
+                ['wslpath', win_path],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5
+            )
+            wsl_path = Path(result.stdout.strip())
+
+            if wsl_path.exists() and (wsl_path / '.claude' / 'projects').exists():
+                return wsl_path
+    except:
+        pass
+
+    # Fallback: scan all drives
+    mnt = Path('/mnt')
+    if mnt.exists():
+        for drive in sorted(mnt.iterdir()):
+            if drive.is_dir() and drive.name not in ['wsl', 'wslg']:
+                users_dir = drive / 'Users'
+                if users_dir.exists():
+                    for user_dir in users_dir.iterdir():
+                        if user_dir.is_dir() and not user_dir.is_symlink():
+                            claude_dir = user_dir / '.claude' / 'projects'
+                            if claude_dir.exists():
+                                return user_dir
+
+    return None
+
+
+def get_windows_users_with_claude():
+    """
+    Get list of all Windows users with Claude Code installed.
+
+    Returns:
+        List of dicts with 'username', 'path', and 'workspace_count'.
+    """
+    results = []
+    mnt = Path('/mnt')
+
+    if not mnt.exists():
+        return results
+
+    for drive in sorted(mnt.iterdir()):
+        if drive.is_dir() and drive.name not in ['wsl', 'wslg']:
+            users_dir = drive / 'Users'
+            if users_dir.exists():
+                for user_dir in users_dir.iterdir():
+                    if user_dir.is_dir() and not user_dir.is_symlink():
+                        claude_dir = user_dir / '.claude' / 'projects'
+                        if claude_dir.exists():
+                            workspace_count = len([d for d in claude_dir.iterdir() if d.is_dir()])
+                            results.append({
+                                'username': user_dir.name,
+                                'drive': drive.name,
+                                'path': user_dir,
+                                'claude_dir': claude_dir,
+                                'workspace_count': workspace_count
+                            })
+
+    return results
+
+
 def is_wsl_remote(remote_spec: str) -> bool:
     """Check if remote spec is a WSL distribution (wsl://DistroName)."""
     return remote_spec.startswith('wsl://')
+
+
+def is_windows_remote(remote_spec: str) -> bool:
+    """Check if remote spec is Windows from WSL (windows or windows://username)."""
+    return remote_spec == 'windows' or remote_spec.startswith('windows://')
 
 
 def get_source_tag(remote_spec: str = None) -> str:
@@ -807,22 +920,31 @@ def get_source_tag(remote_spec: str = None) -> str:
     Generate source tag for filename/directory prefixes.
 
     Args:
-        remote_spec: Remote specification (None for local, 'wsl://Ubuntu', 'user@host')
+        remote_spec: Remote specification (None for local, 'wsl://Ubuntu', 'windows', 'user@host')
 
     Returns:
         Source tag string:
-        - '' for local Windows (no tag)
+        - '' for local (no tag)
         - 'wsl_{distro}_' for WSL
+        - 'windows_' for Windows from WSL
         - 'remote_{hostname}_' for SSH remotes
     """
     if not remote_spec:
-        # Local Windows - no tag
+        # Local - no tag
         return ''
 
     if is_wsl_remote(remote_spec):
         # WSL: wsl_ubuntu_
         distro = remote_spec[6:]  # Remove 'wsl://' prefix
         return f"wsl_{distro.lower()}_"
+
+    if is_windows_remote(remote_spec):
+        # Windows from WSL: windows_ or windows_username_
+        if remote_spec.startswith('windows://'):
+            username = remote_spec[10:]  # Remove 'windows://' prefix
+            return f"windows_{username.lower()}_"
+        else:
+            return "windows_"
 
     # SSH Remote: remote_hostname_
     # Extract hostname from user@hostname or hostname
@@ -984,6 +1106,43 @@ def get_wsl_projects_dir(distro_name: str) -> Path:
     except FileNotFoundError:
         sys.stderr.write(f"Error: WSL not found. Is it installed?\n")
         sys.exit(1)
+
+
+def get_windows_projects_dir(username: str = None) -> Path:
+    """Get Claude projects directory for Windows from WSL.
+
+    Args:
+        username: Optional Windows username. If None, auto-detects from USERPROFILE.
+
+    Returns:
+        Path to .claude/projects in Windows, accessible from WSL
+    """
+    if not is_running_in_wsl():
+        sys.stderr.write(f"Error: Not running in WSL. Windows access is only available from WSL.\n")
+        sys.exit(1)
+
+    windows_home = get_windows_home_from_wsl(username)
+
+    if not windows_home:
+        if username:
+            sys.stderr.write(f"Error: Could not find Windows user '{username}' with Claude Code\n")
+        else:
+            sys.stderr.write(f"Error: Could not find Windows home directory with Claude Code\n")
+        sys.stderr.write(f"\nTips:\n")
+        sys.stderr.write(f"  • Make sure Claude Code is installed on Windows\n")
+        sys.stderr.write(f"  • Try: ./claude-history --list-windows\n")
+        if not username:
+            sys.stderr.write(f"  • Or specify username: -r windows://username\n")
+        sys.exit(1)
+
+    projects_dir = windows_home / '.claude' / 'projects'
+
+    if not projects_dir.exists():
+        sys.stderr.write(f"Error: Claude projects directory not found in Windows\n")
+        sys.stderr.write(f"Expected path: {projects_dir}\n")
+        sys.exit(1)
+
+    return projects_dir
 
 
 # ============================================================================
@@ -1427,10 +1586,68 @@ def cmd_list(args):
         sys.stderr.write("Error: --since date must be before --until date\n")
         sys.exit(1)
 
-    # Handle WSL or remote listing
+    # Handle WSL, Windows, or remote listing
     if remote_host:
+        # Check if this is a Windows remote (windows or windows://username)
+        if is_windows_remote(remote_host):
+            # Extract username if specified (windows://username)
+            username = None
+            if remote_host.startswith('windows://'):
+                username = remote_host[10:]  # Remove 'windows://' prefix
+
+            # Get Windows projects directory (uses /mnt/c/Users/... path)
+            projects_dir = get_windows_projects_dir(username)
+
+            # Use local file operations on Windows filesystem
+            # Temporarily override get_claude_projects_dir to return Windows path
+            original_get_claude_projects_dir = get_claude_projects_dir
+
+            def get_windows_override():
+                return projects_dir
+
+            # Replace function temporarily
+            current_module = sys.modules[__name__]
+            setattr(current_module, 'get_claude_projects_dir', get_windows_override)
+
+            try:
+                # Use local session listing with Windows path
+                all_sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+
+                # Filter out remote caches to prevent showing cached data
+                # Only show native Windows workspaces, not cached remote/wsl data
+                sessions = [
+                    s for s in all_sessions
+                    if not s['workspace'].startswith('remote_') and not s['workspace'].startswith('wsl_')
+                ]
+
+                if not sessions:
+                    sys.stderr.write(f"Error: No native sessions found in Windows\n")
+                    sys.exit(1)
+
+                workspaces_only = getattr(args, 'workspaces_only', False)
+
+                if workspaces_only:
+                    # Just print workspace names
+                    workspaces = set()
+                    for session in sessions:
+                        workspaces.add(session['workspace_readable'])
+
+                    for ws in sorted(workspaces):
+                        print(ws)
+                else:
+                    # Print header and sessions
+                    print("WORKSPACE\tFILE\tMESSAGES\tDATE")
+                    for session in sessions:
+                        print(f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}")
+
+            finally:
+                # Restore original function
+                setattr(current_module, 'get_claude_projects_dir', original_get_claude_projects_dir)
+
+            return  # Done with Windows handling
+
         # Check if this is a WSL remote (wsl://DistroName)
-        if is_wsl_remote(remote_host):
+        elif is_wsl_remote(remote_host):
             # Extract distro name from wsl://DistroName
             distro_name = remote_host[6:]  # Remove 'wsl://' prefix
 
@@ -1689,10 +1906,51 @@ def cmd_batch(args):
 
     output_dir = Path(args.output_dir)
 
-    # Handle WSL or remote export
+    # Handle Windows, WSL, or remote export
     if remote_host:
+        # Check if this is a Windows remote (windows or windows://username)
+        if is_windows_remote(remote_host):
+            # Extract username if specified (windows://username)
+            username = None
+            if remote_host.startswith('windows://'):
+                username = remote_host[10:]  # Remove 'windows://' prefix
+
+            # Get Windows projects directory (uses /mnt/c/Users/... path)
+            projects_dir = get_windows_projects_dir(username)
+
+            # Use local file operations on Windows filesystem
+            # Temporarily override get_claude_projects_dir to return Windows path
+            original_get_claude_projects_dir = get_claude_projects_dir
+
+            def get_windows_override():
+                return projects_dir
+
+            # Replace function temporarily
+            current_module = sys.modules[__name__]
+            setattr(current_module, 'get_claude_projects_dir', get_windows_override)
+
+            try:
+                # Use local session listing with Windows path
+                all_sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+
+                # Filter out remote caches to prevent circular fetching
+                # Only export native Windows workspaces, not cached remote/wsl data
+                sessions = [
+                    s for s in all_sessions
+                    if not s['workspace'].startswith('remote_') and not s['workspace'].startswith('wsl_')
+                ]
+            finally:
+                # Restore original function
+                setattr(current_module, 'get_claude_projects_dir', original_get_claude_projects_dir)
+
+            if not sessions:
+                sys.stderr.write(f"Error: No native sessions found in Windows\n")
+                sys.exit(1)
+
+            # Continue with export processing below (same as local)
+
         # Check if this is a WSL remote (wsl://DistroName)
-        if is_wsl_remote(remote_host):
+        elif is_wsl_remote(remote_host):
             # Extract distro name from wsl://DistroName
             distro_name = remote_host[6:]  # Remove 'wsl://' prefix
 
@@ -1912,6 +2170,26 @@ def cmd_list_wsl(args):
     print("DISTRO\tUSERNAME\tPATH")
     for distro in claude_distros:
         print(f"{distro['name']}\t{distro['username']}\t{distro['path']}")
+
+
+def cmd_list_windows(args):
+    """List available Windows users with Claude Code workspaces (from WSL)."""
+    if not is_running_in_wsl():
+        sys.stderr.write("Error: --list-windows is only available from WSL.\n")
+        sys.stderr.write("To access Windows sessions from Windows, use the tool directly.\n")
+        sys.exit(1)
+
+    users = get_windows_users_with_claude()
+
+    if not users:
+        sys.stderr.write("No Windows users with Claude Code workspaces found.\n")
+        sys.stderr.write("Make sure Claude Code is installed on Windows.\n")
+        sys.exit(1)
+
+    # Print tab-separated output
+    print("USERNAME\tDRIVE\tWORKSPACES\tPATH")
+    for user in users:
+        print(f"{user['username']}\t{user['drive']}\t{user['workspace_count']}\t{user['path']}")
 
 
 def cmd_fetch(args):
@@ -2234,6 +2512,8 @@ EXAMPLES:
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('--list-wsl', action='store_true',
         help='List available WSL distributions with Claude Code workspaces')
+    parser.add_argument('--list-windows', action='store_true',
+        help='List available Windows users with Claude Code workspaces (from WSL)')
 
     # Create subparsers for commands
     subparsers = parser.add_subparsers(dest='command', help='Command to execute', required=False)
@@ -2371,6 +2651,13 @@ EXAMPLES:
         class ListWslArgs:
             pass
         cmd_list_wsl(ListWslArgs())
+        return
+
+    # Handle --list-windows flag (runs before subcommand check)
+    if hasattr(args, 'list_windows') and args.list_windows:
+        class ListWindowsArgs:
+            pass
+        cmd_list_windows(ListWindowsArgs())
         return
 
     # Dispatch to command handlers
