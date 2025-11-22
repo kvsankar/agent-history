@@ -982,40 +982,77 @@ python claude-history lss myproject -r wsl://Ubuntu
 
 ### `export`
 
-Export all sessions from a workspace to markdown.
+Export sessions from workspace(s) to markdown with flexible scope control.
 
 ```bash
-claude-sessions export [PATTERN|--this|--all] [OPTIONS]
+claude-history export [WORKSPACE] [OPTIONS]
 ```
 
+**Scope Flags (Orthogonal):**
+- `--as, --all-sources`: Export from ALL sources (local + WSL + Windows + remotes)
+- `--aw, --all-workspaces` (also `-a, --all`): Export ALL workspaces (default: current workspace)
+
 **Arguments:**
-- `PATTERN`: Workspace name pattern to match (optional)
-- `--this`: Use current project workspace
-- `--all`: Export all workspaces
+- `WORKSPACE`: Workspace name pattern (optional, defaults to current workspace)
+- `output_dir`: Output directory positional argument (optional)
 
 **Options:**
-- `--output-dir`, `-o DIR`: Output directory (default: `./claude-conversations`)
-- `--force`, `-f`: Force re-export all sessions, even if already exported (default: incremental)
+- `-o, --output DIR`: Output directory (overrides positional, default: `./claude-conversations`)
+- `-r, --remote HOST`: Add remote source - can be used multiple times
+  - SSH: `-r user@hostname`
+  - WSL: `-r wsl://DistroName`
+  - Windows: `-r windows`
+- `--force`, `-f`: Force re-export all sessions (default: incremental)
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
 - `--until DATE`: Only include sessions modified on or before this date (YYYY-MM-DD)
 - `--minimal`: Export minimal mode (conversation content only, no metadata)
 - `--split LINES`: Split long conversations into parts of approximately LINES per file
-- `-r HOST`, `--remote HOST`: Access remote or WSL workspaces
-  - SSH: `-r user@hostname`
-  - WSL: `-r wsl://DistroName`
+- `--flat`: Use flat directory structure (default: organized by workspace)
+
+**Orthogonal Design:**
+
+The export command uses independent flags that can be combined:
+
+| Command | Workspace Scope | Source Scope |
+|---------|----------------|--------------|
+| `export` | Current | Local only |
+| `export --as` | Current | All sources |
+| `export --aw` | All | Local only |
+| `export --as --aw` | All | All sources |
+
+**Examples:**
+
+```bash
+# Current workspace, local source (default)
+export
+
+# Current workspace, all sources (local + WSL + Windows + remotes)
+export --as
+
+# All workspaces, local source
+export --aw
+
+# All workspaces, all sources (equivalent to old export-all)
+export --as --aw
+
+# Specific workspace, all sources, custom output
+export myproject --as -o /tmp/backup
+
+# All workspaces matching pattern, all sources
+export astro --as --aw
+
+# Current workspace, all sources + specific SSH remote
+export --as -r user@vm01 -r user@vm02
+
+# With splitting and minimal mode
+export myproject --as --minimal --split 500 -o ./exports
+```
 
 **Output:**
 - Markdown files named `{timestamp}_{session-id}.md`
-- Conversion summary with statistics
-
-**WSL Example:**
-```powershell
-# Export from WSL workspace to Windows filesystem
-python claude-history export django-app -r wsl://Ubuntu ./my-exports
-
-# Export with minimal mode and splitting
-python claude-history export -r wsl://Ubuntu --minimal --split 500
-```
+- Source-tagged filenames: `wsl_ubuntu_`, `windows_`, `remote_hostname_`
+- Organized by workspace subdirectories (unless `--flat`)
+- Conversion summary with per-source statistics
 
 ### `export-all`
 

@@ -2706,20 +2706,35 @@ EXAMPLES:
         description='Export workspace or single file to markdown')
 
     parser_export.add_argument('target',
-        help='Workspace name or file.jsonl (detects file by .jsonl extension)')
+        nargs='?',
+        default='',
+        help='Workspace name or file.jsonl (optional, defaults to current workspace)')
 
     parser_export.add_argument('output_dir',
         nargs='?',
         default='./claude-conversations',
         help='Output directory (default: ./claude-conversations)')
 
-    parser_export.add_argument('-a', '--all',
+    parser_export.add_argument('-o', '--output',
+        metavar='DIR',
+        dest='output_override',
+        help='Output directory (overrides positional output_dir)')
+
+    parser_export.add_argument('-a', '--all', '--aw', '--all-workspaces',
         action='store_true',
-        help='Export all workspaces (target is ignored)')
+        dest='all_workspaces',
+        help='Export all workspaces (default: current workspace)')
+
+    parser_export.add_argument('--as', '--all-sources',
+        action='store_true',
+        dest='all_sources',
+        help='Export from all sources: local + WSL + Windows + remotes (default: local only)')
 
     parser_export.add_argument('-r', '--remote',
         metavar='HOST',
-        help='Export from remote host via SSH (user@hostname) or WSL (wsl://DistroName)')
+        action='append',
+        dest='remotes',
+        help='Export from remote host via SSH (user@hostname), WSL (wsl://DistroName), or Windows (windows) - can be used multiple times')
 
     parser_export.add_argument('--force',
         action='store_true',
@@ -2831,39 +2846,49 @@ EXAMPLES:
         cmd_list(LssArgs())
 
     elif args.command == 'export':
-        # Export - handle file vs workspace
-        if args.all:
-            # Export all workspaces
-            class ExportArgs:
-                workspace = ''  # empty means all
-                output_dir = args.output_dir
+        # Determine output directory (-o overrides positional)
+        final_output_dir = args.output_override if hasattr(args, 'output_override') and args.output_override else args.output_dir
+
+        # Determine workspace (default to current if empty)
+        target = args.target if args.target else get_current_workspace_pattern()
+
+        # Handle --all-sources flag (export from all sources)
+        if args.all_sources:
+            # Export from all sources (local + WSL + Windows + remotes)
+            final_workspace = '' if args.all_workspaces else target
+            final_remotes = args.remotes if hasattr(args, 'remotes') and args.remotes else None
+            class ExportAllArgs:
+                workspace = final_workspace
+                output_dir = final_output_dir
+                remotes = final_remotes
                 since = args.since
                 until = args.until
                 force = args.force
                 minimal = args.minimal
                 split = args.split
-                flat = args.flat
-                remote = getattr(args, 'remote', None)
-            cmd_batch(ExportArgs())
-        elif args.target.endswith('.jsonl'):
+            cmd_export_all(ExportAllArgs())
+        elif target.endswith('.jsonl'):
             # Single file export
+            final_remote = args.remotes[0] if hasattr(args, 'remotes') and args.remotes else None
             class ConvertArgs:
-                jsonl_file = args.target
+                jsonl_file = target
                 output = None  # Use default
-                remote = getattr(args, 'remote', None)
+                remote = final_remote
             cmd_convert(ConvertArgs())
         else:
-            # Workspace export
+            # Regular export - single source
+            final_workspace = '' if args.all_workspaces else target
+            final_remote = args.remotes[0] if hasattr(args, 'remotes') and args.remotes else None
             class ExportArgs:
-                workspace = args.target
-                output_dir = args.output_dir
+                workspace = final_workspace
+                output_dir = final_output_dir
                 since = args.since
                 until = args.until
                 force = args.force
                 minimal = args.minimal
                 split = args.split
                 flat = args.flat
-                remote = getattr(args, 'remote', None)
+                remote = final_remote
             cmd_batch(ExportArgs())
 
     elif args.command == 'export-all':

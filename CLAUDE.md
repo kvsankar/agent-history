@@ -30,12 +30,21 @@ chmod +x claude-history
 ./claude-history lss myproject              # specific workspace
 ./claude-history lss myproject -r user@server    # remote sessions
 
-# Export
-./claude-history export myproject           # export workspace
-./claude-history export -a                  # export all workspaces
+# Export (unified command with orthogonal scope flags)
+./claude-history export                     # current workspace, local source
+./claude-history export --as                # current workspace, all sources
+./claude-history export --aw                # all workspaces, local source
+./claude-history export --as --aw           # all workspaces, all sources
+
+./claude-history export myproject           # specific workspace, local
+./claude-history export myproject --as      # specific workspace, all sources
 ./claude-history export file.jsonl         # export single file
-./claude-history export myproject ./output  # custom output directory
-./claude-history export myproject -r user@server  # remote export
+
+./claude-history export -o /tmp/backup      # current workspace, custom output
+./claude-history export myproject -o ./out  # specific workspace, custom output
+
+./claude-history export -r user@server      # current workspace, specific remote
+./claude-history export --as -r user@vm01   # current workspace, all sources + SSH remote
 
 # Show version
 ./claude-history --version
@@ -49,11 +58,9 @@ chmod +x claude-history
 ./claude-history export myproject --split 500     # split long conversations
 ./claude-history export myproject --flat          # flat structure (no workspace subdirs)
 
-# Export from all sources (local + WSL + remote)
+# Backward compatible (export-all still supported)
 ./claude-history export-all                       # all sources, all workspaces
 ./claude-history export-all myproject             # filter by workspace pattern
-./claude-history export-all -r user@vm01          # include SSH remote
-./claude-history export-all ./backups --split 500 # custom dir + splitting
 
 # WSL access (Windows)
 ./claude-history --list-wsl                       # list WSL distributions
@@ -730,6 +737,22 @@ ssh -o BatchMode=yes user@hostname echo ok
 ```
 
 ## Recent Changes
+
+**Unified Export Interface (v1.2.0+)**
+- Consolidated `export` command with orthogonal scope flags
+- **`--as, --all-sources`**: Export from all sources (local + WSL + Windows + remotes)
+- **`--aw, --all-workspaces`** (also `-a, --all`): Export all workspaces
+- **`-o, --output DIR`**: Specify output directory (cleaner than positional argument)
+- **Orthogonal design**: Combine flags independently
+  - `export` - current workspace, local source (default)
+  - `export --as` - current workspace, all sources
+  - `export --aw` - all workspaces, local source
+  - `export --as --aw` - all workspaces, all sources
+- **Multiple remotes**: `-r` flag can now be used multiple times
+- **Backward compatible**: `export-all` command still supported
+- **Examples**:
+  - `export myproject --as -o /tmp/backup` - specific workspace, all sources, custom output
+  - `export --as --aw` - equivalent to old `export-all` behavior
 
 **Bug Fixes (v1.2.0)**
 - Fixed version output to display `claude-history` instead of `claude-sessions`
