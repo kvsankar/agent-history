@@ -772,15 +772,20 @@ ssh -o BatchMode=yes user@hostname echo ok
 - Environment-aware: automatically detects whether running on Windows or WSL
 - **On Windows**: Exports from local Windows + all WSL distributions + optional SSH remotes
 - **On WSL**: Exports from local WSL + all Windows users + optional SSH remotes
+- **Pre-flight validation**: Checks all sources are accessible before starting export
+  - Validates local, Windows, WSL, and SSH remote access
+  - Prints all errors clearly if any source is inaccessible
+  - Aborts immediately if validation fails (fail-fast behavior)
+  - Only proceeds with export if ALL sources are accessible
 - Automatically discovers and exports from all available sources
 - Generates `index.md` manifest with per-source and per-workspace statistics
 - Supports all standard export options: `--minimal`, `--split`, `--since`, `--until`, `--force`
-- Use `-r` flag to include additional SSH remote hosts
+- Use `-r` flag multiple times to include additional SSH remote hosts
 - Perfect for backups and multi-environment consolidation
 - Examples:
   - Windows: `./claude-history export-all myproject` (exports Windows + WSL + remote)
   - WSL: `./claude-history export-all myproject` (exports WSL + Windows + remote)
-  - With remote: `./claude-history export-all myproject -r user@vm01 user@vm02`
+  - With remote: `./claude-history export-all myproject -r user@vm01 -r user@vm02`
 
 **Cache Naming Consistency (v1.2.0+)**
 - Updated remote cache naming: `remote_{hostname}_{workspace}` (was `-remote-hostname-...`)

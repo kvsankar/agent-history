@@ -2242,8 +2242,86 @@ def cmd_fetch(args):
             sys.stderr.write(f"Error fetching {readable_name}: {error}\n")
 
 
+def validate_export_all_sources(args, in_wsl):
+    """
+    Validate all sources before starting export.
+    Returns (success, errors) where errors is a list of error messages.
+    """
+    errors = []
+
+    # 1. Check local access
+    try:
+        projects_dir = get_claude_projects_dir()
+        if not projects_dir.exists():
+            errors.append(f"❌ Local: Claude projects directory not found: {projects_dir}")
+    except Exception as e:
+        errors.append(f"❌ Local: {e}")
+
+    # 2. Check Windows users (when in WSL)
+    if in_wsl:
+        try:
+            windows_users = get_windows_users_with_claude()
+            if windows_users:
+                for user in windows_users:
+                    try:
+                        projects_dir = get_windows_projects_dir(user['username'])
+                        if not projects_dir or not projects_dir.exists():
+                            errors.append(f"❌ Windows ({user['username']}): Projects directory not accessible")
+                    except Exception as e:
+                        errors.append(f"❌ Windows ({user['username']}): {e}")
+        except Exception as e:
+            errors.append(f"❌ Windows: {e}")
+
+    # 3. Check WSL distributions (when on Windows)
+    if not in_wsl:
+        try:
+            wsl_distros = get_wsl_distributions()
+            claude_distros = [d for d in wsl_distros if d['has_claude']]
+            if claude_distros:
+                for distro in claude_distros:
+                    try:
+                        projects_dir = get_wsl_projects_dir(distro['name'])
+                        if not projects_dir or not projects_dir.exists():
+                            errors.append(f"❌ WSL ({distro['name']}): Projects directory not accessible")
+                    except Exception as e:
+                        errors.append(f"❌ WSL ({distro['name']}): {e}")
+        except Exception as e:
+            errors.append(f"❌ WSL: {e}")
+
+    # 4. Check SSH remotes (if specified)
+    if hasattr(args, 'remotes') and args.remotes:
+        for remote_host in args.remotes:
+            # Skip non-SSH remotes (windows)
+            if is_windows_remote(remote_host):
+                continue
+
+            # Check SSH connectivity
+            if not check_ssh_connection(remote_host):
+                errors.append(f"❌ Remote ({remote_host}): Cannot connect via passwordless SSH")
+
+    return (len(errors) == 0, errors)
+
+
 def cmd_export_all(args):
     """Export from all sources: local, WSL distributions (Windows), Windows (WSL), and optionally remotes."""
+    # Detect environment
+    in_wsl = is_running_in_wsl()
+    local_label = "Local WSL" if in_wsl else "Local Windows"
+
+    # Pre-flight validation: Check all sources before starting export
+    print("[Validation] Checking access to all sources...")
+    valid, errors = validate_export_all_sources(args, in_wsl)
+
+    if not valid:
+        print("\n❌ Export aborted: Cannot access all sources\n")
+        for error in errors:
+            print(error)
+        print("\nPlease fix the issues above and try again.")
+        sys.exit(1)
+
+    print("✅ All sources accessible\n")
+
+    # Create output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2251,10 +2329,6 @@ def cmd_export_all(args):
     sources_processed = []
     total_sessions = 0
     total_errors = 0
-
-    # Detect environment
-    in_wsl = is_running_in_wsl()
-    local_label = "Local WSL" if in_wsl else "Local Windows"
 
     # 1. Export from local (WSL or Windows depending on environment)
     print(f"[Local] Exporting from {local_label}...")
@@ -2687,10 +2761,11 @@ EXAMPLES:
         default='./claude-conversations',
         help='Output directory (default: ./claude-conversations)')
 
-    parser_export_all.add_argument('-r', '--remotes',
+    parser_export_all.add_argument('-r', '--remote',
         metavar='HOST',
-        nargs='+',
-        help='Additional remote hosts to include via SSH (user@hostname)')
+        action='append',
+        dest='remotes',
+        help='Additional remote host to include via SSH (user@hostname) - can be used multiple times')
 
     parser_export_all.add_argument('--force',
         action='store_true',

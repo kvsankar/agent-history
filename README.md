@@ -1050,6 +1050,11 @@ claude-history export-all [WORKSPACE_PATTERN] [OUTPUT_DIR] [OPTIONS]
 - **Environment-aware**: Automatically detects Windows or WSL environment
   - **On Windows**: Exports from local Windows + all WSL distributions + remote SSH hosts
   - **On WSL**: Exports from local WSL + all Windows users + remote SSH hosts
+- **Pre-flight validation**: Checks all sources before starting export
+  - Validates access to local, Windows, WSL, and SSH remotes
+  - Prints clear error messages for inaccessible sources
+  - Aborts immediately if any source fails validation
+  - Only proceeds when ALL sources are accessible
 - Consolidates sessions from multiple sources into one location
 - Generates index.md with per-source and per-workspace statistics
 - Organized by workspace with source tags for easy analysis
