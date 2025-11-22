@@ -2506,6 +2506,13 @@ EXAMPLES:
     claude-history lsw -r wsl://Ubuntu              # list WSL workspaces
     claude-history lss myproject -r wsl://Ubuntu    # list WSL sessions
     claude-history export myproject -r wsl://Ubuntu # export from WSL
+
+  Windows access (from WSL):
+    claude-history --list-windows                   # list Windows users with Claude
+    claude-history lsw -r windows                   # list Windows workspaces
+    claude-history lss myproject -r windows         # list Windows sessions
+    claude-history export myproject -r windows      # export from Windows
+    claude-history lss -r windows://username        # specify Windows user
         '''
     )
 

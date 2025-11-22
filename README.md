@@ -835,6 +835,48 @@ python claude-history export myproject -r wsl://Ubuntu
 - No SSH or rsync needed
 - Native Windows file operations
 
+### Windows Access (from WSL)
+
+Access conversations from Windows directly from WSL:
+
+```bash
+# List available Windows users with Claude
+./claude-history --list-windows
+
+# List Windows workspaces
+./claude-history lsw -r windows
+
+# Export from Windows
+./claude-history export myproject -r windows
+
+# Specify Windows user (if multiple users)
+./claude-history lss -r windows://username
+```
+
+**How it works:**
+- Auto-detects Windows home via USERPROFILE + wslpath
+- Works on any drive letter (C:, D:, E:, etc.)
+- Fallback: scans all `/mnt/*` drives for Windows users
+- Direct filesystem access via `/mnt/c/Users/...` paths
+- No SSH or rsync needed
+- Native file operations
+
+**Example output:**
+```bash
+$ ./claude-history --list-windows
+USERNAME    DRIVE    WORKSPACES    PATH
+alice       c        16            /mnt/c/Users/alice
+
+$ ./claude-history lsw -r windows
+/C//alice/projects/claude-sessions
+/C//alice/projects/astromcp
+...
+
+$ ./claude-history export claude-sessions -r windows
+/tmp/export/claude-sessions/windows_20251120_session.md
+...
+```
+
 ### Circular Fetching Prevention
 
 When syncing conversations between multiple machines, the tool prevents circular dependencies:
@@ -881,6 +923,29 @@ DISTRO          USERNAME        PATH
 Ubuntu          alice           /home/alice/.claude/projects
 Ubuntu-22.04    bob             /home/bob/.claude/projects
 ```
+
+### `--list-windows`
+
+List available Windows users with Claude Code workspaces (from WSL).
+
+```bash
+./claude-history --list-windows
+```
+
+**Output:**
+- Tab-separated table of Windows users
+- Username, drive letter, workspace count, and path
+- Only shows users with Claude Code installed
+
+**Example:**
+```bash
+$ ./claude-history --list-windows
+USERNAME    DRIVE    WORKSPACES    PATH
+alice       c        16            /mnt/c/Users/alice
+bob         d        8             /mnt/d/Users/bob
+```
+
+**Note:** This command is only available when running from WSL.
 
 ### `list` (alias: `lss`)
 

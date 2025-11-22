@@ -60,6 +60,13 @@ chmod +x claude-history
 ./claude-history lsw -r wsl://Ubuntu              # list WSL workspaces
 ./claude-history lss myproject -r wsl://Ubuntu    # list WSL sessions
 ./claude-history export myproject -r wsl://Ubuntu # export from WSL
+
+# Windows access (from WSL)
+./claude-history --list-windows                   # list Windows users with Claude
+./claude-history lsw -r windows                   # list Windows workspaces
+./claude-history lss myproject -r windows         # list Windows sessions
+./claude-history export myproject -r windows      # export from Windows
+./claude-history lss -r windows://username        # specify Windows user
 ```
 
 ### Testing Workflow
@@ -221,10 +228,10 @@ The file is organized into eight main sections:
 
 ```
 ~/.claude/projects/                     (Claude Code storage)
-    ├── C--sankar-projects-myapp/       (local Windows workspace)
+    ├── C--alice-projects-myapp/        (local Windows workspace)
     │   ├── <uuid>.jsonl                (main conversation)
     │   └── agent-<id>.jsonl            (task subagents)
-    ├── wsl_ubuntu_home-sankar-myapp/   (WSL workspace - if cached)
+    ├── wsl_ubuntu_home-alice-myapp/    (WSL workspace - if cached)
     └── remote_vm01_home-user-myapp/    (SSH remote - if cached)
                 ↓
     get_workspace_sessions()            (scan & filter)
@@ -730,6 +737,17 @@ ssh -o BatchMode=yes user@hostname echo ok
   - Previously split files were placed in root output directory
   - Now follows organized export structure with workspace subdirectories
 
+**Windows Access from WSL (v1.2.0+)**
+- Added Windows session access from WSL with `-r windows` syntax
+- Bidirectional access now complete: Windows ↔ WSL
+- Auto-detects Windows home via USERPROFILE + wslpath (works on any drive: C:, D:, etc.)
+- Fallback: scans all `/mnt/*` drives for Windows users with Claude Code
+- `--list-windows` command to discover Windows users with Claude workspaces
+- Full support for `lsw`, `lss`, and `export` commands with Windows remote
+- Optional username specification: `-r windows://username`
+- Source tag: `windows_` prefix for exported files
+- Example: `./claude-history lsw -r windows`, `./claude-history export myproject -r windows`
+
 **WSL Support (v1.2.0+)**
 - Added WSL (Windows Subsystem for Linux) integration with `wsl://DistroName` syntax
 - Direct filesystem access via `\\wsl.localhost\` paths (no SSH/rsync needed)
@@ -739,14 +757,14 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 **Organized Export Structure (v1.2.0+)**
 - **Now default**: Exports organized by workspace subdirectories with source-tagged filenames
-- Source prefixes: `wsl_{distro}_` for WSL, `remote_{hostname}_` for SSH, no prefix for local
-- Example: `exports/myproject/wsl_ubuntu_20251120_session.md`
+- Source prefixes: `wsl_{distro}_` for WSL, `windows_` for Windows (from WSL), `remote_{hostname}_` for SSH, no prefix for local
+- Example: `exports/myproject/wsl_ubuntu_20251120_session.md`, `exports/myproject/windows_20251120_session.md`
 - Use `--flat` flag for backward-compatible flat structure
 - Enables multi-source consolidation (local + WSL + remote sessions in one organized structure)
 
 **Windows Path Handling (v1.2.0+)**
 - Fixed current workspace detection for Windows paths (C:\ drive handling)
-- Windows workspace encoding: `C--sankar-projects-myapp` for `C:\sankar\projects\myapp`
+- Windows workspace encoding: `C--alice-projects-myapp` for `C:\alice\projects\myapp`
 - Consistent underscore separators for source tags throughout
 
 **Export-All Command (v1.2.0+)**
