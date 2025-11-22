@@ -2620,11 +2620,21 @@ EXAMPLES:
     claude-history lss myproject              # specific workspace
     claude-history lss myproject -r user@server    # remote sessions
 
-  Export:
-    claude-history export myproject           # export workspace
-    claude-history export -a                  # export all workspaces
+  Export (unified interface with orthogonal flags):
+    claude-history export                     # current workspace, local source
+    claude-history export --as                # current workspace, all sources
+    claude-history export --aw                # all workspaces, local source
+    claude-history export --as --aw           # all workspaces, all sources
+
+    claude-history export myproject           # specific workspace, local
+    claude-history export myproject --as      # specific workspace, all sources
     claude-history export file.jsonl         # export single file
-    claude-history export myproject -r user@server  # remote export
+
+    claude-history export -o /tmp/backup      # current workspace, custom output
+    claude-history export myproject -o ./out  # specific workspace, custom output
+
+    claude-history export -r user@server      # current workspace, specific remote
+    claude-history export --as -r user@vm01   # current workspace, all sources + SSH
 
   Date filtering:
     claude-history lss myproject --since 2025-11-01
@@ -2633,14 +2643,11 @@ EXAMPLES:
   Export options:
     claude-history export myproject --minimal       # minimal mode
     claude-history export myproject --split 500     # split long conversations
-    claude-history export myproject ./output        # custom output directory
     claude-history export myproject --flat          # flat structure (no subdirs)
 
-  Export from all sources:
-    claude-history export-all                       # local + all WSL distros
+  Backward compatible (export-all still supported):
+    claude-history export-all                       # all sources, all workspaces
     claude-history export-all myproject             # filter by workspace pattern
-    claude-history export-all -r vm01 vm02          # include SSH remotes
-    claude-history export-all ./backups --split 500 # custom dir + splitting
 
   WSL access (Windows):
     claude-history --list-wsl                       # list WSL distributions

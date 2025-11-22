@@ -770,7 +770,10 @@ Consolidate conversations from multiple development environments (local, WSL, re
 
 ```bash
 # Export all sources: local Windows + all WSL distributions + SSH remotes
-python claude-history export-all myproject -r user@vm01 user@vm02
+python claude-history export myproject --as -o ./backups -r user@vm01 -r user@vm02
+
+# Or all workspaces from all sources:
+python claude-history export --as --aw -o ./backups -r user@vm01 -r user@vm02
 
 # Perfect for:
 # - Backing up all Claude sessions across environments
@@ -1056,7 +1059,13 @@ export myproject --as --minimal --split 500 -o ./exports
 
 ### `export-all`
 
+> **Note:** This command is superseded by the unified `export` command with `--as --aw` flags.
+> See [`export`](#export) documentation for the preferred interface.
+> `export-all` is maintained for backward compatibility.
+
 Export conversations from all sources in a single command. Environment-aware: automatically detects whether running on Windows or WSL and exports from all available sources.
+
+**Preferred alternative:** `export --as --aw [WORKSPACE] -o [OUTPUT_DIR] [OPTIONS]`
 
 ```bash
 claude-history export-all [WORKSPACE_PATTERN] [OUTPUT_DIR] [OPTIONS]
@@ -1463,11 +1472,21 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ### Version 1.2.0 (Latest)
 
-**🎉 Export-All Command:**
-- Export from all sources in one command: local + all WSL distributions + SSH remotes
-- Automatic WSL distribution discovery
-- Generates index.md manifest with per-source statistics
-- Example: `python claude-history export-all myproject -r vm01 vm02`
+**🚀 Unified Export Interface:**
+- Orthogonal scope flags: `--as` (all sources) and `--aw` (all workspaces)
+- Clean `-o` flag for output directory (no more positional confusion)
+- Multiple `-r` remotes supported
+- Examples:
+  - `export --as` - current workspace from all sources
+  - `export --aw` - all workspaces from local only
+  - `export --as --aw` - all workspaces from all sources
+  - `export myproject --as -o /tmp/backup`
+
+**🎉 Export-All Command:** *(Superseded by unified export)*
+- Still supported for backward compatibility
+- Use `export --as --aw` for new scripts
+- Environment-aware: local + all WSL distributions + SSH remotes
+- Automatic discovery and consolidated index.md
 
 **🔒 Circular Fetching Prevention:**
 - Prevents infinite loops when machines fetch from each other
