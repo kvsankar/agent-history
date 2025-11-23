@@ -291,7 +291,9 @@ ver  # Windows command prompt/PowerShell
 | 7.1.1 | `./claude-history invalid-command` | Shows error + help text | ⬜ |
 | 7.1.2 | `./claude-history lss --since invalid-date` | Shows date format error | ⬜ |
 | 7.1.3 | `./claude-history lss --since 2025-12-31 --until 2025-01-01` | Shows "since > until" error | ⬜ |
-| 7.1.4 | `./claude-history export --split invalid` | Shows numeric error | ⬜ |
+| 7.1.4 | `./claude-history export --split invalid` | Shows "split value must be an integer" error | ⬜ |
+| 7.1.5 | `./claude-history export --split 0` | Shows "split value must be a positive integer" error | ⬜ |
+| 7.1.6 | `./claude-history export --split -100` | Shows "split value must be a positive integer" error | ⬜ |
 
 ### 7.2 Missing Resources
 

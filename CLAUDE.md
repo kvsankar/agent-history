@@ -755,6 +755,10 @@ ssh -o BatchMode=yes user@hostname echo ok
   - Removed `--list-wsl` and `--list-windows` (use `lsh --wsl` and `lsh --windows`)
   - Removed deprecated `-r wsl://` and `-r windows` syntax from documentation
   - Use semantic flags `--wsl` and `--windows` instead
+- Improved error handling:
+  - Added custom validation for `--split` argument with specific error messages
+  - Invalid values now show clear messages: "split value must be an integer" or "must be a positive integer"
+  - Better user experience with actionable error feedback
 
 **Semantic Flags for WSL/Windows Access (v1.2.0+)**
 - Added `lsh` (list hosts) command to discover all Claude Code installations

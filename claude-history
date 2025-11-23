@@ -38,6 +38,20 @@ def parse_date_string(date_str):
         return None
 
 
+def validate_split_lines(value):
+    """
+    Validate split lines argument for argparse.
+    Ensures value is a positive integer.
+    """
+    try:
+        ivalue = int(value)
+        if ivalue <= 0:
+            raise argparse.ArgumentTypeError(f"split value must be a positive integer, got '{value}'")
+        return ivalue
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"split value must be an integer, got '{value}'")
+
+
 # ============================================================================
 # JSONL Parsing and Markdown Conversion
 # ============================================================================
@@ -2900,7 +2914,7 @@ EXAMPLES:
 
     parser_export.add_argument('--split',
         metavar='LINES',
-        type=int,
+        type=validate_split_lines,
         help='Split long conversations into parts (e.g., --split 500)')
 
     parser_export.add_argument('--since',
@@ -2946,7 +2960,7 @@ EXAMPLES:
 
     parser_export_all.add_argument('--split',
         metavar='LINES',
-        type=int,
+        type=validate_split_lines,
         help='Split long conversations into parts (e.g., --split 500)')
 
     parser_export_all.add_argument('--since',
