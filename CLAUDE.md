@@ -83,12 +83,6 @@ chmod +x claude-history
 ./claude-history lsw --windows              # list Windows workspaces
 ./claude-history lss myproject --windows    # list Windows sessions
 ./claude-history export myproject --windows # export from Windows
-
-# Old syntax (deprecated but still works)
-./claude-history lsw -r wsl://Ubuntu        # deprecated: use --wsl Ubuntu
-./claude-history lsw -r windows             # deprecated: use --windows
-./claude-history --list-wsl                 # deprecated: use lsh --wsl
-./claude-history --list-windows             # deprecated: use lsh --windows
 ```
 
 ### Testing Workflow
@@ -753,7 +747,16 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ## Recent Changes
 
-**Semantic Flags for WSL/Windows Access (v1.3.0+)**
+**Windows Compatibility & Clean Syntax (v1.2.1)**
+- Fixed critical Unicode encoding bug preventing multi-source operations on Windows
+  - Added UTF-8 encoding configuration for Windows console
+  - `export --as` and `export-all` now work correctly on Windows
+- Removed deprecated flags for cleaner interface:
+  - Removed `--list-wsl` and `--list-windows` (use `lsh --wsl` and `lsh --windows`)
+  - Removed deprecated `-r wsl://` and `-r windows` syntax from documentation
+  - Use semantic flags `--wsl` and `--windows` instead
+
+**Semantic Flags for WSL/Windows Access (v1.2.0+)**
 - Added `lsh` (list hosts) command to discover all Claude Code installations
   - `lsh` - show all hosts (local + WSL + Windows)
   - `lsh --local` - only local installation
@@ -763,8 +766,6 @@ ssh -o BatchMode=yes user@hostname echo ok
   - `lsw --wsl` - list workspaces from WSL
   - `lss --windows` - list sessions from Windows
   - `export myproject --wsl` - export from WSL
-- Cleaner, more intuitive interface compared to `-r wsl://` syntax
-- **Deprecation notices**: Old syntax (`-r wsl://`, `-r windows`, `--list-wsl`, `--list-windows`) still works but shows warnings
 - **Conceptual separation**:
   - `--wsl` and `--windows` = same machine, different OS environments (local integration)
   - `-r user@host` = different machine over network (SSH remotes)
@@ -793,21 +794,19 @@ ssh -o BatchMode=yes user@hostname echo ok
   - Now follows organized export structure with workspace subdirectories
 
 **Windows Access from WSL (v1.2.0+)**
-- Added Windows session access from WSL with `-r windows` syntax
+- Added Windows session access from WSL
 - Bidirectional access now complete: Windows ↔ WSL
 - Auto-detects Windows home via USERPROFILE + wslpath (works on any drive: C:, D:, etc.)
 - Fallback: scans all `/mnt/*` drives for Windows users with Claude Code
-- `--list-windows` command to discover Windows users with Claude workspaces
-- Full support for `lsw`, `lss`, and `export` commands with Windows remote
-- Optional username specification: `-r windows://username`
+- Use `--windows` flag with `lsw`, `lss`, and `export` commands
+- Optional username specification: `--windows username`
 - Source tag: `windows_` prefix for exported files
-- Example: `./claude-history lsw -r windows`, `./claude-history export myproject -r windows`
+- Example: `./claude-history lsw --windows`, `./claude-history export myproject --windows`
 
 **WSL Support (v1.2.0+)**
-- Added WSL (Windows Subsystem for Linux) integration with `wsl://DistroName` syntax
+- Added WSL (Windows Subsystem for Linux) integration
 - Direct filesystem access via `\\wsl.localhost\` paths (no SSH/rsync needed)
-- `--list-wsl` command to discover WSL distributions with Claude workspaces
-- Full support for `lsw`, `lss`, and `export` commands with WSL
+- Use `--wsl` flag with `lsw`, `lss`, and `export` commands
 - Seamless access from Windows to WSL Claude sessions
 
 **Organized Export Structure (v1.2.0+)**

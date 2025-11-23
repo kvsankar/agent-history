@@ -46,33 +46,33 @@ python claude-history export
 # Output goes to ./claude-conversations/ by default
 ```
 
-## What's New in v1.3.0
+## What's New in v1.2.1
 
-**🆕 Semantic Flags for Cleaner Multi-Environment Access:**
+**🔧 Windows Compatibility & Clean Interface:**
+
+- Fixed critical Unicode encoding bug on Windows (multi-source operations now work!)
+- Removed deprecated flags for cleaner interface
+- All features working perfectly on Windows, WSL, and Linux
+
+**🆕 Multi-Environment Access:**
 
 ```bash
-# New lsh command - discover all Claude Code installations
+# Discover all Claude Code installations
 ./claude-history lsh                 # all hosts (local + WSL + Windows)
 ./claude-history lsh --wsl           # only WSL distributions
 ./claude-history lsh --windows       # only Windows users
 
-# New --wsl and --windows flags work across all commands
+# Access workspaces across environments
 ./claude-history lsw --wsl           # list WSL workspaces
 ./claude-history lss --windows       # list Windows sessions
 ./claude-history export proj --wsl   # export from WSL
 ```
 
-**Why the change?**
-- **Cleaner**: `--wsl` instead of `-r wsl://DistroName`
-- **More intuitive**: Semantic flags that clearly indicate local OS integration
+**Key Benefits:**
+- **Cleaner**: `--wsl` and `--windows` flags for local environment access
+- **Network SSH**: Use `-r user@host` for remote development machines
 - **Consistent**: Works across all commands (lsw, lss, export)
-- **Conceptual clarity**: `--wsl`/`--windows` = same machine different environments; `-r user@host` = network remotes
-
-**Old syntax still works** (with deprecation warnings):
-```bash
-./claude-history lsw -r wsl://Ubuntu   # ⚠️ deprecated, use: --wsl Ubuntu
-./claude-history lsw -r windows        # ⚠️ deprecated, use: --windows
-```
+- **Conceptual clarity**: WSL/Windows = same machine; SSH = network remotes
 
 See [CLAUDE.md](CLAUDE.md) for complete documentation.
 
@@ -859,13 +859,13 @@ Access conversations from WSL distributions directly from Windows:
 
 ```bash
 # List available WSL distributions
-python claude-history --list-wsl
+python claude-history lsh --wsl
 
 # List WSL workspaces
-python claude-history lsw -r wsl://Ubuntu
+python claude-history lsw --wsl Ubuntu
 
 # Export from WSL
-python claude-history export myproject -r wsl://Ubuntu
+python claude-history export myproject --wsl Ubuntu
 ```
 
 **How it works:**
@@ -975,28 +975,6 @@ WSL Distributions:
 
 # Filter by specific WSL distribution
 $ ./claude-history lsh --wsl Ubuntu
-```
-
-### `--list-wsl` (deprecated)
-
-> **⚠️ Deprecated:** Use `lsh --wsl` instead. This flag still works but will be removed in a future version.
-
-List available WSL distributions with Claude Code workspaces.
-
-```powershell
-python claude-history --list-wsl    # Old syntax
-python claude-history lsh --wsl     # New syntax (recommended)
-```
-
-### `--list-windows` (deprecated)
-
-> **⚠️ Deprecated:** Use `lsh --windows` instead. This flag still works but will be removed in a future version.
-
-List available Windows users with Claude Code workspaces (from WSL).
-
-```bash
-./claude-history --list-windows     # Old syntax
-./claude-history lsh --windows      # New syntax (recommended)
 ```
 
 ### `list` (alias: `lss`)
@@ -1220,19 +1198,13 @@ claude-sessions convert JSONL_FILE [--output FILE] [-r HOST]
 **Options:**
 - `--output`, `-o FILE`: Output markdown filename (default: same name with `.md`)
 - `--minimal`: Export minimal mode (conversation content only, no metadata)
-- `-r HOST`, `--remote HOST`: Access remote or WSL file
-  - SSH: `-r user@hostname`
-  - WSL: `-r wsl://DistroName`
+- `-r HOST`, `--remote HOST`: Access remote file via SSH (`user@hostname`)
+- `--wsl [DISTRO]`: Access WSL file (optionally specify distro)
+- `--windows [USER]`: Access Windows file (optionally specify user)
 
 **Output:**
 - Single markdown file
 - File size information
-
-**WSL Example:**
-```powershell
-# Convert a specific WSL session file
-python claude-history convert /home/alice/.claude/projects/-home-alice-django/session.jsonl -r wsl://Ubuntu
-```
 
 ## FAQ
 
@@ -1321,8 +1293,6 @@ python claude-history lss myproject --wsl Ubuntu
 ```
 
 This works without SSH or rsync setup - it uses direct filesystem access via Windows' built-in WSL integration.
-
-**Note:** The old `-r wsl://` syntax still works but is deprecated.
 
 ---
 
@@ -1547,7 +1517,23 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ## What's New
 
-### Version 1.3.0 (Latest)
+### Version 1.2.1 (Latest)
+
+**🔧 Windows Compatibility:**
+- Fixed critical Unicode encoding bug preventing multi-source operations on Windows
+- Added UTF-8 encoding configuration for Windows console
+- `export --as` and `export-all` now work correctly on Windows
+
+**🧹 Cleaner Interface:**
+- Removed deprecated `--list-wsl` and `--list-windows` flags
+- Updated documentation to show current syntax only
+- Simplified command interface
+
+**✅ Full Platform Support:**
+- All features working on Windows, WSL, and Linux
+- Multi-source operations work correctly across all platforms
+
+### Version 1.2.0
 
 **🆕 Semantic Flags for Multi-Environment Access:**
 - New `lsh` command to discover all Claude Code installations
@@ -1558,16 +1544,12 @@ MIT License - See [LICENSE](LICENSE) file for details.
   - `lsw --wsl` - list WSL workspaces
   - `lss --windows` - list Windows sessions
   - `export myproject --wsl` - export from WSL
-- **Cleaner syntax**: `--wsl` instead of `-r wsl://DistroName`
 - **Conceptual clarity**: WSL/Windows = same machine; `-r` = network SSH
-- **Backward compatible**: Old `-r wsl://` syntax still works with deprecation warnings
 
 **🔍 Improved Workspace Filtering:**
 - Automatically excludes cached remote/WSL workspaces
 - Prevents showing duplicate data in multi-environment setups
 - Better circular fetching prevention
-
-### Version 1.2.0
 
 **🚀 Unified Export Interface:**
 - Orthogonal scope flags: `--as` (all sources) and `--aw` (all workspaces)

@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 
 # ============================================================================
@@ -2685,6 +2685,18 @@ def generate_index_manifest(output_dir: Path, sources_info: list):
 # ============================================================================
 
 def main():
+    # Fix Unicode encoding for Windows console (emojis in output)
+    import sys
+    if sys.platform == 'win32':
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+            sys.stderr.reconfigure(encoding='utf-8')
+        except AttributeError:
+            # Python < 3.7 doesn't have reconfigure
+            import codecs
+            sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+            sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+
     parser = argparse.ArgumentParser(
         prog='claude-history',
         description='Browse and export Claude Code conversation history',
@@ -2732,25 +2744,21 @@ EXAMPLES:
     claude-history export-all myproject             # filter by workspace pattern
 
   WSL access (Windows):
-    claude-history --list-wsl                       # list WSL distributions
-    claude-history lsw -r wsl://Ubuntu              # list WSL workspaces
-    claude-history lss myproject -r wsl://Ubuntu    # list WSL sessions
-    claude-history export myproject -r wsl://Ubuntu # export from WSL
+    claude-history lsh --wsl                        # list WSL distributions
+    claude-history lsw --wsl                        # list WSL workspaces
+    claude-history lsw --wsl Ubuntu                 # list from specific distro
+    claude-history lss myproject --wsl              # list WSL sessions
+    claude-history export myproject --wsl           # export from WSL
 
   Windows access (from WSL):
-    claude-history --list-windows                   # list Windows users with Claude
-    claude-history lsw -r windows                   # list Windows workspaces
-    claude-history lss myproject -r windows         # list Windows sessions
-    claude-history export myproject -r windows      # export from Windows
-    claude-history lss -r windows://username        # specify Windows user
+    claude-history lsh --windows                    # list Windows users with Claude
+    claude-history lsw --windows                    # list Windows workspaces
+    claude-history lss myproject --windows          # list Windows sessions
+    claude-history export myproject --windows       # export from Windows
         '''
     )
 
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
-    parser.add_argument('--list-wsl', action='store_true',
-        help='List available WSL distributions with Claude Code workspaces')
-    parser.add_argument('--list-windows', action='store_true',
-        help='List available Windows users with Claude Code workspaces (from WSL)')
 
     # Create subparsers for commands
     subparsers = parser.add_subparsers(dest='command', help='Command to execute', required=False)
@@ -2766,7 +2774,7 @@ EXAMPLES:
 
     parser_lsw.add_argument('-r', '--remote',
         metavar='HOST',
-        help='List workspaces from remote host via SSH (user@hostname) or WSL (wsl://DistroName)')
+        help='List workspaces from remote host via SSH (user@hostname)')
 
     parser_lsw.add_argument('--wsl',
         nargs='?',
@@ -2791,7 +2799,7 @@ EXAMPLES:
 
     parser_lss.add_argument('-r', '--remote',
         metavar='HOST',
-        help='List sessions from remote host via SSH (user@hostname) or WSL (wsl://DistroName)')
+        help='List sessions from remote host via SSH (user@hostname)')
 
     parser_lss.add_argument('--wsl',
         nargs='?',
@@ -2868,7 +2876,7 @@ EXAMPLES:
         metavar='HOST',
         action='append',
         dest='remotes',
-        help='Export from remote host via SSH (user@hostname), WSL (wsl://DistroName), or Windows (windows) - can be used multiple times')
+        help='Export from remote host via SSH (user@hostname) - can be used multiple times')
 
     parser_export.add_argument('--wsl',
         nargs='?',
@@ -2963,13 +2971,6 @@ EXAMPLES:
         wsl_flag = getattr(args, 'wsl', None)
         windows_flag = getattr(args, 'windows', None)
 
-        # Check for deprecated -r wsl:// or -r windows syntax
-        if remote:
-            if remote.startswith('wsl://'):
-                sys.stderr.write("⚠️  Warning: '-r wsl://DistroName' is deprecated. Use '--wsl DistroName' instead.\n")
-            elif remote == 'windows':
-                sys.stderr.write("⚠️  Warning: '-r windows' is deprecated. Use '--windows' instead.\n")
-
         # Convert new flags to remote format for backward compatibility
         if wsl_flag is not None:
             if wsl_flag:  # Specific distro specified
@@ -2997,13 +2998,6 @@ EXAMPLES:
         wsl_flag = getattr(args, 'wsl', None)
         windows_flag = getattr(args, 'windows', None)
 
-        # Check for deprecated syntax in remotes list
-        for remote in remotes:
-            if remote.startswith('wsl://'):
-                sys.stderr.write("⚠️  Warning: '-r wsl://DistroName' is deprecated. Use '--wsl DistroName' instead.\n")
-            elif remote == 'windows':
-                sys.stderr.write("⚠️  Warning: '-r windows' is deprecated. Use '--windows' instead.\n")
-
         # Add --wsl to remotes list
         if wsl_flag is not None:
             if wsl_flag:  # Specific distro
@@ -3023,20 +3017,6 @@ EXAMPLES:
                 remotes.append('windows')
 
         return remotes if remotes else None
-
-    # Handle --list-wsl flag (runs before subcommand check)
-    if hasattr(args, 'list_wsl') and args.list_wsl:
-        class ListWslArgs:
-            pass
-        cmd_list_wsl(ListWslArgs())
-        return
-
-    # Handle --list-windows flag (runs before subcommand check)
-    if hasattr(args, 'list_windows') and args.list_windows:
-        class ListWindowsArgs:
-            pass
-        cmd_list_windows(ListWindowsArgs())
-        return
 
     # Dispatch to command handlers
     if args.command == 'lsw':

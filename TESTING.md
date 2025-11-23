@@ -33,7 +33,7 @@ ver  # Windows command prompt/PowerShell
 ### Section 5: SSH Remote Operations (All Environments)
 ### Section 6: Multi-Source Operations (All Environments)
 ### Section 7: Error Handling & Edge Cases
-### Section 8: Deprecated Syntax (Backward Compatibility)
+### Section 8: Special Features
 
 ---
 
@@ -329,55 +329,32 @@ ver  # Windows command prompt/PowerShell
 
 ---
 
-## Section 8: Deprecated Syntax (Backward Compatibility)
+## Section 8: Special Features
 
-### 8.1 Deprecated Flags (Should Show Warnings)
-
-| Test ID | Command | Expected Result | Status |
-|---------|---------|----------------|--------|
-| 8.1.1 | `python claude-history --list-wsl` | Shows deprecation warning + lists WSL | ⬜ |
-| 8.1.2 | `./claude-history --list-windows` | Shows deprecation warning + lists Windows | ⬜ |
-| 8.1.3 | `python claude-history lsw -r wsl://<distro>` | Shows deprecation warning + works | ⬜ |
-| 8.1.4 | `./claude-history lsw -r windows` | Shows deprecation warning + works | ⬜ |
-| 8.1.5 | `./claude-history lss -r wsl://<distro>` | Shows deprecation warning + works | ⬜ |
-| 8.1.6 | `./claude-history export -r windows` | Shows deprecation warning + works | ⬜ |
-
-### 8.2 Deprecated export-all Command
+### 8.1 Conversation Splitting
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 8.2.1 | `./claude-history export-all` | Works (equivalent to `export --as --aw`) | ⬜ |
-| 8.2.2 | `./claude-history export-all <workspace>` | Works with workspace filter | ⬜ |
-| 8.2.3 | `./claude-history export-all -r <user>@<host>` | Works with remote | ⬜ |
+| 8.1.1 | `./claude-history export --split 100` | Creates part1, part2, etc. files | ⬜ |
+| 8.1.2 | Verify split files | Each part has navigation footer | ⬜ |
+| 8.1.3 | Verify split files | Parts have message range info | ⬜ |
+| 8.1.4 | Short conversation with --split | Single file (no splitting needed) | ⬜ |
 
----
-
-## Section 9: Special Features
-
-### 9.1 Conversation Splitting
+### 8.2 Minimal Export Mode
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 9.1.1 | `./claude-history export --split 100` | Creates part1, part2, etc. files | ⬜ |
-| 9.1.2 | Verify split files | Each part has navigation footer | ⬜ |
-| 9.1.3 | Verify split files | Parts have message range info | ⬜ |
-| 9.1.4 | Short conversation with --split | Single file (no splitting needed) | ⬜ |
+| 8.2.1 | `./claude-history export --minimal` | Output has no metadata sections | ⬜ |
+| 8.2.2 | `./claude-history export --minimal` | Output has no HTML anchors | ⬜ |
+| 8.2.3 | `./claude-history export --minimal` | Output has conversation content | ⬜ |
 
-### 9.2 Minimal Export Mode
-
-| Test ID | Command | Expected Result | Status |
-|---------|---------|----------------|--------|
-| 9.2.1 | `./claude-history export --minimal` | Output has no metadata sections | ⬜ |
-| 9.2.2 | `./claude-history export --minimal` | Output has no HTML anchors | ⬜ |
-| 9.2.3 | `./claude-history export --minimal` | Output has conversation content | ⬜ |
-
-### 9.3 Agent Conversation Detection
+### 8.3 Agent Conversation Detection
 
 | Test ID | Scenario | Expected Result | Status |
-|---------|----------|----------------|--------|
-| 9.3.1 | Export agent file (agent-*.jsonl) | Title says "Agent" | ⬜ |
-| 9.3.2 | Export agent file | Has warning notice in header | ⬜ |
-| 9.3.3 | Export agent file | Shows parent session ID | ⬜ |
+|---------|----------|--------|
+| 8.3.1 | Export agent file (agent-*.jsonl) | Title says "Agent" | ⬜ |
+| 8.3.2 | Export agent file | Has warning notice in header | ⬜ |
+| 8.3.3 | Export agent file | Shows parent session ID | ⬜ |
 
 ---
 
