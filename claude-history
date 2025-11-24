@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 
 # ============================================================================
@@ -1807,12 +1807,17 @@ def cmd_list(args):
         # Local listing
         sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
 
-        if not sessions:
-            sys.stderr.write(f"Error: No sessions found matching '{args.workspace}'\n")
-            sys.exit(1)
-
         # Check if workspaces-only mode
         workspaces_only = getattr(args, 'workspaces_only', False)
+
+        if not sessions:
+            # For workspaces listing (lsw), silently return empty (no error)
+            # For sessions listing (lss), show error message
+            if not workspaces_only:
+                sys.stderr.write(f"Error: No sessions found matching '{args.workspace}'\n")
+                sys.exit(1)
+            # For lsw with no matches, just exit successfully with no output
+            return
 
         if workspaces_only:
             # Just print workspace names, one per line

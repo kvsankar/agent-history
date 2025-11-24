@@ -28,3 +28,10 @@ Thumbs.db
 
 # Output directories (user-generated)
 claude-conversations/
+
+# Test directories
+temptest-*/
+test-*/
+
+# Claude Code session data
+.claude/

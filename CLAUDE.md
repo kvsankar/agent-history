@@ -747,6 +747,12 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ## Recent Changes
 
+**Bug Fix: lsw Silent Failure (v1.2.2)**
+- Fixed `lsw` (list workspaces) command to return empty output instead of error when no workspaces match pattern
+- Behavior now consistent with UNIX philosophy (silent success vs noisy failure)
+- `lss` (list sessions) still shows error for nonexistent workspaces
+- Improved error message logic to check workspace-only mode before displaying errors
+
 **Windows Compatibility & Clean Syntax (v1.2.1)**
 - Fixed critical Unicode encoding bug preventing multi-source operations on Windows
   - Added UTF-8 encoding configuration for Windows console
