@@ -728,7 +728,7 @@ def get_current_workspace_pattern():
     return workspace_pattern
 
 
-def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_date=None, until_date=None):
+def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_date=None, until_date=None, include_cached: bool = False):
     """Find all sessions in workspaces matching the pattern.
 
     Args:
@@ -736,6 +736,7 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
         quiet: Suppress output if True
         since_date: Only include sessions modified on or after this date (datetime object)
         until_date: Only include sessions modified on or before this date (datetime object)
+        include_cached: If True, include remote_* and wsl_* cached workspaces (default: False)
     """
     projects_dir = get_claude_projects_dir()
     sessions = []
@@ -768,10 +769,12 @@ def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_da
 
         # Skip cached remote/WSL workspaces to prevent circular fetching
         # These are already fetched data from other sources
+        # Unless include_cached is True (for exporting from cached remote data)
         dir_name = workspace_dir.name
-        if (dir_name.startswith('remote_') or dir_name.startswith('wsl_') or
-            dir_name.startswith('-remote-') or dir_name.startswith('--wsl-')):
-            continue
+        if not include_cached:
+            if (dir_name.startswith('remote_') or dir_name.startswith('wsl_') or
+                dir_name.startswith('-remote-') or dir_name.startswith('--wsl-')):
+                continue
 
         # Check if workspace path matches our pattern
         if match_all or workspace_pattern in workspace_dir.name:
@@ -2724,12 +2727,19 @@ def cmd_batch(args):
                 all_sessions = []
                 seen_files = set()
 
-                for pattern in (patterns if patterns and patterns != [''] else ['']):
-                    cached_pattern = cached_prefix
-                    if pattern and pattern not in ('', '*', 'all'):
-                        cached_pattern += pattern
-                    pattern_sessions = get_workspace_sessions(cached_pattern, quiet=True, since_date=since_date, until_date=until_date)
-                    for session in pattern_sessions:
+                # Get all sessions from remote cache (prefix matches all cached workspaces)
+                # Use include_cached=True to access remote_* directories
+                all_cached_sessions = get_workspace_sessions(cached_prefix, quiet=True, since_date=since_date, until_date=until_date, include_cached=True)
+
+                # Filter by patterns if specified (pattern matches workspace name)
+                for session in all_cached_sessions:
+                    ws_name = session['workspace']
+                    if not patterns or patterns == [''] or patterns == ['*'] or patterns == ['all']:
+                        matches = True
+                    else:
+                        matches = any(pattern in ws_name for pattern in patterns if pattern)
+
+                    if matches:
                         file_key = str(session['file'])
                         if file_key not in seen_files:
                             seen_files.add(file_key)
