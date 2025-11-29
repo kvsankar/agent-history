@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.3.3"
+__version__ = "1.3.4"
 
 
 # ============================================================================
@@ -2593,8 +2593,21 @@ def cmd_batch(args):
             setattr(current_module, 'get_claude_projects_dir', get_windows_override)
 
             try:
-                # Use local session listing with Windows path
-                all_sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+                # Get patterns list (multiple patterns support)
+                patterns = getattr(args, 'patterns', None)
+                if patterns is None:
+                    patterns = [getattr(args, 'workspace', '')]
+
+                # Collect sessions from all patterns with deduplication
+                all_sessions = []
+                seen_files = set()
+                for pattern in (patterns if patterns else ['']):
+                    pattern_sessions = get_workspace_sessions(pattern, quiet=True, since_date=since_date, until_date=until_date)
+                    for session in pattern_sessions:
+                        file_key = str(session['file'])
+                        if file_key not in seen_files:
+                            seen_files.add(file_key)
+                            all_sessions.append(session)
 
                 # Filter out remote caches to prevent circular fetching
                 # Only export native Windows workspaces, not cached remote/wsl data
@@ -2632,8 +2645,21 @@ def cmd_batch(args):
             setattr(current_module, 'get_claude_projects_dir', get_wsl_override)
 
             try:
-                # Use local session listing with WSL path
-                all_sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+                # Get patterns list (multiple patterns support)
+                patterns = getattr(args, 'patterns', None)
+                if patterns is None:
+                    patterns = [getattr(args, 'workspace', '')]
+
+                # Collect sessions from all patterns with deduplication
+                all_sessions = []
+                seen_files = set()
+                for pattern in (patterns if patterns else ['']):
+                    pattern_sessions = get_workspace_sessions(pattern, quiet=True, since_date=since_date, until_date=until_date)
+                    for session in pattern_sessions:
+                        file_key = str(session['file'])
+                        if file_key not in seen_files:
+                            seen_files.add(file_key)
+                            all_sessions.append(session)
 
                 # Filter out remote caches to prevent circular fetching
                 # Only export native WSL workspaces, not cached remote/wsl data
@@ -2658,48 +2684,87 @@ def cmd_batch(args):
                 sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
                 sys.exit(1)
 
-            # Get remote workspaces
-            remote_workspaces = list_remote_workspaces(remote_host)
+            # Get patterns list (multiple patterns support)
+            patterns = getattr(args, 'patterns', None)
+            if patterns is None:
+                patterns = [getattr(args, 'workspace', '')]
 
-            if not remote_workspaces:
+            # Get remote workspaces
+            all_remote_workspaces = list_remote_workspaces(remote_host)
+
+            if not all_remote_workspaces:
                 sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
                 sys.exit(1)
 
-            # Filter by pattern
-            workspace_pattern = args.workspace
-            if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
-                remote_workspaces = [ws for ws in remote_workspaces if workspace_pattern in ws]
+            # Filter by patterns (any pattern matches) - be lenient
+            def matches_any_pattern(ws_name, patterns_list):
+                if not patterns_list or patterns_list == [''] or patterns_list == ['*'] or patterns_list == ['all']:
+                    return True
+                return any(pattern in ws_name for pattern in patterns_list if pattern)
+
+            remote_workspaces = [ws for ws in all_remote_workspaces if matches_any_pattern(ws, patterns)]
 
             if not remote_workspaces:
-                sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
-                sys.exit(1)
+                # Be lenient - just return empty sessions, don't exit
+                sessions = []
+            else:
+                # Fetch each workspace to local cache (silent)
+                local_projects_dir = get_claude_projects_dir()
+                hostname = get_remote_hostname(remote_host)
 
-            # Fetch each workspace to local cache (silent)
-            local_projects_dir = get_claude_projects_dir()
-            hostname = get_remote_hostname(remote_host)
+                for remote_workspace in remote_workspaces:
+                    result = fetch_workspace_files(remote_host, remote_workspace,
+                                                  local_projects_dir, hostname)
 
-            for remote_workspace in remote_workspaces:
-                result = fetch_workspace_files(remote_host, remote_workspace,
-                                              local_projects_dir, hostname)
+                    if not result['success']:
+                        sys.stderr.write(f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n")
 
-                if not result['success']:
-                    sys.stderr.write(f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n")
+                # Now export from cached location with deduplication
+                cached_prefix = f"remote_{hostname}_"
+                all_sessions = []
+                seen_files = set()
 
-            # Now export from cached location
-            # New naming: remote_hostname_
-            cached_pattern = f"remote_{hostname}_"
-            if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
-                cached_pattern += workspace_pattern
+                for pattern in (patterns if patterns and patterns != [''] else ['']):
+                    cached_pattern = cached_prefix
+                    if pattern and pattern not in ('', '*', 'all'):
+                        cached_pattern += pattern
+                    pattern_sessions = get_workspace_sessions(cached_pattern, quiet=True, since_date=since_date, until_date=until_date)
+                    for session in pattern_sessions:
+                        file_key = str(session['file'])
+                        if file_key not in seen_files:
+                            seen_files.add(file_key)
+                            all_sessions.append(session)
 
-            sessions = get_workspace_sessions(cached_pattern, quiet=True, since_date=since_date, until_date=until_date)
+                sessions = all_sessions
 
     else:
-        # Local export
-        sessions = get_workspace_sessions(args.workspace, quiet=True, since_date=since_date, until_date=until_date)
+        # Local export - handle multiple patterns
+        patterns = getattr(args, 'patterns', None)
+        if patterns is None:
+            patterns = [getattr(args, 'workspace', '')]
+
+        # Collect sessions from all patterns with deduplication
+        all_sessions = []
+        seen_files = set()
+        for pattern in (patterns if patterns else ['']):
+            pattern_sessions = get_workspace_sessions(pattern, quiet=True, since_date=since_date, until_date=until_date)
+            for session in pattern_sessions:
+                file_key = str(session['file'])
+                if file_key not in seen_files:
+                    seen_files.add(file_key)
+                    all_sessions.append(session)
+
+        sessions = all_sessions
 
     if not sessions:
-        sys.stderr.write(f"Error: No sessions found matching '{args.workspace}'\n")
-        sys.exit(1)
+        # Check if we should be lenient (called from export-all)
+        lenient = getattr(args, 'lenient', False)
+        if not lenient:
+            pattern_str = ', '.join(patterns) if patterns and len(patterns) > 1 else (patterns[0] if patterns else '')
+            sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
+            sys.exit(1)
+        # In lenient mode, just return without error
+        return
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3215,6 +3280,13 @@ def cmd_export_all(args):
     in_wsl = is_running_in_wsl()
     local_label = "Local WSL" if in_wsl else "Local Windows"
 
+    # Get patterns list (multiple patterns support)
+    patterns = getattr(args, 'patterns', None)
+    if patterns is None:
+        # Backward compat: use single workspace
+        ws = getattr(args, 'workspace', '')
+        patterns = [ws] if ws else []
+
     # Pre-flight validation: Check all sources before starting export
     print("[Validation] Checking access to all sources...")
     valid, errors = validate_export_all_sources(args, in_wsl)
@@ -3237,13 +3309,24 @@ def cmd_export_all(args):
     total_sessions = 0
     total_errors = 0
 
+    # Helper to get sessions for multiple patterns with deduplication
+    def get_sessions_for_patterns(patterns_list, quiet=True, since_date=None, until_date=None):
+        all_sessions = []
+        seen_files = set()
+        for pattern in (patterns_list if patterns_list else ['']):
+            sessions = get_workspace_sessions(pattern, quiet=quiet, since_date=since_date, until_date=until_date)
+            for session in sessions:
+                file_key = str(session['file'])
+                if file_key not in seen_files:
+                    seen_files.add(file_key)
+                    all_sessions.append(session)
+        return all_sessions
+
     # 1. Export from local (WSL or Windows depending on environment)
     print(f"[Local] Exporting from {local_label}...")
     try:
         output_dir_str = str(output_dir)
-        workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
         class LocalExportArgs:
-            workspace = workspace_val
             output_dir = output_dir_str
             since = getattr(args, 'since', None)
             until = getattr(args, 'until', None)
@@ -3252,17 +3335,22 @@ def cmd_export_all(args):
             split = getattr(args, 'split', None)
             flat = False  # Always organized for export-all
             remote = None  # Local
+            lenient = True  # Don't fail on empty - export-all handles this
+        LocalExportArgs.patterns = patterns
+        LocalExportArgs.workspace = patterns[0] if patterns else ''  # Backward compat
 
         # Get local sessions count before export
-        local_sessions = get_workspace_sessions(LocalExportArgs.workspace, quiet=True)
-        cmd_batch(LocalExportArgs())
-
-        sources_processed.append({
-            'source': local_label,
-            'sessions': len(local_sessions)
-        })
-        total_sessions += len(local_sessions)
-        print(f"[OK] Local: {len(local_sessions)} sessions exported\n")
+        local_sessions = get_sessions_for_patterns(patterns, quiet=True)
+        if local_sessions:
+            cmd_batch(LocalExportArgs())
+            sources_processed.append({
+                'source': local_label,
+                'sessions': len(local_sessions)
+            })
+            total_sessions += len(local_sessions)
+            print(f"[OK] Local: {len(local_sessions)} sessions exported\n")
+        else:
+            print(f"[OK] Local: No matching sessions\n")
     except Exception as e:
         print(f"[ERROR] Local export failed: {e}\n")
         total_errors += 1
@@ -3278,10 +3366,8 @@ def cmd_export_all(args):
                     print(f"  Exporting from Windows: {user['username']}...")
                     try:
                         output_dir_str = str(output_dir)
-                        workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
                         username = user['username']
                         class WindowsExportArgs:
-                            workspace = workspace_val
                             output_dir = output_dir_str
                             since = getattr(args, 'since', None)
                             until = getattr(args, 'until', None)
@@ -3290,10 +3376,11 @@ def cmd_export_all(args):
                             split = getattr(args, 'split', None)
                             flat = False  # Always organized
                             remote = f"windows://{username}"
+                            lenient = True  # Don't fail on empty
+                        WindowsExportArgs.patterns = patterns
+                        WindowsExportArgs.workspace = patterns[0] if patterns else ''
 
-                        cmd_batch(WindowsExportArgs())
-
-                        # Count sessions
+                        # Count sessions first
                         projects_dir = get_windows_projects_dir(username)
                         original_get_claude = get_claude_projects_dir
                         def temp_override():
@@ -3301,7 +3388,7 @@ def cmd_export_all(args):
                         current_module = sys.modules[__name__]
                         setattr(current_module, 'get_claude_projects_dir', temp_override)
                         try:
-                            win_sessions = get_workspace_sessions(WindowsExportArgs.workspace, quiet=True)
+                            win_sessions = get_sessions_for_patterns(patterns, quiet=True)
                             # Filter out cached data
                             native_sessions = [s for s in win_sessions
                                              if not s['workspace'].startswith('remote_')
@@ -3310,12 +3397,16 @@ def cmd_export_all(args):
                         finally:
                             setattr(current_module, 'get_claude_projects_dir', original_get_claude)
 
-                        sources_processed.append({
-                            'source': f"Windows: {username}",
-                            'sessions': session_count
-                        })
-                        total_sessions += session_count
-                        print(f"  [OK] {username}: {session_count} sessions exported")
+                        if session_count > 0:
+                            cmd_batch(WindowsExportArgs())
+                            sources_processed.append({
+                                'source': f"Windows: {username}",
+                                'sessions': session_count
+                            })
+                            total_sessions += session_count
+                            print(f"  [OK] {username}: {session_count} sessions exported")
+                        else:
+                            print(f"  [OK] {username}: No matching sessions")
                     except Exception as e:
                         print(f"  [ERROR] {username} failed: {e}")
                         total_errors += 1
@@ -3337,10 +3428,8 @@ def cmd_export_all(args):
                     print(f"  Exporting from WSL: {distro['name']}...")
                     try:
                         output_dir_str = str(output_dir)
-                        workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
                         distro_name = distro['name']
                         class WslExportArgs:
-                            workspace = workspace_val
                             output_dir = output_dir_str
                             since = getattr(args, 'since', None)
                             until = getattr(args, 'until', None)
@@ -3349,10 +3438,11 @@ def cmd_export_all(args):
                             split = getattr(args, 'split', None)
                             flat = False  # Always organized
                             remote = f"wsl://{distro_name}"
+                            lenient = True  # Don't fail on empty
+                        WslExportArgs.patterns = patterns
+                        WslExportArgs.workspace = patterns[0] if patterns else ''
 
-                        cmd_batch(WslExportArgs())
-
-                        # Count sessions (approximation)
+                        # Count sessions first
                         projects_dir = get_wsl_projects_dir(distro['name'])
                         original_get_claude = get_claude_projects_dir
                         def temp_override():
@@ -3360,17 +3450,21 @@ def cmd_export_all(args):
                         current_module = sys.modules[__name__]
                         setattr(current_module, 'get_claude_projects_dir', temp_override)
                         try:
-                            wsl_sessions = get_workspace_sessions(WslExportArgs.workspace, quiet=True)
+                            wsl_sessions = get_sessions_for_patterns(patterns, quiet=True)
                             session_count = len(wsl_sessions)
                         finally:
                             setattr(current_module, 'get_claude_projects_dir', original_get_claude)
 
-                        sources_processed.append({
-                            'source': f"WSL: {distro['name']}",
-                            'sessions': session_count
-                        })
-                        total_sessions += session_count
-                        print(f"  [OK] {distro['name']}: {session_count} sessions exported")
+                        if session_count > 0:
+                            cmd_batch(WslExportArgs())
+                            sources_processed.append({
+                                'source': f"WSL: {distro['name']}",
+                                'sessions': session_count
+                            })
+                            total_sessions += session_count
+                            print(f"  [OK] {distro['name']}: {session_count} sessions exported")
+                        else:
+                            print(f"  [OK] {distro['name']}: No matching sessions")
                     except Exception as e:
                         print(f"  [ERROR] {distro['name']} failed: {e}")
                         total_errors += 1
@@ -3387,9 +3481,7 @@ def cmd_export_all(args):
             print(f"  Exporting from {remote_host}...")
             try:
                 output_dir_str = str(output_dir)
-                workspace_val = args.workspace if hasattr(args, 'workspace') and args.workspace else ''
                 class RemoteExportArgs:
-                    workspace = workspace_val
                     output_dir = output_dir_str
                     since = getattr(args, 'since', None)
                     until = getattr(args, 'until', None)
@@ -3398,21 +3490,43 @@ def cmd_export_all(args):
                     split = getattr(args, 'split', None)
                     flat = False
                     remote = remote_host
+                    lenient = True  # Don't fail on empty
+                RemoteExportArgs.patterns = patterns
+                RemoteExportArgs.workspace = patterns[0] if patterns else ''
 
-                cmd_batch(RemoteExportArgs())
+                # Try to export - cmd_batch will handle "no sessions" gracefully
+                try:
+                    cmd_batch(RemoteExportArgs())
+                except SystemExit:
+                    # cmd_batch might exit on "no sessions" - catch and report
+                    pass
 
                 # Count sessions (cached)
                 hostname = get_remote_hostname(remote_host)
                 cached_pattern = f"remote_{hostname}_"
+                # Filter by workspace patterns if specified
                 cached_sessions = get_workspace_sessions(cached_pattern, quiet=True)
-                session_count = len(cached_sessions)
+                if patterns:
+                    # Further filter by patterns
+                    filtered = []
+                    for s in cached_sessions:
+                        for p in patterns:
+                            if p in s['workspace'] or p in s.get('workspace_readable', ''):
+                                filtered.append(s)
+                                break
+                    session_count = len(filtered)
+                else:
+                    session_count = len(cached_sessions)
 
-                sources_processed.append({
-                    'source': f"Remote: {remote_host}",
-                    'sessions': session_count
-                })
-                total_sessions += session_count
-                print(f"  [OK] {remote_host}: {session_count} sessions exported")
+                if session_count > 0:
+                    sources_processed.append({
+                        'source': f"Remote: {remote_host}",
+                        'sessions': session_count
+                    })
+                    total_sessions += session_count
+                    print(f"  [OK] {remote_host}: {session_count} sessions exported")
+                else:
+                    print(f"  [OK] {remote_host}: No matching sessions")
             except Exception as e:
                 print(f"  [ERROR] {remote_host} failed: {e}")
                 total_errors += 1
@@ -3691,9 +3805,9 @@ EXAMPLES:
         description='Export workspace or single file to markdown')
 
     parser_export.add_argument('target',
-        nargs='?',
-        default='',
-        help='Workspace name or file.jsonl (optional, defaults to current workspace)')
+        nargs='*',
+        default=[],
+        help='Workspace pattern(s) or file.jsonl (optional, multiple patterns supported)')
 
     parser_export.add_argument('output_dir',
         nargs='?',
@@ -4043,25 +4157,36 @@ EXAMPLES:
         # Determine output directory (-o overrides positional)
         final_output_dir = args.output_override if hasattr(args, 'output_override') and args.output_override else args.output_dir
 
-        # Determine workspace (default to current if empty)
-        target = args.target if args.target else ''
+        # Handle target(s) - now a list
+        targets = args.target if args.target else []
 
         # Check for alias (@ prefix or --alias flag)
         alias_flag = getattr(args, 'alias', None)
         alias_name = None
         if alias_flag:
             alias_name = alias_flag
-        elif target.startswith('@'):
-            alias_name = target[1:]
+        elif targets and targets[0].startswith('@'):
+            alias_name = targets[0][1:]
 
         if alias_name:
             # Use alias-based export
             cmd_alias_export(alias_name, final_output_dir, args)
             return
 
-        # Get target (default to current workspace if empty)
-        if not target:
-            target = get_current_workspace_pattern()
+        # Get patterns (default to current workspace if empty)
+        if not targets:
+            targets = [get_current_workspace_pattern()]
+
+        # Check for single file export (one target ending with .jsonl)
+        if len(targets) == 1 and targets[0].endswith('.jsonl'):
+            final_remotes = resolve_remote_list(args)
+            final_remote = final_remotes[0] if final_remotes else None
+            class ConvertArgs:
+                jsonl_file = targets[0]
+                output = None  # Use default
+                remote = final_remote
+            cmd_convert(ConvertArgs())
+            return
 
         # Resolve remotes (including --wsl and --windows flags)
         final_remotes = resolve_remote_list(args)
@@ -4069,9 +4194,11 @@ EXAMPLES:
         # Handle --all-sources flag (export from all sources)
         if args.all_sources:
             # Export from all sources (local + WSL + Windows + remotes)
-            final_workspace = '' if args.all_workspaces else target
+            # Pass patterns list for multiple pattern support
+            final_patterns = [] if args.all_workspaces else targets
             class ExportAllArgs:
-                workspace = final_workspace
+                patterns = final_patterns
+                workspace = ''  # Backward compat: empty means all or use patterns
                 output_dir = final_output_dir
                 remotes = final_remotes
                 since = args.since
@@ -4080,20 +4207,13 @@ EXAMPLES:
                 minimal = args.minimal
                 split = args.split
             cmd_export_all(ExportAllArgs())
-        elif target.endswith('.jsonl'):
-            # Single file export
-            final_remote = final_remotes[0] if final_remotes else None
-            class ConvertArgs:
-                jsonl_file = target
-                output = None  # Use default
-                remote = final_remote
-            cmd_convert(ConvertArgs())
         else:
             # Regular export - single source
-            final_workspace = '' if args.all_workspaces else target
+            final_patterns = [] if args.all_workspaces else targets
             final_remote = final_remotes[0] if final_remotes else None
             class ExportArgs:
-                workspace = final_workspace
+                patterns = final_patterns
+                workspace = final_patterns[0] if final_patterns else ''  # Backward compat
                 output_dir = final_output_dir
                 since = args.since
                 until = args.until
