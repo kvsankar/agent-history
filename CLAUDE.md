@@ -32,6 +32,8 @@ chmod +x claude-history
 ./claude-history lsw --wsl                  # WSL workspaces
 ./claude-history lsw --windows              # Windows workspaces
 ./claude-history lsw -r user@server         # SSH remote workspaces
+./claude-history lsw --as                   # all sources (local + WSL/Windows + remotes)
+./claude-history lsw --as -r vm01 -r vm02   # all sources + multiple SSH remotes
 
 # List sessions
 ./claude-history lss                        # current workspace
@@ -39,6 +41,8 @@ chmod +x claude-history
 ./claude-history lss --wsl                  # from WSL
 ./claude-history lss --windows              # from Windows
 ./claude-history lss myproject -r user@server    # SSH remote sessions
+./claude-history lss myproject --as         # from all sources
+./claude-history lss --as -r vm01 -r vm02   # all sources + multiple SSH remotes
 
 # Export (unified command with orthogonal scope flags)
 ./claude-history export                     # current workspace, local source
@@ -843,6 +847,13 @@ ssh -o BatchMode=yes user@hostname echo ok
 ```
 
 ## Recent Changes
+
+**All-Sources Flag for lsw/lss (v1.3.1)**
+- Added `--as` (`--all-sources`) flag to `lsw` and `lss` commands
+- Consistent interface: `lsw --as`, `lss --as` now work like `export --as`
+- List workspaces/sessions from all sources (local + WSL/Windows + SSH remotes)
+- Support for multiple `-r` flags: `lsw --as -r vm01 -r vm02`
+- Output grouped by source with clear labels
 
 **Workspace Aliases (v1.3.0)**
 - Added workspace aliases feature for grouping related workspaces across environments

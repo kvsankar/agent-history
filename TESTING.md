@@ -247,40 +247,53 @@ ver  # Windows command prompt/PowerShell
 
 ## Section 6: Multi-Source Operations (All Environments)
 
-### 6.1 export --as (All Sources)
+### 6.1 lsw/lss --as (All Sources)
 
 | Test ID | Command | Expected Result | Env | Status |
 |---------|---------|----------------|-----|--------|
-| 6.1.1 | `./claude-history export --as` | Exports from all available sources | All | ⬜ |
-| 6.1.2 | `./claude-history export <workspace> --as` | Exports workspace from all sources | All | ⬜ |
-| 6.1.3 | `./claude-history export --as --aw` | All workspaces, all sources | All | ⬜ |
-| 6.1.4 | `./claude-history export --as -r <user>@<host>` | All sources + SSH remote | All | ⬜ |
-| 6.1.5 | `python claude-history export --as` | Includes local + WSL on Windows | Win | ⬜ |
-| 6.1.6 | `./claude-history export --as` | Includes local + Windows on WSL | WSL | ⬜ |
+| 6.1.1 | `./claude-history lsw --as` | Lists workspaces from all sources | All | ⬜ |
+| 6.1.2 | `./claude-history lss --as` | Lists sessions from all sources | All | ⬜ |
+| 6.1.3 | `./claude-history lsw <workspace> --as` | Filters workspaces from all sources | All | ⬜ |
+| 6.1.4 | `./claude-history lss <workspace> --as` | Filters sessions from all sources | All | ⬜ |
+| 6.1.5 | `./claude-history lsw --as -r <user>@<host>` | All sources + SSH remote | All | ⬜ |
+| 6.1.6 | `./claude-history lss --as -r <user>@<host>` | All sources + SSH remote | All | ⬜ |
 
-### 6.2 Multiple SSH Remotes
+### 6.2 export --as (All Sources)
+
+| Test ID | Command | Expected Result | Env | Status |
+|---------|---------|----------------|-----|--------|
+| 6.2.1 | `./claude-history export --as` | Exports from all available sources | All | ⬜ |
+| 6.2.2 | `./claude-history export <workspace> --as` | Exports workspace from all sources | All | ⬜ |
+| 6.2.3 | `./claude-history export --as --aw` | All workspaces, all sources | All | ⬜ |
+| 6.2.4 | `./claude-history export --as -r <user>@<host>` | All sources + SSH remote | All | ⬜ |
+| 6.2.5 | `python claude-history export --as` | Includes local + WSL on Windows | Win | ⬜ |
+| 6.2.6 | `./claude-history export --as` | Includes local + Windows on WSL | WSL | ⬜ |
+
+### 6.3 Multiple SSH Remotes
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 6.2.1 | `./claude-history export -r <user>@<host1> -r <user>@<host2>` | Exports from multiple remotes | ⬜ |
-| 6.2.2 | `./claude-history export --as -r <user>@<host1> -r <user>@<host2>` | All sources + multiple SSH | ⬜ |
+| 6.3.1 | `./claude-history export -r <user>@<host1> -r <user>@<host2>` | Exports from multiple remotes | ⬜ |
+| 6.3.2 | `./claude-history export --as -r <user>@<host1> -r <user>@<host2>` | All sources + multiple SSH | ⬜ |
+| 6.3.3 | `./claude-history lsw --as -r <user>@<host1> -r <user>@<host2>` | Lists from multiple remotes | ⬜ |
+| 6.3.4 | `./claude-history lss --as -r <user>@<host1> -r <user>@<host2>` | Lists from multiple remotes | ⬜ |
 
-### 6.3 Source Tag Verification
+### 6.4 Source Tag Verification
 
 | Test ID | Scenario | Expected Filename Pattern | Status |
 |---------|----------|--------------------------|--------|
-| 6.3.1 | Export from local | `YYYYMMDDHHMMSS_<uuid>.md` (no prefix) | ⬜ |
-| 6.3.2 | Export from WSL | `wsl_<distro>_YYYYMMDDHHMMSS_<uuid>.md` | ⬜ |
-| 6.3.3 | Export from Windows | `windows_YYYYMMDDHHMMSS_<uuid>.md` | ⬜ |
-| 6.3.4 | Export from SSH remote | `remote_<host>_YYYYMMDDHHMMSS_<uuid>.md` | ⬜ |
+| 6.4.1 | Export from local | `YYYYMMDDHHMMSS_<uuid>.md` (no prefix) | ⬜ |
+| 6.4.2 | Export from WSL | `wsl_<distro>_YYYYMMDDHHMMSS_<uuid>.md` | ⬜ |
+| 6.4.3 | Export from Windows | `windows_YYYYMMDDHHMMSS_<uuid>.md` | ⬜ |
+| 6.4.4 | Export from SSH remote | `remote_<host>_YYYYMMDDHHMMSS_<uuid>.md` | ⬜ |
 
-### 6.4 Organized Export Structure
+### 6.5 Organized Export Structure
 
 | Test ID | Command | Expected Directory Structure | Status |
 |---------|---------|----------------------------|--------|
-| 6.4.1 | `./claude-history export <workspace>` | `./claude-conversations/<workspace>/files.md` | ⬜ |
-| 6.4.2 | `./claude-history export --flat` | `./claude-conversations/files.md` (flat) | ⬜ |
-| 6.4.3 | `./claude-history export --as` | Source-tagged files in workspace subdirs | ⬜ |
+| 6.5.1 | `./claude-history export <workspace>` | `./claude-conversations/<workspace>/files.md` | ⬜ |
+| 6.5.2 | `./claude-history export --flat` | `./claude-conversations/files.md` (flat) | ⬜ |
+| 6.5.3 | `./claude-history export --as` | Source-tagged files in workspace subdirs | ⬜ |
 
 ---
 
