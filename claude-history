@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 
 # ============================================================================
@@ -2218,8 +2218,21 @@ def cmd_list(args):
             setattr(current_module, 'get_claude_projects_dir', get_windows_override)
 
             try:
-                # Use local session listing with Windows path
-                all_sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+                # Get patterns list (multiple patterns support)
+                patterns = getattr(args, 'patterns', None)
+                if patterns is None:
+                    patterns = [getattr(args, 'workspace', '')]
+
+                # Collect sessions from all patterns with deduplication
+                all_sessions = []
+                seen_files = set()
+                for pattern in patterns:
+                    pattern_sessions = get_workspace_sessions(pattern, since_date=since_date, until_date=until_date)
+                    for session in pattern_sessions:
+                        file_key = str(session['file'])
+                        if file_key not in seen_files:
+                            seen_files.add(file_key)
+                            all_sessions.append(session)
 
                 # Filter out remote caches to prevent showing cached data
                 # Only show native Windows workspaces, not cached remote/wsl data
@@ -2274,8 +2287,21 @@ def cmd_list(args):
             setattr(current_module, 'get_claude_projects_dir', get_wsl_override)
 
             try:
-                # Use local session listing with WSL path
-                all_sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+                # Get patterns list (multiple patterns support)
+                patterns = getattr(args, 'patterns', None)
+                if patterns is None:
+                    patterns = [getattr(args, 'workspace', '')]
+
+                # Collect sessions from all patterns with deduplication
+                all_sessions = []
+                seen_files = set()
+                for pattern in patterns:
+                    pattern_sessions = get_workspace_sessions(pattern, since_date=since_date, until_date=until_date)
+                    for session in pattern_sessions:
+                        file_key = str(session['file'])
+                        if file_key not in seen_files:
+                            seen_files.add(file_key)
+                            all_sessions.append(session)
 
                 # Filter out remote caches to prevent showing cached data
                 # Only show native WSL workspaces, not cached remote/wsl data
@@ -2316,8 +2342,17 @@ def cmd_list(args):
             sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
             sys.exit(1)
 
-        workspace_pattern = args.workspace
+        # Get patterns list (multiple patterns support)
+        patterns = getattr(args, 'patterns', None)
+        if patterns is None:
+            patterns = [getattr(args, 'workspace', '')]
         workspaces_only = getattr(args, 'workspaces_only', False)
+
+        # Helper to check if workspace matches any pattern
+        def matches_any_pattern(ws_name, patterns_list):
+            if not patterns_list or patterns_list == [''] or patterns_list == ['*'] or patterns_list == ['all']:
+                return True
+            return any(pattern in ws_name for pattern in patterns_list if pattern)
 
         # Use fast batch approach for workspaces-only mode
         if workspaces_only:
@@ -2327,12 +2362,12 @@ def cmd_list(args):
                 sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
                 sys.exit(1)
 
-            # Filter by pattern
-            if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
-                batch_workspaces = [ws for ws in batch_workspaces if workspace_pattern in ws['encoded']]
+            # Filter by patterns (any pattern matches)
+            batch_workspaces = [ws for ws in batch_workspaces if matches_any_pattern(ws['encoded'], patterns)]
 
             if not batch_workspaces:
-                sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
+                pattern_str = ', '.join(patterns) if len(patterns) > 1 else patterns[0]
+                sys.stderr.write(f"Error: No workspaces matching pattern '{pattern_str}'\n")
                 sys.exit(1)
 
             # Just print workspace names, one per line
@@ -2347,12 +2382,12 @@ def cmd_list(args):
                 sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
                 sys.exit(1)
 
-            # Filter by pattern
-            if workspace_pattern and workspace_pattern not in ('', '*', 'all'):
-                remote_workspaces = [ws for ws in remote_workspaces if workspace_pattern in ws]
+            # Filter by patterns (any pattern matches)
+            remote_workspaces = [ws for ws in remote_workspaces if matches_any_pattern(ws, patterns)]
 
             if not remote_workspaces:
-                sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
+                pattern_str = ', '.join(patterns) if len(patterns) > 1 else patterns[0]
+                sys.stderr.write(f"Error: No workspaces matching pattern '{pattern_str}'\n")
                 sys.exit(1)
 
             # Get session info for each workspace
@@ -3953,6 +3988,8 @@ EXAMPLES:
                 remote = resolve_remote_flag(args)
                 workspaces_only = True  # lsw always lists workspaces
             LswArgs.patterns = patterns
+            # Add workspace for backward compatibility with remote handlers
+            LswArgs.workspace = patterns[0] if patterns and patterns[0] else ''
             cmd_list(LswArgs())
 
     elif args.command == 'lss':
