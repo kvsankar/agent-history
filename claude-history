@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 
 
 # ============================================================================
@@ -2391,17 +2391,32 @@ def cmd_list(args):
                 print(f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}")
 
     else:
-        # Local listing
-        sessions = get_workspace_sessions(args.workspace, since_date=since_date, until_date=until_date)
+        # Local listing - handle multiple patterns
+        patterns = getattr(args, 'patterns', None)
+        if patterns is None:
+            # Backward compatibility: use single workspace attribute
+            patterns = [getattr(args, 'workspace', '')]
+
+        # Collect sessions from all patterns
+        all_sessions = []
+        seen_files = set()  # Deduplicate by file path
+        for pattern in patterns:
+            sessions = get_workspace_sessions(pattern, since_date=since_date, until_date=until_date)
+            for session in sessions:
+                file_key = str(session['file'])
+                if file_key not in seen_files:
+                    seen_files.add(file_key)
+                    all_sessions.append(session)
 
         # Check if workspaces-only mode
         workspaces_only = getattr(args, 'workspaces_only', False)
 
-        if not sessions:
+        if not all_sessions:
             # For workspaces listing (lsw), silently return empty (no error)
             # For sessions listing (lss), show error message
             if not workspaces_only:
-                sys.stderr.write(f"Error: No sessions found matching '{args.workspace}'\n")
+                pattern_str = ', '.join(patterns) if len(patterns) > 1 else patterns[0]
+                sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
                 sys.exit(1)
             # For lsw with no matches, just exit successfully with no output
             return
@@ -2409,7 +2424,7 @@ def cmd_list(args):
         if workspaces_only:
             # Just print workspace names, one per line
             workspaces = set()
-            for session in sessions:
+            for session in all_sessions:
                 workspaces.add(session['workspace_readable'])
 
             for ws in sorted(workspaces):
@@ -2418,7 +2433,7 @@ def cmd_list(args):
         else:
             # Print header and sessions in simple format
             print("WORKSPACE\tFILE\tMESSAGES\tDATE")
-            for session in sessions:
+            for session in all_sessions:
                 print(f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}")
 
 
@@ -2809,17 +2824,36 @@ def cmd_list_all_sources(args):
     """List workspaces or sessions from all sources: local, WSL/Windows, and remotes."""
     in_wsl = is_running_in_wsl()
     workspaces_only = getattr(args, 'workspaces_only', False)
-    workspace_pattern = getattr(args, 'workspace', '')
+
+    # Handle multiple patterns
+    patterns = getattr(args, 'patterns', None)
+    if patterns is None:
+        # Backward compatibility
+        patterns = [getattr(args, 'workspace', '')]
+
     since_date = getattr(args, 'since_date', None)
     until_date = getattr(args, 'until_date', None)
     remotes = getattr(args, 'remotes', []) or []
 
     all_results = []  # List of (source_label, sessions)
 
+    # Helper to get sessions for multiple patterns with deduplication
+    def get_sessions_for_patterns(patterns_list, since_date, until_date):
+        all_sessions = []
+        seen_files = set()
+        for pattern in patterns_list:
+            sessions = get_workspace_sessions(pattern, since_date=since_date, until_date=until_date, quiet=True)
+            for session in sessions:
+                file_key = str(session['file'])
+                if file_key not in seen_files:
+                    seen_files.add(file_key)
+                    all_sessions.append(session)
+        return all_sessions
+
     # 1. Get from local
     try:
         local_label = "Local (WSL)" if in_wsl else "Local"
-        sessions = get_workspace_sessions(workspace_pattern, since_date=since_date, until_date=until_date, quiet=True)
+        sessions = get_sessions_for_patterns(patterns, since_date, until_date)
         # Filter out cached remote/wsl workspaces
         native_sessions = [s for s in sessions
                          if not s['workspace'].startswith('remote_')
@@ -2846,7 +2880,7 @@ def cmd_list_all_sources(args):
                     setattr(current_module, 'get_claude_projects_dir', temp_override)
 
                     try:
-                        sessions = get_workspace_sessions(workspace_pattern, since_date=since_date, until_date=until_date, quiet=True)
+                        sessions = get_sessions_for_patterns(patterns, since_date, until_date)
                         native_sessions = [s for s in sessions
                                          if not s['workspace'].startswith('remote_')
                                          and not s['workspace'].startswith('wsl_')]
@@ -2877,7 +2911,7 @@ def cmd_list_all_sources(args):
                     setattr(current_module, 'get_claude_projects_dir', temp_override)
 
                     try:
-                        sessions = get_workspace_sessions(workspace_pattern, since_date=since_date, until_date=until_date, quiet=True)
+                        sessions = get_sessions_for_patterns(patterns, since_date, until_date)
                         native_sessions = [s for s in sessions
                                          if not s['workspace'].startswith('remote_')
                                          and not s['workspace'].startswith('wsl_')]
@@ -2899,13 +2933,29 @@ def cmd_list_all_sources(args):
                 continue
 
             hostname = get_remote_hostname(remote)
-            remote_workspaces = list_remote_workspaces(remote, workspace_pattern if workspace_pattern else None)
+            all_remote_workspaces = list_remote_workspaces(remote)
+
+            # Filter by patterns if specified (any pattern matches)
+            if patterns and patterns != ['']:
+                remote_workspaces = []
+                for ws in all_remote_workspaces:
+                    for pattern in patterns:
+                        if pattern in ws:
+                            remote_workspaces.append(ws)
+                            break  # Don't add same workspace twice
+            else:
+                remote_workspaces = all_remote_workspaces
 
             if remote_workspaces:
                 remote_sessions = []
                 for ws_name in remote_workspaces:
-                    ws_info = get_remote_session_info(remote, ws_name, since_date=since_date, until_date=until_date)
+                    ws_info = get_remote_session_info(remote, ws_name)
                     for session in ws_info:
+                        # Apply date filtering
+                        if since_date and session.get('modified') and session['modified'].date() < since_date:
+                            continue
+                        if until_date and session.get('modified') and session['modified'].date() > until_date:
+                            continue
                         session['workspace'] = ws_name
                         session['workspace_readable'] = normalize_workspace_name(ws_name)
                         remote_sessions.append(session)
@@ -3509,8 +3559,8 @@ EXAMPLES:
         description='List all workspaces (local or remote)')
 
     parser_lsw.add_argument('pattern',
-        nargs='?',
-        help='Optional pattern to filter workspaces')
+        nargs='*',
+        help='Optional pattern(s) to filter workspaces (multiple patterns supported)')
 
     parser_lsw.add_argument('-r', '--remote',
         metavar='HOST',
@@ -3541,8 +3591,8 @@ EXAMPLES:
         description='List sessions in a workspace (defaults to current workspace)')
 
     parser_lss.add_argument('workspace',
-        nargs='?',
-        help='Workspace name (default: current workspace)')
+        nargs='*',
+        help='Workspace name(s) (default: current workspace, multiple patterns supported)')
 
     parser_lss.add_argument('-r', '--remote',
         metavar='HOST',
@@ -3882,8 +3932,8 @@ EXAMPLES:
 
     # Dispatch to command handlers
     if args.command == 'lsw':
-        # List workspaces
-        pattern = args.pattern if args.pattern else ''
+        # List workspaces - handle multiple patterns
+        patterns = args.pattern if args.pattern else ['']
 
         # Check for --all-sources flag
         if getattr(args, 'all_sources', False):
@@ -3891,31 +3941,31 @@ EXAMPLES:
             lsw_remotes = getattr(args, 'remotes', None) or []
 
             class LswAllArgs:
-                workspace = pattern
                 workspaces_only = True
                 since_date = None
                 until_date = None
             LswAllArgs.remotes = lsw_remotes
+            LswAllArgs.patterns = patterns
 
             cmd_list_all_sources(LswAllArgs())
         else:
             class LswArgs:
-                workspace = pattern
                 remote = resolve_remote_flag(args)
                 workspaces_only = True  # lsw always lists workspaces
+            LswArgs.patterns = patterns
             cmd_list(LswArgs())
 
     elif args.command == 'lss':
-        # Check for alias (@ prefix or --alias flag)
-        workspace_val = args.workspace if args.workspace else ''
+        # Handle multiple patterns - args.workspace is now a list
+        workspace_list = args.workspace if args.workspace else []
         alias_flag = getattr(args, 'alias', None)
 
-        # Detect @ prefix
+        # Detect @ prefix in first workspace (alias syntax)
         alias_name = None
         if alias_flag:
             alias_name = alias_flag
-        elif workspace_val.startswith('@'):
-            alias_name = workspace_val[1:]
+        elif workspace_list and workspace_list[0].startswith('@'):
+            alias_name = workspace_list[0][1:]
 
         if alias_name:
             # Use alias-based listing
@@ -3924,15 +3974,14 @@ EXAMPLES:
             cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date)
         elif getattr(args, 'all_sources', False):
             # List from all sources
-            if not workspace_val:
-                workspace_val = get_current_workspace_pattern()
+            patterns = workspace_list if workspace_list else [get_current_workspace_pattern()]
             since_date = parse_date_string(args.since) if args.since else None
             until_date = parse_date_string(args.until) if args.until else None
             lss_remotes = getattr(args, 'remotes', None) or []
 
             class LssAllArgs:
-                workspace = workspace_val
                 workspaces_only = False
+            LssAllArgs.patterns = patterns
             LssAllArgs.since_date = since_date
             LssAllArgs.until_date = until_date
             LssAllArgs.remotes = lss_remotes
@@ -3940,14 +3989,13 @@ EXAMPLES:
             cmd_list_all_sources(LssAllArgs())
         else:
             # Regular workspace listing
-            if not workspace_val:
-                workspace_val = get_current_workspace_pattern()
+            patterns = workspace_list if workspace_list else [get_current_workspace_pattern()]
             class LssArgs:
-                workspace = workspace_val
                 since = args.since
                 until = args.until
                 remote = resolve_remote_flag(args)
                 workspaces_only = False  # lss always lists sessions
+            LssArgs.patterns = patterns
             cmd_list(LssArgs())
 
     elif args.command == 'lsh':

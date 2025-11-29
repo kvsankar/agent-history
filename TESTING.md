@@ -295,6 +295,19 @@ ver  # Windows command prompt/PowerShell
 | 6.5.2 | `./claude-history export --flat` | `./claude-conversations/files.md` (flat) | ⬜ |
 | 6.5.3 | `./claude-history export --as` | Source-tagged files in workspace subdirs | ⬜ |
 
+### 6.6 Multiple Workspace Patterns
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 6.6.1 | `./claude-history lsw <pattern1> <pattern2>` | Lists workspaces matching either pattern | ⬜ |
+| 6.6.2 | `./claude-history lss <pattern1> <pattern2>` | Lists sessions from both patterns (deduplicated) | ⬜ |
+| 6.6.3 | `./claude-history lss <pattern1> <pattern2> --as` | Multiple patterns + all sources | ⬜ |
+| 6.6.4 | `./claude-history lss <pattern1> <pattern2> -r <user>@<host>` | Multiple patterns + SSH remote | ⬜ |
+| 6.6.5 | `./claude-history lss <pattern1> <pattern2> --as -r <user>@<host>` | Multiple patterns + all sources + SSH | ⬜ |
+| 6.6.6 | `./claude-history export <pattern1> <pattern2>` | Exports from both patterns | ⬜ |
+| 6.6.7 | `./claude-history export <pattern1> <pattern2> --as` | Multiple patterns + all sources export | ⬜ |
+| 6.6.8 | `./claude-history lss <overlapping1> <overlapping2>` | No duplicate sessions (deduplication works) | ⬜ |
+
 ---
 
 ## Section 7: Error Handling & Edge Cases
