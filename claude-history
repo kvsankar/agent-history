@@ -728,6 +728,31 @@ def get_current_workspace_pattern():
     return workspace_pattern
 
 
+def check_current_workspace_exists():
+    """
+    Check if the current directory corresponds to a known Claude Code workspace.
+    Returns (pattern, exists) tuple.
+    """
+    pattern = get_current_workspace_pattern()
+    projects_dir = get_claude_projects_dir()
+
+    if not projects_dir or not projects_dir.exists():
+        return pattern, False
+
+    # Check if any workspace directory matches the pattern
+    for workspace_dir in projects_dir.iterdir():
+        if not workspace_dir.is_dir():
+            continue
+        # Skip cached remote/wsl directories
+        dirname = workspace_dir.name
+        if dirname.startswith('remote_') or dirname.startswith('wsl_'):
+            continue
+        if pattern in dirname:
+            return pattern, True
+
+    return pattern, False
+
+
 def get_workspace_sessions(workspace_pattern: str, quiet: bool = False, since_date=None, until_date=None, include_cached: bool = False):
     """Find all sessions in workspaces matching the pattern.
 
@@ -4150,7 +4175,19 @@ EXAMPLES:
             cmd_list_all_sources(LssAllArgs())
         else:
             # Regular workspace listing
-            patterns = workspace_list if workspace_list else [get_current_workspace_pattern()]
+            if workspace_list:
+                patterns = workspace_list
+            else:
+                # No workspace specified - check if current directory is a known workspace
+                pattern, exists = check_current_workspace_exists()
+                if not exists:
+                    print("Error: Not in a Claude Code workspace.", file=sys.stderr)
+                    print("\nTo list sessions, either:", file=sys.stderr)
+                    print("  • Run from within a workspace directory", file=sys.stderr)
+                    print("  • Specify a workspace pattern: lss <pattern>", file=sys.stderr)
+                    print("  • Use --as to list from all sources: lss --as", file=sys.stderr)
+                    sys.exit(1)
+                patterns = [pattern]
             class LssArgs:
                 since = args.since
                 until = args.until
@@ -4185,7 +4222,17 @@ EXAMPLES:
 
         # Get patterns (default to current workspace if empty)
         if not targets:
-            targets = [get_current_workspace_pattern()]
+            # No workspace specified - check if current directory is a known workspace
+            pattern, exists = check_current_workspace_exists()
+            if not exists:
+                print("Error: Not in a Claude Code workspace.", file=sys.stderr)
+                print("\nTo export sessions, either:", file=sys.stderr)
+                print("  • Run from within a workspace directory", file=sys.stderr)
+                print("  • Specify a workspace pattern: export <pattern>", file=sys.stderr)
+                print("  • Use --aw to export all workspaces: export --aw", file=sys.stderr)
+                print("  • Use --as to export from all sources: export --as", file=sys.stderr)
+                sys.exit(1)
+            targets = [pattern]
 
         # Check for single file export (one target ending with .jsonl)
         if len(targets) == 1 and targets[0].endswith('.jsonl'):

@@ -355,6 +355,12 @@ Tests for lenient behavior when patterns don't match on all sources:
 | 7.2.1 | `./claude-history lss nonexistent-workspace` | Shows no sessions found | ⬜ |
 | 7.2.2 | `./claude-history export nonexistent-workspace` | Shows no sessions or skips | ⬜ |
 | 7.2.3 | `./claude-history lsw --wsl NonExistentDistro` | Shows no workspaces | ⬜ |
+| 7.2.4 | `cd /tmp && claude-history lss` | Shows "Not in a Claude Code workspace" error with suggestions | ⬜ |
+| 7.2.5 | `cd /tmp && claude-history export` | Shows "Not in a Claude Code workspace" error with suggestions | ⬜ |
+| 7.2.6 | `cd /tmp && claude-history lsw` | Works - lists all workspaces | ⬜ |
+| 7.2.7 | `cd /tmp && claude-history lss <pattern>` | Works - pattern matching still works outside workspace | ⬜ |
+| 7.2.8 | `cd /tmp && claude-history lss --as` | Works - --as flag bypasses workspace check | ⬜ |
+| 7.2.9 | `cd /tmp && claude-history export --aw` | Works - --aw flag bypasses workspace check | ⬜ |
 
 ### 7.3 SSH Errors
 
