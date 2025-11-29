@@ -302,13 +302,18 @@ ver  # Windows command prompt/PowerShell
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | 6.6.1 | `./claude-history lsw <pattern1> <pattern2>` | Lists workspaces matching either pattern | ⬜ |
+| 6.6.1a | `./claude-history lsw <pattern1> <pattern2> --as` | Multiple patterns + all sources | ⬜ |
+| 6.6.1b | `./claude-history lsw <pattern1> <pattern2> -r <user>@<host>` | Multiple patterns + SSH remote | ⬜ |
 | 6.6.2 | `./claude-history lss <pattern1> <pattern2>` | Lists sessions from both patterns (deduplicated) | ⬜ |
 | 6.6.3 | `./claude-history lss <pattern1> <pattern2> --as` | Multiple patterns + all sources | ⬜ |
 | 6.6.4 | `./claude-history lss <pattern1> <pattern2> -r <user>@<host>` | Multiple patterns + SSH remote | ⬜ |
 | 6.6.5 | `./claude-history lss <pattern1> <pattern2> --as -r <user>@<host>` | Multiple patterns + all sources + SSH | ⬜ |
 | 6.6.6 | `./claude-history export <pattern1> <pattern2>` | Exports from both patterns | ⬜ |
+| 6.6.6a | `./claude-history export <pattern1> <pattern2> -r <user>@<host>` | Multiple patterns + SSH remote | ⬜ |
 | 6.6.7 | `./claude-history export <pattern1> <pattern2> --as` | Multiple patterns + all sources export | ⬜ |
+| 6.6.7a | `./claude-history export <pattern1> <pattern2> --as -r <user>@<host>` | Multiple patterns + all sources + SSH | ⬜ |
 | 6.6.8 | `./claude-history lss <overlapping1> <overlapping2>` | No duplicate sessions (deduplication works) | ⬜ |
+| 6.6.9 | `./claude-history export <overlapping1> <overlapping2>` | No duplicate exports (deduplication works) | ⬜ |
 
 ### 6.7 Lenient Multi-Source Behavior
 
