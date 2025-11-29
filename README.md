@@ -46,6 +46,37 @@ python claude-history export
 # Output goes to ./claude-conversations/ by default
 ```
 
+## What's New in v1.3.0
+
+**🏷️ Workspace Aliases:**
+
+Group related workspaces across environments for consolidated export:
+
+```bash
+# Create and manage aliases
+./claude-history alias create myproject
+./claude-history alias add myproject -- -home-user-myproject
+./claude-history alias add myproject --windows -- C--user-myproject
+./claude-history alias list
+
+# Use aliases with @ prefix or --alias flag
+./claude-history lss @myproject
+./claude-history export @myproject -o ./backup
+./claude-history export --alias myproject
+
+# Sync aliases across machines
+./claude-history alias export > aliases.json
+./claude-history alias import aliases.json
+```
+
+**Key Benefits:**
+- Consolidate workspaces that moved or were renamed
+- Group related projects across local, WSL, Windows, and remote
+- Simple JSON storage in `~/.claude-history/aliases.json`
+- Easy sync via git, rsync, or cloud storage
+
+See [CLAUDE.md](CLAUDE.md) for complete alias documentation.
+
 ## What's New in v1.2.1
 
 **🔧 Windows Compatibility & Clean Interface:**

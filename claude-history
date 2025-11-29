@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.2.2"
+__version__ = "1.3.0"
 
 
 # ============================================================================
@@ -1577,6 +1577,593 @@ def fetch_workspace_files(remote_host: str, remote_workspace: str,
 
 
 # ============================================================================
+# Alias Storage
+# ============================================================================
+
+def get_aliases_dir() -> Path:
+    """Get the aliases storage directory (~/.claude-history/)."""
+    return Path.home() / '.claude-history'
+
+
+def get_aliases_file() -> Path:
+    """Get the aliases storage file path."""
+    return get_aliases_dir() / 'aliases.json'
+
+
+def load_aliases() -> dict:
+    """Load aliases from storage file. Returns empty structure if not found."""
+    aliases_file = get_aliases_file()
+    if not aliases_file.exists():
+        return {'version': 1, 'aliases': {}}
+
+    try:
+        with open(aliases_file, encoding='utf-8') as f:
+            data = json.load(f)
+            # Ensure structure is valid
+            if 'aliases' not in data:
+                data['aliases'] = {}
+            if 'version' not in data:
+                data['version'] = 1
+            return data
+    except (json.JSONDecodeError, IOError) as e:
+        sys.stderr.write(f"Warning: Could not load aliases file: {e}\n")
+        return {'version': 1, 'aliases': {}}
+
+
+def save_aliases(data: dict) -> bool:
+    """Save aliases to storage file. Returns True on success."""
+    aliases_dir = get_aliases_dir()
+    aliases_file = get_aliases_file()
+
+    try:
+        # Create directory if needed
+        aliases_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure version is set
+        if 'version' not in data:
+            data['version'] = 1
+
+        with open(aliases_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        return True
+    except IOError as e:
+        sys.stderr.write(f"Error: Could not save aliases: {e}\n")
+        return False
+
+
+def get_source_key(remote_host=None, wsl_distro=None, windows_user=None) -> str:
+    """Get the source key for aliases based on current context."""
+    if remote_host:
+        if remote_host.startswith('wsl://'):
+            return f"wsl:{remote_host[6:]}"
+        elif remote_host.startswith('windows:'):
+            return f"windows:{remote_host[8:]}" if len(remote_host) > 8 else "windows"
+        elif remote_host == 'windows':
+            return "windows"
+        else:
+            hostname = remote_host.split('@')[-1] if '@' in remote_host else remote_host
+            return f"remote:{hostname}"
+    elif wsl_distro:
+        return f"wsl:{wsl_distro}"
+    elif windows_user is not None:
+        return f"windows:{windows_user}" if windows_user else "windows"
+    else:
+        return "local"
+
+
+def get_alias_session_count(alias_name: str, aliases_data: dict) -> int:
+    """Count total sessions across all sources for an alias."""
+    if alias_name not in aliases_data.get('aliases', {}):
+        return 0
+
+    alias_config = aliases_data['aliases'][alias_name]
+    total = 0
+
+    for source_key, workspaces in alias_config.items():
+        for workspace in workspaces:
+            try:
+                # Try to get session count for this workspace
+                sessions = get_workspace_sessions(workspace)
+                total += len(sessions)
+            except:
+                pass  # Workspace may not exist or be accessible
+
+    return total
+
+
+def resolve_alias_workspaces(alias_name: str, source_filter: str = None) -> list:
+    """
+    Resolve an alias to a list of (source_key, workspace, sessions) tuples.
+    If source_filter is provided, only include matching sources.
+    """
+    aliases_data = load_aliases()
+
+    if alias_name not in aliases_data.get('aliases', {}):
+        return []
+
+    alias_config = aliases_data['aliases'][alias_name]
+    results = []
+
+    for source_key, workspaces in alias_config.items():
+        if source_filter and source_key != source_filter:
+            continue
+
+        for workspace in workspaces:
+            results.append((source_key, workspace))
+
+    return results
+
+
+# ============================================================================
+# Alias Commands
+# ============================================================================
+
+def cmd_alias_list(args):
+    """List all aliases with their workspaces and session counts."""
+    aliases_data = load_aliases()
+    aliases = aliases_data.get('aliases', {})
+
+    if not aliases:
+        print("No aliases defined.")
+        print("\nCreate an alias with:")
+        print("  claude-history alias create <name>")
+        print("  claude-history alias add <name> <workspace>")
+        return
+
+    for alias_name, sources in sorted(aliases.items()):
+        total_sessions = 0
+        print(f"\n{alias_name}:")
+
+        for source_key, workspaces in sorted(sources.items()):
+            if workspaces:
+                print(f"  {source_key}:")
+                for workspace in workspaces:
+                    # Try to get session count
+                    try:
+                        sessions = get_workspace_sessions(workspace)
+                        count = len(sessions)
+                        total_sessions += count
+                        ws_readable = normalize_workspace_name(workspace)
+                        print(f"    {ws_readable}\t{count} sessions")
+                    except:
+                        ws_readable = normalize_workspace_name(workspace)
+                        print(f"    {ws_readable}\t(not accessible)")
+
+        print(f"  Total: {total_sessions} sessions")
+
+
+def cmd_alias_show(args):
+    """Show details of a single alias."""
+    aliases_data = load_aliases()
+    aliases = aliases_data.get('aliases', {})
+
+    alias_name = args.name
+    if alias_name not in aliases:
+        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.exit(1)
+
+    sources = aliases[alias_name]
+    total_sessions = 0
+
+    print(f"{alias_name}:")
+
+    for source_key, workspaces in sorted(sources.items()):
+        if workspaces:
+            print(f"  {source_key}:")
+            for workspace in workspaces:
+                try:
+                    sessions = get_workspace_sessions(workspace)
+                    count = len(sessions)
+                    total_sessions += count
+                    ws_readable = normalize_workspace_name(workspace)
+                    print(f"    {ws_readable}\t{count} sessions")
+                except:
+                    ws_readable = normalize_workspace_name(workspace)
+                    print(f"    {ws_readable}\t(not accessible)")
+
+    print(f"  Total: {total_sessions} sessions")
+
+
+def cmd_alias_create(args):
+    """Create a new empty alias."""
+    aliases_data = load_aliases()
+
+    alias_name = args.name
+
+    if alias_name in aliases_data.get('aliases', {}):
+        sys.stderr.write(f"Error: Alias '{alias_name}' already exists\n")
+        sys.exit(1)
+
+    aliases_data['aliases'][alias_name] = {}
+
+    if save_aliases(aliases_data):
+        print(f"✅ Created alias '{alias_name}'")
+    else:
+        sys.exit(1)
+
+
+def cmd_alias_delete(args):
+    """Delete an alias."""
+    aliases_data = load_aliases()
+
+    alias_name = args.name
+
+    if alias_name not in aliases_data.get('aliases', {}):
+        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.exit(1)
+
+    del aliases_data['aliases'][alias_name]
+
+    if save_aliases(aliases_data):
+        print(f"✅ Deleted alias '{alias_name}'")
+    else:
+        sys.exit(1)
+
+
+def cmd_alias_add(args):
+    """Add workspace(s) to an alias."""
+    aliases_data = load_aliases()
+
+    # Determine alias name (auto-detect from cwd if not provided)
+    alias_name = args.name
+    if not alias_name:
+        # Auto-detect from current directory name
+        alias_name = Path.cwd().name
+
+    # Determine source key
+    source_key = get_source_key(
+        remote_host=getattr(args, 'remote', None),
+        wsl_distro=getattr(args, 'wsl', None) if getattr(args, 'wsl', None) else None,
+        windows_user=getattr(args, 'windows', None) if getattr(args, 'windows', None) is not None else None
+    )
+
+    # Handle interactive picker mode
+    if getattr(args, 'pick', False):
+        workspaces_to_add = interactive_workspace_picker(source_key, args)
+        if not workspaces_to_add:
+            print("No workspaces selected.")
+            return
+    else:
+        # Use provided workspaces
+        workspaces_to_add = args.workspaces if args.workspaces else []
+        if not workspaces_to_add:
+            sys.stderr.write("Error: No workspaces specified. Use --pick for interactive mode.\n")
+            sys.exit(1)
+
+    # Ensure alias exists
+    if alias_name not in aliases_data.get('aliases', {}):
+        aliases_data['aliases'][alias_name] = {}
+
+    # Ensure source key exists in alias
+    if source_key not in aliases_data['aliases'][alias_name]:
+        aliases_data['aliases'][alias_name][source_key] = []
+
+    # Add workspaces (avoid duplicates)
+    added = 0
+    for workspace in workspaces_to_add:
+        if workspace not in aliases_data['aliases'][alias_name][source_key]:
+            aliases_data['aliases'][alias_name][source_key].append(workspace)
+            added += 1
+
+    if save_aliases(aliases_data):
+        print(f"✅ Added {added} workspace(s) to alias '{alias_name}' [{source_key}]")
+    else:
+        sys.exit(1)
+
+
+def interactive_workspace_picker(source_key: str, args) -> list:
+    """Interactive workspace picker. Returns list of selected workspace names."""
+    # Get list of available workspaces
+    try:
+        if source_key.startswith('wsl:'):
+            distro = source_key[4:]
+            projects_dir = get_wsl_projects_dir(distro)
+            if not projects_dir:
+                sys.stderr.write(f"Error: Cannot access WSL '{distro}'\n")
+                return []
+            workspaces = [d.name for d in projects_dir.iterdir()
+                         if d.is_dir() and not d.name.startswith('remote_') and not d.name.startswith('wsl_')]
+        elif source_key.startswith('windows'):
+            user = source_key[8:] if len(source_key) > 8 else None
+            projects_dir = get_windows_projects_dir(user)
+            if not projects_dir:
+                sys.stderr.write("Error: Cannot access Windows\n")
+                return []
+            workspaces = [d.name for d in projects_dir.iterdir()
+                         if d.is_dir() and not d.name.startswith('remote_') and not d.name.startswith('wsl_')]
+        elif source_key.startswith('remote:'):
+            hostname = source_key[7:]
+            # Find original remote format
+            remote_host = getattr(args, 'remote', hostname)
+            batch_ws = get_remote_workspaces_batch(remote_host)
+            workspaces = [ws['encoded'] for ws in batch_ws] if batch_ws else []
+        else:
+            # Local
+            projects_dir = get_claude_projects_dir()
+            workspaces = [d.name for d in projects_dir.iterdir()
+                         if d.is_dir() and not d.name.startswith('remote_') and not d.name.startswith('wsl_')]
+    except Exception as e:
+        sys.stderr.write(f"Error listing workspaces: {e}\n")
+        return []
+
+    if not workspaces:
+        print("No workspaces found.")
+        return []
+
+    # Display numbered list
+    print(f"\nAvailable workspaces [{source_key}]:")
+    for i, ws in enumerate(sorted(workspaces), 1):
+        ws_readable = normalize_workspace_name(ws)
+        print(f"  {i}. {ws_readable}")
+
+    # Get user selection
+    print("\nEnter workspace numbers (space-separated), or 'q' to quit:")
+    try:
+        selection = input("> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return []
+
+    if selection.lower() == 'q':
+        return []
+
+    # Parse selection
+    selected = []
+    sorted_ws = sorted(workspaces)
+    for part in selection.split():
+        try:
+            idx = int(part) - 1
+            if 0 <= idx < len(sorted_ws):
+                selected.append(sorted_ws[idx])
+        except ValueError:
+            continue
+
+    return selected
+
+
+def cmd_alias_remove(args):
+    """Remove workspace from an alias."""
+    aliases_data = load_aliases()
+
+    alias_name = args.name
+    workspace = args.workspace
+
+    if alias_name not in aliases_data.get('aliases', {}):
+        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.exit(1)
+
+    # Determine source key
+    source_key = get_source_key(
+        remote_host=getattr(args, 'remote', None),
+        wsl_distro=getattr(args, 'wsl', None) if getattr(args, 'wsl', None) else None,
+        windows_user=getattr(args, 'windows', None) if getattr(args, 'windows', None) is not None else None
+    )
+
+    alias_config = aliases_data['aliases'][alias_name]
+
+    if source_key not in alias_config:
+        sys.stderr.write(f"Error: No workspaces from '{source_key}' in alias '{alias_name}'\n")
+        sys.exit(1)
+
+    if workspace not in alias_config[source_key]:
+        sys.stderr.write(f"Error: Workspace '{workspace}' not in alias '{alias_name}' [{source_key}]\n")
+        sys.exit(1)
+
+    alias_config[source_key].remove(workspace)
+
+    # Clean up empty source
+    if not alias_config[source_key]:
+        del alias_config[source_key]
+
+    if save_aliases(aliases_data):
+        print(f"✅ Removed workspace from alias '{alias_name}' [{source_key}]")
+    else:
+        sys.exit(1)
+
+
+def cmd_alias_config_export(args):
+    """Export aliases configuration to JSON (stdout)."""
+    aliases_data = load_aliases()
+    print(json.dumps(aliases_data, indent=2))
+
+
+def cmd_alias_lss(alias_name: str, since_date=None, until_date=None):
+    """List sessions across all workspaces in an alias."""
+    aliases_data = load_aliases()
+
+    if alias_name not in aliases_data.get('aliases', {}):
+        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.exit(1)
+
+    alias_config = aliases_data['aliases'][alias_name]
+    all_sessions = []
+
+    for source_key, workspaces in alias_config.items():
+        for workspace in workspaces:
+            try:
+                # Get sessions for this workspace
+                sessions = get_workspace_sessions(workspace, since_date=since_date, until_date=until_date)
+                for session in sessions:
+                    session['source'] = source_key
+                    all_sessions.append(session)
+            except:
+                pass  # Workspace may not be accessible
+
+    if not all_sessions:
+        sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'\n")
+        sys.exit(1)
+
+    # Print header and sessions
+    print("SOURCE\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+    for session in all_sessions:
+        print(f"{session['source']}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}")
+
+
+def cmd_alias_export(alias_name: str, output_dir: str, args):
+    """Export sessions from all workspaces in an alias."""
+    aliases_data = load_aliases()
+
+    if alias_name not in aliases_data.get('aliases', {}):
+        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.exit(1)
+
+    alias_config = aliases_data['aliases'][alias_name]
+
+    # Parse options
+    since_date = parse_date_string(getattr(args, 'since', None))
+    until_date = parse_date_string(getattr(args, 'until', None))
+    force = getattr(args, 'force', False)
+    minimal = getattr(args, 'minimal', False)
+    split_lines = getattr(args, 'split', None)
+    flat = getattr(args, 'flat', False)
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    total_exported = 0
+    total_skipped = 0
+    total_failed = 0
+
+    for source_key, workspaces in alias_config.items():
+        for workspace in workspaces:
+            try:
+                # Get sessions for this workspace
+                sessions = get_workspace_sessions(workspace, since_date=since_date, until_date=until_date)
+
+                if not sessions:
+                    continue
+
+                # Determine source tag for filenames
+                source_tag = ''
+                if source_key != 'local':
+                    source_tag = source_key.replace(':', '_') + '_'
+
+                # Determine workspace name for directory
+                ws_name = normalize_workspace_name(workspace).replace('/', '-').replace('\\', '-')
+                if ws_name.startswith('-'):
+                    ws_name = ws_name[1:]
+
+                # Create workspace directory (unless flat mode)
+                if flat:
+                    ws_output_path = output_path
+                else:
+                    ws_output_path = output_path / ws_name
+                    ws_output_path.mkdir(parents=True, exist_ok=True)
+
+                for session in sessions:
+                    jsonl_file = session['file']
+
+                    # Generate output filename with source tag
+                    first_ts = get_first_timestamp(jsonl_file)
+                    if first_ts:
+                        try:
+                            dt = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
+                            ts_prefix = dt.strftime('%Y%m%d%H%M%S')
+                            output_name = f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
+                        except:
+                            output_name = f"{source_tag}{jsonl_file.stem}.md"
+                    else:
+                        output_name = f"{source_tag}{jsonl_file.stem}.md"
+
+                    output_file = ws_output_path / output_name
+
+                    # Check if incremental skip
+                    if not force and output_file.exists():
+                        source_mtime = jsonl_file.stat().st_mtime
+                        output_mtime = output_file.stat().st_mtime
+                        if output_mtime >= source_mtime:
+                            total_skipped += 1
+                            continue
+
+                    try:
+                        # Handle splitting
+                        if split_lines:
+                            messages = read_jsonl_messages(jsonl_file)
+                            if messages and len(messages) > 3:
+                                parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+                                if parts:
+                                    base_name = output_name[:-3]  # Remove .md
+                                    for part_num, total_parts, part_md, start_msg, end_msg in parts:
+                                        part_filename = f"{base_name}_part{part_num}.md"
+                                        part_file = ws_output_path / part_filename
+                                        part_file.write_text(part_md, encoding='utf-8')
+                                        print(part_file)
+                                    total_exported += 1
+                                    continue
+
+                        # Regular export (no splitting)
+                        markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+                        output_file.write_text(markdown, encoding='utf-8')
+                        print(output_file)
+                        total_exported += 1
+
+                    except Exception as e:
+                        sys.stderr.write(f"Error exporting {jsonl_file}: {e}\n")
+                        total_failed += 1
+
+            except Exception as e:
+                sys.stderr.write(f"Error accessing workspace {workspace}: {e}\n")
+                total_failed += 1
+
+    # Print summary
+    if total_exported > 0 or total_skipped > 0:
+        print(f"\n✅ Alias '{alias_name}': {total_exported} exported, {total_skipped} skipped, {total_failed} failed")
+
+
+def cmd_alias_config_import(args):
+    """Import aliases from JSON file or stdin."""
+    import_file = getattr(args, 'file', None)
+    replace_mode = getattr(args, 'replace', False)
+
+    try:
+        if import_file:
+            with open(import_file, encoding='utf-8') as f:
+                import_data = json.load(f)
+        else:
+            # Read from stdin
+            import_data = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"Error: Invalid JSON: {e}\n")
+        sys.exit(1)
+    except IOError as e:
+        sys.stderr.write(f"Error reading file: {e}\n")
+        sys.exit(1)
+
+    if 'aliases' not in import_data:
+        sys.stderr.write("Error: Invalid aliases format (missing 'aliases' key)\n")
+        sys.exit(1)
+
+    if replace_mode:
+        # Replace all aliases
+        new_data = import_data
+    else:
+        # Merge with existing
+        existing_data = load_aliases()
+
+        for alias_name, sources in import_data['aliases'].items():
+            if alias_name not in existing_data['aliases']:
+                existing_data['aliases'][alias_name] = sources
+            else:
+                # Merge sources
+                for source_key, workspaces in sources.items():
+                    if source_key not in existing_data['aliases'][alias_name]:
+                        existing_data['aliases'][alias_name][source_key] = workspaces
+                    else:
+                        # Merge workspaces (avoid duplicates)
+                        for ws in workspaces:
+                            if ws not in existing_data['aliases'][alias_name][source_key]:
+                                existing_data['aliases'][alias_name][source_key].append(ws)
+
+        new_data = existing_data
+
+    if save_aliases(new_data):
+        alias_count = len(new_data.get('aliases', {}))
+        mode_str = "Replaced" if replace_mode else "Merged"
+        print(f"✅ {mode_str} aliases ({alias_count} aliases)")
+    else:
+        sys.exit(1)
+
+
+# ============================================================================
 # Commands
 # ============================================================================
 
@@ -2840,6 +3427,10 @@ EXAMPLES:
         metavar='DATE',
         help='Only include sessions modified on or before this date (YYYY-MM-DD)')
 
+    parser_lss.add_argument('--alias',
+        metavar='NAME',
+        help='Use alias instead of workspace pattern (alternative to @name syntax)')
+
     # ========== lsh - list hosts ==========
     parser_lsh = subparsers.add_parser('lsh',
         help='List hosts',
@@ -2934,6 +3525,10 @@ EXAMPLES:
         action='store_true',
         help='Use flat directory structure (default: organized by workspace with source tags)')
 
+    parser_export.add_argument('--alias',
+        metavar='NAME',
+        help='Export using alias (alternative to @name syntax)')
+
     # ========== export-all command ==========
     parser_export_all = subparsers.add_parser('export-all',
         help='Export from all sources',
@@ -2979,6 +3574,105 @@ EXAMPLES:
     parser_export_all.add_argument('--no-index',
         action='store_true',
         help='Skip index.md manifest generation')
+
+    # ========== alias command ==========
+    parser_alias = subparsers.add_parser('alias',
+        help='Manage workspace aliases',
+        description='Create and manage workspace aliases for consolidated exports')
+
+    alias_subparsers = parser_alias.add_subparsers(dest='alias_command', help='Alias subcommand')
+
+    # alias list
+    parser_alias_list = alias_subparsers.add_parser('list',
+        help='List all aliases',
+        description='List all aliases with their workspaces and session counts')
+
+    # alias show
+    parser_alias_show = alias_subparsers.add_parser('show',
+        help='Show alias details',
+        description='Show details of a single alias')
+    parser_alias_show.add_argument('name',
+        help='Alias name')
+
+    # alias create
+    parser_alias_create = alias_subparsers.add_parser('create',
+        help='Create a new alias',
+        description='Create a new empty alias')
+    parser_alias_create.add_argument('name',
+        help='Alias name')
+
+    # alias delete
+    parser_alias_delete = alias_subparsers.add_parser('delete',
+        help='Delete an alias',
+        description='Delete an alias and all its workspace associations')
+    parser_alias_delete.add_argument('name',
+        help='Alias name')
+
+    # alias add
+    parser_alias_add = alias_subparsers.add_parser('add',
+        help='Add workspace(s) to alias',
+        description='Add one or more workspaces to an alias')
+    parser_alias_add.add_argument('name',
+        nargs='?',
+        default='',
+        help='Alias name (default: auto-detect from current directory)')
+    parser_alias_add.add_argument('workspaces',
+        nargs='*',
+        help='Workspace names to add (encoded directory names)')
+    parser_alias_add.add_argument('--pick',
+        action='store_true',
+        help='Interactive workspace picker')
+    parser_alias_add.add_argument('-r', '--remote',
+        metavar='HOST',
+        help='Add workspace from remote host (user@hostname)')
+    parser_alias_add.add_argument('--wsl',
+        nargs='?',
+        const='',
+        metavar='DISTRO',
+        help='Add workspace from WSL distribution')
+    parser_alias_add.add_argument('--windows',
+        nargs='?',
+        const='',
+        metavar='USER',
+        help='Add workspace from Windows user')
+
+    # alias remove
+    parser_alias_remove = alias_subparsers.add_parser('remove',
+        help='Remove workspace from alias',
+        description='Remove a workspace from an alias')
+    parser_alias_remove.add_argument('name',
+        help='Alias name')
+    parser_alias_remove.add_argument('workspace',
+        help='Workspace name to remove (encoded directory name)')
+    parser_alias_remove.add_argument('-r', '--remote',
+        metavar='HOST',
+        help='Remove workspace from remote source')
+    parser_alias_remove.add_argument('--wsl',
+        nargs='?',
+        const='',
+        metavar='DISTRO',
+        help='Remove workspace from WSL source')
+    parser_alias_remove.add_argument('--windows',
+        nargs='?',
+        const='',
+        metavar='USER',
+        help='Remove workspace from Windows source')
+
+    # alias export
+    parser_alias_export = alias_subparsers.add_parser('export',
+        help='Export aliases to JSON',
+        description='Export aliases configuration to JSON (stdout)')
+
+    # alias import
+    parser_alias_import = alias_subparsers.add_parser('import',
+        help='Import aliases from JSON',
+        description='Import aliases from JSON file or stdin')
+    parser_alias_import.add_argument('file',
+        nargs='?',
+        help='JSON file to import (default: stdin)')
+    parser_alias_import.add_argument('--replace',
+        action='store_true',
+        help='Replace all aliases instead of merging')
 
     # Parse arguments
     args = parser.parse_args()
@@ -3048,15 +3742,33 @@ EXAMPLES:
         cmd_list(LswArgs())
 
     elif args.command == 'lss':
-        # List sessions
-        workspace_val = args.workspace if args.workspace else get_current_workspace_pattern()
-        class LssArgs:
-            workspace = workspace_val
-            since = args.since
-            until = args.until
-            remote = resolve_remote_flag(args)
-            workspaces_only = False  # lss always lists sessions
-        cmd_list(LssArgs())
+        # Check for alias (@ prefix or --alias flag)
+        workspace_val = args.workspace if args.workspace else ''
+        alias_flag = getattr(args, 'alias', None)
+
+        # Detect @ prefix
+        alias_name = None
+        if alias_flag:
+            alias_name = alias_flag
+        elif workspace_val.startswith('@'):
+            alias_name = workspace_val[1:]
+
+        if alias_name:
+            # Use alias-based listing
+            since_date = parse_date_string(args.since) if args.since else None
+            until_date = parse_date_string(args.until) if args.until else None
+            cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date)
+        else:
+            # Regular workspace listing
+            if not workspace_val:
+                workspace_val = get_current_workspace_pattern()
+            class LssArgs:
+                workspace = workspace_val
+                since = args.since
+                until = args.until
+                remote = resolve_remote_flag(args)
+                workspaces_only = False  # lss always lists sessions
+            cmd_list(LssArgs())
 
     elif args.command == 'lsh':
         # List hosts
@@ -3067,7 +3779,24 @@ EXAMPLES:
         final_output_dir = args.output_override if hasattr(args, 'output_override') and args.output_override else args.output_dir
 
         # Determine workspace (default to current if empty)
-        target = args.target if args.target else get_current_workspace_pattern()
+        target = args.target if args.target else ''
+
+        # Check for alias (@ prefix or --alias flag)
+        alias_flag = getattr(args, 'alias', None)
+        alias_name = None
+        if alias_flag:
+            alias_name = alias_flag
+        elif target.startswith('@'):
+            alias_name = target[1:]
+
+        if alias_name:
+            # Use alias-based export
+            cmd_alias_export(alias_name, final_output_dir, args)
+            return
+
+        # Get target (default to current workspace if empty)
+        if not target:
+            target = get_current_workspace_pattern()
 
         # Resolve remotes (including --wsl and --windows flags)
         final_remotes = resolve_remote_list(args)
@@ -3123,6 +3852,30 @@ EXAMPLES:
             split = args.split
             index = not args.no_index
         cmd_export_all(ExportAllArgs())
+
+    elif args.command == 'alias':
+        # Alias management commands
+        alias_cmd = getattr(args, 'alias_command', None)
+
+        if alias_cmd == 'list' or alias_cmd is None:
+            cmd_alias_list(args)
+        elif alias_cmd == 'show':
+            cmd_alias_show(args)
+        elif alias_cmd == 'create':
+            cmd_alias_create(args)
+        elif alias_cmd == 'delete':
+            cmd_alias_delete(args)
+        elif alias_cmd == 'add':
+            cmd_alias_add(args)
+        elif alias_cmd == 'remove':
+            cmd_alias_remove(args)
+        elif alias_cmd == 'export':
+            cmd_alias_config_export(args)
+        elif alias_cmd == 'import':
+            cmd_alias_config_import(args)
+        else:
+            # Show alias help if unknown subcommand
+            parser_alias.print_help()
 
 
 if __name__ == "__main__":

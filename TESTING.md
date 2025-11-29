@@ -34,6 +34,7 @@ ver  # Windows command prompt/PowerShell
 ### Section 6: Multi-Source Operations (All Environments)
 ### Section 7: Error Handling & Edge Cases
 ### Section 8: Special Features
+### Section 9: Alias Operations (All Environments)
 
 ---
 
@@ -49,6 +50,7 @@ ver  # Windows command prompt/PowerShell
 | 1.1.4 | `./claude-history lsw --help` | Shows lsw help | ⬜ |
 | 1.1.5 | `./claude-history lss --help` | Shows lss help | ⬜ |
 | 1.1.6 | `./claude-history export --help` | Shows export help | ⬜ |
+| 1.1.7 | `./claude-history alias --help` | Shows alias help | ⬜ |
 
 ---
 
@@ -429,6 +431,71 @@ Minimal test set to verify basic functionality:
 Windows: Add `python claude-history lsw --wsl`
 WSL: Add `./claude-history lsw --windows`
 All: Add `./claude-history lsw -r <user>@<host>` (if SSH available)
+
+---
+
+## Section 9: Alias Operations (All Environments)
+
+### 9.1 Alias Management
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 9.1.1 | `./claude-history alias list` | Shows all aliases (or empty) | ⬜ |
+| 9.1.2 | `./claude-history alias create testproject` | Creates new alias | ⬜ |
+| 9.1.3 | `./claude-history alias show testproject` | Shows empty alias | ⬜ |
+| 9.1.4 | `./claude-history alias add testproject -- <workspace>` | Adds local workspace | ⬜ |
+| 9.1.5 | `./claude-history alias show testproject` | Shows added workspace | ⬜ |
+| 9.1.6 | `./claude-history alias remove testproject -- <workspace>` | Removes workspace | ⬜ |
+| 9.1.7 | `./claude-history alias delete testproject` | Deletes alias | ⬜ |
+
+### 9.2 Alias with Sources
+
+| Test ID | Command | Expected Result | Env | Status |
+|---------|---------|----------------|-----|--------|
+| 9.2.1 | `./claude-history alias add testproject --windows -- <ws>` | Adds Windows workspace | WSL | ⬜ |
+| 9.2.2 | `python claude-history alias add testproject --wsl -- <ws>` | Adds WSL workspace | Win | ⬜ |
+| 9.2.3 | `./claude-history alias add testproject -r user@host -- <ws>` | Adds remote workspace | All | ⬜ |
+| 9.2.4 | `./claude-history alias show testproject` | Shows workspaces by source | All | ⬜ |
+
+### 9.3 Using Aliases with lss
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 9.3.1 | `./claude-history lss @testproject` | Lists sessions from alias workspaces | ⬜ |
+| 9.3.2 | `./claude-history lss --alias testproject` | Same as above | ⬜ |
+| 9.3.3 | `./claude-history lss @testproject --since 2025-01-01` | Date filtering works | ⬜ |
+| 9.3.4 | `./claude-history lss @nonexistent` | Shows alias not found error | ⬜ |
+
+### 9.4 Using Aliases with export
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 9.4.1 | `./claude-history export @testproject` | Exports from alias workspaces | ⬜ |
+| 9.4.2 | `./claude-history export --alias testproject` | Same as above | ⬜ |
+| 9.4.3 | `./claude-history export @testproject -o /tmp/test` | Custom output dir | ⬜ |
+| 9.4.4 | `./claude-history export @testproject --minimal` | Minimal mode works | ⬜ |
+| 9.4.5 | `./claude-history export @testproject --as` | All sources for alias | ⬜ |
+| 9.4.6 | `./claude-history export @nonexistent` | Shows alias not found error | ⬜ |
+
+### 9.5 Alias Export/Import
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 9.5.1 | `./claude-history alias export /tmp/aliases.json` | Exports aliases to file | ⬜ |
+| 9.5.2 | Verify `/tmp/aliases.json` | Valid JSON with version and aliases | ⬜ |
+| 9.5.3 | `./claude-history alias import /tmp/aliases.json` | Imports aliases from file | ⬜ |
+| 9.5.4 | `./claude-history alias import nonexistent.json` | Shows file not found error | ⬜ |
+
+### 9.6 Edge Cases
+
+| Test ID | Scenario | Expected Result | Status |
+|---------|----------|----------------|--------|
+| 9.6.1 | Workspace name starting with `-` | Requires `--` separator | ⬜ |
+| 9.6.2 | Alias name with special chars | Handled correctly | ⬜ |
+| 9.6.3 | Add duplicate workspace | Shows already exists | ⬜ |
+| 9.6.4 | Remove non-existent workspace | Shows not found | ⬜ |
+| 9.6.5 | Create duplicate alias | Shows already exists | ⬜ |
+| 9.6.6 | Empty alias with lss/export | Shows no workspaces message | ⬜ |
 
 ---
 

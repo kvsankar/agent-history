@@ -74,6 +74,24 @@ chmod +x claude-history
 ./claude-history export-all                       # all sources, all workspaces
 ./claude-history export-all myproject             # filter by workspace pattern
 
+# Workspace Aliases (group workspaces across environments)
+./claude-history alias list                       # list all aliases
+./claude-history alias show myproject             # show workspaces in an alias
+./claude-history alias create myproject           # create new alias
+./claude-history alias delete myproject           # delete an alias
+./claude-history alias add myproject -- -home-user-myproject  # add workspace to alias
+./claude-history alias add myproject --windows -- C--user-myproject  # add Windows workspace
+./claude-history alias remove myproject -- -home-user-myproject  # remove workspace from alias
+./claude-history alias export aliases.json        # export aliases to file
+./claude-history alias import aliases.json        # import aliases from file
+
+# Using aliases with lss and export
+./claude-history lss @myproject                   # list sessions from all alias workspaces
+./claude-history lss --alias myproject            # same as above
+./claude-history export @myproject                # export from all alias workspaces
+./claude-history export --alias myproject         # same as above
+./claude-history export @myproject --as           # export alias from all sources
+
 # WSL and Windows access (new semantic flags)
 ./claude-history lsw --wsl                  # list WSL workspaces
 ./claude-history lsw --wsl Ubuntu           # filter by distro name
@@ -182,7 +200,7 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ### Code Structure
 
-The file is organized into eight main sections:
+The file is organized into nine main sections:
 
 1. **Date Parsing**
    - `parse_date_string()`: Parses ISO 8601 date strings (YYYY-MM-DD format) into datetime objects
@@ -225,7 +243,23 @@ The file is organized into eight main sections:
    - `get_remote_session_info()`: Gets remote file stats (size, mtime, message count) without downloading
    - `fetch_workspace_files()`: Fetches files from one remote workspace using rsync
 
-8. **Commands**
+8. **Workspace Aliases**
+   - `get_aliases_dir()`: Returns `~/.claude-history/` directory
+   - `get_aliases_file()`: Returns `~/.claude-history/aliases.json` path
+   - `load_aliases()`: Loads aliases from JSON file (returns empty dict if not found)
+   - `save_aliases()`: Saves aliases to JSON file
+   - `cmd_alias_list()`: Lists all defined aliases
+   - `cmd_alias_show()`: Shows workspaces in a specific alias
+   - `cmd_alias_create()`: Creates a new empty alias
+   - `cmd_alias_delete()`: Deletes an alias
+   - `cmd_alias_add()`: Adds a workspace to an alias (with source type)
+   - `cmd_alias_remove()`: Removes a workspace from an alias
+   - `cmd_alias_config_export()`: Exports aliases to a JSON file
+   - `cmd_alias_config_import()`: Imports aliases from a JSON file
+   - `cmd_alias_lss()`: Lists sessions from all workspaces in an alias
+   - `cmd_alias_export()`: Exports sessions from all workspaces in an alias
+
+9. **Commands**
    - `cmd_list()`: Shows all sessions for a workspace with stats (supports `-r` for remote/WSL)
    - `cmd_convert()`: Converts single .jsonl file to markdown (supports `-r` for remote/WSL)
    - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote/WSL, `--split` for splitting, organized export by default)
@@ -234,8 +268,9 @@ The file is organized into eight main sections:
    - `cmd_export_all()`: Exports from all sources (local + all WSL + optional SSH remotes) in one command
    - `generate_index_manifest()`: Generates index.md summary file with per-source and per-workspace statistics
    - `cmd_version()`: Displays version info
+   - `cmd_alias_*()`: Alias management commands (see section 8)
 
-9. **Main**
+10. **Main**
    - Argument parsing with `argparse` (including -r/--remote, --since, --until, --minimal, --split, --flat flags)
    - Command dispatch to appropriate handler
    - Error handling (KeyboardInterrupt, general exceptions)
@@ -684,6 +719,68 @@ Workspace pattern matching is substring-based:
 - Empty pattern (`""`, `"*"`, or `"all"`) matches all workspaces
 - Case-sensitive matching
 
+### Workspace Aliases
+
+Aliases group related workspaces across different sources for unified access.
+
+**Storage Location:**
+- Config directory: `~/.claude-history/`
+- Alias file: `~/.claude-history/aliases.json`
+
+**JSON Structure:**
+```json
+{
+  "version": 1,
+  "aliases": {
+    "myproject": {
+      "local": ["-home-alice-projects-myproject"],
+      "windows": ["C--alice-projects-myproject"],
+      "wsl": {"Ubuntu": ["-home-alice-myproject"]},
+      "remote": {"workstation": ["-home-alice-myproject"]}
+    }
+  }
+}
+```
+
+**Source Types:**
+- `local`: Local workspaces (current environment)
+- `windows`: Windows workspaces (from WSL)
+- `wsl`: WSL workspaces (from Windows), keyed by distro name
+- `remote`: SSH remote workspaces, keyed by hostname
+
+**Usage Patterns:**
+```bash
+# Using @ prefix
+./claude-history lss @myproject
+./claude-history export @myproject
+
+# Using --alias flag
+./claude-history lss --alias myproject
+./claude-history export --alias myproject
+
+# Combine with other flags
+./claude-history export @myproject --as     # all sources
+./claude-history export @myproject --minimal
+```
+
+**Syncing Aliases Across Machines:**
+```bash
+# Export aliases to file
+./claude-history alias export aliases.json
+
+# Copy to another machine
+scp aliases.json user@other-machine:~/
+
+# Import on other machine
+./claude-history alias import aliases.json
+```
+
+**Note on Workspace Names:**
+Workspace names starting with `-` may be interpreted as flags. Use `--` separator:
+```bash
+./claude-history alias add myproject -- -home-user-myproject
+```
+
 ### Remote Operations
 
 All commands support remote operations via the `-r/--remote` flag:
@@ -746,6 +843,24 @@ ssh -o BatchMode=yes user@hostname echo ok
 ```
 
 ## Recent Changes
+
+**Workspace Aliases (v1.3.0)**
+- Added workspace aliases feature for grouping related workspaces across environments
+- **Storage**: Aliases stored in `~/.claude-history/aliases.json`
+- **Alias commands**:
+  - `alias list` - list all defined aliases
+  - `alias show NAME` - show workspaces in an alias
+  - `alias create NAME` - create a new alias
+  - `alias delete NAME` - delete an alias
+  - `alias add NAME WORKSPACE` - add workspace to alias (with `--windows`, `--wsl`, `-r` for source)
+  - `alias remove NAME WORKSPACE` - remove workspace from alias
+  - `alias export FILE` - export aliases to JSON file
+  - `alias import FILE` - import aliases from JSON file
+- **Integration with lss and export**:
+  - Use `@aliasname` prefix or `--alias aliasname` flag
+  - Example: `lss @myproject`, `export --alias myproject`
+- **Cross-source support**: Group workspaces from local, Windows, WSL, and SSH remotes
+- **Sync strategy**: Export/import JSON files for manual synchronization
 
 **Bug Fix: lsw Silent Failure (v1.2.2)**
 - Fixed `lsw` (list workspaces) command to return empty output instead of error when no workspaces match pattern
