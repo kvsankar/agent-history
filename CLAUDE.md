@@ -29,20 +29,24 @@ chmod +x claude-history
 # List workspaces
 ./claude-history lsw                        # all local workspaces
 ./claude-history lsw myproject              # filter by pattern
+./claude-history lsw proj1 proj2            # multiple patterns (match any)
 ./claude-history lsw --wsl                  # WSL workspaces
 ./claude-history lsw --windows              # Windows workspaces
 ./claude-history lsw -r user@server         # SSH remote workspaces
 ./claude-history lsw --as                   # all sources (local + WSL/Windows + remotes)
 ./claude-history lsw --as -r vm01 -r vm02   # all sources + multiple SSH remotes
+./claude-history lsw proj1 proj2 --as       # multiple patterns from all sources
 
 # List sessions
 ./claude-history lss                        # current workspace
 ./claude-history lss myproject              # specific workspace
+./claude-history lss proj1 proj2            # multiple workspaces (deduplicated)
 ./claude-history lss --wsl                  # from WSL
 ./claude-history lss --windows              # from Windows
 ./claude-history lss myproject -r user@server    # SSH remote sessions
 ./claude-history lss myproject --as         # from all sources
 ./claude-history lss --as -r vm01 -r vm02   # all sources + multiple SSH remotes
+./claude-history lss proj1 proj2 --as       # multiple patterns from all sources
 
 # Export (unified command with orthogonal scope flags)
 ./claude-history export                     # current workspace, local source
@@ -51,7 +55,9 @@ chmod +x claude-history
 ./claude-history export --as --aw           # all workspaces, all sources
 
 ./claude-history export myproject           # specific workspace, local
+./claude-history export proj1 proj2         # multiple workspaces (deduplicated)
 ./claude-history export myproject --as      # specific workspace, all sources
+./claude-history export proj1 proj2 --as    # multiple workspaces, all sources (lenient)
 ./claude-history export file.jsonl         # export single file
 
 ./claude-history export -o /tmp/backup      # current workspace, custom output
@@ -61,6 +67,7 @@ chmod +x claude-history
 ./claude-history export --windows           # current workspace, Windows
 ./claude-history export -r user@server      # current workspace, SSH remote
 ./claude-history export --as -r user@vm01   # current workspace, all sources + SSH remote
+./claude-history export --as proj1 proj2 -r host  # multiple patterns, all sources + remote
 
 # Show version
 ./claude-history --version
@@ -847,6 +854,32 @@ ssh -o BatchMode=yes user@hostname echo ok
 ```
 
 ## Recent Changes
+
+**Multiple Patterns and Lenient Export (v1.3.4)**
+- Multiple workspace patterns for all commands:
+  - `lsw pattern1 pattern2` - list workspaces matching any pattern
+  - `lss pattern1 pattern2` - list sessions from multiple workspaces
+  - `export pattern1 pattern2` - export from multiple workspaces
+- Patterns work with `--as` flag: `export --as proj1 proj2 -r host`
+- Sessions deduplicated when patterns overlap
+- **Lenient behavior for `export --as`**:
+  - No error when a pattern doesn't match on a source
+  - Reports "No matching sessions" and continues to next source
+  - Only fails if nothing matches anywhere
+  - Helps with multi-workspace exports across different environments
+
+**Multiple Patterns for Remote (v1.3.3)**
+- Fixed `lsw -r` failing with missing workspace attribute
+- Multiple patterns now work with all source types:
+  - SSH remote: `lsw pattern1 pattern2 -r host`
+  - Windows: `lss pattern1 pattern2 --windows`
+  - WSL: `lss pattern1 pattern2 --wsl`
+
+**Bug Fixes for Remote Operations (v1.3.2)**
+- Fixed `list_remote_workspaces()` call with incorrect argument count
+- Fixed `get_remote_session_info()` call with unsupported keyword args
+- Date filtering for remote sessions now applied after fetching
+- Added test cases for multiple workspace patterns (Section 6.6)
 
 **All-Sources Flag for lsw/lss (v1.3.1)**
 - Added `--as` (`--all-sources`) flag to `lsw` and `lss` commands

@@ -46,6 +46,43 @@ python claude-history export
 # Output goes to ./claude-conversations/ by default
 ```
 
+## What's New in v1.3.4
+
+**📋 Multiple Workspace Patterns:**
+
+Specify multiple workspace patterns in a single command:
+
+```bash
+# List/export from multiple workspaces
+./claude-history lsw proj1 proj2            # match any pattern
+./claude-history lss proj1 proj2            # sessions from both
+./claude-history export proj1 proj2         # export both
+
+# Works with --as (all sources)
+./claude-history export --as proj1 proj2 -r host
+
+# Sessions deduplicated when patterns overlap
+```
+
+**🔄 Lenient Multi-Source Export:**
+
+When using `export --as` with multiple patterns, the tool is now lenient:
+- No error when a pattern doesn't match on a particular source
+- Reports "No matching sessions" and continues to next source
+- Only fails if nothing matches anywhere
+- Perfect for multi-environment exports
+
+```bash
+# Export proj1 and proj2 from all sources
+# Won't fail if proj2 doesn't exist on remote
+./claude-history export --as proj1 proj2 -r vm01
+
+# Output:
+# [Local] 8 sessions exported
+# [Windows] 5 sessions exported
+# [Remote] No matching sessions   ← continues without error
+```
+
 ## What's New in v1.3.0
 
 **🏷️ Workspace Aliases:**
@@ -1063,7 +1100,9 @@ claude-history export [WORKSPACE] [OPTIONS]
 - `--aw, --all-workspaces` (also `-a, --all`): Export ALL workspaces (default: current workspace)
 
 **Arguments:**
-- `WORKSPACE`: Workspace name pattern (optional, defaults to current workspace)
+- `WORKSPACE`: One or more workspace patterns (optional, defaults to current workspace)
+  - Multiple patterns supported: `export proj1 proj2`
+  - Sessions deduplicated when patterns overlap
 - `output_dir`: Output directory positional argument (optional)
 
 **Options:**
@@ -1106,6 +1145,12 @@ export --as --aw
 
 # Specific workspace, all sources, custom output
 export myproject --as -o /tmp/backup
+
+# Multiple workspaces (deduplicated)
+export proj1 proj2 -o ./exports
+
+# Multiple workspaces from all sources (lenient - continues if pattern doesn't match)
+export --as proj1 proj2 -r host
 
 # All workspaces matching pattern, all sources
 export astro --as --aw
@@ -1548,7 +1593,50 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ## What's New
 
-### Version 1.2.1 (Latest)
+### Version 1.3.4 (Latest)
+
+**📋 Multiple Workspace Patterns:**
+- `lsw pattern1 pattern2` - list workspaces matching any pattern
+- `lss pattern1 pattern2` - list sessions from multiple workspaces
+- `export pattern1 pattern2` - export from multiple workspaces
+- Works with `--as` flag: `export --as proj1 proj2 -r host`
+- Sessions deduplicated when patterns overlap
+
+**🔄 Lenient Multi-Source Export:**
+- No error when a pattern doesn't match on a particular source
+- Reports "No matching sessions" and continues to next source
+- Only fails if nothing matches anywhere
+- Perfect for multi-environment exports where not all workspaces exist everywhere
+
+### Version 1.3.3
+
+**🔧 Multiple Patterns for Remote:**
+- Fixed `lsw -r` failing with missing workspace attribute
+- Multiple patterns work with all source types: SSH, Windows, WSL
+
+### Version 1.3.2
+
+**🐛 Bug Fixes:**
+- Fixed `list_remote_workspaces()` call with incorrect argument count
+- Fixed `get_remote_session_info()` call with unsupported keyword args
+- Date filtering for remote sessions now applied after fetching
+
+### Version 1.3.1
+
+**🔍 All-Sources Flag for lsw/lss:**
+- Added `--as` (`--all-sources`) flag to `lsw` and `lss` commands
+- Consistent interface: `lsw --as`, `lss --as` now work like `export --as`
+- List workspaces/sessions from all sources (local + WSL/Windows + SSH remotes)
+- Support for multiple `-r` flags: `lsw --as -r vm01 -r vm02`
+
+### Version 1.3.0
+
+**🏷️ Workspace Aliases:**
+- Group related workspaces across environments
+- `@aliasname` prefix or `--alias` flag for lss/export
+- Import/export aliases for sync across machines
+
+### Version 1.2.1
 
 **🔧 Windows Compatibility:**
 - Fixed critical Unicode encoding bug preventing multi-source operations on Windows

@@ -32,6 +32,8 @@ ver  # Windows command prompt/PowerShell
 ### Section 4: Windows Operations (WSL only)
 ### Section 5: SSH Remote Operations (All Environments)
 ### Section 6: Multi-Source Operations (All Environments)
+  - 6.6: Multiple Workspace Patterns
+  - 6.7: Lenient Multi-Source Behavior
 ### Section 7: Error Handling & Edge Cases
 ### Section 8: Special Features
 ### Section 9: Alias Operations (All Environments)
@@ -307,6 +309,24 @@ ver  # Windows command prompt/PowerShell
 | 6.6.6 | `./claude-history export <pattern1> <pattern2>` | Exports from both patterns | ⬜ |
 | 6.6.7 | `./claude-history export <pattern1> <pattern2> --as` | Multiple patterns + all sources export | ⬜ |
 | 6.6.8 | `./claude-history lss <overlapping1> <overlapping2>` | No duplicate sessions (deduplication works) | ⬜ |
+
+### 6.7 Lenient Multi-Source Behavior
+
+Tests for lenient behavior when patterns don't match on all sources:
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 6.7.1 | `./claude-history export --as <exists> <notexists> -r <host>` | Exports from local/windows, reports "No matching" for remote | ⬜ |
+| 6.7.2 | `./claude-history export --as <pattern> -r <host_with_no_match>` | Reports "No matching sessions" for remote, continues | ⬜ |
+| 6.7.3 | `./claude-history export --as <pattern1> <pattern2>` | Exports from all sources that have matches | ⬜ |
+| 6.7.4 | `./claude-history export <nonexistent1> <nonexistent2>` | Error: No sessions found (nothing matches anywhere) | ⬜ |
+| 6.7.5 | `./claude-history export --as --aw` (some sources empty) | Exports from sources with data, reports "No matching" for empty | ⬜ |
+
+**Expected Behavior:**
+- `export --as` is lenient: continues when a pattern doesn't match on a particular source
+- Single-source `export` fails if no patterns match
+- "No matching sessions" message shown for sources without matches
+- Summary shows correct count per source
 
 ---
 
