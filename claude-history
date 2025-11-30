@@ -13,11 +13,13 @@ License: MIT
 import argparse
 import base64
 import json
+import re
+import shlex
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 
 # ============================================================================
@@ -50,6 +52,69 @@ def validate_split_lines(value):
         return ivalue
     except ValueError:
         raise argparse.ArgumentTypeError(f"split value must be an integer, got '{value}'")
+
+
+# ============================================================================
+# Input Validation (Security)
+# ============================================================================
+
+# Pattern for valid workspace directory names (Claude Code encoded paths)
+# Allow: alphanumeric, dashes, underscores, dots
+# Workspace names always start with dash (Unix) or letter (Windows drive)
+WORKSPACE_NAME_PATTERN = re.compile(r'^[-a-zA-Z0-9_.]+$')
+
+# Pattern for valid SSH remote host specifications
+# Allow: user@hostname, hostname, user@hostname:port, IPv4/IPv6
+REMOTE_HOST_PATTERN = re.compile(
+    r'^(?:[\w.-]+@)?'           # Optional user@
+    r'(?:[\w.-]+|\[[0-9a-fA-F:]+\])'  # Hostname or IPv6 in brackets
+    r'(?::\d+)?$'               # Optional :port
+)
+
+
+def validate_workspace_name(workspace_name: str) -> bool:
+    """Validate workspace name to prevent command injection.
+
+    Workspace names from Claude Code are encoded paths like:
+    - '-home-user-project' (Unix)
+    - 'C--Users-name-project' (Windows)
+    - 'remote_host_home-user-project' (cached remote)
+    - 'wsl_Ubuntu_home-user-project' (cached WSL)
+
+    Returns True if valid, False otherwise.
+    """
+    if not workspace_name:
+        return False
+    if len(workspace_name) > 1000:  # Reasonable limit
+        return False
+    return bool(WORKSPACE_NAME_PATTERN.match(workspace_name))
+
+
+def validate_remote_host(remote_host: str) -> bool:
+    """Validate remote host specification to prevent command injection.
+
+    Valid formats:
+    - hostname
+    - user@hostname
+    - user@hostname:port
+    - IPv4 address
+    - user@IPv6 (with brackets)
+
+    Returns True if valid, False otherwise.
+    """
+    if not remote_host:
+        return False
+    if len(remote_host) > 255:  # DNS limit
+        return False
+    return bool(REMOTE_HOST_PATTERN.match(remote_host))
+
+
+def sanitize_for_shell(value: str) -> str:
+    """Sanitize a value for safe use in shell commands.
+
+    Uses shlex.quote for proper escaping.
+    """
+    return shlex.quote(value)
 
 
 # ============================================================================
@@ -163,11 +228,10 @@ def is_tool_result_message(msg_content: str) -> bool:
 def calculate_time_gap(msg1, msg2) -> float:
     """Calculate time gap in seconds between two messages."""
     try:
-        from datetime import datetime
         ts1 = datetime.fromisoformat(msg1['timestamp'].replace('Z', '+00:00'))
         ts2 = datetime.fromisoformat(msg2['timestamp'].replace('Z', '+00:00'))
         return abs((ts2 - ts1).total_seconds())
-    except:
+    except (ValueError, KeyError, TypeError):
         return 0
 
 
@@ -977,8 +1041,9 @@ def is_running_in_wsl() -> bool:
     """Detect if we're running inside WSL."""
     try:
         with open('/proc/version', 'r') as f:
-            return 'microsoft' in f.read().lower() or 'wsl' in f.read().lower()
-    except:
+            content = f.read().lower()
+            return 'microsoft' in content or 'wsl' in content
+    except (OSError, IOError):
         return False
 
 
@@ -1029,7 +1094,7 @@ def get_windows_home_from_wsl(username: str = None):
 
             if wsl_path.exists() and (wsl_path / '.claude' / 'projects').exists():
                 return wsl_path
-    except:
+    except (subprocess.SubprocessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
 
     # Fallback: scan all drives
@@ -1353,6 +1418,11 @@ def check_ssh_connection(remote_host: str) -> bool:
     """
     import subprocess
 
+    # Validate remote host to prevent command injection (security fix)
+    if not validate_remote_host(remote_host):
+        sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
+        return False
+
     try:
         # Try SSH with BatchMode (no password prompts) and short timeout
         result = subprocess.run(
@@ -1391,6 +1461,11 @@ def get_remote_workspaces_batch(remote_host: str) -> list:
     """
     import subprocess
     import json
+
+    # Validate remote host to prevent command injection (security fix)
+    if not validate_remote_host(remote_host):
+        sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
+        return []
 
     # Create a shell script that will run on remote
     script = '''#!/bin/bash
@@ -1485,6 +1560,14 @@ def normalize_remote_workspace_name(remote_host: str, workspace_dir_name: str) -
     """
     import subprocess
 
+    # Validate inputs to prevent command injection (security fix)
+    if not validate_remote_host(remote_host):
+        # Fall back to simple replacement without remote verification
+        encoded = workspace_dir_name[1:] if workspace_dir_name.startswith('-') else workspace_dir_name
+        return '/' + encoded.replace('-', '/')
+    if not validate_workspace_name(workspace_dir_name):
+        return workspace_dir_name  # Return as-is if invalid
+
     # Remove leading dash
     if workspace_dir_name.startswith('-'):
         encoded = workspace_dir_name[1:]
@@ -1528,7 +1611,7 @@ def normalize_remote_workspace_name(remote_host: str, workspace_dir_name: str) -
         if result.stdout.strip():
             # Return the first (longest) match
             return result.stdout.strip().split('\n')[0]
-    except:
+    except (subprocess.SubprocessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
 
     # Fallback to simple replacement
@@ -1546,6 +1629,11 @@ def list_remote_workspaces(remote_host: str) -> list:
         Excludes remote caches (remote_* and wsl_*) to prevent circular fetching
     """
     import subprocess
+
+    # Validate remote host to prevent command injection (security fix)
+    if not validate_remote_host(remote_host):
+        sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
+        return []
 
     try:
         # List directories in remote ~/.claude/projects/ (simple and fast)
@@ -1589,12 +1677,21 @@ def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
         List of session info dicts with filename, size_kb, modified, message_count
     """
     import subprocess
-    import json
+
+    # Validate inputs to prevent command injection (security fix)
+    if not validate_remote_host(remote_host):
+        sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
+        return []
+    if not validate_workspace_name(remote_workspace):
+        sys.stderr.write(f"Error: Invalid workspace name: {remote_workspace}\n")
+        return []
 
     try:
         # Get file stats from remote using find and stat
         # Output format: filename|size_bytes|mtime_epoch|line_count
-        cmd = f'''cd ~/.claude/projects/{remote_workspace} && \
+        # Use sanitize_for_shell to safely quote the workspace name
+        safe_workspace = sanitize_for_shell(remote_workspace)
+        cmd = f'''cd ~/.claude/projects/{safe_workspace} && \
                   for f in *.jsonl; do \
                       [ -f "$f" ] || continue; \
                       size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null); \
@@ -1659,6 +1756,14 @@ def fetch_workspace_files(remote_host: str, remote_workspace: str,
     """
     import subprocess
 
+    # Validate inputs to prevent command injection (security fix)
+    if not validate_remote_host(remote_host):
+        return {'success': False, 'files_copied': 0, 'bytes': 0,
+                'error': f'Invalid remote host: {remote_host}'}
+    if not validate_workspace_name(remote_workspace):
+        return {'success': False, 'files_copied': 0, 'bytes': 0,
+                'error': f'Invalid workspace name: {remote_workspace}'}
+
     # Generate local directory name with remote prefix
     # New naming: remote_hostname_path (consistent with export tags)
     # Strip leading dash from remote_workspace if present
@@ -1675,6 +1780,7 @@ def fetch_workspace_files(remote_host: str, remote_workspace: str,
     # -h: human-readable
     # --include='*.jsonl': only sync .jsonl files
     # --exclude='*': exclude everything else
+    # Note: rsync handles quoting internally when using list arguments
     remote_path = f"{remote_host}:~/.claude/projects/{remote_workspace}/"
 
     try:
@@ -1872,7 +1978,7 @@ def get_alias_session_count(alias_name: str, aliases_data: dict) -> int:
                 # Try to get session count for this workspace
                 sessions = get_workspace_sessions(workspace)
                 total += len(sessions)
-            except:
+            except (OSError, IOError, PermissionError):
                 pass  # Workspace may not exist or be accessible
 
     return total
@@ -1999,7 +2105,7 @@ def get_sessions_for_source(source_key: str, workspace: str, since_date=None, un
             # Get the local cache directory
             try:
                 local_projects = get_claude_projects_dir()
-            except:
+            except (OSError, SystemExit):
                 return []
 
             # Build the cached workspace name
@@ -2184,7 +2290,7 @@ def cmd_alias_add(args):
                 wsl_distros = get_wsl_distributions()
                 for distro in wsl_distros:
                     sources_to_check.append((f'wsl:{distro}', distro))
-            except:
+            except (OSError, subprocess.SubprocessError):
                 pass
         else:
             # On Linux/WSL, check Windows users
@@ -2193,7 +2299,7 @@ def cmd_alias_add(args):
                 for user_info in windows_users:
                     username = user_info.get('username', '')
                     sources_to_check.append((f'windows:{username}' if username else 'windows', username))
-            except:
+            except (OSError, subprocess.SubprocessError):
                 pass
 
         # 3. SSH remotes (if provided)
@@ -2498,7 +2604,7 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
                         dt = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
                         ts_prefix = dt.strftime('%Y%m%d%H%M%S')
                         output_name = f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
-                    except:
+                    except (ValueError, AttributeError):
                         output_name = f"{source_tag}{jsonl_file.stem}.md"
                 else:
                     output_name = f"{source_tag}{jsonl_file.stem}.md"
@@ -2786,8 +2892,14 @@ def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_messages_file_path ON messages(file_path);
         CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
         CREATE INDEX IF NOT EXISTS idx_messages_model ON messages(model);
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
         CREATE INDEX IF NOT EXISTS idx_tool_uses_file_path ON tool_uses(file_path);
         CREATE INDEX IF NOT EXISTS idx_tool_uses_tool_name ON tool_uses(tool_name);
+        CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id);
+
+        -- Composite indexes for common filter combinations
+        CREATE INDEX IF NOT EXISTS idx_sessions_workspace_source ON sessions(workspace, source);
+        CREATE INDEX IF NOT EXISTS idx_sessions_source_time ON sessions(source, start_time);
     ''')
 
     # Check/set schema version and handle migrations
