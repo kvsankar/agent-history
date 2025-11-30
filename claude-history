@@ -3713,10 +3713,6 @@ EXAMPLES:
     claude-history export myproject --split 500     # split long conversations
     claude-history export myproject --flat          # flat structure (no subdirs)
 
-  Backward compatible (export-all still supported):
-    claude-history export-all                       # all sources, all workspaces
-    claude-history export-all myproject             # filter by workspace pattern
-
   WSL access (Windows):
     claude-history lsh --wsl                        # list WSL distributions
     claude-history lsw --wsl                        # list WSL workspaces
@@ -3910,52 +3906,6 @@ EXAMPLES:
     parser_export.add_argument('--alias',
         metavar='NAME',
         help='Export using alias (alternative to @name syntax)')
-
-    # ========== export-all command ==========
-    parser_export_all = subparsers.add_parser('export-all',
-        help='Export from all sources',
-        description='Export from all sources: local, WSL distributions, and optionally SSH remotes')
-
-    parser_export_all.add_argument('workspace',
-        nargs='?',
-        default='',
-        help='Optional workspace pattern to filter (default: all workspaces)')
-
-    parser_export_all.add_argument('output_dir',
-        nargs='?',
-        default='./claude-conversations',
-        help='Output directory (default: ./claude-conversations)')
-
-    parser_export_all.add_argument('-r', '--remote',
-        metavar='HOST',
-        action='append',
-        dest='remotes',
-        help='Additional remote host to include via SSH (user@hostname) - can be used multiple times')
-
-    parser_export_all.add_argument('--force',
-        action='store_true',
-        help='Force re-export (default: incremental)')
-
-    parser_export_all.add_argument('--minimal',
-        action='store_true',
-        help='Minimal export: omit metadata, keep only conversation content')
-
-    parser_export_all.add_argument('--split',
-        metavar='LINES',
-        type=validate_split_lines,
-        help='Split long conversations into parts (e.g., --split 500)')
-
-    parser_export_all.add_argument('--since',
-        metavar='DATE',
-        help='Only include sessions modified on or after this date (YYYY-MM-DD)')
-
-    parser_export_all.add_argument('--until',
-        metavar='DATE',
-        help='Only include sessions modified on or before this date (YYYY-MM-DD)')
-
-    parser_export_all.add_argument('--no-index',
-        action='store_true',
-        help='Skip index.md manifest generation')
 
     # ========== alias command ==========
     parser_alias = subparsers.add_parser('alias',
@@ -4281,20 +4231,6 @@ EXAMPLES:
                 flat = args.flat
                 remote = final_remote
             cmd_batch(ExportArgs())
-
-    elif args.command == 'export-all':
-        # Export from all sources
-        class ExportAllArgs:
-            workspace = args.workspace
-            output_dir = args.output_dir
-            remotes = getattr(args, 'remotes', None)
-            since = args.since
-            until = args.until
-            force = args.force
-            minimal = args.minimal
-            split = args.split
-            index = not args.no_index
-        cmd_export_all(ExportAllArgs())
 
     elif args.command == 'alias':
         # Alias management commands
