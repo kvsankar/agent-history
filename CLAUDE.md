@@ -857,12 +857,14 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 For the full changelog and version history, see [README.md](README.md#whats-new).
 
-**Current version:** 1.3.4
+**Current version:** 1.3.5
 
 **Key features added recently:**
-- v1.3.4: Multiple workspace patterns, lenient multi-source export, improved workspace detection
+- v1.3.5: Bug fixes for SSH export, workspace detection improvements
+  - Fixed SSH remote export not finding cached sessions
+  - `--aw` and `--as` flags now work correctly from any directory
+- v1.3.4: Multiple workspace patterns, lenient multi-source export
   - `lss` and `export` now show helpful error when run outside a workspace
-  - Suggests alternatives: specify pattern, use `--aw`, or use `--as`
 - v1.3.0: Workspace aliases for grouping workspaces across environments
 - v1.2.0: Unified export interface, WSL/Windows access, organized export structure
 

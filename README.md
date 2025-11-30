@@ -46,6 +46,15 @@ python claude-history export
 # Output goes to ./claude-conversations/ by default
 ```
 
+## What's New in v1.3.5
+
+**🔧 Bug Fixes & Improvements:**
+
+- Fixed SSH remote export not finding cached sessions after fetch
+- Added helpful error messages when `lss`/`export` run outside a workspace
+- `--aw` and `--as` flags now work correctly from any directory
+- Improved workspace detection for better user experience
+
 ## What's New in v1.3.4
 
 **📋 Multiple Workspace Patterns:**
@@ -1593,7 +1602,15 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ## What's New
 
-### Version 1.3.4 (Latest)
+### Version 1.3.5 (Latest)
+
+**🔧 Bug Fixes & Improvements:**
+- Fixed SSH remote export not finding cached sessions after fetch
+- Added helpful error messages when `lss`/`export` run outside a workspace
+- `--aw` and `--as` flags now work correctly from any directory
+- Improved workspace detection for better user experience
+
+### Version 1.3.4
 
 **📋 Multiple Workspace Patterns:**
 - `lsw pattern1 pattern2` - list workspaces matching any pattern
