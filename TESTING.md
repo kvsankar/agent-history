@@ -37,6 +37,11 @@ ver  # Windows command prompt/PowerShell
 ### Section 7: Error Handling & Edge Cases
 ### Section 8: Special Features
 ### Section 9: Alias Operations (All Environments)
+### Section 10: Sources Command (All Environments)
+### Section 11: Stats Command (All Environments)
+  - 11.3: Time Tracking
+  - 11.4: Orthogonal Flags (--as/--aw)
+### Section 12: Automatic Alias Scoping (All Environments)
 
 ---
 
@@ -50,9 +55,11 @@ ver  # Windows command prompt/PowerShell
 | 1.1.2 | `./claude-history --help` | Shows help text | ⬜ |
 | 1.1.3 | `./claude-history lsh --help` | Shows lsh help | ⬜ |
 | 1.1.4 | `./claude-history lsw --help` | Shows lsw help | ⬜ |
-| 1.1.5 | `./claude-history lss --help` | Shows lss help | ⬜ |
-| 1.1.6 | `./claude-history export --help` | Shows export help | ⬜ |
+| 1.1.5 | `./claude-history lss --help` | Shows lss help (includes --this) | ⬜ |
+| 1.1.6 | `./claude-history export --help` | Shows export help (includes --this) | ⬜ |
 | 1.1.7 | `./claude-history alias --help` | Shows alias help | ⬜ |
+| 1.1.8 | `./claude-history sources --help` | Shows sources help | ⬜ |
+| 1.1.9 | `./claude-history stats --help` | Shows stats help (includes --this, --time) | ⬜ |
 
 ---
 
@@ -557,6 +564,176 @@ All: Add `./claude-history lsw -r <user>@<host>` (if SSH available)
 | 9.6.4 | Remove non-existent workspace | Shows not found | ⬜ |
 | 9.6.5 | Create duplicate alias | Shows already exists | ⬜ |
 | 9.6.6 | Empty alias with lss/export | Shows no workspaces message | ⬜ |
+
+---
+
+## Section 10: Sources Command (All Environments)
+
+### 10.1 Sources Management
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 10.1.1 | `./claude-history sources` | Lists saved sources (or empty) | ⬜ |
+| 10.1.2 | `./claude-history sources list` | Same as above | ⬜ |
+| 10.1.3 | `./claude-history sources add user@host` | Adds SSH remote | ⬜ |
+| 10.1.4 | `./claude-history sources` | Shows added remote | ⬜ |
+| 10.1.5 | `./claude-history sources add user@host2` | Adds another remote | ⬜ |
+| 10.1.6 | `./claude-history sources remove user@host` | Removes remote | ⬜ |
+| 10.1.7 | `./claude-history sources clear` | Clears all sources | ⬜ |
+
+### 10.2 Sources Validation
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 10.2.1 | `./claude-history sources add wsl://Ubuntu` | Shows "auto-detected" message, not added | ⬜ |
+| 10.2.2 | `./claude-history sources add windows` | Shows "auto-detected" message, not added | ⬜ |
+| 10.2.3 | `./claude-history sources add invalid` | Shows invalid format error | ⬜ |
+| 10.2.4 | `./claude-history sources add user@host` (duplicate) | Shows already exists | ⬜ |
+| 10.2.5 | `./claude-history sources remove nonexistent@host` | Shows not found | ⬜ |
+
+### 10.3 Sources with --as Flag
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 10.3.1 | Add source, then `./claude-history lsw --as` | Includes saved remote | ⬜ |
+| 10.3.2 | Add source, then `./claude-history lss --as` | Includes saved remote | ⬜ |
+| 10.3.3 | Add source, then `./claude-history export --as` | Includes saved remote | ⬜ |
+| 10.3.4 | Add source, then `./claude-history stats --sync --as` | Syncs from saved remote | ⬜ |
+| 10.3.5 | `./claude-history lsw --as -r extra@host` | Saved sources + additional remote | ⬜ |
+
+---
+
+## Section 11: Stats Command (All Environments)
+
+### 11.1 Stats Sync
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 11.1.1 | `./claude-history stats --sync` | Syncs local sessions to DB | ⬜ |
+| 11.1.2 | `./claude-history stats --sync --force` | Re-syncs all files | ⬜ |
+| 11.1.3 | `./claude-history stats --sync --as` | Syncs from all sources | ⬜ |
+| 11.1.4 | `./claude-history stats --sync --as -r user@host` | Syncs all + extra remote | ⬜ |
+
+### 11.2 Stats Display
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 11.2.1 | `./claude-history stats` | Shows summary for current workspace | ⬜ |
+| 11.2.2 | `./claude-history stats --aw` | Shows summary for all workspaces | ⬜ |
+| 11.2.3 | `./claude-history stats <pattern>` | Filters by workspace pattern | ⬜ |
+| 11.2.4 | `./claude-history stats --tools` | Shows tool usage stats | ⬜ |
+| 11.2.5 | `./claude-history stats --models` | Shows model usage stats | ⬜ |
+| 11.2.6 | `./claude-history stats --by-workspace` | Shows per-workspace breakdown | ⬜ |
+| 11.2.7 | `./claude-history stats --by-day` | Shows daily breakdown | ⬜ |
+| 11.2.8 | `./claude-history stats --since 2025-01-01` | Date filtering | ⬜ |
+| 11.2.9 | `./claude-history stats --source local` | Source filtering | ⬜ |
+
+### 11.3 Stats Time Tracking
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 11.3.1 | `./claude-history stats --time` | Shows time stats for current workspace | ⬜ |
+| 11.3.2 | `./claude-history stats --time --aw` | Shows time stats for all workspaces | ⬜ |
+| 11.3.3 | `./claude-history stats --time --as` | Auto-syncs, then shows time stats | ⬜ |
+| 11.3.4 | `./claude-history stats --time --as --aw` | Syncs all, shows all workspaces | ⬜ |
+| 11.3.5 | `./claude-history stats --time --since 2025-01-01` | Date filtering with time | ⬜ |
+| 11.3.6 | Verify time output | Shows daily breakdown with work periods | ⬜ |
+| 11.3.7 | Verify time output | No day exceeds 24 hours | ⬜ |
+
+### 11.4 Stats Orthogonal Flags
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 11.4.1 | `./claude-history stats` | Current workspace, local DB | ⬜ |
+| 11.4.2 | `./claude-history stats --as` | Current workspace, syncs all sources first | ⬜ |
+| 11.4.3 | `./claude-history stats --aw` | All workspaces, local DB | ⬜ |
+| 11.4.4 | `./claude-history stats --as --aw` | All workspaces, syncs all sources first | ⬜ |
+
+---
+
+## Section 12: Automatic Alias Scoping (All Environments)
+
+**Setup:** Create an alias containing the current workspace before running these tests.
+
+```bash
+# Setup (run once before tests)
+./claude-history alias create testscope
+./claude-history alias add testscope <current-workspace-pattern>
+```
+
+### 12.1 Automatic Scoping with lss
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 12.1.1 | `./claude-history lss` (in aliased workspace) | Shows "📎 Using alias @testscope" message | ⬜ |
+| 12.1.2 | `./claude-history lss` (in aliased workspace) | Lists sessions from all alias workspaces | ⬜ |
+| 12.1.3 | `./claude-history lss --this` | Uses current workspace only, no alias message | ⬜ |
+| 12.1.4 | `./claude-history lss <pattern>` | Explicit pattern bypasses alias scoping | ⬜ |
+| 12.1.5 | `./claude-history lss` (in non-aliased workspace) | No alias message, uses current workspace | ⬜ |
+
+### 12.2 Automatic Scoping with export
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 12.2.1 | `./claude-history export` (in aliased workspace) | Shows "📎 Using alias @testscope" message | ⬜ |
+| 12.2.2 | `./claude-history export` (in aliased workspace) | Exports from all alias workspaces | ⬜ |
+| 12.2.3 | `./claude-history export --this` | Exports current workspace only | ⬜ |
+| 12.2.4 | `./claude-history export <pattern>` | Explicit pattern bypasses alias scoping | ⬜ |
+| 12.2.5 | `./claude-history export --aw` | All workspaces, no alias scoping | ⬜ |
+| 12.2.6 | `./claude-history export --as` (in aliased workspace) | Shows alias message, uses all sources | ⬜ |
+
+### 12.3 Automatic Scoping with stats
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 12.3.1 | `./claude-history stats` (in aliased workspace) | Shows "📎 Using alias @testscope" message | ⬜ |
+| 12.3.2 | `./claude-history stats` (in aliased workspace) | Shows stats for all alias workspaces | ⬜ |
+| 12.3.3 | `./claude-history stats --this` | Shows stats for current workspace only | ⬜ |
+| 12.3.4 | `./claude-history stats <pattern>` | Explicit pattern bypasses alias scoping | ⬜ |
+| 12.3.5 | `./claude-history stats --aw` | All workspaces, no alias scoping | ⬜ |
+| 12.3.6 | `./claude-history stats --time` (in aliased workspace) | Time tracking uses alias scope | ⬜ |
+| 12.3.7 | `./claude-history stats --time --this` | Time tracking for current workspace only | ⬜ |
+
+### 12.4 Edge Cases
+
+| Test ID | Scenario | Expected Result | Status |
+|---------|----------|----------------|--------|
+| 12.4.1 | Workspace in multiple aliases | Uses first matching alias | ⬜ |
+| 12.4.2 | Empty alias (no workspaces) | Shows empty/no sessions message | ⬜ |
+| 12.4.3 | Alias with only remote workspaces | Auto-fetches or shows not cached | ⬜ |
+| 12.4.4 | Delete alias, then run lss | No alias message, uses current workspace | ⬜ |
+
+### 12.5 Cleanup
+
+```bash
+# Cleanup after tests
+./claude-history alias delete testscope
+```
+
+---
+
+## Updated Quick Smoke Test
+
+Minimal test set including new features:
+
+| Test | Command | Expected |
+|------|---------|----------|
+| 1 | `./claude-history --version` | Shows version |
+| 2 | `./claude-history lsh` | Lists local |
+| 3 | `./claude-history lsw` | Lists workspaces |
+| 4 | `./claude-history lss` | Lists sessions |
+| 5 | `./claude-history export -o /tmp/test` | Exports successfully |
+| 6 | `./claude-history sources` | Lists saved sources |
+| 7 | `./claude-history stats --sync` | Syncs to DB |
+| 8 | `./claude-history stats` | Shows summary |
+| 9 | `./claude-history stats --time` | Shows time tracking |
+
+**Environment-specific additions:**
+
+- Windows: Add `python claude-history lsw --wsl`
+- WSL: Add `./claude-history lsw --windows`
+- All: Add `./claude-history lsw -r <user>@<host>` (if SSH available)
+- All: Add `./claude-history sources add <user>@<host>` then `./claude-history lsw --as`
 
 ---
 
