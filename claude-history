@@ -4221,7 +4221,8 @@ EXAMPLES:
             return
 
         # Get patterns (default to current workspace if empty)
-        if not targets:
+        # Skip workspace check if --aw or --as flags are set
+        if not targets and not args.all_workspaces and not args.all_sources:
             # No workspace specified - check if current directory is a known workspace
             pattern, exists = check_current_workspace_exists()
             if not exists:
