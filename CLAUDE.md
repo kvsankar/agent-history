@@ -108,6 +108,33 @@ chmod +x claude-history
 ./claude-history lsw --windows              # list Windows workspaces
 ./claude-history lss myproject --windows    # list Windows sessions
 ./claude-history export myproject --windows # export from Windows
+
+# Saved Sources (for --as flag)
+./claude-history sources                    # list saved sources
+./claude-history sources add user@vm01     # add SSH remote (WSL/Windows auto-detected)
+./claude-history sources add user@vm02     # add another remote
+./claude-history sources remove user@vm01  # remove a source
+./claude-history sources clear             # remove all saved sources
+
+# Usage Statistics and Metrics (orthogonal --as/--aw flags)
+./claude-history stats --sync               # sync local sessions to database
+./claude-history stats --sync --as          # sync from all sources (includes saved remotes)
+./claude-history stats --sync --as -r vm03  # sync all sources + additional remote
+./claude-history stats                      # summary dashboard (current workspace)
+./claude-history stats --aw                 # summary dashboard (all workspaces)
+./claude-history stats myproject            # filter by workspace pattern
+./claude-history stats --tools              # tool usage statistics
+./claude-history stats --models             # model usage breakdown
+./claude-history stats --by-workspace       # per-workspace stats
+./claude-history stats --by-day             # daily usage trends
+./claude-history stats --since 2025-11-01   # filter by date
+./claude-history stats --source local       # filter by source
+
+# Time tracking (orthogonal --as/--aw flags)
+./claude-history stats --time               # current workspace, local DB
+./claude-history stats --time --as          # current workspace, sync all sources first
+./claude-history stats --time --aw          # all workspaces, local DB
+./claude-history stats --time --as --aw     # all workspaces, sync all sources first
 ```
 
 ### Testing Workflow
@@ -207,7 +234,7 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ### Code Structure
 
-The file is organized into nine main sections:
+The file is organized into twelve main sections:
 
 1. **Date Parsing**
    - `parse_date_string()`: Parses ISO 8601 date strings (YYYY-MM-DD format) into datetime objects
@@ -268,7 +295,32 @@ The file is organized into nine main sections:
    - `cmd_alias_lss()`: Lists sessions from all workspaces in an alias
    - `cmd_alias_export()`: Exports sessions from all workspaces in an alias
 
-9. **Commands**
+9. **Configuration and Saved Sources**
+   - `get_config_file()`: Returns `~/.claude-history/config.json` path
+   - `load_config()`: Loads configuration from JSON file
+   - `save_config()`: Saves configuration to JSON file
+   - `get_saved_sources()`: Returns list of saved SSH remotes
+   - `cmd_sources_list()`: Lists saved sources
+   - `cmd_sources_add()`: Adds SSH remote (validates WSL/Windows are auto-detected)
+   - `cmd_sources_remove()`: Removes a saved source
+   - `cmd_sources_clear()`: Clears all saved sources
+
+10. **Metrics Database (SQLite)**
+   - `get_metrics_db_path()`: Returns `~/.claude-history/metrics.db` path
+   - `init_metrics_db()`: Creates/opens database, initializes schema
+   - `extract_metrics_from_jsonl()`: Extracts session, message, and tool use metrics from JSONL
+   - `sync_file_to_db()`: Syncs a single JSONL file to database (incremental)
+   - `cmd_stats_sync()`: Syncs JSONL files from local/WSL/Windows/SSH sources
+   - `cmd_stats()`: Displays metrics with various views (orthogonal --as/--aw flags)
+   - `display_summary_stats()`: Summary dashboard (alias-aware)
+   - `display_tool_stats()`: Tool usage statistics
+   - `display_model_stats()`: Model usage breakdown
+   - `display_workspace_stats()`: Per-workspace statistics (alias-aware)
+   - `display_daily_stats()`: Daily usage trends
+   - `display_time_stats()`: Time tracking with daily breakdown
+   - `calculate_daily_work_time()`: Calculates work time per day with gap detection
+
+11. **Commands**
    - `cmd_list()`: Shows all sessions for a workspace with stats (supports `-r` for remote/WSL)
    - `cmd_convert()`: Converts single .jsonl file to markdown (supports `-r` for remote/WSL)
    - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote/WSL, `--split` for splitting, organized export by default)
@@ -278,8 +330,9 @@ The file is organized into nine main sections:
    - `generate_index_manifest()`: Generates index.md summary file with per-source and per-workspace statistics
    - `cmd_version()`: Displays version info
    - `cmd_alias_*()`: Alias management commands (see section 8)
+   - `cmd_sources_*()`: Source management commands (see section 9)
 
-10. **Main**
+12. **Main**
    - Argument parsing with `argparse` (including -r/--remote, --since, --until, --minimal, --split, --flat flags)
    - Command dispatch to appropriate handler
    - Error handling (KeyboardInterrupt, general exceptions)
@@ -401,7 +454,7 @@ Each `.jsonl` file contains one JSON object per line:
 
 **Why This Matters:**
 - Full conversation reconstruction from markdown
-- Token usage analysis and cost tracking
+- Token usage analysis
 - Message threading and relationship analysis
 - Debugging tool execution
 - Audit trail for all operations
@@ -772,6 +825,24 @@ Aliases group related workspaces across different sources for unified access.
 ./claude-history export @myproject --minimal
 ```
 
+**Automatic Alias Scoping:**
+
+When running `lss`, `export`, or `stats` without arguments, if the current workspace belongs to an alias, the tool automatically scopes to the alias:
+
+```bash
+# If current workspace is part of @myproject alias:
+./claude-history lss        # 📎 Using alias @myproject (use --this for current workspace only)
+./claude-history export     # 📎 Using alias @myproject (use --this for current workspace only)
+./claude-history stats      # 📎 Using alias @myproject (use --this for current workspace only)
+
+# To force current workspace only:
+./claude-history lss --this
+./claude-history export --this
+./claude-history stats --this
+```
+
+This behavior makes it easy to work with related workspaces across environments without explicitly specifying the alias each time.
+
 **Syncing Aliases Across Machines:**
 ```bash
 # Export aliases to file
@@ -862,9 +933,30 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ## Changelog
 
-**Current version:** 1.3.6
+**Current version:** 1.4.1
 
 See [README.md](README.md#changelog) for the full changelog.
+
+### Orthogonal Flag Design
+
+The `--as` and `--aw` flags are designed to be orthogonal (independent):
+
+| Flag | Meaning | Scope |
+|------|---------|-------|
+| `--as` (`--all-sources`) | Include all sources (local + WSL/Windows + saved SSH remotes) | **Where** to get data from |
+| `--aw` (`--all-workspaces`) | Include all workspaces (not just current) | **Which** workspaces to include |
+
+**Key principle:** These flags can be used together or separately:
+- `stats` → Current workspace, local DB only
+- `stats --as` → Current workspace, sync all sources first
+- `stats --aw` → All workspaces, local DB only
+- `stats --as --aw` → All workspaces, sync all sources first
+
+**Implementation notes:**
+- `--as` for `stats --time` triggers auto-sync before display
+- WSL and Windows are auto-detected by `--as` (no configuration needed)
+- Only SSH remotes need to be saved via `sources add`
+- Saved sources are stored in `~/.claude-history/config.json`
 
 ## Contributing Notes
 

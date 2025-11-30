@@ -15,9 +15,9 @@ import base64
 import json
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
-__version__ = "1.3.6"
+__version__ = "1.4.0"
 
 
 # ============================================================================
@@ -1735,14 +1735,66 @@ def fetch_workspace_files(remote_host: str, remote_workspace: str,
 # Alias Storage
 # ============================================================================
 
+def get_config_dir() -> Path:
+    """Get the config storage directory (~/.claude-history/)."""
+    return Path.home() / '.claude-history'
+
+
 def get_aliases_dir() -> Path:
     """Get the aliases storage directory (~/.claude-history/)."""
-    return Path.home() / '.claude-history'
+    return get_config_dir()
 
 
 def get_aliases_file() -> Path:
     """Get the aliases storage file path."""
     return get_aliases_dir() / 'aliases.json'
+
+
+def get_config_file() -> Path:
+    """Get the config file path."""
+    return get_config_dir() / 'config.json'
+
+
+def load_config() -> dict:
+    """Load config from storage file. Returns empty structure if not found."""
+    config_file = get_config_file()
+    if not config_file.exists():
+        return {'version': 1, 'sources': []}
+
+    try:
+        with open(config_file, encoding='utf-8') as f:
+            data = json.load(f)
+            if 'sources' not in data:
+                data['sources'] = []
+            if 'version' not in data:
+                data['version'] = 1
+            return data
+    except (json.JSONDecodeError, IOError) as e:
+        sys.stderr.write(f"Warning: Could not load config file: {e}\n")
+        return {'version': 1, 'sources': []}
+
+
+def save_config(data: dict) -> bool:
+    """Save config to storage file. Returns True on success."""
+    config_dir = get_config_dir()
+    config_file = get_config_file()
+
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        if 'version' not in data:
+            data['version'] = 1
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        return True
+    except IOError as e:
+        sys.stderr.write(f"Error saving config: {e}\n")
+        return False
+
+
+def get_saved_sources() -> list:
+    """Get list of saved remote sources."""
+    config = load_config()
+    return config.get('sources', [])
 
 
 def load_aliases() -> dict:
@@ -1847,6 +1899,35 @@ def resolve_alias_workspaces(alias_name: str, source_filter: str = None) -> list
             results.append((source_key, workspace))
 
     return results
+
+
+def get_alias_for_workspace(workspace: str, source_key: str = 'local') -> str:
+    """
+    Find the alias that contains a given workspace, if any.
+
+    Args:
+        workspace: Encoded workspace name (e.g., '-home-user-project')
+        source_key: Source identifier like 'local', 'windows', 'wsl:distro', 'remote:hostname'
+
+    Returns:
+        Alias name if found, None otherwise
+    """
+    aliases_data = load_aliases()
+
+    for alias_name, alias_config in aliases_data.get('aliases', {}).items():
+        # Check each source in the alias
+        for src_key, workspaces in alias_config.items():
+            # Handle source key matching (e.g., 'local' matches 'local', 'wsl:Ubuntu' matches 'wsl')
+            if src_key == source_key or source_key.startswith(src_key + ':') or src_key.startswith(source_key + ':'):
+                if workspace in workspaces:
+                    return alias_name
+            # Also check if workspace name (without source prefix) matches
+            ws_name = get_workspace_name_from_path(workspace)
+            for ws in workspaces:
+                if get_workspace_name_from_path(ws) == ws_name:
+                    return alias_name
+
+    return None
 
 
 def get_sessions_for_source(source_key: str, workspace: str, since_date=None, until_date=None, fetch_remote: bool = False) -> list:
@@ -2515,6 +2596,1296 @@ def cmd_alias_config_import(args):
         print(f"✅ {mode_str} aliases ({alias_count} aliases)")
     else:
         sys.exit(1)
+
+
+# ============================================================================
+# Sources Configuration
+# ============================================================================
+
+def cmd_sources_list(args):
+    """List saved remote sources."""
+    sources = get_saved_sources()
+
+    if not sources:
+        print("No remote sources configured.")
+        print("\nAdd SSH remotes with:")
+        print("  claude-history sources add user@hostname")
+        print("\nNote: WSL/Windows are auto-detected by --as flag, no need to add them.")
+        return
+
+    print("Configured remote sources:")
+    for source in sources:
+        print(f"  {source}")
+
+
+def cmd_sources_add(args):
+    """Add a remote source to configuration."""
+    source = args.source
+
+    # WSL and Windows are auto-detected, no need to save them
+    if source.startswith('wsl://') or source == 'windows':
+        sys.stderr.write(f"Note: {source} is auto-detected by --as flag, no need to add it.\n")
+        sys.stderr.write("This command is for SSH remotes (user@hostname).\n")
+        return
+
+    # Validate source format (SSH remote)
+    if '@' not in source:
+        sys.stderr.write(f"Error: Invalid source format: {source}\n")
+        sys.stderr.write("Expected: user@hostname (e.g., alice@server.example.com)\n")
+        sys.exit(1)
+
+    config = load_config()
+    sources = config.get('sources', [])
+
+    if source in sources:
+        print(f"Source '{source}' already configured.")
+        return
+
+    sources.append(source)
+    config['sources'] = sources
+
+    if save_config(config):
+        print(f"✅ Added source: {source}")
+    else:
+        sys.exit(1)
+
+
+def cmd_sources_remove(args):
+    """Remove a remote source from configuration."""
+    source = args.source
+
+    config = load_config()
+    sources = config.get('sources', [])
+
+    if source not in sources:
+        sys.stderr.write(f"Error: Source '{source}' not found.\n")
+        sys.stderr.write(f"Configured sources: {', '.join(sources) if sources else '(none)'}\n")
+        sys.exit(1)
+
+    sources.remove(source)
+    config['sources'] = sources
+
+    if save_config(config):
+        print(f"✅ Removed source: {source}")
+    else:
+        sys.exit(1)
+
+
+def cmd_sources_clear(args):
+    """Clear all saved remote sources."""
+    config = load_config()
+    config['sources'] = []
+
+    if save_config(config):
+        print("✅ Cleared all remote sources.")
+    else:
+        sys.exit(1)
+
+
+# ============================================================================
+# Metrics Database (SQLite)
+# ============================================================================
+
+import sqlite3
+
+METRICS_DB_VERSION = 3
+
+# Gap threshold for work period detection (30 minutes in seconds)
+WORK_PERIOD_GAP_THRESHOLD = 30 * 60
+
+def get_metrics_db_path() -> Path:
+    """Get the metrics database file path."""
+    return get_aliases_dir() / 'metrics.db'
+
+
+def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
+    """Initialize the metrics database, creating tables if needed.
+
+    Returns an open connection to the database.
+    """
+    if db_path is None:
+        db_path = get_metrics_db_path()
+
+    # Ensure directory exists
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row  # Enable column access by name
+
+    # Create tables
+    # Note: file_path is the primary key since multiple files can share the same session_id
+    # (e.g., main session + agent files spawned from it)
+    conn.executescript('''
+        -- Schema version tracking
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY
+        );
+
+        -- Sessions table (one row per JSONL file)
+        CREATE TABLE IF NOT EXISTS sessions (
+            file_path TEXT PRIMARY KEY,
+            session_id TEXT,
+            workspace TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'local',
+            file_mtime REAL,
+            is_agent INTEGER DEFAULT 0,
+            parent_session_id TEXT,
+            start_time TEXT,
+            end_time TEXT,
+            message_count INTEGER DEFAULT 0,
+            git_branch TEXT,
+            claude_version TEXT,
+            cwd TEXT,
+            work_period_seconds REAL DEFAULT 0,
+            num_work_periods INTEGER DEFAULT 1
+        );
+
+        -- Messages table (aggregated stats per message)
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uuid TEXT,
+            file_path TEXT NOT NULL,
+            session_id TEXT,
+            parent_uuid TEXT,
+            type TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            model TEXT,
+            stop_reason TEXT,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_creation_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            FOREIGN KEY (file_path) REFERENCES sessions(file_path)
+        );
+
+        -- Tool uses table
+        CREATE TABLE IF NOT EXISTS tool_uses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_use_id TEXT,
+            message_uuid TEXT,
+            file_path TEXT NOT NULL,
+            session_id TEXT,
+            tool_name TEXT NOT NULL,
+            is_error INTEGER DEFAULT 0,
+            timestamp TEXT,
+            FOREIGN KEY (file_path) REFERENCES sessions(file_path)
+        );
+
+        -- Synced files tracking (for incremental sync)
+        CREATE TABLE IF NOT EXISTS synced_files (
+            file_path TEXT PRIMARY KEY,
+            mtime REAL NOT NULL,
+            synced_at TEXT NOT NULL
+        );
+
+        -- Create indexes for common queries
+        CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace);
+        CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
+        CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
+        CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
+        CREATE INDEX IF NOT EXISTS idx_messages_file_path ON messages(file_path);
+        CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_messages_model ON messages(model);
+        CREATE INDEX IF NOT EXISTS idx_tool_uses_file_path ON tool_uses(file_path);
+        CREATE INDEX IF NOT EXISTS idx_tool_uses_tool_name ON tool_uses(tool_name);
+    ''')
+
+    # Check/set schema version and handle migrations
+    cursor = conn.execute('SELECT version FROM schema_version LIMIT 1')
+    row = cursor.fetchone()
+    current_version = row['version'] if row else 0
+
+    if current_version < METRICS_DB_VERSION:
+        # Migrate from version 2 to 3: add time tracking columns
+        if current_version < 3:
+            try:
+                conn.execute('ALTER TABLE sessions ADD COLUMN work_period_seconds REAL DEFAULT 0')
+                conn.execute('ALTER TABLE sessions ADD COLUMN num_work_periods INTEGER DEFAULT 1')
+            except sqlite3.OperationalError:
+                pass  # Columns already exist
+
+        # Update version
+        if row is None:
+            conn.execute('INSERT INTO schema_version (version) VALUES (?)', (METRICS_DB_VERSION,))
+        else:
+            conn.execute('UPDATE schema_version SET version = ?', (METRICS_DB_VERSION,))
+
+    conn.commit()
+    return conn
+
+
+def calculate_work_periods(timestamps: list, gap_threshold: float = WORK_PERIOD_GAP_THRESHOLD) -> tuple:
+    """Calculate work period time from a list of timestamps.
+
+    Args:
+        timestamps: List of ISO 8601 timestamp strings
+        gap_threshold: Gap in seconds that marks end of a work period
+
+    Returns:
+        (work_period_seconds, num_work_periods, start_time, end_time)
+
+    Note: Timestamps are sorted first since JSONL files may have
+    out-of-order timestamps due to context restoration.
+    """
+    if not timestamps:
+        return 0.0, 0, None, None
+
+    if len(timestamps) == 1:
+        return 0.0, 1, timestamps[0], timestamps[0]
+
+    # Sort timestamps chronologically
+    sorted_ts = sorted(timestamps)
+
+    # Parse timestamps
+    def parse_ts(ts):
+        return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+
+    total_duration = 0.0
+    num_periods = 1
+    period_start = parse_ts(sorted_ts[0])
+    prev_ts = period_start
+
+    for ts_str in sorted_ts[1:]:
+        ts = parse_ts(ts_str)
+        gap = (ts - prev_ts).total_seconds()
+
+        if gap > gap_threshold:
+            # End current period, start new one
+            total_duration += (prev_ts - period_start).total_seconds()
+            period_start = ts
+            num_periods += 1
+
+        prev_ts = ts
+
+    # Add final period
+    total_duration += (prev_ts - period_start).total_seconds()
+
+    return total_duration, num_periods, sorted_ts[0], sorted_ts[-1]
+
+
+def extract_metrics_from_jsonl(jsonl_file: Path, source: str = 'local') -> dict:
+    """Extract metrics data from a JSONL file.
+
+    Returns a dict with:
+        - session: session metadata
+        - messages: list of message stats
+        - tool_uses: list of tool use records
+    """
+    messages = []
+    tool_uses = []
+    all_timestamps = []  # Collect all timestamps for work period calculation
+    session_info = {
+        'session_id': None,
+        'workspace': None,
+        'source': source,
+        'file_path': str(jsonl_file),
+        'file_mtime': jsonl_file.stat().st_mtime if jsonl_file.exists() else None,
+        'is_agent': False,
+        'parent_session_id': None,
+        'start_time': None,
+        'end_time': None,
+        'message_count': 0,
+        'git_branch': None,
+        'claude_version': None,
+        'cwd': None,
+        'work_period_seconds': 0.0,
+        'num_work_periods': 0,
+    }
+
+    try:
+        with open(jsonl_file, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    entry = json.loads(line)
+                    entry_type = entry.get('type')
+
+                    # Skip non-message records
+                    if entry_type not in ('user', 'assistant'):
+                        continue
+
+                    timestamp = entry.get('timestamp', '')
+
+                    # Update session info from first message
+                    if session_info['session_id'] is None:
+                        session_info['session_id'] = entry.get('sessionId')
+                        session_info['git_branch'] = entry.get('gitBranch')
+                        session_info['claude_version'] = entry.get('version')
+                        session_info['cwd'] = entry.get('cwd')
+                        session_info['is_agent'] = entry.get('isSidechain', False)
+                        if session_info['is_agent']:
+                            session_info['parent_session_id'] = entry.get('sessionId')
+
+                    # Collect timestamps for work period calculation
+                    if timestamp:
+                        all_timestamps.append(timestamp)
+
+                    session_info['message_count'] += 1
+
+                    # Extract message metrics
+                    message_obj = entry.get('message', {})
+                    usage = message_obj.get('usage', {})
+
+                    msg_record = {
+                        'uuid': entry.get('uuid'),
+                        'session_id': entry.get('sessionId'),
+                        'parent_uuid': entry.get('parentUuid'),
+                        'type': entry_type,
+                        'timestamp': timestamp,
+                        'model': message_obj.get('model'),
+                        'stop_reason': message_obj.get('stop_reason'),
+                        'input_tokens': usage.get('input_tokens', 0),
+                        'output_tokens': usage.get('output_tokens', 0),
+                        'cache_creation_tokens': usage.get('cache_creation_input_tokens', 0),
+                        'cache_read_tokens': usage.get('cache_read_input_tokens', 0),
+                    }
+                    messages.append(msg_record)
+
+                    # Extract tool uses from assistant messages
+                    if entry_type == 'assistant':
+                        content = message_obj.get('content', [])
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get('type') == 'tool_use':
+                                    tool_uses.append({
+                                        'tool_use_id': block.get('id'),
+                                        'message_uuid': entry.get('uuid'),
+                                        'session_id': entry.get('sessionId'),
+                                        'tool_name': block.get('name', 'unknown'),
+                                        'is_error': False,  # Will be updated from tool_result
+                                        'timestamp': timestamp,
+                                    })
+
+                    # Check for tool errors in user messages (tool results)
+                    if entry_type == 'user':
+                        content = message_obj.get('content', [])
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get('type') == 'tool_result':
+                                    tool_use_id = block.get('tool_use_id')
+                                    is_error = block.get('is_error', False)
+                                    # Update corresponding tool_use record
+                                    for tu in tool_uses:
+                                        if tu['tool_use_id'] == tool_use_id:
+                                            tu['is_error'] = is_error
+                                            break
+
+                except json.JSONDecodeError:
+                    continue
+
+    except Exception as e:
+        sys.stderr.write(f"Warning: Error reading {jsonl_file}: {e}\n")
+
+    # Calculate work periods from collected timestamps
+    work_secs, num_periods, start_time, end_time = calculate_work_periods(all_timestamps)
+    session_info['work_period_seconds'] = work_secs
+    session_info['num_work_periods'] = num_periods
+    session_info['start_time'] = start_time
+    session_info['end_time'] = end_time
+
+    # Derive workspace from file path
+    workspace_dir = jsonl_file.parent.name
+    session_info['workspace'] = get_workspace_name_from_path(workspace_dir)
+
+    return {
+        'session': session_info,
+        'messages': messages,
+        'tool_uses': tool_uses,
+    }
+
+
+def sync_file_to_db(conn: sqlite3.Connection, jsonl_file: Path, source: str = 'local', force: bool = False) -> bool:
+    """Sync a single JSONL file to the database.
+
+    Returns True if file was synced, False if skipped (already up to date).
+    """
+    file_path = str(jsonl_file)
+    current_mtime = jsonl_file.stat().st_mtime if jsonl_file.exists() else 0
+
+    # Check if already synced and up to date
+    if not force:
+        cursor = conn.execute(
+            'SELECT mtime FROM synced_files WHERE file_path = ?',
+            (file_path,)
+        )
+        row = cursor.fetchone()
+        if row and row['mtime'] >= current_mtime:
+            return False  # Already up to date
+
+    # Extract metrics
+    metrics = extract_metrics_from_jsonl(jsonl_file, source)
+    session = metrics['session']
+
+    if session['message_count'] == 0:
+        return False  # No messages in file
+
+    # Delete existing data for this file (for re-sync)
+    conn.execute('DELETE FROM tool_uses WHERE file_path = ?', (file_path,))
+    conn.execute('DELETE FROM messages WHERE file_path = ?', (file_path,))
+    conn.execute('DELETE FROM sessions WHERE file_path = ?', (file_path,))
+
+    # Insert session
+    conn.execute('''
+        INSERT INTO sessions (
+            file_path, session_id, workspace, source, file_mtime,
+            is_agent, parent_session_id, start_time, end_time,
+            message_count, git_branch, claude_version, cwd,
+            work_period_seconds, num_work_periods
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        file_path, session['session_id'], session['workspace'], session['source'],
+        session['file_mtime'],
+        1 if session['is_agent'] else 0, session['parent_session_id'],
+        session['start_time'], session['end_time'],
+        session['message_count'], session['git_branch'],
+        session['claude_version'], session['cwd'],
+        session['work_period_seconds'], session['num_work_periods']
+    ))
+
+    # Insert messages
+    for msg in metrics['messages']:
+        conn.execute('''
+            INSERT INTO messages (
+                uuid, file_path, session_id, parent_uuid, type, timestamp,
+                model, stop_reason, input_tokens, output_tokens,
+                cache_creation_tokens, cache_read_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            msg['uuid'], file_path, msg['session_id'], msg['parent_uuid'],
+            msg['type'], msg['timestamp'], msg['model'], msg['stop_reason'],
+            msg['input_tokens'], msg['output_tokens'],
+            msg['cache_creation_tokens'], msg['cache_read_tokens']
+        ))
+
+    # Insert tool uses
+    for tu in metrics['tool_uses']:
+        conn.execute('''
+            INSERT INTO tool_uses (
+                tool_use_id, message_uuid, file_path, session_id, tool_name, is_error, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            tu['tool_use_id'], tu['message_uuid'], file_path, tu['session_id'],
+            tu['tool_name'], 1 if tu['is_error'] else 0, tu['timestamp']
+        ))
+
+    # Update synced files tracking
+    conn.execute('''
+        INSERT OR REPLACE INTO synced_files (file_path, mtime, synced_at)
+        VALUES (?, ?, ?)
+    ''', (file_path, current_mtime, datetime.now().isoformat()))
+
+    conn.commit()
+    return True
+
+
+def cmd_stats_sync(args):
+    """Sync JSONL files to metrics database."""
+    force = getattr(args, 'force', False)
+    all_sources = getattr(args, 'all_sources', False)
+    remotes = getattr(args, 'remotes', None) or []
+    patterns = getattr(args, 'patterns', [''])
+
+    # Include saved sources when --as is used
+    if all_sources:
+        saved_sources = get_saved_sources()
+        for src in saved_sources:
+            if src not in remotes:
+                remotes.append(src)
+
+    conn = init_metrics_db()
+
+    synced = 0
+    skipped = 0
+    errors = 0
+
+    def sync_source(projects_dir: Path, source: str, source_label: str):
+        nonlocal synced, skipped, errors
+
+        if not projects_dir or not projects_dir.exists():
+            return
+
+        print(f"🔍 Scanning {source_label}...")
+
+        for workspace_dir in projects_dir.iterdir():
+            if not workspace_dir.is_dir():
+                continue
+
+            # Skip cached remote/WSL directories
+            if workspace_dir.name.startswith('remote_') or workspace_dir.name.startswith('wsl_'):
+                continue
+
+            # Check pattern match
+            if patterns and patterns[0]:
+                if not any(p in workspace_dir.name for p in patterns):
+                    continue
+
+            # Find all JSONL files
+            for jsonl_file in workspace_dir.glob('*.jsonl'):
+                try:
+                    if sync_file_to_db(conn, jsonl_file, source, force):
+                        synced += 1
+                    else:
+                        skipped += 1
+                except Exception as e:
+                    sys.stderr.write(f"  ❌ Error syncing {jsonl_file.name}: {e}\n")
+                    errors += 1
+
+    # Sync local
+    projects_dir = get_claude_projects_dir()
+    sync_source(projects_dir, 'local', 'local')
+
+    # Sync WSL/Windows if --as flag or running from Windows/WSL
+    if all_sources:
+        # WSL distributions
+        wsl_distros = get_wsl_distributions()
+        for distro in wsl_distros:
+            if distro.get('has_claude'):
+                wsl_projects = get_wsl_projects_dir(distro['name'])
+                if wsl_projects:
+                    sync_source(wsl_projects, f"wsl:{distro['name']}", f"WSL ({distro['name']})")
+
+        # Windows (if accessible)
+        try:
+            win_projects = get_windows_projects_dir()
+            if win_projects:
+                sync_source(win_projects, 'windows', 'Windows')
+        except Exception:
+            pass
+
+    # Sync remotes
+    for remote in remotes:
+        if remote.startswith('wsl://'):
+            distro = remote[6:]
+            wsl_projects = get_wsl_projects_dir(distro)
+            if wsl_projects:
+                sync_source(wsl_projects, f"wsl:{distro}", f"WSL ({distro})")
+        elif remote == 'windows' or remote.startswith('windows:'):
+            win_projects = get_windows_projects_dir()
+            if win_projects:
+                sync_source(win_projects, 'windows', 'Windows')
+        else:
+            # SSH remote - fetch files first, then sync
+            hostname = get_remote_hostname(remote)
+            print(f"🔍 Fetching from remote {remote}...")
+
+            # Check SSH connectivity
+            if not check_ssh_connection(remote):
+                sys.stderr.write(f"  ❌ Cannot connect to {remote}\n")
+                errors += 1
+                continue
+
+            # Get list of remote workspaces
+            remote_workspaces = list_remote_workspaces(remote)
+            if not remote_workspaces:
+                print(f"  No workspaces found on {remote}")
+                continue
+
+            # Filter by patterns if specified
+            if patterns and patterns[0]:
+                remote_workspaces = [ws for ws in remote_workspaces
+                                    if any(p in ws for p in patterns)]
+
+            # Fetch each workspace and sync
+            local_projects_dir = get_claude_projects_dir()
+            for ws in remote_workspaces:
+                try:
+                    # Fetch files using rsync
+                    fetch_result = fetch_workspace_files(remote, ws, local_projects_dir, hostname)
+                    if not fetch_result.get('success'):
+                        continue
+
+                    # Now sync the cached files
+                    workspace_path = ws.lstrip('-')
+                    local_workspace = f"remote_{hostname}_{workspace_path}"
+                    local_dir = local_projects_dir / local_workspace
+
+                    if local_dir.exists():
+                        for jsonl_file in local_dir.glob('*.jsonl'):
+                            try:
+                                if sync_file_to_db(conn, jsonl_file, f"remote:{hostname}", force):
+                                    synced += 1
+                                else:
+                                    skipped += 1
+                            except Exception as e:
+                                sys.stderr.write(f"  ❌ Error syncing {jsonl_file.name}: {e}\n")
+                                errors += 1
+                except Exception as e:
+                    sys.stderr.write(f"  ❌ Error fetching {ws}: {e}\n")
+                    errors += 1
+
+    conn.close()
+
+    print(f"\n✅ Sync complete: {synced} synced, {skipped} up-to-date, {errors} errors")
+
+
+def cmd_stats(args):
+    """Display metrics statistics."""
+    db_path = get_metrics_db_path()
+
+    if not db_path.exists():
+        print("❌ No metrics database found. Run 'stats --sync' first.")
+        print("\nUsage:")
+        print("  claude-history stats --sync        # Sync local sessions")
+        print("  claude-history stats --sync --as   # Sync from all sources")
+        sys.exit(1)
+
+    conn = init_metrics_db(db_path)
+
+    # Get filter parameters
+    workspace_patterns = getattr(args, 'workspace', None) or []
+    source_filter = getattr(args, 'source', None)
+    since_str = getattr(args, 'since', None)
+    until_str = getattr(args, 'until', None)
+    all_workspaces = getattr(args, 'all_workspaces', False)
+    this_only = getattr(args, 'this_only', False)
+
+    # Default to current workspace if no patterns specified (consistent with lss/export)
+    if not workspace_patterns and not all_workspaces:
+        # Use workspace name (final component) since that's what's stored in the DB
+        full_pattern = get_current_workspace_pattern()
+        ws_name = get_workspace_name_from_path(full_pattern)
+
+        # Check if current workspace belongs to an alias (unless --this is used)
+        if not this_only:
+            alias_name = get_alias_for_workspace(full_pattern, 'local')
+            if alias_name:
+                # Use the alias instead of just the current workspace
+                workspace_patterns = [f'@{alias_name}']
+                sys.stderr.write(f"📎 Using alias @{alias_name} (use --this for current workspace only)\n")
+            else:
+                workspace_patterns = [ws_name]
+        else:
+            workspace_patterns = [ws_name]
+
+    # Build WHERE clause
+    where_clauses = []
+    params = []
+
+    if workspace_patterns:
+        # Handle multiple workspace patterns (including aliases)
+        ws_conditions = []
+        aliases_data = load_aliases()
+        aliases = aliases_data.get('aliases', {})
+
+        for pattern in workspace_patterns:
+            if pattern.startswith('@'):
+                # Alias reference
+                alias_name = pattern[1:]
+                if alias_name in aliases:
+                    # Expand alias to workspace names
+                    for source_key, workspaces in aliases[alias_name].items():
+                        if isinstance(workspaces, list):
+                            for ws in workspaces:
+                                ws_name = get_workspace_name_from_path(ws)
+                                ws_conditions.append('s.workspace = ?')
+                                params.append(ws_name)
+                else:
+                    print(f"⚠️  Alias '{alias_name}' not found. Treating as workspace pattern.")
+                    ws_conditions.append('s.workspace LIKE ?')
+                    params.append(f'%{alias_name}%')
+            else:
+                # Regular pattern
+                ws_conditions.append('s.workspace LIKE ?')
+                params.append(f'%{pattern}%')
+
+        if ws_conditions:
+            where_clauses.append(f"({' OR '.join(ws_conditions)})")
+
+    if source_filter:
+        where_clauses.append('s.source = ?')
+        params.append(source_filter)
+
+    if since_str:
+        where_clauses.append('s.start_time >= ?')
+        params.append(since_str)
+
+    if until_str:
+        where_clauses.append('s.start_time <= ?')
+        params.append(until_str + 'T23:59:59')
+
+    where_sql = ' AND '.join(where_clauses) if where_clauses else '1=1'
+
+    # Check what stats to show
+    show_tools = getattr(args, 'tools', False)
+    show_models = getattr(args, 'models', False)
+    show_time = getattr(args, 'time', False)
+    by_workspace = getattr(args, 'by_workspace', False)
+    by_day = getattr(args, 'by_day', False)
+
+    if show_tools:
+        display_tool_stats(conn, where_sql, params)
+    elif show_models:
+        display_model_stats(conn, where_sql, params)
+    elif show_time:
+        display_time_stats(conn, where_sql, params)
+    elif by_workspace:
+        display_workspace_stats(conn, where_sql, params)
+    elif by_day:
+        display_daily_stats(conn, where_sql, params)
+    else:
+        display_summary_stats(conn, where_sql, params)
+
+    conn.close()
+
+
+def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display summary statistics dashboard."""
+    # Session stats
+    cursor = conn.execute(f'''
+        SELECT
+            COUNT(*) as total_sessions,
+            SUM(CASE WHEN is_agent = 0 THEN 1 ELSE 0 END) as main_sessions,
+            SUM(CASE WHEN is_agent = 1 THEN 1 ELSE 0 END) as agent_sessions,
+            SUM(message_count) as total_messages
+        FROM sessions s
+        WHERE {where_sql}
+    ''', params)
+    session_stats = cursor.fetchone()
+
+    # Token stats
+    cursor = conn.execute(f'''
+        SELECT
+            COALESCE(SUM(m.input_tokens), 0) as total_input,
+            COALESCE(SUM(m.output_tokens), 0) as total_output,
+            COALESCE(SUM(m.cache_creation_tokens), 0) as total_cache_creation,
+            COALESCE(SUM(m.cache_read_tokens), 0) as total_cache_read
+        FROM messages m
+        JOIN sessions s ON m.session_id = s.session_id
+        WHERE {where_sql}
+    ''', params)
+    token_stats = cursor.fetchone()
+
+    # Tool stats
+    cursor = conn.execute(f'''
+        SELECT
+            COUNT(*) as total_tool_uses,
+            SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) as tool_errors
+        FROM tool_uses t
+        JOIN sessions s ON t.session_id = s.session_id
+        WHERE {where_sql}
+    ''', params)
+    tool_stats = cursor.fetchone()
+
+    # Source breakdown
+    cursor = conn.execute(f'''
+        SELECT source, COUNT(*) as count
+        FROM sessions s
+        WHERE {where_sql}
+        GROUP BY source
+        ORDER BY count DESC
+    ''', params)
+    sources = cursor.fetchall()
+
+    # Model breakdown (top 3)
+    cursor = conn.execute(f'''
+        SELECT m.model, COUNT(*) as count
+        FROM messages m
+        JOIN sessions s ON m.session_id = s.session_id
+        WHERE {where_sql} AND m.model IS NOT NULL
+        GROUP BY m.model
+        ORDER BY count DESC
+        LIMIT 3
+    ''', params)
+    models = cursor.fetchall()
+
+    # Top workspaces (top 5) - with alias aggregation
+    # First get all workspace stats
+    cursor = conn.execute(f'''
+        SELECT workspace, source, COUNT(*) as sessions, SUM(message_count) as messages
+        FROM sessions s
+        WHERE {where_sql}
+        GROUP BY workspace, source
+        ORDER BY sessions DESC
+    ''', params)
+    all_workspace_stats = cursor.fetchall()
+
+    # Build workspace-to-alias mapping from aliases config
+    aliases_data = load_aliases()
+    aliases = aliases_data.get('aliases', {})
+
+    # Create reverse mapping: (workspace, source) -> alias_name
+    workspace_to_alias = {}
+    for alias_name, alias_config in aliases.items():
+        for source_key, workspaces in alias_config.items():
+            if isinstance(workspaces, list):
+                # Normalize source key for matching
+                # Alias source keys: 'local', 'windows:user', 'wsl:distro', 'remote:host'
+                # DB source values: 'local', 'windows', 'wsl:distro', 'remote:host'
+                normalized_source = source_key
+                if source_key.startswith('windows:'):
+                    normalized_source = 'windows'  # DB uses just 'windows'
+
+                for ws in workspaces:
+                    # Get clean workspace name for matching
+                    ws_name = get_workspace_name_from_path(ws)
+                    workspace_to_alias[(ws_name, normalized_source)] = alias_name
+
+    # Aggregate by alias where applicable
+    alias_stats = {}  # alias_name -> {sessions, messages, workspaces}
+    unaliased_workspaces = []  # workspaces not in any alias
+
+    for row in all_workspace_stats:
+        ws_name = row['workspace']
+        source = row['source']
+        sessions = row['sessions']
+        messages = row['messages'] or 0
+
+        alias_name = workspace_to_alias.get((ws_name, source))
+        if alias_name:
+            if alias_name not in alias_stats:
+                alias_stats[alias_name] = {'sessions': 0, 'messages': 0, 'workspaces': set()}
+            alias_stats[alias_name]['sessions'] += sessions
+            alias_stats[alias_name]['messages'] += messages
+            alias_stats[alias_name]['workspaces'].add(ws_name)
+        else:
+            unaliased_workspaces.append({
+                'name': ws_name,
+                'sessions': sessions,
+                'messages': messages,
+                'is_alias': False
+            })
+
+    # Combine aliases and unaliased workspaces, sort by sessions
+    top_workspaces = []
+    for alias_name, stats in alias_stats.items():
+        top_workspaces.append({
+            'name': f"@{alias_name}",
+            'sessions': stats['sessions'],
+            'messages': stats['messages'],
+            'is_alias': True,
+            'workspace_count': len(stats['workspaces'])
+        })
+    top_workspaces.extend(unaliased_workspaces)
+    top_workspaces.sort(key=lambda x: x['sessions'], reverse=True)
+    top_workspaces = top_workspaces[:5]  # Top 5
+
+    # Calculate derived stats
+    total_input = token_stats['total_input'] or 0
+    total_output = token_stats['total_output'] or 0
+    cache_creation = token_stats['total_cache_creation'] or 0
+    cache_read = token_stats['total_cache_read'] or 0
+
+    cache_total = cache_creation + cache_read
+    cache_hit_ratio = (cache_read / cache_total * 100) if cache_total > 0 else 0
+
+    # Display
+    print("=" * 60)
+    print("CLAUDE CODE METRICS SUMMARY")
+    print("=" * 60)
+
+    total_sessions = session_stats['total_sessions'] or 0
+    main_sessions = session_stats['main_sessions'] or 0
+    agent_sessions = session_stats['agent_sessions'] or 0
+    total_messages = session_stats['total_messages'] or 0
+
+    print(f"\n📊 Sessions")
+    print(f"   Total: {total_sessions:,}")
+    print(f"   Main sessions: {main_sessions:,}")
+    print(f"   Agent tasks: {agent_sessions:,}")
+    print(f"   Total messages: {total_messages:,}")
+
+    print(f"\n🔤 Tokens")
+    print(f"   Input: {total_input:,}")
+    print(f"   Output: {total_output:,}")
+    print(f"   Cache created: {cache_creation:,}")
+    print(f"   Cache read: {cache_read:,}")
+    print(f"   Cache hit ratio: {cache_hit_ratio:.1f}%")
+
+    total_tool_uses = tool_stats['total_tool_uses'] or 0
+    tool_errors = tool_stats['tool_errors'] or 0
+
+    print(f"\n🔧 Tools")
+    print(f"   Total uses: {total_tool_uses:,}")
+    print(f"   Errors: {tool_errors:,}")
+    if total_tool_uses > 0:
+        error_rate = tool_errors / total_tool_uses * 100
+        print(f"   Error rate: {error_rate:.1f}%")
+
+    if sources:
+        print(f"\n📍 Sources")
+        for src in sources:
+            print(f"   {src['source']}: {src['count']:,} sessions")
+
+    if models:
+        print(f"\n🤖 Models (top 3)")
+        for model in models:
+            model_name = model['model'] or 'unknown'
+            # Shorten model name for display
+            short_name = model_name.replace('claude-', '').replace('-20250929', '').replace('-20251001', '')
+            print(f"   {short_name}: {model['count']:,} messages")
+
+    if top_workspaces:
+        print(f"\n📁 Top Workspaces")
+        for ws in top_workspaces:
+            if ws.get('is_alias'):
+                # Show alias with workspace count
+                ws_count = ws.get('workspace_count', 0)
+                print(f"   {ws['name']} ({ws_count} workspaces): {ws['sessions']} sessions, {ws['messages']} msgs")
+            else:
+                print(f"   {ws['name']}: {ws['sessions']} sessions, {ws['messages']} msgs")
+
+    print()
+
+
+def display_tool_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display tool usage statistics."""
+    cursor = conn.execute(f'''
+        SELECT
+            t.tool_name,
+            COUNT(*) as uses,
+            SUM(CASE WHEN t.is_error = 1 THEN 1 ELSE 0 END) as errors
+        FROM tool_uses t
+        JOIN sessions s ON t.session_id = s.session_id
+        WHERE {where_sql}
+        GROUP BY t.tool_name
+        ORDER BY uses DESC
+    ''', params)
+    tools = cursor.fetchall()
+
+    print("=" * 60)
+    print("TOOL USAGE STATISTICS")
+    print("=" * 60)
+
+    print(f"\n{'Tool':<25} {'Uses':>10} {'Errors':>10} {'Error %':>10}")
+    print("-" * 55)
+
+    for row in tools:
+        uses = row['uses']
+        errors = row['errors']
+        error_pct = (errors / uses * 100) if uses > 0 else 0
+        print(f"{row['tool_name']:<25} {uses:>10,} {errors:>10,} {error_pct:>9.1f}%")
+
+    print()
+
+
+def display_model_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display model usage statistics."""
+    cursor = conn.execute(f'''
+        SELECT
+            m.model,
+            COUNT(*) as messages,
+            COUNT(DISTINCT m.session_id) as sessions,
+            SUM(m.input_tokens) as input_tokens,
+            SUM(m.output_tokens) as output_tokens
+        FROM messages m
+        JOIN sessions s ON m.session_id = s.session_id
+        WHERE {where_sql} AND m.model IS NOT NULL
+        GROUP BY m.model
+        ORDER BY messages DESC
+    ''', params)
+    models = cursor.fetchall()
+
+    print("=" * 60)
+    print("MODEL USAGE STATISTICS")
+    print("=" * 60)
+
+    print(f"\n{'Model':<35} {'Messages':>10} {'Sessions':>10} {'Avg Out':>10}")
+    print("-" * 65)
+
+    for row in models:
+        model = row['model'] or 'unknown'
+        short_model = model.replace('claude-', '').replace('-20250929', '').replace('-20251001', '').replace('-20251101', '')
+        messages = row['messages']
+        avg_output = (row['output_tokens'] / messages) if messages > 0 else 0
+        print(f"{short_model:<35} {messages:>10,} {row['sessions']:>10,} {avg_output:>10,.0f}")
+
+    print()
+
+
+def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display per-workspace statistics with alias aggregation."""
+    cursor = conn.execute(f'''
+        SELECT
+            s.workspace,
+            s.source,
+            COUNT(*) as sessions,
+            SUM(s.message_count) as messages,
+            SUM(m_stats.input_tokens) as input_tokens,
+            SUM(m_stats.output_tokens) as output_tokens
+        FROM sessions s
+        LEFT JOIN (
+            SELECT session_id,
+                   SUM(input_tokens) as input_tokens,
+                   SUM(output_tokens) as output_tokens
+            FROM messages
+            GROUP BY session_id
+        ) m_stats ON s.session_id = m_stats.session_id
+        WHERE {where_sql}
+        GROUP BY s.workspace, s.source
+        ORDER BY sessions DESC
+    ''', params)
+    all_workspaces = cursor.fetchall()
+
+    # Build workspace-to-alias mapping
+    aliases_data = load_aliases()
+    aliases = aliases_data.get('aliases', {})
+
+    workspace_to_alias = {}
+    for alias_name, alias_config in aliases.items():
+        for source_key, workspaces in alias_config.items():
+            if isinstance(workspaces, list):
+                normalized_source = source_key
+                if source_key.startswith('windows:'):
+                    normalized_source = 'windows'
+                for ws in workspaces:
+                    ws_name = get_workspace_name_from_path(ws)
+                    workspace_to_alias[(ws_name, normalized_source)] = alias_name
+
+    # Aggregate by alias
+    alias_stats = {}
+    unaliased = []
+
+    for row in all_workspaces:
+        ws_name = row['workspace']
+        source = row['source']
+        sessions = row['sessions']
+        messages = row['messages'] or 0
+
+        alias_name = workspace_to_alias.get((ws_name, source))
+        if alias_name:
+            if alias_name not in alias_stats:
+                alias_stats[alias_name] = {'sessions': 0, 'messages': 0, 'sources': set()}
+            alias_stats[alias_name]['sessions'] += sessions
+            alias_stats[alias_name]['messages'] += messages
+            alias_stats[alias_name]['sources'].add(source)
+        else:
+            unaliased.append({
+                'name': ws_name,
+                'source': source,
+                'sessions': sessions,
+                'messages': messages
+            })
+
+    print("=" * 60)
+    print("WORKSPACE STATISTICS")
+    print("=" * 60)
+
+    # Show aliases first
+    if alias_stats:
+        print(f"\n📦 Aliases")
+        print(f"{'Alias':<30} {'Sources':<15} {'Sessions':>8} {'Messages':>10}")
+        print("-" * 65)
+
+        sorted_aliases = sorted(alias_stats.items(), key=lambda x: x[1]['sessions'], reverse=True)
+        for alias_name, stats in sorted_aliases:
+            sources_str = ','.join(sorted(stats['sources']))[:13]
+            print(f"@{alias_name:<29} {sources_str:<15} {stats['sessions']:>8,} {stats['messages']:>10,}")
+
+    # Show unaliased workspaces
+    print(f"\n📁 Individual Workspaces (Top 20)")
+    print(f"{'Workspace':<30} {'Source':<10} {'Sessions':>8} {'Messages':>10}")
+    print("-" * 60)
+
+    for row in unaliased[:20]:
+        ws_name = row['name'][:28] if len(row['name']) > 28 else row['name']
+        print(f"{ws_name:<30} {row['source']:<10} {row['sessions']:>8,} {row['messages']:>10,}")
+
+    print()
+
+
+def display_daily_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display daily usage statistics."""
+    cursor = conn.execute(f'''
+        SELECT
+            DATE(s.start_time) as date,
+            COUNT(*) as sessions,
+            SUM(s.message_count) as messages,
+            SUM(m_stats.input_tokens) as input_tokens,
+            SUM(m_stats.output_tokens) as output_tokens
+        FROM sessions s
+        LEFT JOIN (
+            SELECT session_id,
+                   SUM(input_tokens) as input_tokens,
+                   SUM(output_tokens) as output_tokens
+            FROM messages
+            GROUP BY session_id
+        ) m_stats ON s.session_id = m_stats.session_id
+        WHERE {where_sql} AND s.start_time IS NOT NULL
+        GROUP BY DATE(s.start_time)
+        ORDER BY date DESC
+        LIMIT 30
+    ''', params)
+    days = cursor.fetchall()
+
+    print("=" * 60)
+    print("DAILY STATISTICS (Last 30 days)")
+    print("=" * 60)
+
+    print(f"\n{'Date':<12} {'Sessions':>10} {'Messages':>10} {'Input Tokens':>15}")
+    print("-" * 50)
+
+    for row in days:
+        print(f"{row['date'] or 'unknown':<12} {row['sessions']:>10,} {row['messages'] or 0:>10,} {row['input_tokens'] or 0:>15,}")
+
+    print()
+
+
+def format_duration_hm(seconds: float) -> str:
+    """Format seconds as Xh Ym."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def calculate_daily_work_time(conn: sqlite3.Connection, where_sql: str, params: list) -> dict:
+    """Calculate work time per day from message timestamps.
+
+    This properly distributes work time across days, even for sessions
+    that span multiple days. Uses gap detection (30 min threshold) to
+    identify work periods.
+
+    IMPORTANT: Merges ALL timestamps across all files to avoid double-counting
+    overlapping time from concurrent agents.
+
+    Returns dict: {date_str: {'work_seconds': float, 'messages': int, 'work_periods': int}}
+    """
+    # Get ALL message timestamps from matching sessions, ordered globally by time
+    cursor = conn.execute(f'''
+        SELECT m.timestamp
+        FROM messages m
+        JOIN sessions s ON m.file_path = s.file_path
+        WHERE {where_sql} AND m.timestamp IS NOT NULL
+        ORDER BY m.timestamp
+    ''', params)
+
+    # Collect all timestamps
+    all_timestamps = [row['timestamp'] for row in cursor]
+
+    if not all_timestamps:
+        return {}
+
+    daily_stats = {}  # date -> {work_seconds, messages, work_periods}
+    gap_threshold = WORK_PERIOD_GAP_THRESHOLD
+
+    def parse_ts(ts):
+        return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+
+    def get_date(dt):
+        return dt.strftime('%Y-%m-%d')
+
+    def add_period_time(stats, start_dt, end_dt, is_new_period=False):
+        """Add work period time, splitting across day boundaries if needed."""
+        if start_dt >= end_dt:
+            return
+
+        current = start_dt
+        first_day = True
+        while current < end_dt:
+            date_str = current.strftime('%Y-%m-%d')
+            if date_str not in stats:
+                stats[date_str] = {'work_seconds': 0.0, 'messages': 0, 'work_periods': 0}
+
+            # Count new work period only on its first day
+            if is_new_period and first_day:
+                stats[date_str]['work_periods'] += 1
+                first_day = False
+
+            # Calculate end of this day
+            next_midnight = (current + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+            if next_midnight >= end_dt:
+                # Period ends before midnight
+                stats[date_str]['work_seconds'] += (end_dt - current).total_seconds()
+                break
+            else:
+                # Period continues past midnight
+                stats[date_str]['work_seconds'] += (next_midnight - current).total_seconds()
+                current = next_midnight
+
+    # Process all timestamps globally (merged across all files)
+    prev_ts = None
+    period_start = None
+
+    for ts_str in all_timestamps:
+        ts = parse_ts(ts_str)
+        date_str = get_date(ts)
+
+        # Initialize date entry if needed
+        if date_str not in daily_stats:
+            daily_stats[date_str] = {'work_seconds': 0.0, 'messages': 0, 'work_periods': 0}
+
+        # Count message
+        daily_stats[date_str]['messages'] += 1
+
+        if prev_ts is None:
+            # First message - start first period
+            period_start = ts
+            daily_stats[date_str]['work_periods'] += 1
+        else:
+            gap = (ts - prev_ts).total_seconds()
+
+            if gap > gap_threshold:
+                # End previous period, start new one
+                add_period_time(daily_stats, period_start, prev_ts)
+                period_start = ts
+                daily_stats[date_str]['work_periods'] += 1
+
+        prev_ts = ts
+
+    # Don't forget the last period
+    if period_start and prev_ts:
+        add_period_time(daily_stats, period_start, prev_ts)
+
+    return daily_stats
+
+
+def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display time tracking statistics with daily breakdown."""
+
+    # Calculate daily work time from message timestamps
+    daily_stats = calculate_daily_work_time(conn, where_sql, params)
+
+    # Calculate totals
+    total_work = sum(d['work_seconds'] for d in daily_stats.values())
+    total_messages = sum(d['messages'] for d in daily_stats.values())
+    total_periods = sum(d['work_periods'] for d in daily_stats.values())
+
+    # Get session count
+    cursor = conn.execute(f'''
+        SELECT COUNT(*) as num_files
+        FROM sessions s
+        WHERE {where_sql}
+    ''', params)
+    num_files = cursor.fetchone()['num_files'] or 0
+
+    # Get date range
+    dates = sorted(daily_stats.keys()) if daily_stats else []
+    first_date = dates[0] if dates else None
+    last_date = dates[-1] if dates else None
+
+    print("=" * 70)
+    print("TIME TRACKING")
+    print("=" * 70)
+
+    print(f"\n📊 Summary")
+    print(f"   Total work time: {format_duration_hm(total_work)}")
+    print(f"   Work periods: {total_periods}")
+    print(f"   Session files: {num_files}")
+    if first_date and last_date:
+        print(f"   Date range: {first_date} to {last_date}")
+
+    if daily_stats:
+        print(f"\n📅 Daily Breakdown")
+        print(f"\n{'Date':<12} {'Work Time':>12} {'Periods':>10} {'Messages':>10}")
+        print("-" * 46)
+
+        # Sort by date descending
+        for date_str in sorted(daily_stats.keys(), reverse=True):
+            stats = daily_stats[date_str]
+            work_time = format_duration_hm(stats['work_seconds'])
+            print(f"{date_str:<12} {work_time:>12} {stats['work_periods']:>10} {stats['messages']:>10}")
+
+        print("-" * 46)
+        print(f"{'TOTAL':<12} {format_duration_hm(total_work):>12} {total_periods:>10} {total_messages:>10}")
+
+    print()
 
 
 # ============================================================================
@@ -3296,6 +4667,12 @@ def cmd_list_all_sources(args):
     until_date = getattr(args, 'until_date', None)
     remotes = getattr(args, 'remotes', []) or []
 
+    # Include saved sources
+    saved_sources = get_saved_sources()
+    for src in saved_sources:
+        if src not in remotes:
+            remotes.append(src)
+
     all_results = []  # List of (source_label, sessions)
 
     # Helper to get sessions for multiple patterns with deduplication
@@ -3633,6 +5010,14 @@ def cmd_export_all(args):
         # Backward compat: use single workspace
         ws = getattr(args, 'workspace', '')
         patterns = [ws] if ws else []
+
+    # Include saved sources in remotes
+    remotes = getattr(args, 'remotes', []) or []
+    saved_sources = get_saved_sources()
+    for src in saved_sources:
+        if src not in remotes:
+            remotes.append(src)
+    args.remotes = remotes
 
     # Pre-flight validation: Check all sources before starting export
     print("[Validation] Checking access to all sources...")
@@ -4113,6 +5498,11 @@ EXAMPLES:
         metavar='NAME',
         help='Use alias instead of workspace pattern (alternative to @name syntax)')
 
+    parser_lss.add_argument('--this',
+        action='store_true',
+        dest='this_only',
+        help='Use current workspace only, not its alias (if aliased)')
+
     # ========== lsh - list hosts ==========
     parser_lsh = subparsers.add_parser('lsh',
         help='List hosts',
@@ -4202,6 +5592,11 @@ EXAMPLES:
     parser_export.add_argument('--alias',
         metavar='NAME',
         help='Export using alias (alternative to @name syntax)')
+
+    parser_export.add_argument('--this',
+        action='store_true',
+        dest='this_only',
+        help='Use current workspace only, not its alias (if aliased)')
 
     # ========== alias command ==========
     parser_alias = subparsers.add_parser('alias',
@@ -4297,6 +5692,116 @@ EXAMPLES:
     parser_alias_import.add_argument('--replace',
         action='store_true',
         help='Replace all aliases instead of merging')
+
+    # ========== sources command ==========
+    parser_sources = subparsers.add_parser('sources',
+        help='Manage saved SSH remote sources',
+        description='Configure SSH remotes for --as flag. Note: WSL/Windows are auto-detected.')
+
+    sources_subparsers = parser_sources.add_subparsers(dest='sources_action')
+
+    # sources list (default)
+    sources_subparsers.add_parser('list',
+        help='List saved sources',
+        description='List all configured SSH remote sources')
+
+    # sources add
+    parser_sources_add = sources_subparsers.add_parser('add',
+        help='Add an SSH remote source',
+        description='Add an SSH remote (user@hostname). WSL/Windows are auto-detected by --as.')
+    parser_sources_add.add_argument('source',
+        help='SSH remote (user@hostname)')
+
+    # sources remove
+    parser_sources_remove = sources_subparsers.add_parser('remove',
+        help='Remove a remote source',
+        description='Remove a remote source from configuration')
+    parser_sources_remove.add_argument('source',
+        help='Remote source to remove')
+
+    # sources clear
+    sources_subparsers.add_parser('clear',
+        help='Clear all saved sources',
+        description='Remove all saved remote sources')
+
+    # ========== stats command ==========
+    parser_stats = subparsers.add_parser('stats',
+        help='Show usage statistics and metrics',
+        description='Display Claude Code usage statistics from synced metrics database')
+
+    parser_stats.add_argument('workspace',
+        nargs='*',
+        default=None,
+        help='Filter by workspace pattern(s) or @alias')
+
+    parser_stats.add_argument('--sync',
+        action='store_true',
+        help='Sync JSONL files to metrics database')
+
+    parser_stats.add_argument('--force',
+        action='store_true',
+        help='Force re-sync all files (ignore mtime)')
+
+    parser_stats.add_argument('--tools',
+        action='store_true',
+        help='Show tool usage statistics')
+
+    parser_stats.add_argument('--models',
+        action='store_true',
+        help='Show model usage statistics')
+
+    parser_stats.add_argument('--time',
+        action='store_true',
+        help='Show time tracking with daily breakdown')
+
+    parser_stats.add_argument('--by-workspace',
+        action='store_true',
+        help='Show statistics grouped by workspace')
+
+    parser_stats.add_argument('--by-day',
+        action='store_true',
+        help='Show daily statistics')
+
+    parser_stats.add_argument('--source',
+        metavar='SOURCE',
+        help='Filter by source (local, wsl:distro, windows, remote:host)')
+
+    parser_stats.add_argument('--since',
+        metavar='DATE',
+        help='Filter sessions starting from this date (YYYY-MM-DD)')
+
+    parser_stats.add_argument('--until',
+        metavar='DATE',
+        help='Filter sessions until this date (YYYY-MM-DD)')
+
+    parser_stats.add_argument('--aw', '--all-workspaces',
+        action='store_true',
+        dest='all_workspaces',
+        help='Show stats for all workspaces (default: current workspace)')
+
+    parser_stats.add_argument('--this',
+        action='store_true',
+        dest='this_only',
+        help='Use current workspace only, not its alias (if aliased)')
+
+    parser_stats.add_argument('--as', '--all-sources',
+        action='store_true',
+        dest='all_sources',
+        help='Sync from all sources (local + WSL/Windows)')
+
+    parser_stats.add_argument('--wsl',
+        action='store_true',
+        help='Include WSL source')
+
+    parser_stats.add_argument('--windows',
+        action='store_true',
+        help='Include Windows source')
+
+    parser_stats.add_argument('-r', '--remote',
+        action='append',
+        dest='remotes',
+        metavar='HOST',
+        help='Include remote source (can be repeated)')
 
     # Parse arguments
     args = parser.parse_args()
@@ -4405,6 +5910,7 @@ EXAMPLES:
             cmd_list_all_sources(LssAllArgs())
         else:
             # Regular workspace listing
+            this_only = getattr(args, 'this_only', False)
             if workspace_list:
                 patterns = workspace_list
             else:
@@ -4417,6 +5923,18 @@ EXAMPLES:
                     print("  • Specify a workspace pattern: lss <pattern>", file=sys.stderr)
                     print("  • Use --as to list from all sources: lss --as", file=sys.stderr)
                     sys.exit(1)
+
+                # Check if current workspace belongs to an alias (unless --this is used)
+                if not this_only:
+                    alias_for_ws = get_alias_for_workspace(pattern, 'local')
+                    if alias_for_ws:
+                        # Use alias-based listing instead
+                        sys.stderr.write(f"📎 Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+                        since_date = parse_date_string(args.since) if args.since else None
+                        until_date = parse_date_string(args.until) if args.until else None
+                        cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
+                        return  # Early return after alias listing
+
                 patterns = [pattern]
             class LssArgs:
                 since = args.since
@@ -4452,6 +5970,7 @@ EXAMPLES:
 
         # Get patterns (default to current workspace if empty)
         # Skip workspace check if --aw or --as flags are set
+        this_only = getattr(args, 'this_only', False)
         if not targets and not args.all_workspaces and not args.all_sources:
             # No workspace specified - check if current directory is a known workspace
             pattern, exists = check_current_workspace_exists()
@@ -4463,6 +5982,16 @@ EXAMPLES:
                 print("  • Use --aw to export all workspaces: export --aw", file=sys.stderr)
                 print("  • Use --as to export from all sources: export --as", file=sys.stderr)
                 sys.exit(1)
+
+            # Check if current workspace belongs to an alias (unless --this is used)
+            if not this_only:
+                alias_for_ws = get_alias_for_workspace(pattern, 'local')
+                if alias_for_ws:
+                    # Use alias-based export instead
+                    sys.stderr.write(f"📎 Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+                    cmd_alias_export(alias_for_ws, final_output_dir, args)
+                    return  # Early return after alias export
+
             targets = [pattern]
 
         # Check for single file export (one target ending with .jsonl)
@@ -4535,6 +6064,77 @@ EXAMPLES:
         else:
             # Show alias help if unknown subcommand
             parser_alias.print_help()
+
+    elif args.command == 'sources':
+        # Sources configuration commands
+        sources_cmd = getattr(args, 'sources_action', None)
+
+        if sources_cmd == 'list' or sources_cmd is None:
+            cmd_sources_list(args)
+        elif sources_cmd == 'add':
+            cmd_sources_add(args)
+        elif sources_cmd == 'remove':
+            cmd_sources_remove(args)
+        elif sources_cmd == 'clear':
+            cmd_sources_clear(args)
+        else:
+            parser_sources.print_help()
+
+    elif args.command == 'stats':
+        # Stats/metrics commands
+        if args.sync:
+            # Build remotes list from flags
+            remotes = getattr(args, 'remotes', None) or []
+            if args.wsl:
+                wsl_distros = get_wsl_distributions()
+                claude_distros = [d for d in wsl_distros if d.get('has_claude')]
+                if claude_distros:
+                    remotes.append(f"wsl://{claude_distros[0]['name']}")
+            if args.windows:
+                remotes.append('windows')
+
+            class SyncArgs:
+                force = args.force
+                all_sources = args.all_sources
+                patterns = [args.workspace] if args.workspace else ['']
+            SyncArgs.remotes = remotes
+            cmd_stats_sync(SyncArgs())
+        else:
+            # Display stats
+            # If --as is given, sync first then display
+            if args.all_sources:
+                remotes = getattr(args, 'remotes', None) or []
+                if args.wsl:
+                    wsl_distros = get_wsl_distributions()
+                    claude_distros = [d for d in wsl_distros if d.get('has_claude')]
+                    if claude_distros:
+                        remotes.append(f"wsl://{claude_distros[0]['name']}")
+                if args.windows:
+                    remotes.append('windows')
+
+                class SyncArgs:
+                    force = args.force
+                    all_sources = True
+                    patterns = [args.workspace] if args.workspace else ['']
+                SyncArgs.remotes = remotes
+                cmd_stats_sync(SyncArgs())
+                print()  # Blank line between sync and display
+
+            # --as and --aw are orthogonal:
+            # --as = sync from all sources first
+            # --aw = query all workspaces
+            class StatsArgs:
+                workspace = args.workspace
+                source = args.source
+                since = args.since
+                until = args.until
+                tools = args.tools
+                models = args.models
+                time = getattr(args, 'time', False)
+                by_workspace = getattr(args, 'by_workspace', False)
+                by_day = getattr(args, 'by_day', False)
+                all_workspaces = getattr(args, 'all_workspaces', False)
+            cmd_stats(StatsArgs())
 
 
 if __name__ == "__main__":

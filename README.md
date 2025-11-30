@@ -112,6 +112,20 @@ Group related workspaces across environments for consolidated export:
 - Group related projects across local, WSL, Windows, and remote
 - Simple JSON storage in `~/.claude-history/aliases.json`
 - Easy sync via git, rsync, or cloud storage
+- **Automatic alias scoping**: When in an aliased workspace, `lss`/`export`/`stats` use the alias by default
+
+**Automatic Alias Scoping:**
+```bash
+# If current workspace is part of @myproject alias:
+./claude-history lss        # 📎 Using alias @myproject
+./claude-history export     # 📎 Using alias @myproject
+./claude-history stats      # 📎 Using alias @myproject
+
+# To force current workspace only:
+./claude-history lss --this
+./claude-history export --this
+./claude-history stats --this
+```
 
 See [CLAUDE.md](CLAUDE.md) for complete alias documentation.
 
@@ -136,6 +150,35 @@ See [CLAUDE.md](CLAUDE.md) for complete alias documentation.
 - **Conceptual clarity**: WSL/Windows = same machine; SSH = network remotes
 
 See [CLAUDE.md](CLAUDE.md) for complete documentation.
+
+**📊 Usage Metrics & Time Tracking:**
+
+Track your Claude Code usage with built-in analytics:
+
+```bash
+# Configure SSH remotes once (WSL/Windows are auto-detected)
+./claude-history sources add user@vm01
+
+# Time tracking with auto-sync from all sources
+./claude-history stats --time --as        # Current workspace, all sources
+./claude-history stats --time --as --aw   # All workspaces, all sources
+
+# View usage dashboard
+./claude-history stats
+
+# Detailed breakdowns
+./claude-history stats --tools          # Tool usage patterns
+./claude-history stats --by-day         # Daily trends
+./claude-history stats --by-workspace   # Per-project stats
+```
+
+**Key Features:**
+- **Time tracking**: Work periods with daily breakdown (excludes idle gaps >30 min)
+- **Token tracking**: Input, output, cache creation/read with hit ratio
+- **Tool analytics**: Usage counts and error rates per tool
+- **Saved sources**: Configure SSH remotes once, `--as` uses them automatically
+- **Alias-aware**: Aggregates workspaces in the same alias
+- **Zero dependencies**: Uses Python's built-in sqlite3
 
 ## Installation
 
@@ -971,6 +1014,123 @@ scp aliases.json user@newmachine:~/
 ./claude-history export @myproject --since 2025-11-01 -o ./recent/
 ```
 
+### Recipe 9: Configure Saved Sources (One-Time Setup)
+
+Configure SSH remotes once so `--as` uses them automatically:
+
+```bash
+# Add your SSH remotes (WSL/Windows are auto-detected)
+./claude-history sources add user@vm01
+./claude-history sources add user@vm02
+
+# Verify saved sources
+./claude-history sources
+
+# Now --as includes saved remotes automatically
+./claude-history lsw --as              # includes vm01 and vm02
+./claude-history stats --time --as     # syncs from vm01 and vm02
+```
+
+### Recipe 10: Track Usage Metrics Across All Environments
+
+```bash
+# Initial sync from all sources (uses saved remotes)
+./claude-history stats --sync --as
+
+# View overall statistics (current workspace)
+./claude-history stats
+
+# View all workspaces
+./claude-history stats --aw
+
+# See tool usage patterns
+./claude-history stats --tools
+
+# Daily breakdown
+./claude-history stats --by-day
+
+# Filter to specific project
+./claude-history stats myproject
+```
+
+### Recipe 11: Monthly Usage Report
+
+```bash
+# Sync latest data
+./claude-history stats --sync --as
+
+# Get stats for November 2025
+./claude-history stats --since 2025-11-01 --until 2025-11-30
+
+# Per-workspace breakdown for the month
+./claude-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
+```
+
+### Recipe 12: Compare Tool Usage Across Projects
+
+```bash
+# Overall tool usage
+./claude-history stats --tools
+
+# Tool usage for specific project
+./claude-history stats --tools myproject
+
+# Compare by looking at different workspaces
+./claude-history stats --tools frontend-app
+./claude-history stats --tools backend-api
+```
+
+### Recipe 13: Time Tracking with Daily Breakdown
+
+Track how much time you've spent with Claude Code:
+
+```bash
+# Current workspace, sync all sources first
+./claude-history stats --time --as
+
+# All workspaces, sync all sources first
+./claude-history stats --time --as --aw
+
+# Filter by date range
+./claude-history stats --time --since 2025-11-01 --until 2025-11-30
+```
+
+### Recipe 14: Analyze Alias Usage
+
+Aliases are automatically aggregated in stats output:
+
+```bash
+# Create alias for a project across environments
+./claude-history alias create myproject
+./claude-history alias add myproject --as myproject
+
+# View aggregated stats (shows @myproject with combined metrics)
+./claude-history stats
+
+# Detailed workspace view shows aliases separately
+./claude-history stats --by-workspace
+```
+
+### Recipe 15: Automatic Alias Scoping
+
+Once a workspace is part of an alias, commands automatically use the alias scope:
+
+```bash
+# Set up: create alias and add current workspace
+./claude-history alias create myproject
+./claude-history alias add myproject myproject
+
+# Now running from this workspace automatically uses the alias
+./claude-history lss        # 📎 Using alias @myproject
+./claude-history export     # 📎 Using alias @myproject
+./claude-history stats      # 📎 Using alias @myproject
+
+# Force current workspace only when needed
+./claude-history lss --this
+./claude-history export --this
+./claude-history stats --this
+```
+
 ## Remote Operations
 
 The tool supports accessing Claude Code conversations from remote machines via SSH and WSL distributions.
@@ -1129,13 +1289,15 @@ WSL Distributions:
 Show all sessions for a workspace.
 
 ```bash
-claude-sessions list [PATTERN|--this|--all] [--since DATE] [--until DATE] [--wsl|--windows|-r HOST]
+claude-sessions list [PATTERN] [--this] [--since DATE] [--until DATE] [--wsl|--windows|-r HOST]
 ```
 
 **Arguments:**
-- `PATTERN`: Workspace name pattern to match (optional)
-- `--this`: Use current project workspace
-- `--all`: Show all workspaces
+- `PATTERN`: Workspace name pattern to match (optional, default: current workspace or its alias)
+
+**Scope Options:**
+- `--this`: Use current workspace only, not its alias (if aliased)
+- `--as, --all-sources`: List from all sources (local + WSL/Windows + remotes)
 
 **Date Filtering:**
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
@@ -1151,8 +1313,17 @@ claude-sessions list [PATTERN|--this|--all] [--since DATE] [--until DATE] [--wsl
 - Total size, message count, date range
 - Grouped by workspace
 
+**Alias Scoping:**
+When no pattern is specified and the current workspace is part of an alias, `lss` automatically uses the alias. Use `--this` to override.
+
 **Examples:**
 ```bash
+# List sessions from current workspace (or alias if aliased)
+./claude-history lss
+
+# Force current workspace only (not alias)
+./claude-history lss --this
+
 # List sessions from WSL
 ./claude-history lss myproject --wsl
 
@@ -1174,9 +1345,10 @@ claude-history export [WORKSPACE] [OPTIONS]
 **Scope Flags (Orthogonal):**
 - `--as, --all-sources`: Export from ALL sources (local + WSL + Windows + remotes)
 - `--aw, --all-workspaces` (also `-a, --all`): Export ALL workspaces (default: current workspace)
+- `--this`: Use current workspace only, not its alias (if aliased)
 
 **Arguments:**
-- `WORKSPACE`: One or more workspace patterns (optional, defaults to current workspace)
+- `WORKSPACE`: One or more workspace patterns (optional, defaults to current workspace or its alias)
   - Multiple patterns supported: `export proj1 proj2`
   - Sessions deduplicated when patterns overlap
 - `output_dir`: Output directory positional argument (optional)
@@ -1192,6 +1364,9 @@ claude-history export [WORKSPACE] [OPTIONS]
 - `--minimal`: Export minimal mode (conversation content only, no metadata)
 - `--split LINES`: Split long conversations into parts of approximately LINES per file
 - `--flat`: Use flat directory structure (default: organized by workspace)
+
+**Alias Scoping:**
+When no workspace is specified and the current workspace is part of an alias, `export` automatically uses the alias. Use `--this` to override.
 
 **Orthogonal Design:**
 
@@ -1272,6 +1447,170 @@ claude-sessions convert JSONL_FILE [--output FILE] [-r HOST]
 **Output:**
 - Single markdown file
 - File size information
+
+### `sources`
+
+Manage saved SSH remote sources. WSL/Windows are auto-detected by `--as`, so this command is only for SSH remotes.
+
+```bash
+claude-history sources [list|add|remove|clear]
+```
+
+**Examples:**
+```bash
+# List saved sources
+./claude-history sources
+
+# Add SSH remotes
+./claude-history sources add user@vm01
+./claude-history sources add user@vm02
+
+# Remove a source
+./claude-history sources remove user@vm02
+
+# Clear all sources
+./claude-history sources clear
+```
+
+**Note:** Once configured, `--as` automatically includes saved sources in all commands.
+
+### `stats`
+
+Display usage statistics and metrics from synced Claude Code sessions.
+
+```bash
+claude-history stats [WORKSPACE] [OPTIONS]
+```
+
+**Scope Flags (Orthogonal):**
+- `--as, --all-sources`: Sync from all sources first (local + WSL + Windows + saved SSH remotes)
+- `--aw, --all-workspaces`: Query all workspaces (default: current workspace)
+- `--this`: Use current workspace only, not its alias (if aliased)
+
+**Alias Scoping:**
+When no workspace is specified and the current workspace is part of an alias, `stats` automatically uses the alias. Use `--this` to override.
+
+**First-Time Setup:**
+```bash
+# Configure SSH remotes once (optional)
+./claude-history sources add user@vm01
+
+# Sync local sessions only
+./claude-history stats --sync
+
+# Sync from all sources (auto-includes saved remotes)
+./claude-history stats --sync --as
+```
+
+**Time Tracking:**
+```bash
+# Current workspace, local DB only
+./claude-history stats --time
+
+# Current workspace, sync all sources first
+./claude-history stats --time --as
+
+# All workspaces, local DB only
+./claude-history stats --time --aw
+
+# All workspaces, sync all sources first
+./claude-history stats --time --as --aw
+```
+
+**Viewing Statistics:**
+```bash
+# Summary dashboard (default, current workspace)
+./claude-history stats
+
+# All workspaces
+./claude-history stats --aw
+
+# Filter by workspace pattern
+./claude-history stats myproject
+
+# Specific views
+./claude-history stats --tools          # Tool usage statistics
+./claude-history stats --models         # Model usage breakdown
+./claude-history stats --time           # Time tracking with daily breakdown
+./claude-history stats --by-workspace   # Per-workspace stats
+./claude-history stats --by-day         # Daily usage trends
+
+# Filter by date range
+./claude-history stats --since 2025-11-01
+./claude-history stats --since 2025-11-01 --until 2025-11-15
+
+# Filter by source
+./claude-history stats --source local
+./claude-history stats --source remote:vm01
+```
+
+**Options:**
+- `--sync`: Sync JSONL files to metrics database (without display)
+- `--force`: Force re-sync all files (ignore timestamps)
+- `--time`: Show time tracking with daily breakdown
+- `--tools`: Show tool usage statistics
+- `--models`: Show model usage statistics
+- `--by-workspace`: Show per-workspace breakdown
+- `--by-day`: Show daily statistics
+- `--source SOURCE`: Filter by source (local, wsl:distro, windows, remote:host)
+- `--since DATE`: Filter sessions from this date (YYYY-MM-DD)
+- `--until DATE`: Filter sessions until this date (YYYY-MM-DD)
+- `--aw, --all-workspaces`: Query all workspaces (default: current workspace)
+- `--as, --all-sources`: Sync from all sources first, then display
+- `--wsl`: Include WSL source
+- `--windows`: Include Windows source
+- `-r, --remote HOST`: Include additional SSH remote (repeatable)
+
+**Metrics Available:**
+- **Sessions**: Total, main vs agent, message counts
+- **Tokens**: Input, output, cache creation, cache read, hit ratio
+- **Tools**: Usage counts and error rates per tool
+- **Models**: Usage distribution across Claude models
+- **Workspaces**: Top workspaces by activity (alias-aware)
+- **Daily trends**: Session and token usage over time
+
+**Database Location:**
+- Stored at `~/.claude-history/metrics.db` (SQLite)
+- Incremental sync (only processes new/modified files)
+- Zero external dependencies (uses Python's built-in sqlite3)
+
+**Example Output:**
+```
+============================================================
+CLAUDE CODE METRICS SUMMARY
+============================================================
+
+📊 Sessions
+   Total: 517
+   Main sessions: 162
+   Agent tasks: 355
+   Total messages: 93,815
+
+🔤 Tokens
+   Input: 3,330,399
+   Output: 18,934,339
+   Cache hit ratio: 92.0%
+
+🔧 Tools
+   Total uses: 29,606
+   Errors: 2,168
+   Error rate: 7.3%
+
+📍 Sources
+   remote:ubuntuvm01: 355 sessions
+   windows: 106 sessions
+   local: 56 sessions
+
+🤖 Models (top 3)
+   sonnet-4-5: 41,715 messages
+   opus-4-5: 8,188 messages
+   opus-4-1: 3,648 messages
+
+📁 Top Workspaces
+   code-recipes: 350 sessions, 2883 msgs
+   @myproject (3 workspaces): 45 sessions, 12,500 msgs
+   astromcp-wsl: 26 sessions, 1721 msgs
+```
 
 ## FAQ
 
@@ -1568,6 +1907,18 @@ MIT License - See [LICENSE](LICENSE) file for details.
 - Thanks to the Claude Code community
 
 ## Changelog
+
+### Version 1.4.0
+
+- **New `stats` command**: Usage metrics and analytics
+  - Token tracking (input, output, cache creation/read)
+  - Tool usage statistics with error rates
+  - Daily and per-workspace breakdowns
+  - Alias-aware workspace aggregation
+- SQLite database for metrics storage (`~/.claude-history/metrics.db`)
+- Incremental sync (only processes new/modified files)
+- Multi-source sync: `stats --sync --as -r user@vm`
+- Zero new dependencies (uses Python's built-in sqlite3)
 
 ### Version 1.3.6
 
