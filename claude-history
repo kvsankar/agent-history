@@ -1849,6 +1849,118 @@ def resolve_alias_workspaces(alias_name: str, source_filter: str = None) -> list
     return results
 
 
+def get_sessions_for_source(source_key: str, workspace: str, since_date=None, until_date=None, fetch_remote: bool = False) -> list:
+    """
+    Get sessions from a workspace on a specific source.
+
+    Args:
+        source_key: Source identifier like 'local', 'windows:username', 'wsl:distro', 'remote:hostname'
+        workspace: Encoded workspace name (e.g., '-home-user-project' or 'C--user-project')
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+        fetch_remote: If True, fetch remote sessions via SSH if not cached
+
+    Returns:
+        List of session dicts, or empty list if not accessible
+    """
+    try:
+        if source_key == 'local':
+            # Local sessions - use default get_workspace_sessions
+            return get_workspace_sessions(workspace, quiet=True, since_date=since_date, until_date=until_date)
+
+        elif source_key.startswith('windows:'):
+            # Windows sessions (from WSL)
+            username = source_key.split(':', 1)[1]
+            projects_dir = get_windows_projects_dir(username)
+
+            # Temporarily override get_claude_projects_dir
+            original_get_claude = get_claude_projects_dir
+
+            def temp_override():
+                return projects_dir
+
+            current_module = sys.modules[__name__]
+            setattr(current_module, 'get_claude_projects_dir', temp_override)
+
+            try:
+                sessions = get_workspace_sessions(workspace, quiet=True, since_date=since_date, until_date=until_date)
+                return sessions
+            finally:
+                setattr(current_module, 'get_claude_projects_dir', original_get_claude)
+
+        elif source_key.startswith('wsl:'):
+            # WSL sessions (from Windows)
+            distro = source_key.split(':', 1)[1]
+            projects_dir = get_wsl_projects_dir(distro)
+
+            if projects_dir is None:
+                return []
+
+            # Temporarily override get_claude_projects_dir
+            original_get_claude = get_claude_projects_dir
+
+            def temp_override():
+                return projects_dir
+
+            current_module = sys.modules[__name__]
+            setattr(current_module, 'get_claude_projects_dir', temp_override)
+
+            try:
+                sessions = get_workspace_sessions(workspace, quiet=True, since_date=since_date, until_date=until_date)
+                return sessions
+            finally:
+                setattr(current_module, 'get_claude_projects_dir', original_get_claude)
+
+        elif source_key.startswith('remote:'):
+            # Remote sessions via SSH
+            hostname = source_key.split(':', 1)[1]
+
+            # Get the local cache directory
+            try:
+                local_projects = get_claude_projects_dir()
+            except:
+                return []
+
+            # Build the cached workspace name
+            cached_workspace = f"remote_{hostname}_{workspace.lstrip('-')}"
+
+            # Check if cached workspace exists
+            cached_path = local_projects / cached_workspace
+            if cached_path.exists():
+                # Use the cached workspace (include_cached=True to allow remote_* pattern)
+                return get_workspace_sessions(cached_workspace, quiet=True, since_date=since_date, until_date=until_date, include_cached=True)
+            elif fetch_remote:
+                # Fetch from remote via SSH
+                # Build remote host string (assume same username as local or use hostname directly)
+                # The hostname stored might be just hostname or user@hostname
+                remote_host = hostname if '@' in hostname else hostname
+
+                # Check SSH connection first
+                if not check_ssh_connection(remote_host):
+                    sys.stderr.write(f"⚠ Cannot connect to remote '{hostname}' - skipping\n")
+                    return []
+
+                # Fetch the workspace
+                sys.stderr.write(f"📥 Fetching from {hostname}:{workspace}...\n")
+                result = fetch_workspace_files(remote_host, workspace, local_projects, hostname)
+
+                if result.get('success'):
+                    # Now get sessions from the cached workspace (include_cached=True)
+                    return get_workspace_sessions(cached_workspace, quiet=True, since_date=since_date, until_date=until_date, include_cached=True)
+                else:
+                    return []
+            else:
+                # Remote not cached and fetch not requested
+                return []
+
+        else:
+            # Unknown source type
+            return []
+
+    except Exception:
+        return []
+
+
 # ============================================================================
 # Alias Commands
 # ============================================================================
@@ -1873,16 +1985,15 @@ def cmd_alias_list(args):
             if workspaces:
                 print(f"  {source_key}:")
                 for workspace in workspaces:
-                    # Try to get session count
-                    try:
-                        sessions = get_workspace_sessions(workspace)
-                        count = len(sessions)
-                        total_sessions += count
-                        ws_readable = normalize_workspace_name(workspace)
+                    # Try to get session count using source-aware function
+                    sessions = get_sessions_for_source(source_key, workspace)
+                    count = len(sessions)
+                    total_sessions += count
+                    ws_readable = normalize_workspace_name(workspace)
+                    if count > 0 or source_key == 'local':
                         print(f"    {ws_readable}\t{count} sessions")
-                    except:
-                        ws_readable = normalize_workspace_name(workspace)
-                        print(f"    {ws_readable}\t(not accessible)")
+                    else:
+                        print(f"    {ws_readable}\t{count} sessions (not cached)")
 
         print(f"  Total: {total_sessions} sessions")
 
@@ -1906,15 +2017,15 @@ def cmd_alias_show(args):
         if workspaces:
             print(f"  {source_key}:")
             for workspace in workspaces:
-                try:
-                    sessions = get_workspace_sessions(workspace)
-                    count = len(sessions)
-                    total_sessions += count
-                    ws_readable = normalize_workspace_name(workspace)
+                # Use source-aware function to get sessions
+                sessions = get_sessions_for_source(source_key, workspace)
+                count = len(sessions)
+                total_sessions += count
+                ws_readable = normalize_workspace_name(workspace)
+                if count > 0 or source_key == 'local':
                     print(f"    {ws_readable}\t{count} sessions")
-                except:
-                    ws_readable = normalize_workspace_name(workspace)
-                    print(f"    {ws_readable}\t(not accessible)")
+                else:
+                    print(f"    {ws_readable}\t{count} sessions (not cached)")
 
     print(f"  Total: {total_sessions} sessions")
 
@@ -2230,14 +2341,11 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None):
 
     for source_key, workspaces in alias_config.items():
         for workspace in workspaces:
-            try:
-                # Get sessions for this workspace
-                sessions = get_workspace_sessions(workspace, since_date=since_date, until_date=until_date)
-                for session in sessions:
-                    session['source'] = source_key
-                    all_sessions.append(session)
-            except:
-                pass  # Workspace may not be accessible
+            # Use source-aware function to get sessions
+            sessions = get_sessions_for_source(source_key, workspace, since_date=since_date, until_date=until_date)
+            for session in sessions:
+                session['source'] = source_key
+                all_sessions.append(session)
 
     if not all_sessions:
         sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'\n")
@@ -2276,84 +2384,79 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
 
     for source_key, workspaces in alias_config.items():
         for workspace in workspaces:
-            try:
-                # Get sessions for this workspace
-                sessions = get_workspace_sessions(workspace, since_date=since_date, until_date=until_date)
+            # Use source-aware function to get sessions (auto-fetch remote if needed)
+            sessions = get_sessions_for_source(source_key, workspace, since_date=since_date, until_date=until_date, fetch_remote=True)
 
-                if not sessions:
-                    continue
+            if not sessions:
+                continue
 
-                # Determine source tag for filenames
-                source_tag = ''
-                if source_key != 'local':
-                    source_tag = source_key.replace(':', '_') + '_'
+            # Determine source tag for filenames
+            source_tag = ''
+            if source_key != 'local':
+                source_tag = source_key.replace(':', '_') + '_'
 
-                # Determine workspace name for directory
-                ws_name = normalize_workspace_name(workspace).replace('/', '-').replace('\\', '-')
-                if ws_name.startswith('-'):
-                    ws_name = ws_name[1:]
+            # Determine workspace name for directory
+            ws_name = normalize_workspace_name(workspace).replace('/', '-').replace('\\', '-')
+            if ws_name.startswith('-'):
+                ws_name = ws_name[1:]
 
-                # Create workspace directory (unless flat mode)
-                if flat:
-                    ws_output_path = output_path
-                else:
-                    ws_output_path = output_path / ws_name
-                    ws_output_path.mkdir(parents=True, exist_ok=True)
+            # Create workspace directory (unless flat mode)
+            if flat:
+                ws_output_path = output_path
+            else:
+                ws_output_path = output_path / ws_name
+                ws_output_path.mkdir(parents=True, exist_ok=True)
 
-                for session in sessions:
-                    jsonl_file = session['file']
+            for session in sessions:
+                jsonl_file = session['file']
 
-                    # Generate output filename with source tag
-                    first_ts = get_first_timestamp(jsonl_file)
-                    if first_ts:
-                        try:
-                            dt = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
-                            ts_prefix = dt.strftime('%Y%m%d%H%M%S')
-                            output_name = f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
-                        except:
-                            output_name = f"{source_tag}{jsonl_file.stem}.md"
-                    else:
-                        output_name = f"{source_tag}{jsonl_file.stem}.md"
-
-                    output_file = ws_output_path / output_name
-
-                    # Check if incremental skip
-                    if not force and output_file.exists():
-                        source_mtime = jsonl_file.stat().st_mtime
-                        output_mtime = output_file.stat().st_mtime
-                        if output_mtime >= source_mtime:
-                            total_skipped += 1
-                            continue
-
+                # Generate output filename with source tag
+                first_ts = get_first_timestamp(jsonl_file)
+                if first_ts:
                     try:
-                        # Handle splitting
-                        if split_lines:
-                            messages = read_jsonl_messages(jsonl_file)
-                            if messages and len(messages) > 3:
-                                parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
-                                if parts:
-                                    base_name = output_name[:-3]  # Remove .md
-                                    for part_num, total_parts, part_md, start_msg, end_msg in parts:
-                                        part_filename = f"{base_name}_part{part_num}.md"
-                                        part_file = ws_output_path / part_filename
-                                        part_file.write_text(part_md, encoding='utf-8')
-                                        print(part_file)
-                                    total_exported += 1
-                                    continue
+                        dt = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
+                        ts_prefix = dt.strftime('%Y%m%d%H%M%S')
+                        output_name = f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
+                    except:
+                        output_name = f"{source_tag}{jsonl_file.stem}.md"
+                else:
+                    output_name = f"{source_tag}{jsonl_file.stem}.md"
 
-                        # Regular export (no splitting)
-                        markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
-                        output_file.write_text(markdown, encoding='utf-8')
-                        print(output_file)
-                        total_exported += 1
+                output_file = ws_output_path / output_name
 
-                    except Exception as e:
-                        sys.stderr.write(f"Error exporting {jsonl_file}: {e}\n")
-                        total_failed += 1
+                # Check if incremental skip
+                if not force and output_file.exists():
+                    source_mtime = jsonl_file.stat().st_mtime
+                    output_mtime = output_file.stat().st_mtime
+                    if output_mtime >= source_mtime:
+                        total_skipped += 1
+                        continue
 
-            except Exception as e:
-                sys.stderr.write(f"Error accessing workspace {workspace}: {e}\n")
-                total_failed += 1
+                try:
+                    # Handle splitting
+                    if split_lines:
+                        messages = read_jsonl_messages(jsonl_file)
+                        if messages and len(messages) > 3:
+                            parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+                            if parts:
+                                base_name = output_name[:-3]  # Remove .md
+                                for part_num, total_parts, part_md, start_msg, end_msg in parts:
+                                    part_filename = f"{base_name}_part{part_num}.md"
+                                    part_file = ws_output_path / part_filename
+                                    part_file.write_text(part_md, encoding='utf-8')
+                                    print(part_file)
+                                total_exported += 1
+                                continue
+
+                    # Regular export (no splitting)
+                    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+                    output_file.write_text(markdown, encoding='utf-8')
+                    print(output_file)
+                    total_exported += 1
+
+                except Exception as e:
+                    sys.stderr.write(f"Error exporting {jsonl_file}: {e}\n")
+                    total_failed += 1
 
     # Print summary
     if total_exported > 0 or total_skipped > 0:

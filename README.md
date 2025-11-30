@@ -863,6 +863,114 @@ python claude-history export --as --aw -o ./backups -r user@vm01 -r user@vm02
 
 **Circular Fetching Prevention:** When P1 fetches from P2 and P2 fetches from P1, the tool automatically filters out cached remote data (`remote_*` and `wsl_*` directories) to prevent infinite loops. Only native workspaces are fetched from each source.
 
+## Cookbook
+
+Common workflows and recipes for managing Claude Code conversations across environments.
+
+### Recipe 1: Set Up a Cross-Environment Alias
+
+Create an alias to manage a project that exists on Windows, WSL, and a remote VM:
+
+```bash
+# Create the alias
+./claude-history alias create myproject
+
+# Add workspaces interactively from all sources
+./claude-history alias add myproject --as -r user@vm01 --pick
+
+# Or add by pattern (non-interactive)
+./claude-history alias add myproject myproject                    # local
+./claude-history alias add myproject --windows myproject          # Windows
+./claude-history alias add myproject -r user@vm01 myproject       # remote
+
+# View the alias
+./claude-history alias show myproject
+```
+
+### Recipe 2: Daily Backup of All Sessions
+
+Export all sessions from all environments to a backup directory:
+
+```bash
+# One-time: create an alias for everything
+./claude-history alias create all-projects
+./claude-history alias add all-projects --as -r vm01 -r vm02 --pick
+
+# Daily backup (incremental - only exports new/changed files)
+./claude-history export @all-projects -o ~/backups/claude-sessions/
+
+# Force re-export everything
+./claude-history export @all-projects -o ~/backups/claude-sessions/ --force
+```
+
+### Recipe 3: Export a Single Project from Multiple Machines
+
+```bash
+# List sessions from all sources matching "myproject"
+./claude-history lss myproject --as -r user@vm01
+
+# Export from all sources
+./claude-history export myproject --as -r user@vm01 -o ./exports/
+```
+
+### Recipe 4: Search Across All Environments
+
+```bash
+# List all workspaces from everywhere
+./claude-history lsw --as -r user@vm01 -r user@vm02
+
+# Find sessions mentioning a specific project
+./claude-history lsw --as | grep django
+
+# List sessions from matching workspaces
+./claude-history lss django --as
+```
+
+### Recipe 5: Sync Remote Sessions for Offline Access
+
+```bash
+# Fetch and cache remote sessions locally
+./claude-history export myproject -r user@vm01
+
+# Later, work with cached data (no network needed)
+./claude-history lss remote_vm01_home-user-myproject
+```
+
+### Recipe 6: Export for Sharing (Minimal Mode)
+
+Create clean exports without metadata for blog posts or documentation:
+
+```bash
+# Export without UUIDs, token counts, and navigation links
+./claude-history export myproject --minimal -o ./blog-posts/
+
+# Split long conversations into manageable parts
+./claude-history export myproject --minimal --split 500 -o ./blog-posts/
+```
+
+### Recipe 7: Move Aliases Between Machines
+
+```bash
+# On source machine: export aliases
+./claude-history alias export aliases.json
+
+# Copy to target machine
+scp aliases.json user@newmachine:~/
+
+# On target machine: import aliases
+./claude-history alias import aliases.json
+```
+
+### Recipe 8: List Recent Sessions Across Everything
+
+```bash
+# Sessions from last week across all sources
+./claude-history lss --as --since 2025-11-24
+
+# Export recent sessions only
+./claude-history export @myproject --since 2025-11-01 -o ./recent/
+```
+
 ## Remote Operations
 
 The tool supports accessing Claude Code conversations from remote machines via SSH and WSL distributions.

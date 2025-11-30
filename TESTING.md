@@ -119,16 +119,14 @@ ver  # Windows command prompt/PowerShell
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | 3.1.1 | `python claude-history lsh --wsl` | Lists WSL distributions with Claude | ⬜ |
-| 3.1.2 | `python claude-history lsh --wsl <distro>` | Filters by specific distro name | ⬜ |
-| 3.1.3 | `python claude-history lsh --wsl NonExistent` | Shows no distributions | ⬜ |
+| 3.1.2 | `python claude-history lsh` | Shows all sources including WSL | ⬜ |
 
 ### 3.2 lsw with WSL
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 3.2.1 | `python claude-history lsw --wsl` | Lists workspaces from first WSL distro | ⬜ |
-| 3.2.2 | `python claude-history lsw --wsl <distro>` | Lists workspaces from specific distro | ⬜ |
-| 3.2.3 | `python claude-history lsw <workspace> --wsl` | Filters workspaces by pattern in WSL | ⬜ |
+| 3.2.1 | `python claude-history lsw --wsl` | Lists workspaces from WSL (auto-detects distro) | ⬜ |
+| 3.2.2 | `python claude-history lsw <workspace> --wsl` | Filters workspaces by pattern in WSL | ⬜ |
 
 ### 3.3 lss with WSL
 
@@ -136,8 +134,7 @@ ver  # Windows command prompt/PowerShell
 |---------|---------|----------------|--------|
 | 3.3.1 | `python claude-history lss --wsl` | Lists sessions from current workspace in WSL | ⬜ |
 | 3.3.2 | `python claude-history lss <workspace> --wsl` | Lists sessions from WSL workspace | ⬜ |
-| 3.3.3 | `python claude-history lss <workspace> --wsl <distro>` | Lists sessions from specific distro | ⬜ |
-| 3.3.4 | `python claude-history lss <workspace> --wsl --since 2025-01-01` | Date filtering in WSL | ⬜ |
+| 3.3.3 | `python claude-history lss <workspace> --wsl --since 2025-01-01` | Date filtering in WSL | ⬜ |
 
 ### 3.4 export with WSL
 
@@ -145,9 +142,8 @@ ver  # Windows command prompt/PowerShell
 |---------|---------|----------------|--------|
 | 3.4.1 | `python claude-history export --wsl` | Exports current workspace from WSL | ⬜ |
 | 3.4.2 | `python claude-history export <workspace> --wsl` | Exports specific workspace from WSL | ⬜ |
-| 3.4.3 | `python claude-history export <workspace> --wsl <distro>` | Exports from specific distro | ⬜ |
-| 3.4.4 | `python claude-history export --wsl -o C:\test` | Exports to Windows directory | ⬜ |
-| 3.4.5 | `python claude-history export --wsl --minimal` | Minimal export from WSL | ⬜ |
+| 3.4.3 | `python claude-history export --wsl -o C:\test` | Exports to Windows directory | ⬜ |
+| 3.4.4 | `python claude-history export --wsl --minimal` | Minimal export from WSL | ⬜ |
 
 ### 3.5 WSL Filtering
 
@@ -166,16 +162,14 @@ ver  # Windows command prompt/PowerShell
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | 4.1.1 | `./claude-history lsh --windows` | Lists Windows users with Claude | ⬜ |
-| 4.1.2 | `./claude-history lsh --windows <user>` | Filters by specific username | ⬜ |
-| 4.1.3 | `./claude-history lsh --windows NonExistent` | Shows no users | ⬜ |
+| 4.1.2 | `./claude-history lsh` | Shows all sources including Windows | ⬜ |
 
 ### 4.2 lsw with Windows
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 4.2.1 | `./claude-history lsw --windows` | Lists workspaces from Windows | ⬜ |
-| 4.2.2 | `./claude-history lsw --windows <user>` | Lists workspaces from specific user | ⬜ |
-| 4.2.3 | `./claude-history lsw <workspace> --windows` | Filters workspaces by pattern | ⬜ |
+| 4.2.1 | `./claude-history lsw --windows` | Lists workspaces from Windows (auto-detects user) | ⬜ |
+| 4.2.2 | `./claude-history lsw <workspace> --windows` | Filters workspaces by pattern | ⬜ |
 
 ### 4.3 lss with Windows
 
@@ -183,8 +177,7 @@ ver  # Windows command prompt/PowerShell
 |---------|---------|----------------|--------|
 | 4.3.1 | `./claude-history lss --windows` | Lists sessions from Windows | ⬜ |
 | 4.3.2 | `./claude-history lss <workspace> --windows` | Lists sessions from Windows workspace | ⬜ |
-| 4.3.3 | `./claude-history lss <workspace> --windows <user>` | Lists from specific user | ⬜ |
-| 4.3.4 | `./claude-history lss <workspace> --windows --since 2025-01-01` | Date filtering | ⬜ |
+| 4.3.3 | `./claude-history lss <workspace> --windows --since 2025-01-01` | Date filtering | ⬜ |
 
 ### 4.4 export with Windows
 
@@ -192,9 +185,8 @@ ver  # Windows command prompt/PowerShell
 |---------|---------|----------------|--------|
 | 4.4.1 | `./claude-history export --windows` | Exports from Windows | ⬜ |
 | 4.4.2 | `./claude-history export <workspace> --windows` | Exports specific workspace | ⬜ |
-| 4.4.3 | `./claude-history export <workspace> --windows <user>` | Exports from specific user | ⬜ |
-| 4.4.4 | `./claude-history export --windows -o /tmp/test` | Exports to WSL directory | ⬜ |
-| 4.4.5 | `./claude-history export --windows --minimal` | Minimal export | ⬜ |
+| 4.4.3 | `./claude-history export --windows -o /tmp/test` | Exports to WSL directory | ⬜ |
+| 4.4.4 | `./claude-history export --windows --minimal` | Minimal export | ⬜ |
 
 ### 4.5 Windows Filtering
 
@@ -509,10 +501,13 @@ All: Add `./claude-history lsw -r <user>@<host>` (if SSH available)
 
 | Test ID | Command | Expected Result | Env | Status |
 |---------|---------|----------------|-----|--------|
-| 9.2.1 | `./claude-history alias add testproject --windows -- <ws>` | Adds Windows workspace | WSL | ⬜ |
-| 9.2.2 | `python claude-history alias add testproject --wsl -- <ws>` | Adds WSL workspace | Win | ⬜ |
-| 9.2.3 | `./claude-history alias add testproject -r user@host -- <ws>` | Adds remote workspace | All | ⬜ |
-| 9.2.4 | `./claude-history alias show testproject` | Shows workspaces by source | All | ⬜ |
+| 9.2.1 | `./claude-history alias add testproject <pattern>` | Adds local workspace by pattern | All | ⬜ |
+| 9.2.2 | `./claude-history alias add testproject --windows <pattern>` | Adds Windows workspace | WSL | ⬜ |
+| 9.2.3 | `python claude-history alias add testproject --wsl <pattern>` | Adds WSL workspace | Win | ⬜ |
+| 9.2.4 | `./claude-history alias add testproject -r user@host <pattern>` | Adds remote workspace | All | ⬜ |
+| 9.2.5 | `./claude-history alias add testproject --as -r user@host <pattern>` | Adds from all sources at once | All | ⬜ |
+| 9.2.6 | `./claude-history alias add testproject --as --pick` | Interactive picker from all sources | All | ⬜ |
+| 9.2.7 | `./claude-history alias show testproject` | Shows workspaces by source with session counts | All | ⬜ |
 
 ### 9.3 Using Aliases with lss
 
@@ -527,12 +522,21 @@ All: Add `./claude-history lsw -r <user>@<host>` (if SSH available)
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 9.4.1 | `./claude-history export @testproject` | Exports from alias workspaces | ⬜ |
+| 9.4.1 | `./claude-history export @testproject` | Exports from alias workspaces (all sources) | ⬜ |
 | 9.4.2 | `./claude-history export --alias testproject` | Same as above | ⬜ |
 | 9.4.3 | `./claude-history export @testproject -o /tmp/test` | Custom output dir | ⬜ |
 | 9.4.4 | `./claude-history export @testproject --minimal` | Minimal mode works | ⬜ |
-| 9.4.5 | `./claude-history export @testproject --as` | All sources for alias | ⬜ |
-| 9.4.6 | `./claude-history export @nonexistent` | Shows alias not found error | ⬜ |
+| 9.4.5 | `./claude-history export @nonexistent` | Shows alias not found error | ⬜ |
+
+### 9.4a Alias Export with Remote Auto-Fetch
+
+| Test ID | Scenario | Expected Result | Status |
+|---------|----------|----------------|--------|
+| 9.4a.1 | Alias has remote workspace (not cached) | Auto-fetches via SSH then exports | ⬜ |
+| 9.4a.2 | Alias has remote workspace (already cached) | Uses cache, exports directly | ⬜ |
+| 9.4a.3 | Alias has Windows workspace | Exports from Windows directly | ⬜ |
+| 9.4a.4 | Alias has mixed sources | Exports from all sources with correct prefixes | ⬜ |
+| 9.4a.5 | Remote unreachable | Shows warning, continues with other sources | ⬜ |
 
 ### 9.5 Alias Export/Import
 
