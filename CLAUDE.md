@@ -86,8 +86,9 @@ chmod +x claude-history
 ./claude-history alias show myproject             # show workspaces in an alias
 ./claude-history alias create myproject           # create new alias
 ./claude-history alias delete myproject           # delete an alias
-./claude-history alias add myproject -- -home-user-myproject  # add workspace to alias
-./claude-history alias add myproject --windows -- C--user-myproject  # add Windows workspace
+./claude-history alias add myproject myproject    # add by pattern (searches local)
+./claude-history alias add myproject --windows myproject  # add by pattern from Windows
+./claude-history alias add myproject --as -r vm myproject  # add from all sources at once
 ./claude-history alias remove myproject -- -home-user-myproject  # remove workspace from alias
 ./claude-history alias export aliases.json        # export aliases to file
 ./claude-history alias import aliases.json        # import aliases from file
@@ -99,9 +100,8 @@ chmod +x claude-history
 ./claude-history export --alias myproject         # same as above
 ./claude-history export @myproject --as           # export alias from all sources
 
-# WSL and Windows access
+# WSL and Windows access (flags auto-detect)
 ./claude-history lsw --wsl                  # list WSL workspaces
-./claude-history lsw --wsl Ubuntu           # filter by distro name
 ./claude-history lss myproject --wsl        # list WSL sessions
 ./claude-history export myproject --wsl     # export from WSL
 
@@ -255,11 +255,13 @@ The file is organized into nine main sections:
    - `get_aliases_file()`: Returns `~/.claude-history/aliases.json` path
    - `load_aliases()`: Loads aliases from JSON file (returns empty dict if not found)
    - `save_aliases()`: Saves aliases to JSON file
+   - `path_to_encoded_workspace()`: Converts absolute path to Claude's encoded workspace name
+   - `resolve_workspace_input()`: Resolves pattern/path/encoded name to matching workspaces
    - `cmd_alias_list()`: Lists all defined aliases
    - `cmd_alias_show()`: Shows workspaces in a specific alias
    - `cmd_alias_create()`: Creates a new empty alias
    - `cmd_alias_delete()`: Deletes an alias
-   - `cmd_alias_add()`: Adds a workspace to an alias (with source type)
+   - `cmd_alias_add()`: Adds workspaces to an alias (supports patterns, `--as` flag for all sources)
    - `cmd_alias_remove()`: Removes a workspace from an alias
    - `cmd_alias_config_export()`: Exports aliases to a JSON file
    - `cmd_alias_config_import()`: Imports aliases from a JSON file
@@ -782,10 +784,19 @@ scp aliases.json user@other-machine:~/
 ./claude-history alias import aliases.json
 ```
 
-**Note on Workspace Names:**
-Workspace names starting with `-` may be interpreted as flags. Use `--` separator:
+**Adding Workspaces to Aliases:**
 ```bash
-./claude-history alias add myproject -- -home-user-myproject
+# Add by pattern (searches local workspaces)
+./claude-history alias add myproject myproject
+
+# Add from Windows (auto-detects user)
+./claude-history alias add myproject --windows myproject
+
+# Add from all sources at once (local + WSL/Windows + remotes)
+./claude-history alias add myproject --as -r vm myproject
+
+# Workspace names starting with '-' need '--' separator
+./claude-history alias remove myproject -- -home-user-myproject
 ```
 
 ### Remote Operations
@@ -851,7 +862,7 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ## Changelog
 
-**Current version:** 1.3.5
+**Current version:** 1.3.6
 
 See [README.md](README.md#changelog) for the full changelog.
 

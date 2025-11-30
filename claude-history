@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-__version__ = "1.3.5"
+__version__ = "1.3.6"
 
 
 # ============================================================================
@@ -629,6 +629,89 @@ def get_claude_projects_dir():
     return projects_dir
 
 
+def path_to_encoded_workspace(path: str) -> str:
+    """Convert an absolute path to Claude's encoded workspace directory name.
+
+    Args:
+        path: Absolute path (e.g., '/home/user/my-project')
+
+    Returns:
+        Encoded workspace name (e.g., '-home-user-my-project')
+    """
+    # Remove trailing slash if present
+    path = path.rstrip('/')
+    # Replace / with - and add leading -
+    if path.startswith('/'):
+        return '-' + path[1:].replace('/', '-')
+    else:
+        return '-' + path.replace('/', '-')
+
+
+def resolve_workspace_input(workspace_input: str, source_key: str = 'local', args=None) -> list:
+    """Resolve a workspace input (pattern, path, or encoded name) to actual encoded workspace names.
+
+    Args:
+        workspace_input: Can be:
+            - Encoded name: '-home-user-project'
+            - Absolute path: '/home/user/project'
+            - Pattern: 'project' or 'my-project'
+        source_key: Source to search in ('local', 'remote:host', 'wsl:distro', 'windows')
+        args: Arguments object for remote access
+
+    Returns:
+        List of matching encoded workspace names
+    """
+    # Case 1: Already an encoded workspace name (starts with -)
+    if workspace_input.startswith('-'):
+        return [workspace_input]
+
+    # Case 2: Absolute path - convert to encoded name
+    if workspace_input.startswith('/'):
+        return [path_to_encoded_workspace(workspace_input)]
+
+    # Case 3: Windows absolute path (C:\... or C:/...)
+    if len(workspace_input) > 2 and workspace_input[1] == ':':
+        # Convert C:\path or C:/path to encoded format
+        drive = workspace_input[0].upper()
+        rest = workspace_input[2:].lstrip('/\\').replace('\\', '/').replace('/', '-')
+        return [f'{drive}-{rest}']
+
+    # Case 4: Pattern - search for matching workspaces
+    # Get list of available workspaces for this source
+    try:
+        if source_key.startswith('wsl:'):
+            distro = source_key[4:]
+            projects_dir = get_wsl_projects_dir(distro)
+            if not projects_dir:
+                return []
+            workspaces = [d.name for d in projects_dir.iterdir()
+                         if d.is_dir() and not d.name.startswith('remote_') and not d.name.startswith('wsl_')]
+        elif source_key.startswith('windows'):
+            # source_key is 'windows' or 'windows:username'
+            user = source_key[8:] if source_key.startswith('windows:') else None
+            projects_dir = get_windows_projects_dir(user)
+            if not projects_dir:
+                return []
+            workspaces = [d.name for d in projects_dir.iterdir()
+                         if d.is_dir() and not d.name.startswith('remote_') and not d.name.startswith('wsl_')]
+        elif source_key.startswith('remote:'):
+            hostname = source_key[7:]
+            remote_host = getattr(args, 'remote', hostname) if args else hostname
+            batch_ws = get_remote_workspaces_batch(remote_host)
+            workspaces = [ws['encoded'] for ws in batch_ws] if batch_ws else []
+        else:
+            # Local
+            projects_dir = get_claude_projects_dir()
+            workspaces = [d.name for d in projects_dir.iterdir()
+                         if d.is_dir() and not d.name.startswith('remote_') and not d.name.startswith('wsl_')]
+    except Exception:
+        return []
+
+    # Find workspaces matching the pattern
+    matches = [ws for ws in workspaces if workspace_input in ws]
+    return matches
+
+
 def normalize_workspace_name(workspace_dir_name: str, verify_local: bool = True, base_path: Path = None) -> str:
     """Convert workspace directory name to readable path.
 
@@ -640,7 +723,51 @@ def normalize_workspace_name(workspace_dir_name: str, verify_local: bool = True,
     Returns:
         Decoded path (e.g., 'home/user/my-project')
     """
-    # Remove leading dash
+    # Handle Windows-style paths (e.g., 'C--sankar-projects-claude-history')
+    # These start with a drive letter followed by double dash
+    if len(workspace_dir_name) >= 3 and workspace_dir_name[1:3] == '--':
+        drive_letter = workspace_dir_name[0].upper()
+        rest = workspace_dir_name[3:]  # Skip 'C--'
+
+        # For Windows paths accessed from WSL, verify against /mnt/<drive>/
+        if verify_local:
+            mnt_base = Path(f'/mnt/{drive_letter.lower()}')
+            if mnt_base.exists():
+                # Verify path segments against filesystem
+                parts = rest.split('-')
+                path_segments = []
+                i = 0
+
+                while i < len(parts):
+                    current_path = mnt_base / '/'.join(path_segments) if path_segments else mnt_base
+
+                    # Try progressively longer combinations (longest first)
+                    best_match = None
+                    best_match_len = 0
+
+                    for j in range(len(parts), i, -1):
+                        candidate_segment = '-'.join(parts[i:j])
+                        candidate_path = current_path / candidate_segment
+
+                        if candidate_path.exists() and candidate_path.is_dir():
+                            best_match = candidate_segment
+                            best_match_len = j - i
+                            break
+
+                    if best_match:
+                        path_segments.append(best_match)
+                        i += best_match_len
+                    else:
+                        path_segments.append(parts[i])
+                        i += 1
+
+                if path_segments:
+                    return f'/{drive_letter}/' + '/'.join(path_segments)
+
+        # Fallback: simple replacement (may break hyphenated names)
+        return f'/{drive_letter}/' + rest.replace('-', '/')
+
+    # Remove leading dash for Unix paths
     if workspace_dir_name.startswith('-'):
         encoded = workspace_dir_name[1:]
     else:
@@ -1838,29 +1965,121 @@ def cmd_alias_add(args):
         # Auto-detect from current directory name
         alias_name = Path.cwd().name
 
-    # Determine source key
+    # Get workspace patterns
+    raw_workspaces = args.workspaces if args.workspaces else []
+    use_picker = getattr(args, 'pick', False)
+
+    if not raw_workspaces and not use_picker:
+        sys.stderr.write("Error: No workspaces specified. Use --pick for interactive mode.\n")
+        sys.exit(1)
+
+    # Ensure alias exists
+    if alias_name not in aliases_data.get('aliases', {}):
+        aliases_data['aliases'][alias_name] = {}
+
+    # Handle --as (all sources) flag
+    if getattr(args, 'all_sources', False):
+        # Build list of all sources to check
+        sources_to_check = []
+
+        # 1. Local
+        sources_to_check.append(('local', None))
+
+        # 2. WSL distributions (if on Windows) or Windows users (if on WSL/Linux)
+        if sys.platform == 'win32':
+            # On Windows, check WSL distributions
+            try:
+                wsl_distros = get_wsl_distributions()
+                for distro in wsl_distros:
+                    sources_to_check.append((f'wsl:{distro}', distro))
+            except:
+                pass
+        else:
+            # On Linux/WSL, check Windows users
+            try:
+                windows_users = get_windows_users_with_claude()
+                for user_info in windows_users:
+                    username = user_info.get('username', '')
+                    sources_to_check.append((f'windows:{username}' if username else 'windows', username))
+            except:
+                pass
+
+        # 3. SSH remotes (if provided)
+        remotes = getattr(args, 'remotes', None) or []
+        if getattr(args, 'remote', None):
+            remotes.append(args.remote)
+        for remote in remotes:
+            hostname = get_remote_hostname(remote)
+            sources_to_check.append((f'remote:{hostname}', remote))
+
+        # Add workspaces from each source
+        total_added = 0
+        for source_key, source_param in sources_to_check:
+            if use_picker:
+                workspaces_to_add = interactive_workspace_picker(source_key, args)
+            else:
+                workspaces_to_add = []
+                for ws_input in raw_workspaces:
+                    # Create a mock args object with the right remote parameter
+                    class MockArgs:
+                        remote = source_param if source_key.startswith('remote:') else None
+                    resolved = resolve_workspace_input(ws_input, source_key, MockArgs())
+                    if resolved:
+                        workspaces_to_add.extend(resolved)
+
+            if not workspaces_to_add:
+                continue
+
+            # Ensure source key exists
+            if source_key not in aliases_data['aliases'][alias_name]:
+                aliases_data['aliases'][alias_name][source_key] = []
+
+            # Add workspaces (avoid duplicates)
+            added = 0
+            for workspace in workspaces_to_add:
+                if workspace not in aliases_data['aliases'][alias_name][source_key]:
+                    aliases_data['aliases'][alias_name][source_key].append(workspace)
+                    added += 1
+
+            if added > 0:
+                print(f"[{source_key}] Added {added} workspace(s)")
+                total_added += added
+
+        if save_aliases(aliases_data):
+            print(f"✅ Added {total_added} workspace(s) to alias '{alias_name}' from all sources")
+        else:
+            sys.exit(1)
+        return
+
+    # Single source mode (original behavior)
+    # For alias add, --wsl and --windows are boolean flags (store_true)
+    wsl_flag = getattr(args, 'wsl', False)
+    windows_flag = getattr(args, 'windows', False)
     source_key = get_source_key(
         remote_host=getattr(args, 'remote', None),
-        wsl_distro=getattr(args, 'wsl', None) if getattr(args, 'wsl', None) else None,
-        windows_user=getattr(args, 'windows', None) if getattr(args, 'windows', None) is not None else None
+        wsl_distro='' if wsl_flag else None,  # Empty string means auto-detect
+        windows_user='' if windows_flag else None  # Empty string means auto-detect
     )
 
     # Handle interactive picker mode
-    if getattr(args, 'pick', False):
+    if use_picker:
         workspaces_to_add = interactive_workspace_picker(source_key, args)
         if not workspaces_to_add:
             print("No workspaces selected.")
             return
     else:
-        # Use provided workspaces
-        workspaces_to_add = args.workspaces if args.workspaces else []
-        if not workspaces_to_add:
-            sys.stderr.write("Error: No workspaces specified. Use --pick for interactive mode.\n")
-            sys.exit(1)
+        # Resolve each input to encoded workspace names
+        workspaces_to_add = []
+        for ws_input in raw_workspaces:
+            resolved = resolve_workspace_input(ws_input, source_key, args)
+            if resolved:
+                workspaces_to_add.extend(resolved)
+            else:
+                sys.stderr.write(f"Warning: No workspace found matching '{ws_input}'\n")
 
-    # Ensure alias exists
-    if alias_name not in aliases_data.get('aliases', {}):
-        aliases_data['aliases'][alias_name] = {}
+        if not workspaces_to_add:
+            sys.stderr.write("Error: No valid workspaces found.\n")
+            sys.exit(1)
 
     # Ensure source key exists in alias
     if source_key not in aliases_data['aliases'][alias_name]:
@@ -1892,7 +2111,8 @@ def interactive_workspace_picker(source_key: str, args) -> list:
             workspaces = [d.name for d in projects_dir.iterdir()
                          if d.is_dir() and not d.name.startswith('remote_') and not d.name.startswith('wsl_')]
         elif source_key.startswith('windows'):
-            user = source_key[8:] if len(source_key) > 8 else None
+            # source_key is 'windows' or 'windows:username'
+            user = source_key[8:] if source_key.startswith('windows:') else None
             projects_dir = get_windows_projects_dir(user)
             if not projects_dir:
                 sys.stderr.write("Error: Cannot access Windows\n")
@@ -1960,10 +2180,13 @@ def cmd_alias_remove(args):
         sys.exit(1)
 
     # Determine source key
+    # For alias remove, --wsl and --windows are boolean flags
+    wsl_flag = getattr(args, 'wsl', False)
+    windows_flag = getattr(args, 'windows', False)
     source_key = get_source_key(
         remote_host=getattr(args, 'remote', None),
-        wsl_distro=getattr(args, 'wsl', None) if getattr(args, 'wsl', None) else None,
-        windows_user=getattr(args, 'windows', None) if getattr(args, 'windows', None) is not None else None
+        wsl_distro='' if wsl_flag else None,  # Empty string means auto-detect
+        windows_user='' if windows_flag else None  # Empty string means auto-detect
     )
 
     alias_config = aliases_data['aliases'][alias_name]
@@ -3131,9 +3354,9 @@ def cmd_lsh(args):
     # Determine what to show based on flags
     # If no flags are specified, show all
     # If any flag is specified, show only that one
-    show_local = args.local or (args.wsl is None and args.windows is None)
-    show_wsl = args.wsl is not None
-    show_windows = args.windows is not None
+    show_local = args.local or (not args.wsl and not args.windows)
+    show_wsl = args.wsl
+    show_windows = args.windows
 
     # 1. Show local home folder
     if show_local:
@@ -3157,19 +3380,12 @@ def cmd_lsh(args):
             claude_distros = [d for d in wsl_distros if d['has_claude']]
 
             if claude_distros:
-                # Filter by specific distro if provided
-                if args.wsl:
-                    claude_distros = [d for d in claude_distros if args.wsl.lower() in d['name'].lower()]
+                for distro in claude_distros:
+                    # Count workspaces
+                    projects_dir = get_wsl_projects_dir(distro['name'])
+                    workspace_count = len([d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith('.')])
 
-                if claude_distros:
-                    for distro in claude_distros:
-                        # Count workspaces
-                        projects_dir = get_wsl_projects_dir(distro['name'])
-                        workspace_count = len([d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith('.')])
-
-                        print(f"  {distro['name']}\t{distro['username']}\t{workspace_count} workspaces\t{projects_dir}")
-                else:
-                    print(f"  No WSL distributions matching '{args.wsl}' found")
+                    print(f"  {distro['name']}\t{distro['username']}\t{workspace_count} workspaces\t{projects_dir}")
             else:
                 print("  No WSL distributions with Claude Code found")
             print()
@@ -3183,15 +3399,8 @@ def cmd_lsh(args):
             windows_users = get_windows_users_with_claude()
 
             if windows_users:
-                # Filter by specific user if provided
-                if args.windows:
-                    windows_users = [u for u in windows_users if args.windows.lower() in u['username'].lower()]
-
-                if windows_users:
-                    for user in windows_users:
-                        print(f"  {user['username']}\t{user['path']}\t{user['workspace_count']} workspaces")
-                else:
-                    print(f"  No Windows users matching '{args.windows}' found")
+                for user in windows_users:
+                    print(f"  {user['username']}\t{user['path']}\t{user['workspace_count']} workspaces")
             else:
                 print("  No Windows users with Claude Code found")
             print()
@@ -3749,16 +3958,12 @@ EXAMPLES:
         help='List workspaces from remote host via SSH (user@hostname) - can be used multiple times with --as')
 
     parser_lsw.add_argument('--wsl',
-        nargs='?',
-        const='',
-        metavar='DISTRO',
-        help='List workspaces from WSL distribution (optionally filter by distro name)')
+        action='store_true',
+        help='List workspaces from WSL (auto-detects distribution)')
 
     parser_lsw.add_argument('--windows',
-        nargs='?',
-        const='',
-        metavar='USER',
-        help='List workspaces from Windows user (optionally filter by username)')
+        action='store_true',
+        help='List workspaces from Windows (auto-detects user)')
 
     parser_lsw.add_argument('--as', '--all-sources',
         dest='all_sources',
@@ -3781,16 +3986,12 @@ EXAMPLES:
         help='List sessions from remote host via SSH (user@hostname) - can be used multiple times with --as')
 
     parser_lss.add_argument('--wsl',
-        nargs='?',
-        const='',
-        metavar='DISTRO',
-        help='List sessions from WSL distribution (optionally filter by distro name)')
+        action='store_true',
+        help='List sessions from WSL (auto-detects distribution)')
 
     parser_lss.add_argument('--windows',
-        nargs='?',
-        const='',
-        metavar='USER',
-        help='List sessions from Windows user (optionally filter by username)')
+        action='store_true',
+        help='List sessions from Windows (auto-detects user)')
 
     parser_lss.add_argument('--since',
         metavar='DATE',
@@ -3815,16 +4016,12 @@ EXAMPLES:
         description='List all home folders with Claude Code (.claude directories)')
 
     parser_lsh.add_argument('--wsl',
-        nargs='?',
-        const='',
-        metavar='DISTRO',
-        help='Show WSL distributions only (optionally filter by distro name)')
+        action='store_true',
+        help='Show WSL distributions only')
 
     parser_lsh.add_argument('--windows',
-        nargs='?',
-        const='',
-        metavar='USER',
-        help='Show Windows users only (optionally filter by username)')
+        action='store_true',
+        help='Show Windows users only')
 
     parser_lsh.add_argument('--local',
         action='store_true',
@@ -3867,16 +4064,12 @@ EXAMPLES:
         help='Export from remote host via SSH (user@hostname) - can be used multiple times')
 
     parser_export.add_argument('--wsl',
-        nargs='?',
-        const='',
-        metavar='DISTRO',
-        help='Export from WSL distribution (optionally filter by distro name)')
+        action='store_true',
+        help='Export from WSL (auto-detects distribution)')
 
     parser_export.add_argument('--windows',
-        nargs='?',
-        const='',
-        metavar='USER',
-        help='Export from Windows user (optionally filter by username)')
+        action='store_true',
+        help='Export from Windows (auto-detects user)')
 
     parser_export.add_argument('--force',
         action='store_true',
@@ -3958,15 +4151,15 @@ EXAMPLES:
         metavar='HOST',
         help='Add workspace from remote host (user@hostname)')
     parser_alias_add.add_argument('--wsl',
-        nargs='?',
-        const='',
-        metavar='DISTRO',
-        help='Add workspace from WSL distribution')
+        action='store_true',
+        help='Add workspace from WSL (auto-detects distribution)')
     parser_alias_add.add_argument('--windows',
-        nargs='?',
-        const='',
-        metavar='USER',
-        help='Add workspace from Windows user')
+        action='store_true',
+        help='Add workspace from Windows (auto-detects user)')
+    parser_alias_add.add_argument('--as', '--all-sources',
+        action='store_true',
+        dest='all_sources',
+        help='Add from all sources (local + WSL/Windows + remotes)')
 
     # alias remove
     parser_alias_remove = alias_subparsers.add_parser('remove',
@@ -3980,14 +4173,10 @@ EXAMPLES:
         metavar='HOST',
         help='Remove workspace from remote source')
     parser_alias_remove.add_argument('--wsl',
-        nargs='?',
-        const='',
-        metavar='DISTRO',
+        action='store_true',
         help='Remove workspace from WSL source')
     parser_alias_remove.add_argument('--windows',
-        nargs='?',
-        const='',
-        metavar='USER',
+        action='store_true',
         help='Remove workspace from Windows source')
 
     # alias export
@@ -4011,56 +4200,44 @@ EXAMPLES:
 
     # Helper function to resolve remote flags
     def resolve_remote_flag(args):
-        """Convert --wsl and --windows flags to remote format, add deprecation warnings."""
+        """Convert --wsl and --windows flags to remote format."""
         remotes = getattr(args, 'remotes', None)
         remote = remotes[0] if remotes else None  # Use first remote for single-remote commands
-        wsl_flag = getattr(args, 'wsl', None)
-        windows_flag = getattr(args, 'windows', None)
+        wsl_flag = getattr(args, 'wsl', False)
+        windows_flag = getattr(args, 'windows', False)
 
-        # Convert new flags to remote format for backward compatibility
-        if wsl_flag is not None:
-            if wsl_flag:  # Specific distro specified
-                return f'wsl://{wsl_flag}'
-            else:  # No distro specified, use first available
-                wsl_distros = get_wsl_distributions()
-                if wsl_distros:
-                    claude_distros = [d for d in wsl_distros if d['has_claude']]
-                    if claude_distros:
-                        return f'wsl://{claude_distros[0]["name"]}'
-                sys.stderr.write("❌ Error: No WSL distributions with Claude Code found\n")
-                sys.exit(1)
+        # Convert boolean flags to remote format (auto-detect)
+        if wsl_flag:
+            wsl_distros = get_wsl_distributions()
+            if wsl_distros:
+                claude_distros = [d for d in wsl_distros if d['has_claude']]
+                if claude_distros:
+                    return f'wsl://{claude_distros[0]["name"]}'
+            sys.stderr.write("❌ Error: No WSL distributions with Claude Code found\n")
+            sys.exit(1)
 
-        if windows_flag is not None:
-            if windows_flag:  # Specific user specified
-                return f'windows:{windows_flag}'
-            else:  # No user specified
-                return 'windows'
+        if windows_flag:
+            return 'windows'
 
         return remote
 
     def resolve_remote_list(args):
         """Convert --wsl and --windows flags to remote list for export command."""
         remotes = getattr(args, 'remotes', None) or []
-        wsl_flag = getattr(args, 'wsl', None)
-        windows_flag = getattr(args, 'windows', None)
+        wsl_flag = getattr(args, 'wsl', False)
+        windows_flag = getattr(args, 'windows', False)
 
-        # Add --wsl to remotes list
-        if wsl_flag is not None:
-            if wsl_flag:  # Specific distro
-                remotes.append(f'wsl://{wsl_flag}')
-            else:  # Use first available
-                wsl_distros = get_wsl_distributions()
-                if wsl_distros:
-                    claude_distros = [d for d in wsl_distros if d['has_claude']]
-                    if claude_distros:
-                        remotes.append(f'wsl://{claude_distros[0]["name"]}')
+        # Add --wsl to remotes list (auto-detect first available distro)
+        if wsl_flag:
+            wsl_distros = get_wsl_distributions()
+            if wsl_distros:
+                claude_distros = [d for d in wsl_distros if d['has_claude']]
+                if claude_distros:
+                    remotes.append(f'wsl://{claude_distros[0]["name"]}')
 
-        # Add --windows to remotes list
-        if windows_flag is not None:
-            if windows_flag:  # Specific user
-                remotes.append(f'windows:{windows_flag}')
-            else:  # Default
-                remotes.append('windows')
+        # Add --windows to remotes list (auto-detect)
+        if windows_flag:
+            remotes.append('windows')
 
         return remotes if remotes else None
 
