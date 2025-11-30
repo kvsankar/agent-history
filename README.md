@@ -46,16 +46,7 @@ python claude-history export
 # Output goes to ./claude-conversations/ by default
 ```
 
-## What's New in v1.3.5
-
-**🔧 Bug Fixes & Improvements:**
-
-- Fixed SSH remote export not finding cached sessions after fetch
-- Added helpful error messages when `lss`/`export` run outside a workspace
-- `--aw` and `--as` flags now work correctly from any directory
-- Improved workspace detection for better user experience
-
-## What's New in v1.3.4
+## Highlights
 
 **📋 Multiple Workspace Patterns:**
 
@@ -75,7 +66,7 @@ Specify multiple workspace patterns in a single command:
 
 **🔄 Lenient Multi-Source Export:**
 
-When using `export --as` with multiple patterns, the tool is now lenient:
+When using `export --as` with multiple patterns, the tool is lenient:
 - No error when a pattern doesn't match on a particular source
 - Reports "No matching sessions" and continues to next source
 - Only fails if nothing matches anywhere
@@ -91,8 +82,6 @@ When using `export --as` with multiple patterns, the tool is now lenient:
 # [Windows] 5 sessions exported
 # [Remote] No matching sessions   ← continues without error
 ```
-
-## What's New in v1.3.0
 
 **🏷️ Workspace Aliases:**
 
@@ -122,14 +111,6 @@ Group related workspaces across environments for consolidated export:
 - Easy sync via git, rsync, or cloud storage
 
 See [CLAUDE.md](CLAUDE.md) for complete alias documentation.
-
-## What's New in v1.2.1
-
-**🔧 Windows Compatibility & Clean Interface:**
-
-- Fixed critical Unicode encoding bug on Windows (multi-source operations now work!)
-- Removed deprecated flags for cleaner interface
-- All features working perfectly on Windows, WSL, and Linux
 
 **🆕 Multi-Environment Access:**
 
@@ -1149,7 +1130,7 @@ export --as
 # All workspaces, local source
 export --aw
 
-# All workspaces, all sources (equivalent to old export-all)
+# All workspaces, all sources
 export --as --aw
 
 # Specific workspace, all sources, custom output
@@ -1185,89 +1166,7 @@ export myproject --as --minimal --split 500 -o ./exports
 - Source-tagged filenames: `wsl_ubuntu_`, `windows_`, `remote_hostname_`
 - Organized by workspace subdirectories (unless `--flat`)
 - Conversion summary with per-source statistics
-
-### `export-all`
-
-> **Note:** This command is superseded by the unified `export` command with `--as --aw` flags.
-> See [`export`](#export) documentation for the preferred interface.
-> `export-all` is maintained for backward compatibility.
-
-Export conversations from all sources in a single command. Environment-aware: automatically detects whether running on Windows or WSL and exports from all available sources.
-
-**Preferred alternative:** `export --as --aw [WORKSPACE] -o [OUTPUT_DIR] [OPTIONS]`
-
-```bash
-claude-history export-all [WORKSPACE_PATTERN] [OUTPUT_DIR] [OPTIONS]
-```
-
-**Arguments:**
-- `WORKSPACE_PATTERN`: Optional workspace pattern to filter (default: all workspaces)
-- `OUTPUT_DIR`: Output directory (default: `./claude-conversations`)
-
-**Options:**
-- `--force`, `-f`: Force re-export all sessions (default: incremental)
-- `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
-- `--until DATE`: Only include sessions modified on or before this date (YYYY-MM-DD)
-- `--minimal`: Export minimal mode (conversation content only, no metadata)
-- `--split LINES`: Split long conversations into parts of approximately LINES per file
-- `-r HOST [HOST ...]`, `--remotes HOST [HOST ...]`: Additional SSH remote hosts to include
-- `--no-index`: Skip index.md manifest generation
-
-**Output:**
-- Organized workspace subdirectories with source-tagged filenames:
-  - Local: `20251120_session.md` (no prefix)
-  - WSL: `wsl_ubuntu_20251120_session.md`
-  - Windows (from WSL): `windows_username_20251120_session.md`
-  - SSH Remote: `remote_hostname_20251120_session.md`
-- `index.md` manifest file with summary statistics
-
-**Features:**
-- **Environment-aware**: Automatically detects Windows or WSL environment
-  - **On Windows**: Exports from local Windows + all WSL distributions + remote SSH hosts
-  - **On WSL**: Exports from local WSL + all Windows users + remote SSH hosts
-- **Pre-flight validation**: Checks all sources before starting export
-  - Validates access to local, Windows, WSL, and SSH remotes
-  - Prints clear error messages for inaccessible sources
-  - Aborts immediately if any source fails validation
-  - Only proceeds when ALL sources are accessible
-- Consolidates sessions from multiple sources into one location
-- Generates index.md with per-source and per-workspace statistics
-- Organized by workspace with source tags for easy analysis
-
-**Examples:**
-
-**On Windows:**
-```powershell
-# Export all workspaces from local Windows + all WSL distributions
-python claude-history export-all
-
-# Filter by workspace pattern
-python claude-history export-all myproject
-
-# Include SSH remote hosts
-python claude-history export-all -r user@vm01 user@vm02
-
-# Custom output directory with splitting
-python claude-history export-all ./backups --split 500
-```
-
-**On WSL:**
-```bash
-# Export all workspaces from local WSL + all Windows users
-./claude-history export-all
-
-# Filter by workspace pattern
-./claude-history export-all myproject
-
-# Include SSH remote hosts
-./claude-history export-all -r user@vm01 user@vm02
-
-# Custom output directory with minimal mode
-./claude-history export-all ./backups --minimal
-```
-
-**Use Case:**
-Perfect for backing up all Claude Code conversations across multiple environments, or consolidating sessions for analysis across local systems (Windows/WSL), WSL distributions, Windows users, and remote development machines.
+- `index.md` manifest file with summary statistics (when using `--as`)
 
 ### `convert`
 
@@ -1600,139 +1499,60 @@ MIT License - See [LICENSE](LICENSE) file for details.
 - Inspired by Simon Willison's [claude-conversation-extractor](https://github.com/simonw/claude-conversation-extractor)
 - Thanks to the Claude Code community
 
-## What's New
+## Changelog
 
-### Version 1.3.5 (Latest)
+### Version 1.3.5
 
-**🔧 Bug Fixes & Improvements:**
-- Fixed SSH remote export not finding cached sessions after fetch
-- Added helpful error messages when `lss`/`export` run outside a workspace
-- `--aw` and `--as` flags now work correctly from any directory
-- Improved workspace detection for better user experience
+- SSH remote export finds cached sessions correctly
+- Helpful error messages when `lss`/`export` run outside a workspace
+- `--aw` and `--as` flags work from any directory
 
 ### Version 1.3.4
 
-**📋 Multiple Workspace Patterns:**
-- `lsw pattern1 pattern2` - list workspaces matching any pattern
-- `lss pattern1 pattern2` - list sessions from multiple workspaces
-- `export pattern1 pattern2` - export from multiple workspaces
-- Works with `--as` flag: `export --as proj1 proj2 -r host`
+- Multiple workspace patterns: `lsw/lss/export pattern1 pattern2`
 - Sessions deduplicated when patterns overlap
-
-**🔄 Lenient Multi-Source Export:**
-- No error when a pattern doesn't match on a particular source
-- Reports "No matching sessions" and continues to next source
-- Only fails if nothing matches anywhere
-- Perfect for multi-environment exports where not all workspaces exist everywhere
+- Lenient multi-source export (continues if pattern doesn't match on a source)
 
 ### Version 1.3.3
 
-**🔧 Multiple Patterns for Remote:**
-- Fixed `lsw -r` failing with missing workspace attribute
 - Multiple patterns work with all source types: SSH, Windows, WSL
 
 ### Version 1.3.2
 
-**🐛 Bug Fixes:**
-- Fixed `list_remote_workspaces()` call with incorrect argument count
-- Fixed `get_remote_session_info()` call with unsupported keyword args
-- Date filtering for remote sessions now applied after fetching
+- Date filtering for remote sessions applied after fetching
 
 ### Version 1.3.1
 
-**🔍 All-Sources Flag for lsw/lss:**
-- Added `--as` (`--all-sources`) flag to `lsw` and `lss` commands
-- Consistent interface: `lsw --as`, `lss --as` now work like `export --as`
-- List workspaces/sessions from all sources (local + WSL/Windows + SSH remotes)
-- Support for multiple `-r` flags: `lsw --as -r vm01 -r vm02`
+- `--as` (`--all-sources`) flag for `lsw` and `lss` commands
+- Multiple `-r` flags supported: `lsw --as -r vm01 -r vm02`
 
 ### Version 1.3.0
 
-**🏷️ Workspace Aliases:**
-- Group related workspaces across environments
+- Workspace aliases to group workspaces across environments
 - `@aliasname` prefix or `--alias` flag for lss/export
 - Import/export aliases for sync across machines
 
 ### Version 1.2.1
 
-**🔧 Windows Compatibility:**
-- Fixed critical Unicode encoding bug preventing multi-source operations on Windows
-- Added UTF-8 encoding configuration for Windows console
-- `export --as` and `export-all` now work correctly on Windows
-
-**🧹 Cleaner Interface:**
+- Windows compatibility: UTF-8 encoding for console
 - Removed deprecated `--list-wsl` and `--list-windows` flags
-- Updated documentation to show current syntax only
-- Simplified command interface
-
-**✅ Full Platform Support:**
-- All features working on Windows, WSL, and Linux
-- Multi-source operations work correctly across all platforms
 
 ### Version 1.2.0
 
-**🆕 Semantic Flags for Multi-Environment Access:**
-- New `lsh` command to discover all Claude Code installations
-  - `lsh` - show all hosts (local + WSL + Windows)
-  - `lsh --wsl` - only WSL distributions
-  - `lsh --windows` - only Windows users
-- Universal `--wsl` and `--windows` flags across all commands
-  - `lsw --wsl` - list WSL workspaces
-  - `lss --windows` - list Windows sessions
-  - `export myproject --wsl` - export from WSL
-- **Conceptual clarity**: WSL/Windows = same machine; `-r` = network SSH
-
-**🔍 Improved Workspace Filtering:**
-- Automatically excludes cached remote/WSL workspaces
-- Prevents showing duplicate data in multi-environment setups
-- Better circular fetching prevention
-
-**🚀 Unified Export Interface:**
-- Orthogonal scope flags: `--as` (all sources) and `--aw` (all workspaces)
-- Clean `-o` flag for output directory (no more positional confusion)
-- Multiple `-r` remotes supported
-- Examples:
-  - `export --as` - current workspace from all sources
-  - `export --aw` - all workspaces from local only
-  - `export --as --aw` - all workspaces from all sources
-  - `export myproject --as -o /tmp/backup`
-
-**🎉 Export-All Command:** *(Superseded by unified export)*
-- Still supported for backward compatibility
-- Use `export --as --aw` for new scripts
-- Environment-aware: local + all WSL distributions + SSH remotes
-- Automatic discovery and consolidated index.md
-
-**🔒 Circular Fetching Prevention:**
-- Prevents infinite loops when machines fetch from each other
-- Automatically filters `remote_*` and `wsl_*` cached directories
-- Safe bidirectional syncing between P1 ↔ P2
-
-**🐧 WSL Support:**
-- Native Windows support for WSL distributions
-- Direct filesystem access via `\\wsl.localhost\` paths
-- List, export, and access WSL conversations from Windows
-- Example: `python claude-history export myproject --wsl`
-
-**📁 Organized Export Structure (Default):**
-- Workspace subdirectories with source-tagged filenames
-- Source tags: `wsl_ubuntu_`, `remote_hostname_`, or no prefix for local
-- Use `--flat` for backward-compatible flat structure
-
-**🔧 Windows Path Handling:**
-- Fixed current workspace detection for Windows (C:\ drive support)
-- Consistent underscore separators for source tags
+- `lsh` command to discover all Claude Code installations
+- `--wsl` and `--windows` flags across all commands
+- Unified export interface with `--as` and `--aw` flags
+- Circular fetching prevention for cached workspaces
+- WSL support via `\\wsl.localhost\` paths
+- Organized export structure with source-tagged filenames
 
 ### Version 1.1.0
 
-**Remote Operations:**
 - SSH remote access with `-r user@hostname`
-- Workspace-only listing with `--workspaces-only` flag
 - Remote caching for efficient repeated operations
 
 ### Version 1.0.0
 
-**Core Features:**
 - Workspace-based extraction
 - Date filtering with `--since` and `--until`
 - Conversation splitting with `--split`

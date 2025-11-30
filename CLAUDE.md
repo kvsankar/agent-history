@@ -81,10 +81,6 @@ chmod +x claude-history
 ./claude-history export myproject --split 500     # split long conversations
 ./claude-history export myproject --flat          # flat structure (no workspace subdirs)
 
-# Backward compatible (export-all still supported)
-./claude-history export-all                       # all sources, all workspaces
-./claude-history export-all myproject             # filter by workspace pattern
-
 # Workspace Aliases (group workspaces across environments)
 ./claude-history alias list                       # list all aliases
 ./claude-history alias show myproject             # show workspaces in an alias
@@ -103,7 +99,7 @@ chmod +x claude-history
 ./claude-history export --alias myproject         # same as above
 ./claude-history export @myproject --as           # export alias from all sources
 
-# WSL and Windows access (new semantic flags)
+# WSL and Windows access
 ./claude-history lsw --wsl                  # list WSL workspaces
 ./claude-history lsw --wsl Ubuntu           # filter by distro name
 ./claude-history lss myproject --wsl        # list WSL sessions
@@ -855,18 +851,9 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ## Changelog
 
-For the full changelog and version history, see [README.md](README.md#whats-new).
-
 **Current version:** 1.3.5
 
-**Key features added recently:**
-- v1.3.5: Bug fixes for SSH export, workspace detection improvements
-  - Fixed SSH remote export not finding cached sessions
-  - `--aw` and `--as` flags now work correctly from any directory
-- v1.3.4: Multiple workspace patterns, lenient multi-source export
-  - `lss` and `export` now show helpful error when run outside a workspace
-- v1.3.0: Workspace aliases for grouping workspaces across environments
-- v1.2.0: Unified export interface, WSL/Windows access, organized export structure
+See [README.md](README.md#changelog) for the full changelog.
 
 ## Contributing Notes
 
