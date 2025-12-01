@@ -2536,7 +2536,15 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None):
                 all_sessions.append(session)
 
     if not all_sessions:
-        sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'\n")
+        if since_date or until_date:
+            date_range = []
+            if since_date:
+                date_range.append(f"from {since_date.strftime('%Y-%m-%d')}")
+            if until_date:
+                date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
+            sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
+        else:
+            sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'\n")
         sys.exit(1)
 
     # Print header and sessions
@@ -4286,7 +4294,15 @@ def cmd_list(args):
             # For sessions listing (lss), show error message
             if not workspaces_only:
                 pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
-                sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
+                if since_date or until_date:
+                    date_range = []
+                    if since_date:
+                        date_range.append(f"from {since_date.strftime('%Y-%m-%d')}")
+                    if until_date:
+                        date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
+                    sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
+                else:
+                    sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
                 sys.exit(1)
             # For lsw with no matches, just exit successfully with no output
             return
@@ -4609,7 +4625,15 @@ def cmd_batch(args):
         lenient = getattr(args, "lenient", False)
         if not lenient:
             pattern_str = ", ".join(patterns) if patterns and len(patterns) > 1 else (patterns[0] if patterns else "")
-            sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
+            if since_date or until_date:
+                date_range = []
+                if since_date:
+                    date_range.append(f"from {since_date.strftime('%Y-%m-%d')}")
+                if until_date:
+                    date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
+                sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
+            else:
+                sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
             sys.exit(1)
         # In lenient mode, just return without error
         return
