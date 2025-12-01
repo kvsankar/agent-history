@@ -2705,44 +2705,6 @@ def cmd_alias_config_import(args):
 
 
 # ============================================================================
-# Sources Configuration
-# ============================================================================
-
-def cmd_sources_list(args):
-    """List saved remote sources. (Deprecated - use 'lsh' instead)"""
-    sys.stderr.write("Note: 'sources' is deprecated. Use 'lsh' instead.\n\n")
-    sources = get_saved_sources()
-
-    if not sources:
-        print("No SSH remotes configured.")
-        print("\nAdd SSH remotes with:")
-        print("  claude-history lsh add user@hostname")
-        return
-
-    print("Configured SSH remotes:")
-    for source in sources:
-        print(f"  {source}")
-
-
-def cmd_sources_add(args):
-    """Add a remote source. (Deprecated - use 'lsh add' instead)"""
-    sys.stderr.write("Note: 'sources add' is deprecated. Use 'lsh add' instead.\n\n")
-    cmd_lsh_add(args)
-
-
-def cmd_sources_remove(args):
-    """Remove a remote source. (Deprecated - use 'lsh remove' instead)"""
-    sys.stderr.write("Note: 'sources remove' is deprecated. Use 'lsh remove' instead.\n\n")
-    cmd_lsh_remove(args)
-
-
-def cmd_sources_clear(args):
-    """Clear all remote sources. (Deprecated - use 'lsh clear' instead)"""
-    sys.stderr.write("Note: 'sources clear' is deprecated. Use 'lsh clear' instead.\n\n")
-    cmd_lsh_clear(args)
-
-
-# ============================================================================
 # Metrics Database (SQLite)
 # ============================================================================
 
@@ -5044,6 +5006,60 @@ def cmd_lsh_clear(args):
         sys.exit(1)
 
 
+def cmd_reset(args):
+    """Reset claude-history data (database, settings, aliases)."""
+    config_dir = get_config_dir()
+
+    what = getattr(args, 'what', None)
+    yes = getattr(args, 'yes', False)
+
+    # Determine what to reset
+    reset_db = what in (None, 'db', 'all')
+    reset_settings = what in (None, 'settings', 'all')
+    reset_aliases = what in (None, 'aliases', 'all')
+
+    # Build list of files to delete
+    items = []
+    if reset_db:
+        db_path = get_metrics_db_path()
+        if db_path.exists():
+            items.append(('Metrics database', db_path))
+    if reset_settings:
+        config_file = config_dir / 'config.json'
+        if config_file.exists():
+            items.append(('Settings (SSH remotes)', config_file))
+    if reset_aliases:
+        aliases_file = config_dir / 'aliases.json'
+        if aliases_file.exists():
+            items.append(('Aliases', aliases_file))
+
+    if not items:
+        print("Nothing to reset.")
+        return
+
+    # Show what will be deleted
+    print("This will delete:")
+    for desc, path in items:
+        print(f"  - {desc}: {path}")
+
+    # Confirm unless -y flag
+    if not yes:
+        try:
+            response = input("\nProceed? [y/N] ").strip().lower()
+            if response not in ('y', 'yes'):
+                print("Cancelled.")
+                return
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled.")
+            return
+
+    # Perform reset
+    print()
+    for desc, path in items:
+        path.unlink()
+        print(f"Deleted {desc.lower()}")
+
+
 def cmd_fetch(args):
     """Fetch remote conversation sessions via SSH."""
     remote_host = args.remote_host
@@ -5875,37 +5891,6 @@ EXAMPLES:
         action='store_true',
         help='Replace all aliases instead of merging')
 
-    # ========== sources command ==========
-    parser_sources = subparsers.add_parser('sources',
-        help='Manage saved SSH remote sources',
-        description='Configure SSH remotes for --as flag. Note: WSL/Windows are auto-detected.')
-
-    sources_subparsers = parser_sources.add_subparsers(dest='sources_action')
-
-    # sources list (default)
-    sources_subparsers.add_parser('list',
-        help='List saved sources',
-        description='List all configured SSH remote sources')
-
-    # sources add
-    parser_sources_add = sources_subparsers.add_parser('add',
-        help='Add an SSH remote source',
-        description='Add an SSH remote (user@hostname). WSL/Windows are auto-detected by --as.')
-    parser_sources_add.add_argument('source',
-        help='SSH remote (user@hostname)')
-
-    # sources remove
-    parser_sources_remove = sources_subparsers.add_parser('remove',
-        help='Remove a remote source',
-        description='Remove a remote source from configuration')
-    parser_sources_remove.add_argument('source',
-        help='Remote source to remove')
-
-    # sources clear
-    sources_subparsers.add_parser('clear',
-        help='Clear all saved sources',
-        description='Remove all saved remote sources')
-
     # ========== stats command ==========
     parser_stats = subparsers.add_parser('stats',
         help='Show usage statistics and metrics',
@@ -5984,6 +5969,21 @@ EXAMPLES:
         dest='remotes',
         metavar='HOST',
         help='Include remote source (can be repeated)')
+
+    # ========== reset command ==========
+    parser_reset = subparsers.add_parser('reset',
+        help='Reset stored data (database, settings, aliases)',
+        description='Delete metrics database, settings, and/or aliases.')
+
+    parser_reset.add_argument('what',
+        nargs='?',
+        choices=['db', 'settings', 'aliases', 'all'],
+        default='all',
+        help='What to reset: db (metrics), settings (SSH remotes), aliases, or all (default: all)')
+
+    parser_reset.add_argument('-y', '--yes',
+        action='store_true',
+        help='Skip confirmation prompt')
 
     # Parse arguments
     args = parser.parse_args()
@@ -6263,21 +6263,6 @@ EXAMPLES:
             # Show alias help if unknown subcommand
             parser_alias.print_help()
 
-    elif args.command == 'sources':
-        # Sources configuration commands
-        sources_cmd = getattr(args, 'sources_action', None)
-
-        if sources_cmd == 'list' or sources_cmd is None:
-            cmd_sources_list(args)
-        elif sources_cmd == 'add':
-            cmd_sources_add(args)
-        elif sources_cmd == 'remove':
-            cmd_sources_remove(args)
-        elif sources_cmd == 'clear':
-            cmd_sources_clear(args)
-        else:
-            parser_sources.print_help()
-
     elif args.command == 'stats':
         # Stats/metrics commands
         if args.sync:
@@ -6333,6 +6318,9 @@ EXAMPLES:
                 by_day = getattr(args, 'by_day', False)
                 all_workspaces = getattr(args, 'all_workspaces', False)
             cmd_stats(StatsArgs())
+
+    elif args.command == 'reset':
+        cmd_reset(args)
 
 
 if __name__ == "__main__":

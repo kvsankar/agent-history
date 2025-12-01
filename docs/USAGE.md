@@ -12,6 +12,7 @@ Detailed documentation for all `claude-history` commands and options.
 | `export` | Export sessions to markdown |
 | `alias` | Manage workspace aliases |
 | `stats` | Show usage statistics and metrics |
+| `reset` | Reset stored data (database, settings, aliases) |
 
 ---
 
@@ -459,3 +460,41 @@ python claude-history export myproject --wsl
 ./claude-history lss myproject --windows
 ./claude-history export myproject --windows
 ```
+
+---
+
+## `reset` - Reset Stored Data
+
+Delete metrics database, settings (SSH remotes), and/or aliases.
+
+```bash
+./claude-history reset [what] [--force]
+```
+
+**Arguments:**
+- `what`: What to reset (optional, default: `all`)
+  - `db`: Delete metrics database only
+  - `settings`: Delete SSH remote configuration only
+  - `aliases`: Delete aliases only
+  - `all`: Delete everything (default)
+
+**Options:**
+- `-y`, `--yes`: Skip confirmation prompt
+
+**Examples:**
+```bash
+# Reset everything (prompts for confirmation)
+./claude-history reset
+
+# Reset only metrics database
+./claude-history reset db
+
+# Reset without confirmation (for scripts)
+./claude-history reset -y
+./claude-history reset db -y
+```
+
+**Files affected:**
+- `~/.claude-history/metrics.db` - Metrics database (stats, time tracking)
+- `~/.claude-history/config.json` - Settings (SSH remotes)
+- `~/.claude-history/aliases.json` - Workspace aliases

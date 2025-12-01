@@ -248,3 +248,38 @@ When syncing between machines (P1 ↔ P2), the tool automatically filters out ca
 
 - Remote: `~/.claude/projects/remote_hostname_workspace`
 - WSL: Direct filesystem access (no caching)
+
+---
+
+## Reset & Data Management
+
+### Where does claude-history store its data?
+
+All data is stored in `~/.claude-history/`:
+- `metrics.db` - SQLite database for stats and time tracking
+- `config.json` - Settings (saved SSH remotes)
+- `aliases.json` - Workspace alias definitions
+
+### How do I start fresh?
+
+Use the reset command:
+```bash
+# Delete everything (prompts for confirmation)
+./claude-history reset
+
+# Delete only specific data
+./claude-history reset db        # Metrics only
+./claude-history reset aliases   # Aliases only
+./claude-history reset settings  # SSH remotes only
+
+# Skip confirmation (for scripts)
+./claude-history reset -y
+```
+
+### Stats showing incorrect data?
+
+Try resetting the metrics database:
+```bash
+./claude-history reset db
+./claude-history stats --sync
+```

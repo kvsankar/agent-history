@@ -44,6 +44,81 @@ sudo mv claude-history /usr/local/bin/
 
 **Requirements:** Python 3.6+ (stdlib only, no pip install needed)
 
+## Help
+
+```
+$ claude-history --help
+usage: claude-history [-h] [--version]
+                      {lsw,lss,lsh,export,alias,stats,reset} ...
+
+Browse and export Claude Code conversation history
+
+positional arguments:
+  {lsw,lss,lsh,export,alias,stats,reset}
+                        Command to execute
+    lsw                 List workspaces
+    lss                 List sessions
+    lsh                 List hosts and manage SSH remotes
+    export              Export to markdown
+    alias               Manage workspace aliases
+    stats               Show usage statistics and metrics
+    reset               Reset stored data (database, settings, aliases)
+
+options:
+  -h, --help            show this help message and exit
+  --version             show program's version number and exit
+
+EXAMPLES:
+
+  List workspaces:
+    claude-history lsw                        # all local workspaces
+    claude-history lsw myproject              # filter by pattern
+    claude-history lsw -r user@server         # remote workspaces
+
+  List sessions:
+    claude-history lss                        # current workspace
+    claude-history lss myproject              # specific workspace
+    claude-history lss myproject -r user@server    # remote sessions
+
+  Export (unified interface with orthogonal flags):
+    claude-history export                     # current workspace, local source
+    claude-history export --as                # current workspace, all sources
+    claude-history export --aw                # all workspaces, local source
+    claude-history export --as --aw           # all workspaces, all sources
+
+    claude-history export myproject           # specific workspace, local
+    claude-history export myproject --as      # specific workspace, all sources
+    claude-history export file.jsonl         # export single file
+
+    claude-history export -o /tmp/backup      # current workspace, custom output
+    claude-history export myproject -o ./out  # specific workspace, custom output
+
+    claude-history export -r user@server      # current workspace, specific remote
+    claude-history export --as -r user@vm01   # current workspace, all sources + SSH
+
+  Date filtering:
+    claude-history lss myproject --since 2025-11-01
+    claude-history export myproject --since 2025-11-01 --until 2025-11-30
+
+  Export options:
+    claude-history export myproject --minimal       # minimal mode
+    claude-history export myproject --split 500     # split long conversations
+    claude-history export myproject --flat          # flat structure (no subdirs)
+
+  WSL access (Windows):
+    claude-history lsh --wsl                        # list WSL distributions
+    claude-history lsw --wsl                        # list WSL workspaces
+    claude-history lsw --wsl Ubuntu                 # list from specific distro
+    claude-history lss myproject --wsl              # list WSL sessions
+    claude-history export myproject --wsl           # export from WSL
+
+  Windows access (from WSL):
+    claude-history lsh --windows                    # list Windows users with Claude
+    claude-history lsw --windows                    # list Windows workspaces
+    claude-history lss myproject --windows          # list Windows sessions
+    claude-history export myproject --windows       # export from Windows
+```
+
 ## Commands
 
 | Command | Description |
@@ -54,6 +129,7 @@ sudo mv claude-history /usr/local/bin/
 | `export` | Export to markdown |
 | `alias` | Manage workspace aliases |
 | `stats` | Usage statistics |
+| `reset` | Reset stored data |
 
 ## Common Examples
 

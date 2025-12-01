@@ -43,6 +43,7 @@ ver  # Windows command prompt/PowerShell
   - 11.4: Orthogonal Flags (--as/--aw)
 ### Section 12: Automatic Alias Scoping (All Environments)
 ### Section 13: Orthogonal Flag Combinations
+### Section 14: Reset Command (All Environments)
 
 ---
 
@@ -61,6 +62,7 @@ ver  # Windows command prompt/PowerShell
 | 1.1.7 | `./claude-history alias --help` | Shows alias help | ⬜ |
 | 1.1.8 | `./claude-history lsh add --help` | Shows lsh add help | ⬜ |
 | 1.1.9 | `./claude-history stats --help` | Shows stats help (includes --this, --time) | ⬜ |
+| 1.1.10 | `./claude-history reset --help` | Shows reset help | ⬜ |
 
 ---
 
@@ -602,14 +604,6 @@ All: Add `./claude-history lsw -r <user>@<host>` (if SSH available)
 | 10.3.4 | Add remote, then `./claude-history stats --sync --as` | Syncs from saved remote | ⬜ |
 | 10.3.5 | `./claude-history lsw --as -r extra@host` | Saved remotes + additional remote | ⬜ |
 
-### 10.4 Deprecated sources Command
-
-| Test ID | Command | Expected Result | Status |
-|---------|---------|----------------|--------|
-| 10.4.1 | `./claude-history sources` | Shows deprecation warning, delegates to lsh | ⬜ |
-| 10.4.2 | `./claude-history sources add user@host` | Shows deprecation warning, adds remote | ⬜ |
-| 10.4.3 | `./claude-history sources remove user@host` | Shows deprecation warning, removes remote | ⬜ |
-
 ---
 
 ## Section 11: Stats Command (All Environments)
@@ -904,6 +898,39 @@ This section tests all combinations of workspace scope and source scope flags to
 | 13.3.4a | `lss @myalias` | Alias workspaces | All in alias | ⬜ |
 | 13.3.4b | `export @myalias -o /tmp/t` | Alias workspaces | All in alias | ⬜ |
 | 13.3.4c | `stats @myalias` | Alias workspaces | Local DB | ⬜ |
+
+---
+
+## Section 14: Reset Command (All Environments)
+
+### 14.1 Reset with Confirmation Prompt
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 14.1.1 | `./claude-history reset` (answer n) | Shows files, prompts, cancelled | ⬜ |
+| 14.1.2 | `./claude-history reset` (answer y) | Shows files, prompts, deletes all | ⬜ |
+| 14.1.3 | `./claude-history reset db` (answer y) | Deletes only metrics.db | ⬜ |
+| 14.1.4 | `./claude-history reset settings` (answer y) | Deletes only config.json | ⬜ |
+| 14.1.5 | `./claude-history reset aliases` (answer y) | Deletes only aliases.json | ⬜ |
+
+### 14.2 Reset with -y (Skip Confirmation)
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 14.2.1 | `./claude-history reset db -y` | Deletes metrics.db without prompt | ⬜ |
+| 14.2.2 | `./claude-history reset settings -y` | Deletes config.json without prompt | ⬜ |
+| 14.2.3 | `./claude-history reset aliases -y` | Deletes aliases.json without prompt | ⬜ |
+| 14.2.4 | `./claude-history reset all -y` | Deletes all three files without prompt | ⬜ |
+| 14.2.5 | `./claude-history reset -y` | Deletes all three files without prompt | ⬜ |
+
+### 14.3 Reset Edge Cases
+
+| Test ID | Scenario | Expected Result | Status |
+|---------|----------|----------------|--------|
+| 14.3.1 | Reset when no files exist | Shows "Nothing to reset." | ⬜ |
+| 14.3.2 | Reset db when only db exists | Deletes only db | ⬜ |
+| 14.3.3 | Reset after reset | Shows "Nothing to reset." | ⬜ |
+| 14.3.4 | Ctrl+C during prompt | Shows "Cancelled." | ⬜ |
 
 ---
 
