@@ -2266,7 +2266,7 @@ def cmd_alias_add(args):
     if alias_name not in aliases_data.get("aliases", {}):
         aliases_data["aliases"][alias_name] = {}
 
-    # Handle --al (all homes) flag
+    # Handle --ah (all homes) flag
     if getattr(args, "all_homes", False):
         # Build list of all homes to check
         sources_to_check = []
@@ -3162,7 +3162,7 @@ def cmd_stats_sync(args):
     remotes = getattr(args, "remotes", None) or []
     patterns = getattr(args, "patterns", [""])
 
-    # Include saved sources when --al is used
+    # Include saved sources when --ah is used
     if all_homes:
         saved_sources = get_saved_sources()
         for src in saved_sources:
@@ -3211,7 +3211,7 @@ def cmd_stats_sync(args):
     projects_dir = get_claude_projects_dir()
     sync_source(projects_dir, "local", "local")
 
-    # Sync WSL/Windows if --al flag or running from Windows/WSL
+    # Sync WSL/Windows if --ah flag or running from Windows/WSL
     if all_homes:
         # WSL distributions
         wsl_distros = get_wsl_distributions()
@@ -3302,7 +3302,7 @@ def cmd_stats(args):
         print("No metrics database found. Run 'stats --sync' first.")
         print("\nUsage:")
         print("  claude-history stats --sync        # Sync local sessions")
-        print("  claude-history stats --sync --al   # Sync from all homes")
+        print("  claude-history stats --sync --ah   # Sync from all homes")
         sys.exit(1)
 
     conn = init_metrics_db(db_path)
@@ -5076,7 +5076,7 @@ def cmd_lsh_add(args):
 
     # WSL and Windows are auto-detected, no need to save them
     if source.startswith("wsl://") or source == "windows":
-        sys.stderr.write(f"Note: {source} is auto-detected by --al flag, no need to add it.\n")
+        sys.stderr.write(f"Note: {source} is auto-detected by --ah flag, no need to add it.\n")
         sys.stderr.write("This command is for SSH remotes (user@hostname).\n")
         return
 
@@ -5686,20 +5686,20 @@ EXAMPLES:
     claude-history lss myproject -r user@server    # remote sessions
 
   Export (unified interface with orthogonal flags):
-    claude-history export                     # current workspace, local source
-    claude-history export --al                # current workspace, all homes
-    claude-history export --aw                # all workspaces, local source
-    claude-history export --al --aw           # all workspaces, all homes
+    claude-history export                     # current workspace, local home
+    claude-history export --ah                # current workspace, all homes
+    claude-history export --aw                # all workspaces, local home
+    claude-history export --ah --aw           # all workspaces, all homes
 
     claude-history export myproject           # specific workspace, local
-    claude-history export myproject --al      # specific workspace, all homes
+    claude-history export myproject --ah      # specific workspace, all homes
     claude-history export file.jsonl         # export single file
 
     claude-history export -o /tmp/backup      # current workspace, custom output
     claude-history export myproject -o ./out  # specific workspace, custom output
 
     claude-history export -r user@server      # current workspace, specific remote
-    claude-history export --al -r user@vm01   # current workspace, all homes + SSH
+    claude-history export --ah -r user@vm01   # current workspace, all homes + SSH
 
   Date filtering:
     claude-history lss myproject --since 2025-11-01
@@ -6233,7 +6233,7 @@ EXAMPLES:
                     print("\nTo list sessions, either:", file=sys.stderr)
                     print("  • Run from within a workspace directory", file=sys.stderr)
                     print("  • Specify a workspace pattern: lss <pattern>", file=sys.stderr)
-                    print("  • Use --al to list from all homes: lss --as", file=sys.stderr)
+                    print("  • Use --ah to list from all homes: lss --as", file=sys.stderr)
                     sys.exit(1)
 
                 # Check if current workspace belongs to an alias (unless --this is used)
@@ -6286,13 +6286,13 @@ EXAMPLES:
 
         # Get patterns (default to current workspace if empty)
         # Skip workspace check if --aw is set (all workspaces)
-        # Also skip if --al is set and not in a workspace (implies --aw)
+        # Also skip if --ah is set and not in a workspace (implies --aw)
         this_only = getattr(args, "this_only", False)
         if not targets and not args.all_workspaces:
             # No workspace specified - check if current directory is a known workspace
             pattern, exists = check_current_workspace_exists()
             if not exists:
-                # If --al is used from outside a workspace, treat as --aw
+                # If --ah is used from outside a workspace, treat as --aw
                 if args.all_homes:
                     args.all_workspaces = True
                 else:
@@ -6301,7 +6301,7 @@ EXAMPLES:
                     print("  • Run from within a workspace directory", file=sys.stderr)
                     print("  • Specify a workspace pattern: export <pattern>", file=sys.stderr)
                     print("  • Use --aw to export all workspaces: export --aw", file=sys.stderr)
-                    print("  • Use --al to export from all homes: export --as", file=sys.stderr)
+                    print("  • Use --ah to export from all homes: export --as", file=sys.stderr)
                     sys.exit(1)
             else:
                 # Check if current workspace belongs to an alias (unless --this is used)
@@ -6414,7 +6414,7 @@ EXAMPLES:
             cmd_stats_sync(SyncArgs())
         else:
             # Display stats
-            # If --al is given, sync first then display
+            # If --ah is given, sync first then display
             if args.all_homes:
                 remotes = getattr(args, "remotes", None) or []
                 if args.wsl:
@@ -6434,8 +6434,8 @@ EXAMPLES:
                 cmd_stats_sync(SyncArgs())
                 print()  # Blank line between sync and display
 
-            # --al and --aw are orthogonal:
-            # --al = sync from all homes first
+            # --ah and --aw are orthogonal:
+            # --ah = sync from all homes first
             # --aw = query all workspaces
             class StatsArgs:
                 workspace = args.workspace
