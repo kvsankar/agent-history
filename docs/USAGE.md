@@ -6,7 +6,7 @@ Detailed documentation for all `claude-history` commands and options.
 
 | Command | Description |
 |---------|-------------|
-| `lsh` | List hosts and manage SSH remotes |
+| `lsh` | List homes and manage SSH remotes |
 | `lsw` | List workspaces |
 | `lss` | List sessions |
 | `export` | Export sessions to markdown |

@@ -5806,10 +5806,10 @@ EXAMPLES:
         "--this", action="store_true", dest="this_only", help="Use current workspace only, not its alias (if aliased)"
     )
 
-    # ========== lsh - list hosts ==========
+    # ========== lsh - list homes ==========
     parser_lsh = subparsers.add_parser(
         "lsh",
-        help="List hosts and manage SSH remotes",
+        help="List homes and manage SSH remotes",
         description="List all Claude Code installations (local, WSL, Windows, SSH remotes)",
     )
 
@@ -6259,7 +6259,7 @@ EXAMPLES:
             cmd_list(LssArgs())
 
     elif args.command == "lsh":
-        # List hosts
+        # List homes
         cmd_lsh(args)
 
     elif args.command == "export":

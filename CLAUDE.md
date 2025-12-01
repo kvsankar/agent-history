@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Make script executable (if needed)
 chmod +x claude-history
 
-# List hosts (all Claude Code installations)
+# List homes (all Claude Code installations)
 ./claude-history lsh                        # all hosts (local + WSL + Windows)
 ./claude-history lsh --local                # only local
 ./claude-history lsh --wsl                  # only WSL distributions

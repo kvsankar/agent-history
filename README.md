@@ -68,7 +68,7 @@ positional arguments:
                         Command to execute
     lsw                 List workspaces
     lss                 List sessions
-    lsh                 List hosts and manage SSH remotes
+    lsh                 List homes and manage SSH remotes
     export              Export to markdown
     alias               Manage workspace aliases
     stats               Show usage statistics and metrics
@@ -133,7 +133,7 @@ EXAMPLES:
 
 | Command | Description |
 |---------|-------------|
-| `lsh` | List hosts and manage SSH remotes |
+| `lsh` | List homes and manage SSH remotes |
 | `lsw` | List workspaces |
 | `lss` | List sessions |
 | `export` | Export to markdown |
