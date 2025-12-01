@@ -21,10 +21,10 @@ Detailed documentation for all `claude-history` commands and options.
 List all Claude Code installations and manage SSH remote sources.
 
 ```bash
-./claude-history lsh [--local|--wsl|--windows|--remotes]
-./claude-history lsh add <user@hostname>
-./claude-history lsh remove <user@hostname>
-./claude-history lsh clear
+claude-history lsh [--local|--wsl|--windows|--remotes]
+claude-history lsh add <user@hostname>
+claude-history lsh remove <user@hostname>
+claude-history lsh clear
 ```
 
 **Subcommands:**
@@ -42,7 +42,7 @@ List all Claude Code installations and manage SSH remote sources.
 **Examples:**
 ```bash
 # Show all hosts and SSH remotes
-$ ./claude-history lsh
+$ claude-history lsh
 Local:
   /home/alice/.claude	10 workspaces
 
@@ -50,22 +50,22 @@ SSH Remotes:
   alice@server.example.com
 
 # Add an SSH remote
-$ ./claude-history lsh add alice@server.example.com
+$ claude-history lsh add alice@server.example.com
 Added source: alice@server.example.com
 
 # Remove an SSH remote
-$ ./claude-history lsh remove alice@server.example.com
+$ claude-history lsh remove alice@server.example.com
 Removed source: alice@server.example.com
 
 # Show only SSH remotes
-$ ./claude-history lsh --remotes
+$ claude-history lsh --remotes
 ```
 
 Once configured, `--as` automatically includes saved SSH remotes:
 ```bash
-./claude-history lsw --as              # includes saved remotes
-./claude-history export --as           # exports from all sources
-./claude-history stats --time --as     # syncs from all sources
+claude-history lsw --as              # includes saved remotes
+claude-history export --as           # exports from all sources
+claude-history stats --time --as     # syncs from all sources
 ```
 
 ---
@@ -75,7 +75,7 @@ Once configured, `--as` automatically includes saved SSH remotes:
 List all workspaces matching a pattern.
 
 ```bash
-./claude-history lsw [PATTERN...] [OPTIONS]
+claude-history lsw [PATTERN...] [OPTIONS]
 ```
 
 **Arguments:**
@@ -90,16 +90,16 @@ List all workspaces matching a pattern.
 **Examples:**
 ```bash
 # List all local workspaces
-./claude-history lsw
+claude-history lsw
 
 # Filter by pattern
-./claude-history lsw myproject
+claude-history lsw myproject
 
 # Multiple patterns
-./claude-history lsw proj1 proj2
+claude-history lsw proj1 proj2
 
 # List from all sources
-./claude-history lsw --as -r user@vm01
+claude-history lsw --as -r user@vm01
 ```
 
 ---
@@ -109,7 +109,7 @@ List all workspaces matching a pattern.
 Show all sessions for a workspace.
 
 ```bash
-./claude-history lss [PATTERN] [OPTIONS]
+claude-history lss [PATTERN] [OPTIONS]
 ```
 
 **Arguments:**
@@ -131,23 +131,23 @@ Show all sessions for a workspace.
 **Examples:**
 ```bash
 # List sessions from current workspace (or alias if aliased)
-./claude-history lss
+claude-history lss
 
 # Force current workspace only (not alias)
-./claude-history lss --this
+claude-history lss --this
 
 # List sessions from WSL
-./claude-history lss myproject --wsl
+claude-history lss myproject --wsl
 
 # List sessions from Windows
-./claude-history lss myproject --windows
+claude-history lss myproject --windows
 
 # List sessions from SSH remote
-./claude-history lss myproject -r user@hostname
+claude-history lss myproject -r user@hostname
 
 # Date filtering
-./claude-history lss myproject --since 2025-11-01
-./claude-history lss myproject --since 2025-11-01 --until 2025-11-30
+claude-history lss myproject --since 2025-11-01
+claude-history lss myproject --since 2025-11-01 --until 2025-11-30
 ```
 
 **Output:**
@@ -162,7 +162,7 @@ Show all sessions for a workspace.
 Export sessions from workspace(s) to markdown with flexible scope control.
 
 ```bash
-./claude-history export [WORKSPACE...] [OPTIONS]
+claude-history export [WORKSPACE...] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
@@ -197,31 +197,31 @@ Export sessions from workspace(s) to markdown with flexible scope control.
 **Examples:**
 ```bash
 # Current workspace, local source (default)
-./claude-history export
+claude-history export
 
 # Current workspace, all sources
-./claude-history export --as
+claude-history export --as
 
 # All workspaces, local source
-./claude-history export --aw
+claude-history export --aw
 
 # All workspaces, all sources
-./claude-history export --as --aw
+claude-history export --as --aw
 
 # Specific workspace, all sources, custom output
-./claude-history export myproject --as -o /tmp/backup
+claude-history export myproject --as -o /tmp/backup
 
 # Multiple workspaces (deduplicated)
-./claude-history export proj1 proj2 -o ./exports
+claude-history export proj1 proj2 -o ./exports
 
 # Export from WSL
-./claude-history export myproject --wsl
+claude-history export myproject --wsl
 
 # Export from Windows
-./claude-history export myproject --windows
+claude-history export myproject --windows
 
 # With splitting and minimal mode
-./claude-history export myproject --minimal --split 500
+claude-history export myproject --minimal --split 500
 ```
 
 **Output:**
@@ -236,7 +236,7 @@ Export sessions from workspace(s) to markdown with flexible scope control.
 Group related workspaces across environments.
 
 ```bash
-./claude-history alias <subcommand> [OPTIONS]
+claude-history alias <subcommand> [OPTIONS]
 ```
 
 **Subcommands:**
@@ -274,33 +274,33 @@ Import aliases from JSON file.
 **Examples:**
 ```bash
 # Create and populate an alias
-./claude-history alias create myproject
-./claude-history alias add myproject myproject
-./claude-history alias add myproject --windows myproject
-./claude-history alias add myproject -r user@vm01 myproject
+claude-history alias create myproject
+claude-history alias add myproject myproject
+claude-history alias add myproject --windows myproject
+claude-history alias add myproject -r user@vm01 myproject
 
 # Or add from all sources at once
-./claude-history alias add myproject --as -r user@vm myproject
+claude-history alias add myproject --as -r user@vm myproject
 
 # Use aliases with @ prefix
-./claude-history lss @myproject
-./claude-history export @myproject -o ./backup
+claude-history lss @myproject
+claude-history export @myproject -o ./backup
 
 # Sync aliases across machines
-./claude-history alias export aliases.json
-./claude-history alias import aliases.json
+claude-history alias export aliases.json
+claude-history alias import aliases.json
 ```
 
 **Automatic Alias Scoping:**
 
 When running commands without arguments from an aliased workspace:
 ```bash
-./claude-history lss        # Uses alias automatically
-./claude-history export     # Uses alias automatically
-./claude-history stats      # Uses alias automatically
+claude-history lss        # Uses alias automatically
+claude-history export     # Uses alias automatically
+claude-history stats      # Uses alias automatically
 
 # Force current workspace only
-./claude-history lss --this
+claude-history lss --this
 ```
 
 ---
@@ -310,7 +310,7 @@ When running commands without arguments from an aliased workspace:
 Display usage statistics and metrics from synced Claude Code sessions.
 
 ```bash
-./claude-history stats [WORKSPACE] [OPTIONS]
+claude-history stats [WORKSPACE] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
@@ -337,22 +337,22 @@ Display usage statistics and metrics from synced Claude Code sessions.
 **Examples:**
 ```bash
 # Summary dashboard (current workspace)
-./claude-history stats
+claude-history stats
 
 # All workspaces
-./claude-history stats --aw
+claude-history stats --aw
 
 # Time tracking with auto-sync from all sources
-./claude-history stats --time --as
+claude-history stats --time --as
 
 # Tool usage statistics
-./claude-history stats --tools
+claude-history stats --tools
 
 # Daily trends
-./claude-history stats --by-day
+claude-history stats --by-day
 
 # Filter by date range
-./claude-history stats --since 2025-11-01 --until 2025-11-30
+claude-history stats --since 2025-11-01 --until 2025-11-30
 ```
 
 **Metrics Available:**
@@ -373,13 +373,13 @@ Both `lss` and `export` support date filtering:
 
 ```bash
 # Sessions modified on or after a date
-./claude-history lss myproject --since 2025-11-01
+claude-history lss myproject --since 2025-11-01
 
 # Sessions within a date range
-./claude-history export myproject --since 2025-11-01 --until 2025-11-30
+claude-history export myproject --since 2025-11-01 --until 2025-11-30
 
 # Export recent sessions only
-./claude-history export myproject --since 2025-11-01 -o ./recent
+claude-history export myproject --since 2025-11-01 -o ./recent
 ```
 
 **Notes:**
@@ -417,7 +417,7 @@ Omits:
 Split long conversations into multiple parts:
 
 ```bash
-./claude-history export myproject --split 500
+claude-history export myproject --split 500
 ```
 
 - Smart break points (before User messages, after tool results, time gaps)
@@ -432,13 +432,13 @@ Split long conversations into multiple parts:
 
 ```bash
 # List remote workspaces
-./claude-history lsw -r user@server
+claude-history lsw -r user@server
 
 # List sessions from remote
-./claude-history lss myproject -r user@server
+claude-history lss myproject -r user@server
 
 # Export from remote
-./claude-history export myproject -r user@server
+claude-history export myproject -r user@server
 ```
 
 **Requirements:**
@@ -456,9 +456,9 @@ python claude-history export myproject --wsl
 ### Windows Access (from WSL)
 
 ```bash
-./claude-history lsw --windows
-./claude-history lss myproject --windows
-./claude-history export myproject --windows
+claude-history lsw --windows
+claude-history lss myproject --windows
+claude-history export myproject --windows
 ```
 
 ---
@@ -468,7 +468,7 @@ python claude-history export myproject --wsl
 Delete metrics database, settings (SSH remotes), and/or aliases.
 
 ```bash
-./claude-history reset [what] [--force]
+claude-history reset [what] [--force]
 ```
 
 **Arguments:**
@@ -484,14 +484,14 @@ Delete metrics database, settings (SSH remotes), and/or aliases.
 **Examples:**
 ```bash
 # Reset everything (prompts for confirmation)
-./claude-history reset
+claude-history reset
 
 # Reset only metrics database
-./claude-history reset db
+claude-history reset db
 
 # Reset without confirmation (for scripts)
-./claude-history reset -y
-./claude-history reset db -y
+claude-history reset -y
+claude-history reset db -y
 ```
 
 **Files affected:**

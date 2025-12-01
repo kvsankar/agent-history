@@ -12,14 +12,14 @@
 
 List all workspaces:
 ```bash
-./claude-history lsw
+claude-history lsw
 # or
 ls ~/.claude/projects/
 ```
 
 Or try a partial match:
 ```bash
-./claude-history lss projects  # Match any workspace with "projects"
+claude-history lss projects  # Match any workspace with "projects"
 ```
 
 ---
@@ -28,9 +28,9 @@ Or try a partial match:
 
 Yes! Use multiple patterns or the `--aw` flag:
 ```bash
-./claude-history export proj1 proj2         # Multiple specific patterns
-./claude-history export django              # All workspaces containing "django"
-./claude-history export --aw                # All workspaces
+claude-history export proj1 proj2         # Multiple specific patterns
+claude-history export django              # All workspaces containing "django"
+claude-history export --aw                # All workspaces
 ```
 
 ---
@@ -54,8 +54,8 @@ Both are extracted and converted.
 
 Use `--since` and `--until`:
 ```bash
-./claude-history lss myproject --since 2025-11-01 --until 2025-11-30
-./claude-history export myproject --since 2025-11-01
+claude-history lss myproject --since 2025-11-01 --until 2025-11-30
+claude-history export myproject --since 2025-11-01
 ```
 
 ---
@@ -77,10 +77,10 @@ No SSH or rsync needed - uses direct filesystem access.
 
 Yes! Combine flags:
 ```bash
-./claude-history lsw --as                    # All sources
-./claude-history lss myproject --wsl         # WSL
-./claude-history lss myproject --windows     # Windows (from WSL)
-./claude-history lss myproject -r user@host  # SSH remote
+claude-history lsw --as                    # All sources
+claude-history lss myproject --wsl         # WSL
+claude-history lss myproject --windows     # Windows (from WSL)
+claude-history lss myproject -r user@host  # SSH remote
 ```
 
 ---
@@ -103,7 +103,7 @@ Yes! Combine flags:
 **Problem:** No workspaces match your pattern
 
 **Solution:**
-1. List all workspaces: `./claude-history lsw`
+1. List all workspaces: `claude-history lsw`
 2. Try a partial match
 3. Check spelling and case-sensitivity
 
@@ -130,7 +130,7 @@ chmod 700 ~/.claude/projects/  # Fix if needed
 2. Ensure the conversation wasn't interrupted mid-session
 3. Try converting individual files for better error messages:
    ```bash
-   ./claude-history export path/to/file.jsonl
+   claude-history export path/to/file.jsonl
    ```
 
 ---
@@ -265,21 +265,21 @@ All data is stored in `~/.claude-history/`:
 Use the reset command:
 ```bash
 # Delete everything (prompts for confirmation)
-./claude-history reset
+claude-history reset
 
 # Delete only specific data
-./claude-history reset db        # Metrics only
-./claude-history reset aliases   # Aliases only
-./claude-history reset settings  # SSH remotes only
+claude-history reset db        # Metrics only
+claude-history reset aliases   # Aliases only
+claude-history reset settings  # SSH remotes only
 
 # Skip confirmation (for scripts)
-./claude-history reset -y
+claude-history reset -y
 ```
 
 ### Stats showing incorrect data?
 
 Try resetting the metrics database:
 ```bash
-./claude-history reset db
-./claude-history stats --sync
+claude-history reset db
+claude-history stats --sync
 ```

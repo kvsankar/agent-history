@@ -8,18 +8,18 @@ Create an alias to manage a project that exists on Windows, WSL, and a remote VM
 
 ```bash
 # Create the alias
-./claude-history alias create myproject
+claude-history alias create myproject
 
 # Add workspaces interactively from all sources
-./claude-history alias add myproject --as -r user@vm01 --pick
+claude-history alias add myproject --as -r user@vm01 --pick
 
 # Or add by pattern (non-interactive)
-./claude-history alias add myproject myproject                    # local
-./claude-history alias add myproject --windows myproject          # Windows
-./claude-history alias add myproject -r user@vm01 myproject       # remote
+claude-history alias add myproject myproject                    # local
+claude-history alias add myproject --windows myproject          # Windows
+claude-history alias add myproject -r user@vm01 myproject       # remote
 
 # View the alias
-./claude-history alias show myproject
+claude-history alias show myproject
 ```
 
 ---
@@ -30,14 +30,14 @@ Export all sessions from all environments to a backup directory:
 
 ```bash
 # One-time: create an alias for everything
-./claude-history alias create all-projects
-./claude-history alias add all-projects --as -r vm01 -r vm02 --pick
+claude-history alias create all-projects
+claude-history alias add all-projects --as -r vm01 -r vm02 --pick
 
 # Daily backup (incremental - only exports new/changed files)
-./claude-history export @all-projects -o ~/backups/claude-sessions/
+claude-history export @all-projects -o ~/backups/claude-sessions/
 
 # Force re-export everything
-./claude-history export @all-projects -o ~/backups/claude-sessions/ --force
+claude-history export @all-projects -o ~/backups/claude-sessions/ --force
 ```
 
 ---
@@ -46,10 +46,10 @@ Export all sessions from all environments to a backup directory:
 
 ```bash
 # List sessions from all sources matching "myproject"
-./claude-history lss myproject --as -r user@vm01
+claude-history lss myproject --as -r user@vm01
 
 # Export from all sources
-./claude-history export myproject --as -r user@vm01 -o ./exports/
+claude-history export myproject --as -r user@vm01 -o ./exports/
 ```
 
 ---
@@ -58,13 +58,13 @@ Export all sessions from all environments to a backup directory:
 
 ```bash
 # List all workspaces from everywhere
-./claude-history lsw --as -r user@vm01 -r user@vm02
+claude-history lsw --as -r user@vm01 -r user@vm02
 
 # Find sessions mentioning a specific project
-./claude-history lsw --as | grep django
+claude-history lsw --as | grep django
 
 # List sessions from matching workspaces
-./claude-history lss django --as
+claude-history lss django --as
 ```
 
 ---
@@ -73,10 +73,10 @@ Export all sessions from all environments to a backup directory:
 
 ```bash
 # Fetch and cache remote sessions locally
-./claude-history export myproject -r user@vm01
+claude-history export myproject -r user@vm01
 
 # Later, work with cached data (no network needed)
-./claude-history lss remote_vm01_home-user-myproject
+claude-history lss remote_vm01_home-user-myproject
 ```
 
 ---
@@ -87,10 +87,10 @@ Create clean exports without metadata for blog posts or documentation:
 
 ```bash
 # Export without UUIDs, token counts, and navigation links
-./claude-history export myproject --minimal -o ./blog-posts/
+claude-history export myproject --minimal -o ./blog-posts/
 
 # Split long conversations into manageable parts
-./claude-history export myproject --minimal --split 500 -o ./blog-posts/
+claude-history export myproject --minimal --split 500 -o ./blog-posts/
 ```
 
 ---
@@ -99,13 +99,13 @@ Create clean exports without metadata for blog posts or documentation:
 
 ```bash
 # On source machine: export aliases
-./claude-history alias export aliases.json
+claude-history alias export aliases.json
 
 # Copy to target machine
 scp aliases.json user@newmachine:~/
 
 # On target machine: import aliases
-./claude-history alias import aliases.json
+claude-history alias import aliases.json
 ```
 
 ---
@@ -114,10 +114,10 @@ scp aliases.json user@newmachine:~/
 
 ```bash
 # Sessions from last week across all sources
-./claude-history lss --as --since 2025-11-24
+claude-history lss --as --since 2025-11-24
 
 # Export recent sessions only
-./claude-history export @myproject --since 2025-11-01 -o ./recent/
+claude-history export @myproject --since 2025-11-01 -o ./recent/
 ```
 
 ---
@@ -128,15 +128,15 @@ Configure SSH remotes once so `--as` uses them automatically:
 
 ```bash
 # Add your SSH remotes (WSL/Windows are auto-detected)
-./claude-history lsh add user@vm01
-./claude-history lsh add user@vm02
+claude-history lsh add user@vm01
+claude-history lsh add user@vm02
 
 # Verify saved sources
-./claude-history lsh
+claude-history lsh
 
 # Now --as includes saved remotes automatically
-./claude-history lsw --as              # includes vm01 and vm02
-./claude-history stats --time --as     # syncs from vm01 and vm02
+claude-history lsw --as              # includes vm01 and vm02
+claude-history stats --time --as     # syncs from vm01 and vm02
 ```
 
 ---
@@ -145,22 +145,22 @@ Configure SSH remotes once so `--as` uses them automatically:
 
 ```bash
 # Initial sync from all sources (uses saved remotes)
-./claude-history stats --sync --as
+claude-history stats --sync --as
 
 # View overall statistics (current workspace)
-./claude-history stats
+claude-history stats
 
 # View all workspaces
-./claude-history stats --aw
+claude-history stats --aw
 
 # See tool usage patterns
-./claude-history stats --tools
+claude-history stats --tools
 
 # Daily breakdown
-./claude-history stats --by-day
+claude-history stats --by-day
 
 # Filter to specific project
-./claude-history stats myproject
+claude-history stats myproject
 ```
 
 ---
@@ -169,13 +169,13 @@ Configure SSH remotes once so `--as` uses them automatically:
 
 ```bash
 # Sync latest data
-./claude-history stats --sync --as
+claude-history stats --sync --as
 
 # Get stats for November 2025
-./claude-history stats --since 2025-11-01 --until 2025-11-30
+claude-history stats --since 2025-11-01 --until 2025-11-30
 
 # Per-workspace breakdown for the month
-./claude-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
+claude-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -184,14 +184,14 @@ Configure SSH remotes once so `--as` uses them automatically:
 
 ```bash
 # Overall tool usage
-./claude-history stats --tools
+claude-history stats --tools
 
 # Tool usage for specific project
-./claude-history stats --tools myproject
+claude-history stats --tools myproject
 
 # Compare by looking at different workspaces
-./claude-history stats --tools frontend-app
-./claude-history stats --tools backend-api
+claude-history stats --tools frontend-app
+claude-history stats --tools backend-api
 ```
 
 ---
@@ -202,13 +202,13 @@ Track how much time you've spent with Claude Code:
 
 ```bash
 # Current workspace, sync all sources first
-./claude-history stats --time --as
+claude-history stats --time --as
 
 # All workspaces, sync all sources first
-./claude-history stats --time --as --aw
+claude-history stats --time --as --aw
 
 # Filter by date range
-./claude-history stats --time --since 2025-11-01 --until 2025-11-30
+claude-history stats --time --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -219,14 +219,14 @@ Aliases are automatically aggregated in stats output:
 
 ```bash
 # Create alias for a project across environments
-./claude-history alias create myproject
-./claude-history alias add myproject --as myproject
+claude-history alias create myproject
+claude-history alias add myproject --as myproject
 
 # View aggregated stats (shows @myproject with combined metrics)
-./claude-history stats
+claude-history stats
 
 # Detailed workspace view shows aliases separately
-./claude-history stats --by-workspace
+claude-history stats --by-workspace
 ```
 
 ---
@@ -237,18 +237,18 @@ Once a workspace is part of an alias, commands automatically use the alias scope
 
 ```bash
 # Set up: create alias and add current workspace
-./claude-history alias create myproject
-./claude-history alias add myproject myproject
+claude-history alias create myproject
+claude-history alias add myproject myproject
 
 # Now running from this workspace automatically uses the alias
-./claude-history lss        # 📎 Using alias @myproject
-./claude-history export     # 📎 Using alias @myproject
-./claude-history stats      # 📎 Using alias @myproject
+claude-history lss        # 📎 Using alias @myproject
+claude-history export     # 📎 Using alias @myproject
+claude-history stats      # 📎 Using alias @myproject
 
 # Force current workspace only when needed
-./claude-history lss --this
-./claude-history export --this
-./claude-history stats --this
+claude-history lss --this
+claude-history export --this
+claude-history stats --this
 ```
 
 ---
@@ -261,10 +261,10 @@ Extract conversation history for writing blog posts:
 
 ```bash
 # Initial export
-./claude-history export my-project -o ./blog-material
+claude-history export my-project -o ./blog-material
 
 # Later - only exports new/updated conversations
-./claude-history export my-project -o ./blog-material
+claude-history export my-project -o ./blog-material
 ```
 
 ### Project Documentation
@@ -272,7 +272,7 @@ Extract conversation history for writing blog posts:
 Document development decisions and iterations:
 
 ```bash
-./claude-history export backend-api -o ./docs/development-log
+claude-history export backend-api -o ./docs/development-log
 ```
 
 ### Analysis & Learning
@@ -281,7 +281,7 @@ Review problem-solving approaches across sessions:
 
 ```bash
 # Export all sessions for a project
-./claude-history export ml-pipeline
+claude-history export ml-pipeline
 
 # Analyze patterns
 grep -r "Error:" claude-conversations/
@@ -292,7 +292,7 @@ grep -r "Error:" claude-conversations/
 Archive conversation history by date/project:
 
 ```bash
-./claude-history export project-2024 -o archives/2024-11/
+claude-history export project-2024 -o archives/2024-11/
 ```
 
 ### Multi-Environment Consolidation
@@ -301,8 +301,8 @@ Consolidate conversations from multiple environments:
 
 ```bash
 # Export all sources: local + WSL + Windows + SSH remotes
-./claude-history export myproject --as -o ./backups -r user@vm01
+claude-history export myproject --as -o ./backups -r user@vm01
 
 # Or all workspaces from all sources
-./claude-history export --as --aw -o ./backups -r user@vm01
+claude-history export --as --aw -o ./backups -r user@vm01
 ```

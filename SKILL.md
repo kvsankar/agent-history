@@ -31,65 +31,65 @@ Browse, search, and analyze Claude Code conversation history using the `claude-h
 ### List Sessions
 ```bash
 # Current workspace
-./claude-history lss
+claude-history lss
 
 # All sources (local + WSL + Windows + remotes)
-./claude-history lss --as
+claude-history lss --as
 
 # Filter by workspace pattern
-./claude-history lss myproject
+claude-history lss myproject
 
 # Filter by date
-./claude-history lss --since 2025-11-01
-./claude-history lss --since 2025-11-01 --until 2025-11-30
+claude-history lss --since 2025-11-01
+claude-history lss --since 2025-11-01 --until 2025-11-30
 ```
 
 ### Export to Markdown
 ```bash
 # Export current workspace sessions
-./claude-history export
+claude-history export
 
 # Export specific workspace
-./claude-history export myproject
+claude-history export myproject
 
 # Export with date filter
-./claude-history export --since 2025-11-24
+claude-history export --since 2025-11-24
 
 # Export minimal (no metadata, cleaner for reading)
-./claude-history export --minimal
+claude-history export --minimal
 
 # Export to specific directory
-./claude-history export -o /tmp/history-export
+claude-history export -o /tmp/history-export
 ```
 
 ### Usage Statistics
 ```bash
 # Summary dashboard
-./claude-history stats
+claude-history stats
 
 # Time tracking (work hours per day)
-./claude-history stats --time
+claude-history stats --time
 
 # Tool usage breakdown
-./claude-history stats --tools
+claude-history stats --tools
 
 # Model usage
-./claude-history stats --models
+claude-history stats --models
 
 # Daily trends
-./claude-history stats --by-day
+claude-history stats --by-day
 
 # Per-workspace breakdown
-./claude-history stats --by-workspace
+claude-history stats --by-workspace
 ```
 
 ### List Workspaces
 ```bash
 # All local workspaces
-./claude-history lsw
+claude-history lsw
 
 # Filter by pattern
-./claude-history lsw myproject
+claude-history lsw myproject
 ```
 
 ## Data Location
@@ -107,7 +107,7 @@ Since the tool doesn't have a search command, use this workflow:
 ### Method 1: Export + Grep (Recommended)
 ```bash
 # Export recent sessions from ALL workspaces to temp directory
-./claude-history export --aw --since 2025-11-24 -o /tmp/history-search --minimal
+claude-history export --aw --since 2025-11-24 -o /tmp/history-search --minimal
 
 # Search the exported markdown files
 grep -r -i "search term" /tmp/history-search/
@@ -133,7 +133,7 @@ For questions like "what did we discuss about database connections":
 Example for "database connections":
 ```bash
 # Export recent history from all workspaces first
-./claude-history export --aw --since 2025-11-24 -o /tmp/search --minimal
+claude-history export --aw --since 2025-11-24 -o /tmp/search --minimal
 
 # Search for related terms
 grep -r -i -l "database" /tmp/search/
@@ -151,7 +151,7 @@ Then read the matching files to find relevant conversations.
 
 1. Export recent sessions from all workspaces:
    ```bash
-   ./claude-history export --aw --since 2025-11-24 -o /tmp/history --minimal
+   claude-history export --aw --since 2025-11-24 -o /tmp/history --minimal
    ```
 
 2. Search for the topic and variations:
@@ -167,7 +167,7 @@ Then read the matching files to find relevant conversations.
 
 1. Search for error-related terms:
    ```bash
-   ./claude-history export --aw --since 2025-11-01 -o /tmp/history --minimal
+   claude-history export --aw --since 2025-11-01 -o /tmp/history --minimal
    grep -r -i "error\|exception\|failed" /tmp/history/ | head -50
    ```
 
@@ -179,25 +179,25 @@ Then read the matching files to find relevant conversations.
 ### "How much time have I spent on this project?"
 
 ```bash
-./claude-history stats --time
+claude-history stats --time
 ```
 
 ### "Which tools do I use most?"
 
 ```bash
-./claude-history stats --tools
+claude-history stats --tools
 ```
 
 ### "Show me my activity this month"
 
 ```bash
-./claude-history stats --by-day --since 2025-11-01
+claude-history stats --by-day --since 2025-11-01
 ```
 
 ### "Export everything for backup"
 
 ```bash
-./claude-history export --as --aw -o ~/claude-backup/
+claude-history export --as --aw -o ~/claude-backup/
 ```
 
 ## Tips
