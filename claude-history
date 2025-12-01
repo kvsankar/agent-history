@@ -6170,16 +6170,21 @@ EXAMPLES:
             if workspace_list:
                 patterns = workspace_list
             else:
-                # Check current workspace and alias
-                pattern = get_current_workspace_pattern()
-                if not this_only:
+                # Check if current directory is a valid workspace
+                pattern, exists = check_current_workspace_exists()
+                if not exists:
+                    # Not in a workspace - list all workspaces from all sources
+                    patterns = [""]
+                elif not this_only:
                     alias_for_ws = get_alias_for_workspace(pattern, "local")
                     if alias_for_ws:
                         # Use alias-based listing instead
                         sys.stderr.write(f"📎 Using alias @{alias_for_ws} (use --this for current workspace only)\n")
                         cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
                         return  # Early return after alias listing
-                patterns = [pattern]
+                    patterns = [pattern]
+                else:
+                    patterns = [pattern]
 
             class LssAllArgs:
                 workspaces_only = False
