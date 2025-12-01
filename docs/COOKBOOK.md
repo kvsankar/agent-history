@@ -1,0 +1,308 @@
+# Cookbook
+
+Common workflows and recipes for managing Claude Code conversations across environments.
+
+## Recipe 1: Set Up a Cross-Environment Alias
+
+Create an alias to manage a project that exists on Windows, WSL, and a remote VM:
+
+```bash
+# Create the alias
+./claude-history alias create myproject
+
+# Add workspaces interactively from all sources
+./claude-history alias add myproject --as -r user@vm01 --pick
+
+# Or add by pattern (non-interactive)
+./claude-history alias add myproject myproject                    # local
+./claude-history alias add myproject --windows myproject          # Windows
+./claude-history alias add myproject -r user@vm01 myproject       # remote
+
+# View the alias
+./claude-history alias show myproject
+```
+
+---
+
+## Recipe 2: Daily Backup of All Sessions
+
+Export all sessions from all environments to a backup directory:
+
+```bash
+# One-time: create an alias for everything
+./claude-history alias create all-projects
+./claude-history alias add all-projects --as -r vm01 -r vm02 --pick
+
+# Daily backup (incremental - only exports new/changed files)
+./claude-history export @all-projects -o ~/backups/claude-sessions/
+
+# Force re-export everything
+./claude-history export @all-projects -o ~/backups/claude-sessions/ --force
+```
+
+---
+
+## Recipe 3: Export a Single Project from Multiple Machines
+
+```bash
+# List sessions from all sources matching "myproject"
+./claude-history lss myproject --as -r user@vm01
+
+# Export from all sources
+./claude-history export myproject --as -r user@vm01 -o ./exports/
+```
+
+---
+
+## Recipe 4: Search Across All Environments
+
+```bash
+# List all workspaces from everywhere
+./claude-history lsw --as -r user@vm01 -r user@vm02
+
+# Find sessions mentioning a specific project
+./claude-history lsw --as | grep django
+
+# List sessions from matching workspaces
+./claude-history lss django --as
+```
+
+---
+
+## Recipe 5: Sync Remote Sessions for Offline Access
+
+```bash
+# Fetch and cache remote sessions locally
+./claude-history export myproject -r user@vm01
+
+# Later, work with cached data (no network needed)
+./claude-history lss remote_vm01_home-user-myproject
+```
+
+---
+
+## Recipe 6: Export for Sharing (Minimal Mode)
+
+Create clean exports without metadata for blog posts or documentation:
+
+```bash
+# Export without UUIDs, token counts, and navigation links
+./claude-history export myproject --minimal -o ./blog-posts/
+
+# Split long conversations into manageable parts
+./claude-history export myproject --minimal --split 500 -o ./blog-posts/
+```
+
+---
+
+## Recipe 7: Move Aliases Between Machines
+
+```bash
+# On source machine: export aliases
+./claude-history alias export aliases.json
+
+# Copy to target machine
+scp aliases.json user@newmachine:~/
+
+# On target machine: import aliases
+./claude-history alias import aliases.json
+```
+
+---
+
+## Recipe 8: List Recent Sessions Across Everything
+
+```bash
+# Sessions from last week across all sources
+./claude-history lss --as --since 2025-11-24
+
+# Export recent sessions only
+./claude-history export @myproject --since 2025-11-01 -o ./recent/
+```
+
+---
+
+## Recipe 9: Configure Saved Sources (One-Time Setup)
+
+Configure SSH remotes once so `--as` uses them automatically:
+
+```bash
+# Add your SSH remotes (WSL/Windows are auto-detected)
+./claude-history sources add user@vm01
+./claude-history sources add user@vm02
+
+# Verify saved sources
+./claude-history sources
+
+# Now --as includes saved remotes automatically
+./claude-history lsw --as              # includes vm01 and vm02
+./claude-history stats --time --as     # syncs from vm01 and vm02
+```
+
+---
+
+## Recipe 10: Track Usage Metrics Across All Environments
+
+```bash
+# Initial sync from all sources (uses saved remotes)
+./claude-history stats --sync --as
+
+# View overall statistics (current workspace)
+./claude-history stats
+
+# View all workspaces
+./claude-history stats --aw
+
+# See tool usage patterns
+./claude-history stats --tools
+
+# Daily breakdown
+./claude-history stats --by-day
+
+# Filter to specific project
+./claude-history stats myproject
+```
+
+---
+
+## Recipe 11: Monthly Usage Report
+
+```bash
+# Sync latest data
+./claude-history stats --sync --as
+
+# Get stats for November 2025
+./claude-history stats --since 2025-11-01 --until 2025-11-30
+
+# Per-workspace breakdown for the month
+./claude-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
+```
+
+---
+
+## Recipe 12: Compare Tool Usage Across Projects
+
+```bash
+# Overall tool usage
+./claude-history stats --tools
+
+# Tool usage for specific project
+./claude-history stats --tools myproject
+
+# Compare by looking at different workspaces
+./claude-history stats --tools frontend-app
+./claude-history stats --tools backend-api
+```
+
+---
+
+## Recipe 13: Time Tracking with Daily Breakdown
+
+Track how much time you've spent with Claude Code:
+
+```bash
+# Current workspace, sync all sources first
+./claude-history stats --time --as
+
+# All workspaces, sync all sources first
+./claude-history stats --time --as --aw
+
+# Filter by date range
+./claude-history stats --time --since 2025-11-01 --until 2025-11-30
+```
+
+---
+
+## Recipe 14: Analyze Alias Usage
+
+Aliases are automatically aggregated in stats output:
+
+```bash
+# Create alias for a project across environments
+./claude-history alias create myproject
+./claude-history alias add myproject --as myproject
+
+# View aggregated stats (shows @myproject with combined metrics)
+./claude-history stats
+
+# Detailed workspace view shows aliases separately
+./claude-history stats --by-workspace
+```
+
+---
+
+## Recipe 15: Automatic Alias Scoping
+
+Once a workspace is part of an alias, commands automatically use the alias scope:
+
+```bash
+# Set up: create alias and add current workspace
+./claude-history alias create myproject
+./claude-history alias add myproject myproject
+
+# Now running from this workspace automatically uses the alias
+./claude-history lss        # 📎 Using alias @myproject
+./claude-history export     # 📎 Using alias @myproject
+./claude-history stats      # 📎 Using alias @myproject
+
+# Force current workspace only when needed
+./claude-history lss --this
+./claude-history export --this
+./claude-history stats --this
+```
+
+---
+
+## Use Cases
+
+### Blog Post Material
+
+Extract conversation history for writing blog posts:
+
+```bash
+# Initial export
+./claude-history export my-project -o ./blog-material
+
+# Later - only exports new/updated conversations
+./claude-history export my-project -o ./blog-material
+```
+
+### Project Documentation
+
+Document development decisions and iterations:
+
+```bash
+./claude-history export backend-api -o ./docs/development-log
+```
+
+### Analysis & Learning
+
+Review problem-solving approaches across sessions:
+
+```bash
+# Export all sessions for a project
+./claude-history export ml-pipeline
+
+# Analyze patterns
+grep -r "Error:" claude-conversations/
+```
+
+### Archival
+
+Archive conversation history by date/project:
+
+```bash
+./claude-history export project-2024 -o archives/2024-11/
+```
+
+### Multi-Environment Consolidation
+
+Consolidate conversations from multiple environments:
+
+```bash
+# Export all sources: local + WSL + Windows + SSH remotes
+./claude-history export myproject --as -o ./backups -r user@vm01
+
+# Or all workspaces from all sources
+./claude-history export --as --aw -o ./backups -r user@vm01
+```
