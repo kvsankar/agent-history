@@ -125,8 +125,8 @@ grep -r -i -B3 -A10 "cache.*implementation\|implement.*cache" /tmp/history/
 # Create backup directory with date
 mkdir -p ~/backups/claude-$(date +%Y%m%d)
 
-# Export all workspaces from all sources
-claude-history export --as --aw -o ~/backups/claude-$(date +%Y%m%d)
+# Export all workspaces from all locations
+claude-history export --al --aw -o ~/backups/claude-$(date +%Y%m%d)
 
 # Verify
 ls -la ~/backups/claude-$(date +%Y%m%d)/
@@ -157,8 +157,8 @@ claude-history stats myproject
 **Claude's approach**:
 
 ```bash
-# Export from all sources (local + WSL + Windows + remotes)
-claude-history export --as --aw -o /tmp/all-history --minimal
+# Export from all locations (local + WSL + Windows + remotes)
+claude-history export --al --aw -o /tmp/all-history --minimal
 
 # Search across everything
 grep -r -i -l "docker\|container\|dockerfile" /tmp/all-history/

@@ -63,9 +63,9 @@ $ claude-history lsh --remotes
 
 Once configured, `--as` automatically includes saved SSH remotes:
 ```bash
-claude-history lsw --as              # includes saved remotes
-claude-history export --as           # exports from all sources
-claude-history stats --time --as     # syncs from all sources
+claude-history lsw --al              # includes saved remotes
+claude-history export --al           # exports from all locations
+claude-history stats --time --al     # syncs from all locations
 ```
 
 ---
@@ -85,7 +85,7 @@ claude-history lsw [PATTERN...] [OPTIONS]
 - `--wsl`: List WSL workspaces
 - `--windows`: List Windows workspaces
 - `-r HOST`, `--remote HOST`: List remote workspaces via SSH
-- `--as`, `--all-sources`: List from all sources
+- `--as`, `--all-locations`: List from all locations
 
 **Examples:**
 ```bash
@@ -98,8 +98,8 @@ claude-history lsw myproject
 # Multiple patterns
 claude-history lsw proj1 proj2
 
-# List from all sources
-claude-history lsw --as -r user@vm01
+# List from all locations
+claude-history lsw --al -r user@vm01
 ```
 
 ---
@@ -117,7 +117,7 @@ claude-history lss [PATTERN] [OPTIONS]
 
 **Scope Options:**
 - `--this`: Use current workspace only, not its alias (if aliased)
-- `--as`, `--all-sources`: List from all sources (local + WSL/Windows + remotes)
+- `--as`, `--all-locations`: List from all locations (local + WSL/Windows + remotes)
 
 **Date Filtering:**
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
@@ -166,7 +166,7 @@ claude-history export [WORKSPACE...] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
-- `--as`, `--all-sources`: Export from ALL sources (local + WSL + Windows + remotes)
+- `--as`, `--all-locations`: Export from ALL sources (local + WSL + Windows + remotes)
 - `--aw`, `--all-workspaces` (also `-a`, `--all`): Export ALL workspaces
 - `--this`: Use current workspace only, not its alias (if aliased)
 
@@ -192,24 +192,24 @@ claude-history export [WORKSPACE...] [OPTIONS]
 | `export` | Current | Local only |
 | `export --as` | Current | All sources |
 | `export --aw` | All | Local only |
-| `export --as --aw` | All | All sources |
+| `export --al --aw` | All | All sources |
 
 **Examples:**
 ```bash
 # Current workspace, local source (default)
 claude-history export
 
-# Current workspace, all sources
-claude-history export --as
+# Current workspace, all locations
+claude-history export --al
 
 # All workspaces, local source
 claude-history export --aw
 
-# All workspaces, all sources
-claude-history export --as --aw
+# All workspaces, all locations
+claude-history export --al --aw
 
-# Specific workspace, all sources, custom output
-claude-history export myproject --as -o /tmp/backup
+# Specific workspace, all locations, custom output
+claude-history export myproject --al -o /tmp/backup
 
 # Multiple workspaces (deduplicated)
 claude-history export proj1 proj2 -o ./exports
@@ -260,7 +260,7 @@ Options:
 - `--wsl`: Add from WSL
 - `--windows`: Add from Windows
 - `-r HOST`: Add from SSH remote
-- `--as`: Add from all sources
+- `--as`: Add from all locations
 
 ### `alias remove <name> -- <workspace>`
 Remove a workspace from an alias. Use `--` before workspace names starting with `-`.
@@ -279,8 +279,8 @@ claude-history alias add myproject myproject
 claude-history alias add myproject --windows myproject
 claude-history alias add myproject -r user@vm01 myproject
 
-# Or add from all sources at once
-claude-history alias add myproject --as -r user@vm myproject
+# Or add from all locations at once
+claude-history alias add myproject --al -r user@vm myproject
 
 # Use aliases with @ prefix
 claude-history lss @myproject
@@ -314,7 +314,7 @@ claude-history stats [WORKSPACE] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
-- `--as`, `--all-sources`: Sync from all sources first
+- `--as`, `--all-locations`: Sync from all locations first
 - `--aw`, `--all-workspaces`: Query all workspaces (default: current)
 - `--this`: Use current workspace only, not its alias
 
@@ -342,8 +342,8 @@ claude-history stats
 # All workspaces
 claude-history stats --aw
 
-# Time tracking with auto-sync from all sources
-claude-history stats --time --as
+# Time tracking with auto-sync from all locations
+claude-history stats --time --al
 
 # Tool usage statistics
 claude-history stats --tools

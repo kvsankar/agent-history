@@ -34,7 +34,7 @@ Browse, search, and analyze Claude Code conversation history using the `claude-h
 claude-history lss
 
 # All sources (local + WSL + Windows + remotes)
-claude-history lss --as
+claude-history lss --al
 
 # Filter by workspace pattern
 claude-history lss myproject
@@ -197,7 +197,7 @@ claude-history stats --by-day --since 2025-11-01
 ### "Export everything for backup"
 
 ```bash
-claude-history export --as --aw -o ~/claude-backup/
+claude-history export --al --aw -o ~/claude-backup/
 ```
 
 ## Tips
