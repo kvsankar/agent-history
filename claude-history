@@ -6081,9 +6081,10 @@ EXAMPLES:
             return
 
         # Get patterns (default to current workspace if empty)
-        # Skip workspace check if --aw or --as flags are set
+        # Skip workspace check only if --aw is set (all workspaces)
+        # --as (all sources) still needs a workspace pattern
         this_only = getattr(args, 'this_only', False)
-        if not targets and not args.all_workspaces and not args.all_sources:
+        if not targets and not args.all_workspaces:
             # No workspace specified - check if current directory is a known workspace
             pattern, exists = check_current_workspace_exists()
             if not exists:
