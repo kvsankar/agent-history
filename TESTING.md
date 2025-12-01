@@ -37,11 +37,12 @@ ver  # Windows command prompt/PowerShell
 ### Section 7: Error Handling & Edge Cases
 ### Section 8: Special Features
 ### Section 9: Alias Operations (All Environments)
-### Section 10: Sources Command (All Environments)
+### Section 10: SSH Remote Management (lsh add/remove/clear)
 ### Section 11: Stats Command (All Environments)
   - 11.3: Time Tracking
   - 11.4: Orthogonal Flags (--as/--aw)
 ### Section 12: Automatic Alias Scoping (All Environments)
+### Section 13: Orthogonal Flag Combinations
 
 ---
 
@@ -58,7 +59,7 @@ ver  # Windows command prompt/PowerShell
 | 1.1.5 | `./claude-history lss --help` | Shows lss help (includes --this) | ⬜ |
 | 1.1.6 | `./claude-history export --help` | Shows export help (includes --this) | ⬜ |
 | 1.1.7 | `./claude-history alias --help` | Shows alias help | ⬜ |
-| 1.1.8 | `./claude-history sources --help` | Shows sources help | ⬜ |
+| 1.1.8 | `./claude-history lsh add --help` | Shows lsh add help | ⬜ |
 | 1.1.9 | `./claude-history stats --help` | Shows stats help (includes --this, --time) | ⬜ |
 
 ---
@@ -567,39 +568,47 @@ All: Add `./claude-history lsw -r <user>@<host>` (if SSH available)
 
 ---
 
-## Section 10: Sources Command (All Environments)
+## Section 10: SSH Remote Management (lsh add/remove/clear)
 
-### 10.1 Sources Management
-
-| Test ID | Command | Expected Result | Status |
-|---------|---------|----------------|--------|
-| 10.1.1 | `./claude-history sources` | Lists saved sources (or empty) | ⬜ |
-| 10.1.2 | `./claude-history sources list` | Same as above | ⬜ |
-| 10.1.3 | `./claude-history sources add user@host` | Adds SSH remote | ⬜ |
-| 10.1.4 | `./claude-history sources` | Shows added remote | ⬜ |
-| 10.1.5 | `./claude-history sources add user@host2` | Adds another remote | ⬜ |
-| 10.1.6 | `./claude-history sources remove user@host` | Removes remote | ⬜ |
-| 10.1.7 | `./claude-history sources clear` | Clears all sources | ⬜ |
-
-### 10.2 Sources Validation
+### 10.1 SSH Remote Management
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 10.2.1 | `./claude-history sources add wsl://Ubuntu` | Shows "auto-detected" message, not added | ⬜ |
-| 10.2.2 | `./claude-history sources add windows` | Shows "auto-detected" message, not added | ⬜ |
-| 10.2.3 | `./claude-history sources add invalid` | Shows invalid format error | ⬜ |
-| 10.2.4 | `./claude-history sources add user@host` (duplicate) | Shows already exists | ⬜ |
-| 10.2.5 | `./claude-history sources remove nonexistent@host` | Shows not found | ⬜ |
+| 10.1.1 | `./claude-history lsh` | Lists hosts including SSH remotes (or empty) | ⬜ |
+| 10.1.2 | `./claude-history lsh --remotes` | Lists only SSH remotes | ⬜ |
+| 10.1.3 | `./claude-history lsh add user@host` | Adds SSH remote | ⬜ |
+| 10.1.4 | `./claude-history lsh` | Shows added remote in SSH Remotes section | ⬜ |
+| 10.1.5 | `./claude-history lsh add user@host2` | Adds another remote | ⬜ |
+| 10.1.6 | `./claude-history lsh remove user@host` | Removes remote | ⬜ |
+| 10.1.7 | `./claude-history lsh clear` | Clears all SSH remotes | ⬜ |
 
-### 10.3 Sources with --as Flag
+### 10.2 SSH Remote Validation
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 10.3.1 | Add source, then `./claude-history lsw --as` | Includes saved remote | ⬜ |
-| 10.3.2 | Add source, then `./claude-history lss --as` | Includes saved remote | ⬜ |
-| 10.3.3 | Add source, then `./claude-history export --as` | Includes saved remote | ⬜ |
-| 10.3.4 | Add source, then `./claude-history stats --sync --as` | Syncs from saved remote | ⬜ |
-| 10.3.5 | `./claude-history lsw --as -r extra@host` | Saved sources + additional remote | ⬜ |
+| 10.2.1 | `./claude-history lsh add wsl://Ubuntu` | Shows "auto-detected" message, not added | ⬜ |
+| 10.2.2 | `./claude-history lsh add windows` | Shows "auto-detected" message, not added | ⬜ |
+| 10.2.3 | `./claude-history lsh add invalid` | Shows invalid format error | ⬜ |
+| 10.2.4 | `./claude-history lsh add user@host` (duplicate) | Shows already exists | ⬜ |
+| 10.2.5 | `./claude-history lsh remove nonexistent@host` | Shows not found | ⬜ |
+
+### 10.3 SSH Remotes with --as Flag
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 10.3.1 | Add remote, then `./claude-history lsw --as` | Includes saved remote | ⬜ |
+| 10.3.2 | Add remote, then `./claude-history lss --as` | Includes saved remote | ⬜ |
+| 10.3.3 | Add remote, then `./claude-history export --as` | Includes saved remote | ⬜ |
+| 10.3.4 | Add remote, then `./claude-history stats --sync --as` | Syncs from saved remote | ⬜ |
+| 10.3.5 | `./claude-history lsw --as -r extra@host` | Saved remotes + additional remote | ⬜ |
+
+### 10.4 Deprecated sources Command
+
+| Test ID | Command | Expected Result | Status |
+|---------|---------|----------------|--------|
+| 10.4.1 | `./claude-history sources` | Shows deprecation warning, delegates to lsh | ⬜ |
+| 10.4.2 | `./claude-history sources add user@host` | Shows deprecation warning, adds remote | ⬜ |
+| 10.4.3 | `./claude-history sources remove user@host` | Shows deprecation warning, removes remote | ⬜ |
 
 ---
 
@@ -719,11 +728,11 @@ Minimal test set including new features:
 | Test | Command | Expected |
 |------|---------|----------|
 | 1 | `./claude-history --version` | Shows version |
-| 2 | `./claude-history lsh` | Lists local |
+| 2 | `./claude-history lsh` | Lists hosts and SSH remotes |
 | 3 | `./claude-history lsw` | Lists workspaces |
 | 4 | `./claude-history lss` | Lists sessions |
 | 5 | `./claude-history export -o /tmp/test` | Exports successfully |
-| 6 | `./claude-history sources` | Lists saved sources |
+| 6 | `./claude-history lsh --remotes` | Lists saved SSH remotes |
 | 7 | `./claude-history stats --sync` | Syncs to DB |
 | 8 | `./claude-history stats` | Shows summary |
 | 9 | `./claude-history stats --time` | Shows time tracking |
@@ -733,7 +742,168 @@ Minimal test set including new features:
 - Windows: Add `python claude-history lsw --wsl`
 - WSL: Add `./claude-history lsw --windows`
 - All: Add `./claude-history lsw -r <user>@<host>` (if SSH available)
-- All: Add `./claude-history sources add <user>@<host>` then `./claude-history lsw --as`
+- All: Add `./claude-history lsh add <user>@<host>` then `./claude-history lsw --as`
+
+---
+
+## Section 13: Orthogonal Flag Combinations
+
+This section tests all combinations of workspace scope and source scope flags to ensure orthogonal behavior.
+
+### Dimensions
+
+| Dimension | Values |
+|-----------|--------|
+| **Context** | In-workspace (aliased), In-workspace (not aliased), Outside-workspace |
+| **Command** | lss, export, stats |
+| **Source Scope** | (default), --as, -r host, --wsl, --windows |
+| **Workspace Scope** | (default), --aw, pattern, @alias |
+| **Override** | (default), --this |
+
+### Expected Behavior Matrix
+
+| Scenario | Expected Workspace | Expected Source |
+|----------|-------------------|-----------------|
+| No flags, in aliased workspace | Alias workspaces | Local only |
+| --as, in aliased workspace | Alias workspaces | All sources |
+| --this, in aliased workspace | Current workspace only | Local only |
+| --as --this, in aliased workspace | Current workspace only | All sources |
+| --aw | All workspaces | Local only |
+| --as --aw | All workspaces | All sources |
+| pattern specified | Pattern workspaces | Local only |
+| @alias specified | Alias workspaces | All sources in alias |
+| Outside workspace, no flags | ERROR | - |
+| Outside workspace, --aw | All workspaces | Local only |
+| Outside workspace, pattern | Pattern workspaces | Local only |
+
+### 13.1 In Aliased Workspace
+
+**Setup:** Run from a workspace that belongs to an alias
+
+#### 13.1.1 Default (no flags)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.1.1a | `lss` | Alias workspaces | Local | ⬜ |
+| 13.1.1b | `export -o /tmp/t` | Alias workspaces | Local | ⬜ |
+| 13.1.1c | `stats` | Alias workspaces | Local DB | ⬜ |
+
+#### 13.1.2 With --as (all sources)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.1.2a | `lss --as` | Alias workspaces | All sources | ⬜ |
+| 13.1.2b | `export --as -o /tmp/t` | Alias workspaces | All sources | ⬜ |
+| 13.1.2c | `stats --as` | Alias workspaces | Sync all, query alias | ⬜ |
+
+#### 13.1.3 With --this (override alias)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.1.3a | `lss --this` | Current workspace only | Local | ⬜ |
+| 13.1.3b | `export --this -o /tmp/t` | Current workspace only | Local | ⬜ |
+| 13.1.3c | `stats --this` | Current workspace only | Local DB | ⬜ |
+
+#### 13.1.4 With --as --this
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.1.4a | `lss --as --this` | Current workspace only | All sources | ⬜ |
+| 13.1.4b | `export --as --this -o /tmp/t` | Current workspace only | All sources | ⬜ |
+| 13.1.4c | `stats --as --this` | Current workspace only | Sync all, query current | ⬜ |
+
+#### 13.1.5 With --aw (all workspaces)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.1.5a | `export --aw -o /tmp/t` | All workspaces | Local | ⬜ |
+| 13.1.5b | `stats --aw` | All workspaces | Local DB | ⬜ |
+
+#### 13.1.6 With --as --aw
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.1.6a | `export --as --aw -o /tmp/t` | All workspaces | All sources | ⬜ |
+| 13.1.6b | `stats --as --aw` | All workspaces | Sync all, query all | ⬜ |
+
+#### 13.1.7 With explicit pattern
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.1.7a | `lss otherproject` | otherproject | Local | ⬜ |
+| 13.1.7b | `export otherproject -o /tmp/t` | otherproject | Local | ⬜ |
+| 13.1.7c | `stats otherproject` | otherproject | Local DB | ⬜ |
+
+#### 13.1.8 With explicit @alias
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.1.8a | `lss @otheralias` | otheralias workspaces | All in alias | ⬜ |
+| 13.1.8b | `export @otheralias -o /tmp/t` | otheralias workspaces | All in alias | ⬜ |
+| 13.1.8c | `stats @otheralias` | otheralias workspaces | Local DB | ⬜ |
+
+### 13.2 In Non-Aliased Workspace
+
+**Setup:** Run from a workspace that does NOT belong to any alias
+
+#### 13.2.1 Default (no flags)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.2.1a | `lss` | Current workspace | Local | ⬜ |
+| 13.2.1b | `export -o /tmp/t` | Current workspace | Local | ⬜ |
+| 13.2.1c | `stats` | Current workspace | Local DB | ⬜ |
+
+#### 13.2.2 With --as
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.2.2a | `lss --as` | Current workspace | All sources | ⬜ |
+| 13.2.2b | `export --as -o /tmp/t` | Current workspace | All sources | ⬜ |
+| 13.2.2c | `stats --as` | Current workspace | Sync all, query current | ⬜ |
+
+#### 13.2.3 With --this (no effect in non-aliased)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.2.3a | `lss --this` | Current workspace | Local | ⬜ |
+| 13.2.3b | `export --this -o /tmp/t` | Current workspace | Local | ⬜ |
+| 13.2.3c | `stats --this` | Current workspace | Local DB | ⬜ |
+
+### 13.3 Outside Workspace
+
+**Setup:** Run from a directory that is NOT a Claude workspace (e.g., /tmp)
+
+#### 13.3.1 Default (no flags) - Should ERROR
+
+| ID | Command | Expected Result | Status |
+|----|---------|-----------------|--------|
+| 13.3.1a | `lss` | ERROR: Not in a workspace | ⬜ |
+| 13.3.1b | `export` | ERROR: Not in a workspace | ⬜ |
+| 13.3.1c | `stats` | ERROR: Not in a workspace | ⬜ |
+
+#### 13.3.2 With --aw (should work)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.3.2a | `export --aw -o /tmp/t` | All workspaces | Local | ⬜ |
+| 13.3.2b | `stats --aw` | All workspaces | Local DB | ⬜ |
+
+#### 13.3.3 With explicit pattern (should work)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.3.3a | `lss myproject` | myproject | Local | ⬜ |
+| 13.3.3b | `export myproject -o /tmp/t` | myproject | Local | ⬜ |
+| 13.3.3c | `stats myproject` | myproject | Local DB | ⬜ |
+
+#### 13.3.4 With @alias (should work)
+
+| ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
+|----|---------|-------------------------|----------------------|--------|
+| 13.3.4a | `lss @myalias` | Alias workspaces | All in alias | ⬜ |
+| 13.3.4b | `export @myalias -o /tmp/t` | Alias workspaces | All in alias | ⬜ |
+| 13.3.4c | `stats @myalias` | Alias workspaces | Local DB | ⬜ |
 
 ---
 
