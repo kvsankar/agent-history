@@ -18,21 +18,25 @@ Claude Code stores your conversations locally, but accessing them for analysis, 
 
 ```bash
 # Make executable
-chmod +x claude-history
+chmod +x /path/to/claude-history
+
+# Go to your project directory
+cd /path/to/project
 
 # List sessions from current project
-./claude-history lss
+/path/to/claude-history lss
 
 # Export to markdown
-./claude-history export
+/path/to/claude-history export
 
 # Output goes to ./claude-conversations/
 ```
 
 **Windows:**
 ```powershell
-python claude-history lss
-python claude-history export
+cd \path\to\project
+python \path\to\claude-history lss
+python \path\to\claude-history export
 ```
 
 ## Installation
@@ -47,6 +51,8 @@ sudo mv claude-history /usr/local/bin/
 ```
 
 **Requirements:** Python 3.6+ (stdlib only, no pip install needed)
+
+> **Note:** Examples below assume `claude-history` is in your PATH.
 
 ## Help
 
@@ -139,45 +145,45 @@ EXAMPLES:
 
 ```bash
 # List all workspaces
-./claude-history lsw
+claude-history lsw
 
 # Export specific project
-./claude-history export myproject
+claude-history export myproject
 
 # Export from all sources (local + WSL + Windows + remotes)
-./claude-history export myproject --as
+claude-history export myproject --as
 
 # Date filtering
-./claude-history lss --since 2025-11-01
+claude-history lss --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
-./claude-history export myproject --minimal
+claude-history export myproject --minimal
 
 # Time tracking
-./claude-history stats --time
+claude-history stats --time
 ```
 
 ## Multi-Environment Access
 
 ```bash
 # Discover all Claude installations and SSH remotes
-./claude-history lsh
+claude-history lsh
 
 # Add/remove SSH remotes
-./claude-history lsh add user@server
-./claude-history lsh remove user@server
+claude-history lsh add user@server
+claude-history lsh remove user@server
 
 # Access WSL (from Windows)
-python claude-history lss --wsl
+claude-history lss --wsl
 
 # Access Windows (from WSL)
-./claude-history lss --windows
+claude-history lss --windows
 
 # Access SSH remote
-./claude-history lss -r user@server
+claude-history lss -r user@server
 
 # All sources at once (includes saved SSH remotes)
-./claude-history export --as
+claude-history export --as
 ```
 
 ## Workspace Aliases
@@ -186,16 +192,16 @@ Group related workspaces across environments:
 
 ```bash
 # Create alias
-./claude-history alias create myproject
+claude-history alias create myproject
 
 # Add workspaces
-./claude-history alias add myproject myproject
-./claude-history alias add myproject --windows myproject
-./claude-history alias add myproject -r user@vm myproject
+claude-history alias add myproject myproject
+claude-history alias add myproject --windows myproject
+claude-history alias add myproject -r user@vm myproject
 
 # Use with @ prefix
-./claude-history lss @myproject
-./claude-history export @myproject
+claude-history lss @myproject
+claude-history export @myproject
 ```
 
 ## Important: Preserve Your History
