@@ -4091,10 +4091,11 @@ def cmd_list(args):
                         print(ws)
                 else:
                     # Print header and sessions
-                    print("WORKSPACE\tFILE\tMESSAGES\tDATE")
+                    source_label = f"Windows ({username})" if username else "Windows"
+                    print("SOURCE\tWORKSPACE\tFILE\tMESSAGES\tDATE")
                     for session in sessions:
                         print(
-                            f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+                            f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
                         )
 
             finally:
@@ -4163,10 +4164,11 @@ def cmd_list(args):
                         print(ws)
                 else:
                     # Print header and sessions
-                    print("WORKSPACE\tFILE\tMESSAGES\tDATE")
+                    source_label = f"WSL ({distro_name})"
+                    print("SOURCE\tWORKSPACE\tFILE\tMESSAGES\tDATE")
                     for session in sessions:
                         print(
-                            f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+                            f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
                         )
             finally:
                 # Restore original function
@@ -4262,10 +4264,11 @@ def cmd_list(args):
                 sys.exit(1)
 
             # Print header and sessions in simple format
-            print("WORKSPACE\tFILE\tMESSAGES\tDATE")
+            source_label = f"Remote ({remote_host})"
+            print("SOURCE\tWORKSPACE\tFILE\tMESSAGES\tDATE")
             for session in sessions:
                 print(
-                    f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+                    f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
                 )
 
     else:
@@ -4318,10 +4321,12 @@ def cmd_list(args):
 
         else:
             # Print header and sessions in simple format
-            print("WORKSPACE\tFILE\tMESSAGES\tDATE")
+            in_wsl = is_running_in_wsl()
+            source_label = "Local (WSL)" if in_wsl else "Local"
+            print("SOURCE\tWORKSPACE\tFILE\tMESSAGES\tDATE")
             for session in all_sessions:
                 print(
-                    f"{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+                    f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
                 )
 
 
