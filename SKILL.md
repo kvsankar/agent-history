@@ -6,6 +6,16 @@ allowed-tools: Bash, Read, Grep, Glob
 
 # Claude History Skill
 
+## Setup
+
+```bash
+mkdir -p ~/.claude/skills
+cp claude-history SKILL.md ~/.claude/skills/
+chmod +x ~/.claude/skills/claude-history
+```
+
+Once installed, Claude Code will automatically use this skill when you ask about past conversations, usage patterns, or want to search your history.
+
 Browse, search, and analyze Claude Code conversation history using the `claude-history` CLI tool.
 
 ## When to Activate

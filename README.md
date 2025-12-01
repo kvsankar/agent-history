@@ -2,12 +2,16 @@
 
 A CLI tool to browse and export Claude Code conversation history with multi-environment support.
 
+Claude Code stores your conversations locally, but accessing them for analysis, searching past solutions, or tracking usage patterns requires parsing JSONL files scattered across project directories. This tool makes that data accessible through a simple command-line interface.
+
 ## Features
 
+- **Markdown export** - Export conversations to readable markdown files with optional size control
 - **Workspace filtering** - Export by project, not just session IDs
 - **Multi-environment** - Access local, WSL, Windows, and SSH remotes
 - **Workspace aliases** - Group related workspaces across platforms
 - **Usage metrics** - Track time spent, tokens used, tool usage
+- **Claude Code skill** - Enable Claude to search your conversation history ([SKILL.md](SKILL.md))
 - **Zero dependencies** - Single Python file, stdlib only
 
 ## Quick Start
