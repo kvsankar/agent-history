@@ -129,7 +129,7 @@ ver  # Windows command prompt/PowerShell
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | 3.1.1 | `python claude-history lsh --wsl` | Lists WSL distributions with Claude | ⬜ |
-| 3.1.2 | `python claude-history lsh` | Shows all locations including WSL | ⬜ |
+| 3.1.2 | `python claude-history lsh` | Shows all homes including WSL | ⬜ |
 
 ### 3.2 lsw with WSL
 
@@ -172,7 +172,7 @@ ver  # Windows command prompt/PowerShell
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | 4.1.1 | `claude-history lsh --windows` | Lists Windows users with Claude | ⬜ |
-| 4.1.2 | `claude-history lsh` | Shows all locations including Windows | ⬜ |
+| 4.1.2 | `claude-history lsh` | Shows all homes including Windows | ⬜ |
 
 ### 4.2 lsw with Windows
 
@@ -255,10 +255,10 @@ ver  # Windows command prompt/PowerShell
 
 | Test ID | Command | Expected Result | Env | Status |
 |---------|---------|----------------|-----|--------|
-| 6.1.1 | `claude-history lsw --as` | Lists workspaces from all locations | All | ⬜ |
-| 6.1.2 | `claude-history lss --as` | Lists sessions from all locations | All | ⬜ |
-| 6.1.3 | `claude-history lsw <workspace> --as` | Filters workspaces from all locations | All | ⬜ |
-| 6.1.4 | `claude-history lss <workspace> --as` | Filters sessions from all locations | All | ⬜ |
+| 6.1.1 | `claude-history lsw --as` | Lists workspaces from all homes | All | ⬜ |
+| 6.1.2 | `claude-history lss --as` | Lists sessions from all homes | All | ⬜ |
+| 6.1.3 | `claude-history lsw <workspace> --as` | Filters workspaces from all homes | All | ⬜ |
+| 6.1.4 | `claude-history lss <workspace> --as` | Filters sessions from all homes | All | ⬜ |
 | 6.1.5 | `claude-history lsw --al -r <user>@<host>` | All sources + SSH remote | All | ⬜ |
 | 6.1.6 | `claude-history lss --al -r <user>@<host>` | All sources + SSH remote | All | ⬜ |
 
@@ -267,8 +267,8 @@ ver  # Windows command prompt/PowerShell
 | Test ID | Command | Expected Result | Env | Status |
 |---------|---------|----------------|-----|--------|
 | 6.2.1 | `claude-history export --as` | Exports from all available sources | All | ⬜ |
-| 6.2.2 | `claude-history export <workspace> --as` | Exports workspace from all locations | All | ⬜ |
-| 6.2.3 | `claude-history export --al --aw` | All workspaces, all locations | All | ⬜ |
+| 6.2.2 | `claude-history export <workspace> --as` | Exports workspace from all homes | All | ⬜ |
+| 6.2.3 | `claude-history export --al --aw` | All workspaces, all homes | All | ⬜ |
 | 6.2.4 | `claude-history export --al -r <user>@<host>` | All sources + SSH remote | All | ⬜ |
 | 6.2.5 | `python claude-history export --as` | Includes local + WSL on Windows | Win | ⬜ |
 | 6.2.6 | `claude-history export --as` | Includes local + Windows on WSL | WSL | ⬜ |
@@ -304,28 +304,28 @@ ver  # Windows command prompt/PowerShell
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | 6.6.1 | `claude-history lsw <pattern1> <pattern2>` | Lists workspaces matching either pattern | ⬜ |
-| 6.6.1a | `claude-history lsw <pattern1> <pattern2> --as` | Multiple patterns + all locations | ⬜ |
+| 6.6.1a | `claude-history lsw <pattern1> <pattern2> --as` | Multiple patterns + all homes | ⬜ |
 | 6.6.1b | `claude-history lsw <pattern1> <pattern2> -r <user>@<host>` | Multiple patterns + SSH remote | ⬜ |
 | 6.6.2 | `claude-history lss <pattern1> <pattern2>` | Lists sessions from both patterns (deduplicated) | ⬜ |
-| 6.6.3 | `claude-history lss <pattern1> <pattern2> --as` | Multiple patterns + all locations | ⬜ |
+| 6.6.3 | `claude-history lss <pattern1> <pattern2> --as` | Multiple patterns + all homes | ⬜ |
 | 6.6.4 | `claude-history lss <pattern1> <pattern2> -r <user>@<host>` | Multiple patterns + SSH remote | ⬜ |
-| 6.6.5 | `claude-history lss <pattern1> <pattern2> --al -r <user>@<host>` | Multiple patterns + all locations + SSH | ⬜ |
+| 6.6.5 | `claude-history lss <pattern1> <pattern2> --al -r <user>@<host>` | Multiple patterns + all homes + SSH | ⬜ |
 | 6.6.6 | `claude-history export <pattern1> <pattern2>` | Exports from both patterns | ⬜ |
 | 6.6.6a | `claude-history export <pattern1> <pattern2> -r <user>@<host>` | Multiple patterns + SSH remote | ⬜ |
-| 6.6.7 | `claude-history export <pattern1> <pattern2> --as` | Multiple patterns + all locations export | ⬜ |
-| 6.6.7a | `claude-history export <pattern1> <pattern2> --al -r <user>@<host>` | Multiple patterns + all locations + SSH | ⬜ |
+| 6.6.7 | `claude-history export <pattern1> <pattern2> --as` | Multiple patterns + all homes export | ⬜ |
+| 6.6.7a | `claude-history export <pattern1> <pattern2> --al -r <user>@<host>` | Multiple patterns + all homes + SSH | ⬜ |
 | 6.6.8 | `claude-history lss <overlapping1> <overlapping2>` | No duplicate sessions (deduplication works) | ⬜ |
 | 6.6.9 | `claude-history export <overlapping1> <overlapping2>` | No duplicate exports (deduplication works) | ⬜ |
 
 ### 6.7 Lenient Multi-Source Behavior
 
-Tests for lenient behavior when patterns don't match on all locations:
+Tests for lenient behavior when patterns don't match on all homes:
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | 6.7.1 | `claude-history export --al <exists> <notexists> -r <host>` | Exports from local/windows, reports "No matching" for remote | ⬜ |
 | 6.7.2 | `claude-history export --al <pattern> -r <host_with_no_match>` | Reports "No matching sessions" for remote, continues | ⬜ |
-| 6.7.3 | `claude-history export --al <pattern1> <pattern2>` | Exports from all locations that have matches | ⬜ |
+| 6.7.3 | `claude-history export --al <pattern1> <pattern2>` | Exports from all homes that have matches | ⬜ |
 | 6.7.4 | `claude-history export <nonexistent1> <nonexistent2>` | Error: No sessions found (nothing matches anywhere) | ⬜ |
 | 6.7.5 | `claude-history export --al --aw` (some sources empty) | Exports from sources with data, reports "No matching" for empty | ⬜ |
 
@@ -515,8 +515,8 @@ All: Add `claude-history lsw -r <user>@<host>` (if SSH available)
 | 9.2.2 | `claude-history alias add testproject --windows <pattern>` | Adds Windows workspace | WSL | ⬜ |
 | 9.2.3 | `python claude-history alias add testproject --wsl <pattern>` | Adds WSL workspace | Win | ⬜ |
 | 9.2.4 | `claude-history alias add testproject -r user@host <pattern>` | Adds remote workspace | All | ⬜ |
-| 9.2.5 | `claude-history alias add testproject --al -r user@host <pattern>` | Adds from all locations at once | All | ⬜ |
-| 9.2.6 | `claude-history alias add testproject --al --pick` | Interactive picker from all locations | All | ⬜ |
+| 9.2.5 | `claude-history alias add testproject --al -r user@host <pattern>` | Adds from all homes at once | All | ⬜ |
+| 9.2.6 | `claude-history alias add testproject --al --pick` | Interactive picker from all homes | All | ⬜ |
 | 9.2.7 | `claude-history alias show testproject` | Shows workspaces by source with session counts | All | ⬜ |
 
 ### 9.3 Using Aliases with lss
@@ -532,7 +532,7 @@ All: Add `claude-history lsw -r <user>@<host>` (if SSH available)
 
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
-| 9.4.1 | `claude-history export @testproject` | Exports from alias workspaces (all locations) | ⬜ |
+| 9.4.1 | `claude-history export @testproject` | Exports from alias workspaces (all homes) | ⬜ |
 | 9.4.2 | `claude-history export --alias testproject` | Same as above | ⬜ |
 | 9.4.3 | `claude-history export @testproject -o /tmp/test` | Custom output dir | ⬜ |
 | 9.4.4 | `claude-history export @testproject --minimal` | Minimal mode works | ⬜ |
@@ -545,7 +545,7 @@ All: Add `claude-history lsw -r <user>@<host>` (if SSH available)
 | 9.4a.1 | Alias has remote workspace (not cached) | Auto-fetches via SSH then exports | ⬜ |
 | 9.4a.2 | Alias has remote workspace (already cached) | Uses cache, exports directly | ⬜ |
 | 9.4a.3 | Alias has Windows workspace | Exports from Windows directly | ⬜ |
-| 9.4a.4 | Alias has mixed sources | Exports from all locations with correct prefixes | ⬜ |
+| 9.4a.4 | Alias has mixed sources | Exports from all homes with correct prefixes | ⬜ |
 | 9.4a.5 | Remote unreachable | Shows warning, continues with other sources | ⬜ |
 
 ### 9.5 Alias Export/Import
@@ -614,7 +614,7 @@ All: Add `claude-history lsw -r <user>@<host>` (if SSH available)
 |---------|---------|----------------|--------|
 | 11.1.1 | `claude-history stats --sync` | Syncs local sessions to DB | ⬜ |
 | 11.1.2 | `claude-history stats --sync --force` | Re-syncs all files | ⬜ |
-| 11.1.3 | `claude-history stats --sync --as` | Syncs from all locations | ⬜ |
+| 11.1.3 | `claude-history stats --sync --as` | Syncs from all homes | ⬜ |
 | 11.1.4 | `claude-history stats --sync --al -r user@host` | Syncs all + extra remote | ⬜ |
 
 ### 11.2 Stats Display
@@ -648,9 +648,9 @@ All: Add `claude-history lsw -r <user>@<host>` (if SSH available)
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | 11.4.1 | `claude-history stats` | Current workspace, local DB | ⬜ |
-| 11.4.2 | `claude-history stats --as` | Current workspace, syncs all locations first | ⬜ |
+| 11.4.2 | `claude-history stats --as` | Current workspace, syncs all homes first | ⬜ |
 | 11.4.3 | `claude-history stats --aw` | All workspaces, local DB | ⬜ |
-| 11.4.4 | `claude-history stats --al --aw` | All workspaces, syncs all locations first | ⬜ |
+| 11.4.4 | `claude-history stats --al --aw` | All workspaces, syncs all homes first | ⬜ |
 
 ---
 
@@ -683,7 +683,7 @@ claude-history alias add testscope <current-workspace-pattern>
 | 12.2.3 | `claude-history export --this` | Exports current workspace only | ⬜ |
 | 12.2.4 | `claude-history export <pattern>` | Explicit pattern bypasses alias scoping | ⬜ |
 | 12.2.5 | `claude-history export --aw` | All workspaces, no alias scoping | ⬜ |
-| 12.2.6 | `claude-history export --as` (in aliased workspace) | Shows alias message, uses all locations | ⬜ |
+| 12.2.6 | `claude-history export --as` (in aliased workspace) | Shows alias message, uses all homes | ⬜ |
 
 ### 12.3 Automatic Scoping with stats
 
@@ -782,7 +782,7 @@ This section tests all combinations of workspace scope and source scope flags to
 | 13.1.1b | `export -o /tmp/t` | Alias workspaces | Local | ⬜ |
 | 13.1.1c | `stats` | Alias workspaces | Local DB | ⬜ |
 
-#### 13.1.2 With --al (all locations)
+#### 13.1.2 With --al (all homes)
 
 | ID | Command | Expected Workspace Scope | Expected Source Scope | Status |
 |----|---------|-------------------------|----------------------|--------|

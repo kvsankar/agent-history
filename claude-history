@@ -1949,7 +1949,7 @@ def get_source_key(remote_host=None, wsl_distro=None, windows_user=None) -> str:
 
 
 def get_alias_session_count(alias_name: str, aliases_data: dict) -> int:
-    """Count total sessions across all locations for an alias."""
+    """Count total sessions across all homes for an alias."""
     if alias_name not in aliases_data.get("aliases", {}):
         return 0
 
@@ -2266,9 +2266,9 @@ def cmd_alias_add(args):
     if alias_name not in aliases_data.get("aliases", {}):
         aliases_data["aliases"][alias_name] = {}
 
-    # Handle --al (all locations) flag
-    if getattr(args, "all_locations", False):
-        # Build list of all locations to check
+    # Handle --al (all homes) flag
+    if getattr(args, "all_homes", False):
+        # Build list of all homes to check
         sources_to_check = []
 
         # 1. Local
@@ -2336,7 +2336,7 @@ def cmd_alias_add(args):
                 total_added += added
 
         if save_aliases(aliases_data):
-            print(f"Added {total_added} workspace(s) to alias '{alias_name}' from all locations")
+            print(f"Added {total_added} workspace(s) to alias '{alias_name}' from all homes")
         else:
             sys.exit(1)
         return
@@ -3158,12 +3158,12 @@ def sync_file_to_db(conn: sqlite3.Connection, jsonl_file: Path, source: str = "l
 def cmd_stats_sync(args):
     """Sync JSONL files to metrics database."""
     force = getattr(args, "force", False)
-    all_locations = getattr(args, "all_locations", False)
+    all_homes = getattr(args, "all_homes", False)
     remotes = getattr(args, "remotes", None) or []
     patterns = getattr(args, "patterns", [""])
 
     # Include saved sources when --al is used
-    if all_locations:
+    if all_homes:
         saved_sources = get_saved_sources()
         for src in saved_sources:
             if src not in remotes:
@@ -3212,7 +3212,7 @@ def cmd_stats_sync(args):
     sync_source(projects_dir, "local", "local")
 
     # Sync WSL/Windows if --al flag or running from Windows/WSL
-    if all_locations:
+    if all_homes:
         # WSL distributions
         wsl_distros = get_wsl_distributions()
         for distro in wsl_distros:
@@ -3302,7 +3302,7 @@ def cmd_stats(args):
         print("No metrics database found. Run 'stats --sync' first.")
         print("\nUsage:")
         print("  claude-history stats --sync        # Sync local sessions")
-        print("  claude-history stats --sync --al   # Sync from all locations")
+        print("  claude-history stats --sync --al   # Sync from all homes")
         sys.exit(1)
 
     conn = init_metrics_db(db_path)
@@ -4797,8 +4797,8 @@ def cmd_list_windows(args):
         print(f"{user['username']}\t{user['drive']}\t{user['workspace_count']}\t{user['path']}")
 
 
-def cmd_list_all_locations(args):
-    """List workspaces or sessions from all locations: local, WSL/Windows, and remotes."""
+def cmd_list_all_homes(args):
+    """List workspaces or sessions from all homes: local, WSL/Windows, and remotes."""
     in_wsl = is_running_in_wsl()
     workspaces_only = getattr(args, "workspaces_only", False)
 
@@ -5237,9 +5237,9 @@ def cmd_fetch(args):
             sys.stderr.write(f"Error fetching {readable_name}: {error}\n")
 
 
-def validate_export_all_locations(args, in_wsl):
+def validate_export_all_homes(args, in_wsl):
     """
-    Validate all locations before starting export.
+    Validate all homes before starting export.
     Returns (success, errors) where errors is a list of error messages.
     """
     errors = []
@@ -5298,7 +5298,7 @@ def validate_export_all_locations(args, in_wsl):
 
 
 def cmd_export_all(args):
-    """Export from all locations: local, WSL distributions (Windows), Windows (WSL), and optionally remotes."""
+    """Export from all homes: local, WSL distributions (Windows), Windows (WSL), and optionally remotes."""
     # Detect environment
     in_wsl = is_running_in_wsl()
     local_label = "Local WSL" if in_wsl else "Local Windows"
@@ -5318,12 +5318,12 @@ def cmd_export_all(args):
             remotes.append(src)
     args.remotes = remotes
 
-    # Pre-flight validation: Check all locations before starting export
-    print("[Validation] Checking access to all locations...")
-    valid, errors = validate_export_all_locations(args, in_wsl)
+    # Pre-flight validation: Check all homes before starting export
+    print("[Validation] Checking access to all homes...")
+    valid, errors = validate_export_all_homes(args, in_wsl)
 
     if not valid:
-        print("\nExport aborted: Cannot access all locations\n")
+        print("\nExport aborted: Cannot access all homes\n")
         for error in errors:
             print(error)
         print("\nPlease fix the issues above and try again.")
@@ -5687,19 +5687,19 @@ EXAMPLES:
 
   Export (unified interface with orthogonal flags):
     claude-history export                     # current workspace, local source
-    claude-history export --al                # current workspace, all locations
+    claude-history export --al                # current workspace, all homes
     claude-history export --aw                # all workspaces, local source
-    claude-history export --al --aw           # all workspaces, all locations
+    claude-history export --al --aw           # all workspaces, all homes
 
     claude-history export myproject           # specific workspace, local
-    claude-history export myproject --al      # specific workspace, all locations
+    claude-history export myproject --al      # specific workspace, all homes
     claude-history export file.jsonl         # export single file
 
     claude-history export -o /tmp/backup      # current workspace, custom output
     claude-history export myproject -o ./out  # specific workspace, custom output
 
     claude-history export -r user@server      # current workspace, specific remote
-    claude-history export --al -r user@vm01   # current workspace, all locations + SSH
+    claude-history export --al -r user@vm01   # current workspace, all homes + SSH
 
   Date filtering:
     claude-history lss myproject --since 2025-11-01
@@ -5753,11 +5753,11 @@ EXAMPLES:
     parser_lsw.add_argument("--windows", action="store_true", help="List workspaces from Windows (auto-detects user)")
 
     parser_lsw.add_argument(
-        "--al",
-        "--all-locations",
-        dest="all_locations",
+        "--ah",
+        "--all-homes",
+        dest="all_homes",
         action="store_true",
-        help="List workspaces from all locations (local + WSL/Windows + remotes)",
+        help="List workspaces from all homes (local + WSL/Windows + remotes)",
     )
 
     # ========== lss - list sessions ==========
@@ -5791,11 +5791,11 @@ EXAMPLES:
     )
 
     parser_lss.add_argument(
-        "--al",
-        "--all-locations",
-        dest="all_locations",
+        "--ah",
+        "--all-homes",
+        dest="all_homes",
         action="store_true",
-        help="List sessions from all locations (local + WSL/Windows + remotes)",
+        help="List sessions from all homes (local + WSL/Windows + remotes)",
     )
 
     parser_lss.add_argument(
@@ -5877,11 +5877,11 @@ EXAMPLES:
     )
 
     parser_export.add_argument(
-        "--al",
-        "--all-locations",
+        "--ah",
+        "--all-homes",
         action="store_true",
-        dest="all_locations",
-        help="Export from all locations: local + WSL + Windows + remotes (default: local only)",
+        dest="all_homes",
+        help="Export from all homes: local + WSL + Windows + remotes (default: local only)",
     )
 
     parser_export.add_argument(
@@ -5981,11 +5981,11 @@ EXAMPLES:
         "--windows", action="store_true", help="Add workspace from Windows (auto-detects user)"
     )
     parser_alias_add.add_argument(
-        "--al",
-        "--all-locations",
+        "--ah",
+        "--all-homes",
         action="store_true",
-        dest="all_locations",
-        help="Add from all locations (local + WSL/Windows + remotes)",
+        dest="all_homes",
+        help="Add from all homes (local + WSL/Windows + remotes)",
     )
 
     # alias remove
@@ -6054,11 +6054,11 @@ EXAMPLES:
     )
 
     parser_stats.add_argument(
-        "--al",
-        "--all-locations",
+        "--ah",
+        "--all-homes",
         action="store_true",
-        dest="all_locations",
-        help="Sync from all locations (local + WSL/Windows)",
+        dest="all_homes",
+        help="Sync from all homes (local + WSL/Windows)",
     )
 
     parser_stats.add_argument("--wsl", action="store_true", help="Include WSL source")
@@ -6142,8 +6142,8 @@ EXAMPLES:
         # List workspaces - handle multiple patterns
         patterns = args.pattern if args.pattern else [""]
 
-        # Check for --all-locations flag
-        if getattr(args, "all_locations", False):
+        # Check for --all-homes flag
+        if getattr(args, "all_homes", False):
             # Get remotes list
             lsw_remotes = getattr(args, "remotes", None) or []
 
@@ -6155,7 +6155,7 @@ EXAMPLES:
             LswAllArgs.remotes = lsw_remotes
             LswAllArgs.patterns = patterns
 
-            cmd_list_all_locations(LswAllArgs())
+            cmd_list_all_homes(LswAllArgs())
         else:
 
             class LswArgs:
@@ -6184,8 +6184,8 @@ EXAMPLES:
             since_date = parse_date_string(args.since) if args.since else None
             until_date = parse_date_string(args.until) if args.until else None
             cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date)
-        elif getattr(args, "all_locations", False):
-            # List from all locations
+        elif getattr(args, "all_homes", False):
+            # List from all homes
             this_only = getattr(args, "this_only", False)
             since_date = parse_date_string(args.since) if args.since else None
             until_date = parse_date_string(args.until) if args.until else None
@@ -6198,7 +6198,7 @@ EXAMPLES:
                 # Check if current directory is a valid workspace
                 pattern, exists = check_current_workspace_exists()
                 if not exists:
-                    # Not in a workspace - list all workspaces from all locations
+                    # Not in a workspace - list all workspaces from all homes
                     patterns = [""]
                 elif not this_only:
                     alias_for_ws = get_alias_for_workspace(pattern, "local")
@@ -6219,7 +6219,7 @@ EXAMPLES:
             LssAllArgs.until_date = until_date
             LssAllArgs.remotes = lss_remotes
 
-            cmd_list_all_locations(LssAllArgs())
+            cmd_list_all_homes(LssAllArgs())
         else:
             # Regular workspace listing
             this_only = getattr(args, "this_only", False)
@@ -6233,7 +6233,7 @@ EXAMPLES:
                     print("\nTo list sessions, either:", file=sys.stderr)
                     print("  • Run from within a workspace directory", file=sys.stderr)
                     print("  • Specify a workspace pattern: lss <pattern>", file=sys.stderr)
-                    print("  • Use --al to list from all locations: lss --as", file=sys.stderr)
+                    print("  • Use --al to list from all homes: lss --as", file=sys.stderr)
                     sys.exit(1)
 
                 # Check if current workspace belongs to an alias (unless --this is used)
@@ -6293,7 +6293,7 @@ EXAMPLES:
             pattern, exists = check_current_workspace_exists()
             if not exists:
                 # If --al is used from outside a workspace, treat as --aw
-                if args.all_locations:
+                if args.all_homes:
                     args.all_workspaces = True
                 else:
                     print("Error: Not in a Claude Code workspace.", file=sys.stderr)
@@ -6301,7 +6301,7 @@ EXAMPLES:
                     print("  • Run from within a workspace directory", file=sys.stderr)
                     print("  • Specify a workspace pattern: export <pattern>", file=sys.stderr)
                     print("  • Use --aw to export all workspaces: export --aw", file=sys.stderr)
-                    print("  • Use --al to export from all locations: export --as", file=sys.stderr)
+                    print("  • Use --al to export from all homes: export --as", file=sys.stderr)
                     sys.exit(1)
             else:
                 # Check if current workspace belongs to an alias (unless --this is used)
@@ -6331,9 +6331,9 @@ EXAMPLES:
         # Resolve remotes (including --wsl and --windows flags)
         final_remotes = resolve_remote_list(args)
 
-        # Handle --all-locations flag (export from all locations)
-        if args.all_locations:
-            # Export from all locations (local + WSL + Windows + remotes)
+        # Handle --all-homes flag (export from all homes)
+        if args.all_homes:
+            # Export from all homes (local + WSL + Windows + remotes)
             # Pass patterns list for multiple pattern support
             final_patterns = [] if args.all_workspaces else targets
 
@@ -6407,7 +6407,7 @@ EXAMPLES:
 
             class SyncArgs:
                 force = args.force
-                all_locations = args.all_locations
+                all_homes = args.all_homes
                 patterns = [args.workspace] if args.workspace else [""]
 
             SyncArgs.remotes = remotes
@@ -6415,7 +6415,7 @@ EXAMPLES:
         else:
             # Display stats
             # If --al is given, sync first then display
-            if args.all_locations:
+            if args.all_homes:
                 remotes = getattr(args, "remotes", None) or []
                 if args.wsl:
                     wsl_distros = get_wsl_distributions()
@@ -6427,7 +6427,7 @@ EXAMPLES:
 
                 class SyncArgs:
                     force = args.force
-                    all_locations = True
+                    all_homes = True
                     patterns = [args.workspace] if args.workspace else [""]
 
                 SyncArgs.remotes = remotes
@@ -6435,7 +6435,7 @@ EXAMPLES:
                 print()  # Blank line between sync and display
 
             # --al and --aw are orthogonal:
-            # --al = sync from all locations first
+            # --al = sync from all homes first
             # --aw = query all workspaces
             class StatsArgs:
                 workspace = args.workspace

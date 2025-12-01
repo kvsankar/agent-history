@@ -92,19 +92,19 @@ EXAMPLES:
 
   Export (unified interface with orthogonal flags):
     claude-history export                     # current workspace, local source
-    claude-history export --al                # current workspace, all locations
+    claude-history export --al                # current workspace, all homes
     claude-history export --aw                # all workspaces, local source
-    claude-history export --al --aw           # all workspaces, all locations
+    claude-history export --al --aw           # all workspaces, all homes
 
     claude-history export myproject           # specific workspace, local
-    claude-history export myproject --al      # specific workspace, all locations
+    claude-history export myproject --al      # specific workspace, all homes
     claude-history export file.jsonl         # export single file
 
     claude-history export -o /tmp/backup      # current workspace, custom output
     claude-history export myproject -o ./out  # specific workspace, custom output
 
     claude-history export -r user@server      # current workspace, specific remote
-    claude-history export --al -r user@vm01   # current workspace, all locations + SSH
+    claude-history export --al -r user@vm01   # current workspace, all homes + SSH
 
   Date filtering:
     claude-history lss myproject --since 2025-11-01
@@ -150,7 +150,7 @@ claude-history lsw
 # Export specific project
 claude-history export myproject
 
-# Export from all locations (local + WSL + Windows + remotes)
+# Export from all homes (local + WSL + Windows + remotes)
 claude-history export myproject --al
 
 # Date filtering

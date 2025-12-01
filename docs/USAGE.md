@@ -64,8 +64,8 @@ $ claude-history lsh --remotes
 Once configured, `--as` automatically includes saved SSH remotes:
 ```bash
 claude-history lsw --al              # includes saved remotes
-claude-history export --al           # exports from all locations
-claude-history stats --time --al     # syncs from all locations
+claude-history export --al           # exports from all homes
+claude-history stats --time --al     # syncs from all homes
 ```
 
 ---
@@ -85,7 +85,7 @@ claude-history lsw [PATTERN...] [OPTIONS]
 - `--wsl`: List WSL workspaces
 - `--windows`: List Windows workspaces
 - `-r HOST`, `--remote HOST`: List remote workspaces via SSH
-- `--as`, `--all-locations`: List from all locations
+- `--as`, `--all-homes`: List from all homes
 
 **Examples:**
 ```bash
@@ -98,7 +98,7 @@ claude-history lsw myproject
 # Multiple patterns
 claude-history lsw proj1 proj2
 
-# List from all locations
+# List from all homes
 claude-history lsw --al -r user@vm01
 ```
 
@@ -117,7 +117,7 @@ claude-history lss [PATTERN] [OPTIONS]
 
 **Scope Options:**
 - `--this`: Use current workspace only, not its alias (if aliased)
-- `--as`, `--all-locations`: List from all locations (local + WSL/Windows + remotes)
+- `--as`, `--all-homes`: List from all homes (local + WSL/Windows + remotes)
 
 **Date Filtering:**
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
@@ -166,7 +166,7 @@ claude-history export [WORKSPACE...] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
-- `--as`, `--all-locations`: Export from ALL sources (local + WSL + Windows + remotes)
+- `--as`, `--all-homes`: Export from ALL sources (local + WSL + Windows + remotes)
 - `--aw`, `--all-workspaces` (also `-a`, `--all`): Export ALL workspaces
 - `--this`: Use current workspace only, not its alias (if aliased)
 
@@ -199,16 +199,16 @@ claude-history export [WORKSPACE...] [OPTIONS]
 # Current workspace, local source (default)
 claude-history export
 
-# Current workspace, all locations
+# Current workspace, all homes
 claude-history export --al
 
 # All workspaces, local source
 claude-history export --aw
 
-# All workspaces, all locations
+# All workspaces, all homes
 claude-history export --al --aw
 
-# Specific workspace, all locations, custom output
+# Specific workspace, all homes, custom output
 claude-history export myproject --al -o /tmp/backup
 
 # Multiple workspaces (deduplicated)
@@ -260,7 +260,7 @@ Options:
 - `--wsl`: Add from WSL
 - `--windows`: Add from Windows
 - `-r HOST`: Add from SSH remote
-- `--as`: Add from all locations
+- `--as`: Add from all homes
 
 ### `alias remove <name> -- <workspace>`
 Remove a workspace from an alias. Use `--` before workspace names starting with `-`.
@@ -279,7 +279,7 @@ claude-history alias add myproject myproject
 claude-history alias add myproject --windows myproject
 claude-history alias add myproject -r user@vm01 myproject
 
-# Or add from all locations at once
+# Or add from all homes at once
 claude-history alias add myproject --al -r user@vm myproject
 
 # Use aliases with @ prefix
@@ -314,7 +314,7 @@ claude-history stats [WORKSPACE] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
-- `--as`, `--all-locations`: Sync from all locations first
+- `--as`, `--all-homes`: Sync from all homes first
 - `--aw`, `--all-workspaces`: Query all workspaces (default: current)
 - `--this`: Use current workspace only, not its alias
 
@@ -342,7 +342,7 @@ claude-history stats
 # All workspaces
 claude-history stats --aw
 
-# Time tracking with auto-sync from all locations
+# Time tracking with auto-sync from all homes
 claude-history stats --time --al
 
 # Tool usage statistics

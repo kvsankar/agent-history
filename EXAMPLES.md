@@ -125,7 +125,7 @@ grep -r -i -B3 -A10 "cache.*implementation\|implement.*cache" /tmp/history/
 # Create backup directory with date
 mkdir -p ~/backups/claude-$(date +%Y%m%d)
 
-# Export all workspaces from all locations
+# Export all workspaces from all homes
 claude-history export --al --aw -o ~/backups/claude-$(date +%Y%m%d)
 
 # Verify
@@ -157,7 +157,7 @@ claude-history stats myproject
 **Claude's approach**:
 
 ```bash
-# Export from all locations (local + WSL + Windows + remotes)
+# Export from all homes (local + WSL + Windows + remotes)
 claude-history export --al --aw -o /tmp/all-history --minimal
 
 # Search across everything

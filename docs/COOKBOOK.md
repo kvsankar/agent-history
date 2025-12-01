@@ -10,7 +10,7 @@ Create an alias to manage a project that exists on Windows, WSL, and a remote VM
 # Create the alias
 claude-history alias create myproject
 
-# Add workspaces interactively from all locations
+# Add workspaces interactively from all homes
 claude-history alias add myproject --al -r user@vm01 --pick
 
 # Or add by pattern (non-interactive)
@@ -45,10 +45,10 @@ claude-history export @all-projects -o ~/backups/claude-sessions/ --force
 ## Recipe 3: Export a Single Project from Multiple Machines
 
 ```bash
-# List sessions from all locations matching "myproject"
+# List sessions from all homes matching "myproject"
 claude-history lss myproject --al -r user@vm01
 
-# Export from all locations
+# Export from all homes
 claude-history export myproject --al -r user@vm01 -o ./exports/
 ```
 
@@ -113,7 +113,7 @@ claude-history alias import aliases.json
 ## Recipe 8: List Recent Sessions Across Everything
 
 ```bash
-# Sessions from last week across all locations
+# Sessions from last week across all homes
 claude-history lss --al --since 2025-11-24
 
 # Export recent sessions only
@@ -144,7 +144,7 @@ claude-history stats --time --al     # syncs from vm01 and vm02
 ## Recipe 10: Track Usage Metrics Across All Environments
 
 ```bash
-# Initial sync from all locations (uses saved remotes)
+# Initial sync from all homes (uses saved remotes)
 claude-history stats --sync --al
 
 # View overall statistics (current workspace)
@@ -201,10 +201,10 @@ claude-history stats --tools backend-api
 Track how much time you've spent with Claude Code:
 
 ```bash
-# Current workspace, sync all locations first
+# Current workspace, sync all homes first
 claude-history stats --time --al
 
-# All workspaces, sync all locations first
+# All workspaces, sync all homes first
 claude-history stats --time --al --aw
 
 # Filter by date range
@@ -300,9 +300,9 @@ claude-history export project-2024 -o archives/2024-11/
 Consolidate conversations from multiple environments:
 
 ```bash
-# Export all locations: local + WSL + Windows + SSH remotes
+# Export all homes: local + WSL + Windows + SSH remotes
 claude-history export myproject --al -o ./backups -r user@vm01
 
-# Or all workspaces from all locations
+# Or all workspaces from all homes
 claude-history export --al --aw -o ./backups -r user@vm01
 ```
