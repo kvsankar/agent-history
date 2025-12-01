@@ -61,7 +61,7 @@ Removed source: alice@server.example.com
 $ claude-history lsh --remotes
 ```
 
-Once configured, `--as` automatically includes saved SSH remotes:
+Once configured, `--ah` automatically includes saved SSH remotes:
 ```bash
 claude-history lsw --al              # includes saved remotes
 claude-history export --al           # exports from all homes
@@ -85,7 +85,7 @@ claude-history lsw [PATTERN...] [OPTIONS]
 - `--wsl`: List WSL workspaces
 - `--windows`: List Windows workspaces
 - `-r HOST`, `--remote HOST`: List remote workspaces via SSH
-- `--as`, `--all-homes`: List from all homes
+- `--ah`, `--all-homes`: List from all homes
 
 **Examples:**
 ```bash
@@ -117,7 +117,7 @@ claude-history lss [PATTERN] [OPTIONS]
 
 **Scope Options:**
 - `--this`: Use current workspace only, not its alias (if aliased)
-- `--as`, `--all-homes`: List from all homes (local + WSL/Windows + remotes)
+- `--ah`, `--all-homes`: List from all homes (local + WSL/Windows + remotes)
 
 **Date Filtering:**
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
@@ -166,7 +166,7 @@ claude-history export [WORKSPACE...] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
-- `--as`, `--all-homes`: Export from ALL sources (local + WSL + Windows + remotes)
+- `--ah`, `--all-homes`: Export from ALL sources (local + WSL + Windows + remotes)
 - `--aw`, `--all-workspaces` (also `-a`, `--all`): Export ALL workspaces
 - `--this`: Use current workspace only, not its alias (if aliased)
 
@@ -190,7 +190,7 @@ claude-history export [WORKSPACE...] [OPTIONS]
 | Command | Workspace Scope | Source Scope |
 |---------|----------------|--------------|
 | `export` | Current | Local only |
-| `export --as` | Current | All homes |
+| `export --ah` | Current | All homes |
 | `export --aw` | All | Local only |
 | `export --al --aw` | All | All homes |
 
@@ -260,7 +260,7 @@ Options:
 - `--wsl`: Add from WSL
 - `--windows`: Add from Windows
 - `-r HOST`: Add from SSH remote
-- `--as`: Add from all homes
+- `--ah`: Add from all homes
 
 ### `alias remove <name> -- <workspace>`
 Remove a workspace from an alias. Use `--` before workspace names starting with `-`.
@@ -314,7 +314,7 @@ claude-history stats [WORKSPACE] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
-- `--as`, `--all-homes`: Sync from all homes first
+- `--ah`, `--all-homes`: Sync from all homes first
 - `--aw`, `--all-workspaces`: Query all workspaces (default: current)
 - `--this`: Use current workspace only, not its alias
 

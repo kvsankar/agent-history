@@ -33,9 +33,9 @@ chmod +x claude-history
 ./claude-history lsw --wsl                  # WSL workspaces
 ./claude-history lsw --windows              # Windows workspaces
 ./claude-history lsw -r user@server         # SSH remote workspaces
-./claude-history lsw --as                   # all sources (local + WSL/Windows + remotes)
-./claude-history lsw --as -r vm01 -r vm02   # all sources + multiple SSH remotes
-./claude-history lsw proj1 proj2 --as       # multiple patterns from all sources
+./claude-history lsw --ah                   # all homes (local + WSL/Windows + remotes)
+./claude-history lsw --ah -r vm01 -r vm02   # all homes + multiple SSH remotes
+./claude-history lsw proj1 proj2 --ah       # multiple patterns from all homes
 
 # List sessions
 ./claude-history lss                        # current workspace
@@ -44,20 +44,20 @@ chmod +x claude-history
 ./claude-history lss --wsl                  # from WSL
 ./claude-history lss --windows              # from Windows
 ./claude-history lss myproject -r user@server    # SSH remote sessions
-./claude-history lss myproject --as         # from all sources
-./claude-history lss --as -r vm01 -r vm02   # all sources + multiple SSH remotes
-./claude-history lss proj1 proj2 --as       # multiple patterns from all sources
+./claude-history lss myproject --ah         # from all homes
+./claude-history lss --ah -r vm01 -r vm02   # all homes + multiple SSH remotes
+./claude-history lss proj1 proj2 --ah       # multiple patterns from all homes
 
 # Export (unified command with orthogonal scope flags)
 ./claude-history export                     # current workspace, local source
-./claude-history export --as                # current workspace, all sources
+./claude-history export --ah                # current workspace, all homes
 ./claude-history export --aw                # all workspaces, local source
-./claude-history export --as --aw           # all workspaces, all sources
+./claude-history export --ah --aw           # all workspaces, all homes
 
 ./claude-history export myproject           # specific workspace, local
 ./claude-history export proj1 proj2         # multiple workspaces (deduplicated)
-./claude-history export myproject --as      # specific workspace, all sources
-./claude-history export proj1 proj2 --as    # multiple workspaces, all sources (lenient)
+./claude-history export myproject --ah      # specific workspace, all homes
+./claude-history export proj1 proj2 --ah    # multiple workspaces, all homes (lenient)
 ./claude-history export file.jsonl         # export single file
 
 ./claude-history export -o /tmp/backup      # current workspace, custom output
@@ -66,8 +66,8 @@ chmod +x claude-history
 ./claude-history export --wsl               # current workspace, WSL
 ./claude-history export --windows           # current workspace, Windows
 ./claude-history export -r user@server      # current workspace, SSH remote
-./claude-history export --as -r user@vm01   # current workspace, all sources + SSH remote
-./claude-history export --as proj1 proj2 -r host  # multiple patterns, all sources + remote
+./claude-history export --ah -r user@vm01   # current workspace, all homes + SSH remote
+./claude-history export --ah proj1 proj2 -r host  # multiple patterns, all homes + remote
 
 # Show version
 ./claude-history --version
@@ -88,7 +88,7 @@ chmod +x claude-history
 ./claude-history alias delete myproject           # delete an alias
 ./claude-history alias add myproject myproject    # add by pattern (searches local)
 ./claude-history alias add myproject --windows myproject  # add by pattern from Windows
-./claude-history alias add myproject --as -r vm myproject  # add from all sources at once
+./claude-history alias add myproject --ah -r vm myproject  # add from all homes at once
 ./claude-history alias remove myproject -- -home-user-myproject  # remove workspace from alias
 ./claude-history alias export aliases.json        # export aliases to file
 ./claude-history alias import aliases.json        # import aliases from file
@@ -98,7 +98,7 @@ chmod +x claude-history
 ./claude-history lss --alias myproject            # same as above
 ./claude-history export @myproject                # export from all alias workspaces
 ./claude-history export --alias myproject         # same as above
-./claude-history export @myproject --as           # export alias from all sources
+./claude-history export @myproject --ah           # export alias from all homes
 
 # WSL and Windows access (flags auto-detect)
 ./claude-history lsw --wsl                  # list WSL workspaces
@@ -109,17 +109,17 @@ chmod +x claude-history
 ./claude-history lss myproject --windows    # list Windows sessions
 ./claude-history export myproject --windows # export from Windows
 
-# Saved Sources (for --as flag)
+# Saved Sources (for --ah flag)
 ./claude-history sources                    # list saved sources
-./claude-history sources add user@vm01     # add SSH remote (WSL/Windows auto-detected)
-./claude-history sources add user@vm02     # add another remote
-./claude-history sources remove user@vm01  # remove a source
-./claude-history sources clear             # remove all saved sources
+./claude-history lsh add user@vm01     # add SSH remote (WSL/Windows auto-detected)
+./claude-history lsh add user@vm02     # add another remote
+./claude-history lsh remove user@vm01  # remove a source
+./claude-history lsh clear             # remove all saved sources
 
-# Usage Statistics and Metrics (orthogonal --as/--aw flags)
+# Usage Statistics and Metrics (orthogonal --ah/--aw flags)
 ./claude-history stats --sync               # sync local sessions to database
-./claude-history stats --sync --as          # sync from all sources (includes saved remotes)
-./claude-history stats --sync --as -r vm03  # sync all sources + additional remote
+./claude-history stats --sync --ah          # sync from all homes (includes saved remotes)
+./claude-history stats --sync --ah -r vm03  # sync all homes + additional remote
 ./claude-history stats                      # summary dashboard (current workspace)
 ./claude-history stats --aw                 # summary dashboard (all workspaces)
 ./claude-history stats myproject            # filter by workspace pattern
@@ -130,11 +130,11 @@ chmod +x claude-history
 ./claude-history stats --since 2025-11-01   # filter by date
 ./claude-history stats --source local       # filter by source
 
-# Time tracking (orthogonal --as/--aw flags)
+# Time tracking (orthogonal --ah/--aw flags)
 ./claude-history stats --time               # current workspace, local DB
-./claude-history stats --time --as          # current workspace, sync all sources first
+./claude-history stats --time --ah          # current workspace, sync all homes first
 ./claude-history stats --time --aw          # all workspaces, local DB
-./claude-history stats --time --as --aw     # all workspaces, sync all sources first
+./claude-history stats --time --ah --aw     # all workspaces, sync all homes first
 ```
 
 ### Testing Workflow
@@ -288,7 +288,7 @@ The file is organized into twelve main sections:
    - `cmd_alias_show()`: Shows workspaces in a specific alias
    - `cmd_alias_create()`: Creates a new empty alias
    - `cmd_alias_delete()`: Deletes an alias
-   - `cmd_alias_add()`: Adds workspaces to an alias (supports patterns, `--as` flag for all sources)
+   - `cmd_alias_add()`: Adds workspaces to an alias (supports patterns, `--ah` flag for all homes)
    - `cmd_alias_remove()`: Removes a workspace from an alias
    - `cmd_alias_config_export()`: Exports aliases to a JSON file
    - `cmd_alias_config_import()`: Imports aliases from a JSON file
@@ -311,7 +311,7 @@ The file is organized into twelve main sections:
    - `extract_metrics_from_jsonl()`: Extracts session, message, and tool use metrics from JSONL
    - `sync_file_to_db()`: Syncs a single JSONL file to database (incremental)
    - `cmd_stats_sync()`: Syncs JSONL files from local/WSL/Windows/SSH sources
-   - `cmd_stats()`: Displays metrics with various views (orthogonal --as/--aw flags)
+   - `cmd_stats()`: Displays metrics with various views (orthogonal --ah/--aw flags)
    - `display_summary_stats()`: Summary dashboard (alias-aware)
    - `display_tool_stats()`: Tool usage statistics
    - `display_model_stats()`: Model usage breakdown
@@ -326,7 +326,7 @@ The file is organized into twelve main sections:
    - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote/WSL, `--split` for splitting, organized export by default)
    - `cmd_list_wsl()`: Lists WSL distributions with Claude Code workspaces
    - `cmd_fetch()`: Pre-caches remote sessions via SSH (one-way sync)
-   - `cmd_export_all()`: Exports from all sources (local + all WSL + optional SSH remotes) in one command
+   - `cmd_export_all()`: Exports from all homes (local + all WSL + optional SSH remotes) in one command
    - `generate_index_manifest()`: Generates index.md summary file with per-source and per-workspace statistics
    - `cmd_version()`: Displays version info
    - `cmd_alias_*()`: Alias management commands (see section 8)
@@ -821,7 +821,7 @@ Aliases group related workspaces across different sources for unified access.
 ./claude-history export --alias myproject
 
 # Combine with other flags
-./claude-history export @myproject --as     # all sources
+./claude-history export @myproject --ah     # all homes
 ./claude-history export @myproject --minimal
 ```
 
@@ -863,8 +863,8 @@ scp aliases.json user@other-machine:~/
 # Add from Windows (auto-detects user)
 ./claude-history alias add myproject --windows myproject
 
-# Add from all sources at once (local + WSL/Windows + remotes)
-./claude-history alias add myproject --as -r vm myproject
+# Add from all homes at once (local + WSL/Windows + remotes)
+./claude-history alias add myproject --ah -r vm myproject
 
 # Workspace names starting with '-' need '--' separator
 ./claude-history alias remove myproject -- -home-user-myproject
@@ -939,23 +939,23 @@ See [README.md](README.md#changelog) for the full changelog.
 
 ### Orthogonal Flag Design
 
-The `--as` and `--aw` flags are designed to be orthogonal (independent):
+The `--ah` and `--aw` flags are designed to be orthogonal (independent):
 
 | Flag | Meaning | Scope |
 |------|---------|-------|
-| `--as` (`--all-sources`) | Include all sources (local + WSL/Windows + saved SSH remotes) | **Where** to get data from |
+| `--ah` (`--all-homes`) | Include all homes (local + WSL/Windows + saved SSH remotes) | **Where** to get data from |
 | `--aw` (`--all-workspaces`) | Include all workspaces (not just current) | **Which** workspaces to include |
 
 **Key principle:** These flags can be used together or separately:
 - `stats` → Current workspace, local DB only
-- `stats --as` → Current workspace, sync all sources first
+- `stats --ah` → Current workspace, sync all homes first
 - `stats --aw` → All workspaces, local DB only
-- `stats --as --aw` → All workspaces, sync all sources first
+- `stats --ah --aw` → All workspaces, sync all homes first
 
 **Implementation notes:**
-- `--as` for `stats --time` triggers auto-sync before display
-- WSL and Windows are auto-detected by `--as` (no configuration needed)
-- Only SSH remotes need to be saved via `sources add`
+- `--ah` for `stats --time` triggers auto-sync before display
+- WSL and Windows are auto-detected by `--ah` (no configuration needed)
+- Only SSH remotes need to be saved via `lsh add`
 - Saved sources are stored in `~/.claude-history/config.json`
 
 ## Contributing Notes

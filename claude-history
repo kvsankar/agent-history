@@ -13,14 +13,16 @@ License: MIT
 import argparse
 import base64
 import json
+import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-__version__ = "1.4.1"
+__version__ = "1.4.2"
 
 
 # ============================================================================
@@ -75,7 +77,7 @@ REMOTE_HOST_PATTERN = re.compile(
 
 
 def validate_workspace_name(workspace_name: str) -> bool:
-    """Validate workspace name to prevent command injection.
+    """Validate workspace name to prevent command injection and path traversal.
 
     Workspace names from Claude Code are encoded paths like:
     - '-home-user-project' (Unix)
@@ -87,7 +89,10 @@ def validate_workspace_name(workspace_name: str) -> bool:
     """
     if not workspace_name:
         return False
-    if len(workspace_name) > 1000:  # Reasonable limit
+    if len(workspace_name) > MAX_WORKSPACE_NAME_LENGTH:
+        return False
+    # Check for path traversal sequences
+    if ".." in workspace_name:
         return False
     return bool(WORKSPACE_NAME_PATTERN.match(workspace_name))
 
@@ -106,7 +111,7 @@ def validate_remote_host(remote_host: str) -> bool:
     """
     if not remote_host:
         return False
-    if len(remote_host) > 255:  # DNS limit
+    if len(remote_host) > MAX_REMOTE_HOST_LENGTH:
         return False
     return bool(REMOTE_HOST_PATTERN.match(remote_host))
 
@@ -117,6 +122,141 @@ def sanitize_for_shell(value: str) -> str:
     Uses shlex.quote for proper escaping.
     """
     return shlex.quote(value)
+
+
+def is_safe_path(base_dir: Path, target_path: Path) -> bool:
+    """Check if target_path is safely within base_dir (no path traversal).
+
+    This prevents directory traversal attacks where a malicious path
+    could escape the intended base directory.
+
+    Args:
+        base_dir: The base directory that should contain the path
+        target_path: The path to validate
+
+    Returns:
+        True if target_path is within base_dir, False otherwise.
+    """
+    try:
+        # Resolve both paths to absolute paths (resolves symlinks and ..)
+        base_resolved = base_dir.resolve()
+        target_resolved = target_path.resolve()
+
+        # Check if target is within base (or is base itself)
+        return target_resolved == base_resolved or str(target_resolved).startswith(str(base_resolved) + os.sep)
+    except (OSError, ValueError):
+        return False
+
+
+# ============================================================================
+# Constants
+# ============================================================================
+
+# Validation limits
+MAX_WORKSPACE_NAME_LENGTH = 1000  # Reasonable limit for workspace names
+MAX_REMOTE_HOST_LENGTH = 255  # DNS hostname limit
+
+# Conversation splitting thresholds
+SPLIT_MIN_FACTOR = 0.8  # Minimum lines before considering split (80% of target)
+SPLIT_MAX_FACTOR = 1.3  # Maximum lines before forcing split (130% of target)
+HEADER_LINES_ESTIMATE = 30  # Approximate header size in lines
+METADATA_LINES_ESTIMATE = 20  # Approximate metadata section size in lines
+
+# Split point scoring weights
+SCORE_USER_MESSAGE_NEXT = 100  # Next message is User (best - starting new topic)
+SCORE_TOOL_RESULT = 50  # Current message is tool result (action complete)
+SCORE_TIME_GAP_LARGE = 30  # Time gap > 5 minutes
+SCORE_TIME_GAP_MEDIUM = 10  # Time gap > 1 minute
+SCORE_DISTANCE_PENALTY = 0.05  # Penalty per line away from target
+
+# Time gap thresholds (in seconds)
+TIME_GAP_LARGE = 300  # 5 minutes
+TIME_GAP_MEDIUM = 60  # 1 minute
+
+# Display limits
+MAX_WORKSPACE_CANDIDATES = 20  # Maximum workspaces to show in suggestions
+MAX_TOP_WORKSPACES = 20  # Top workspaces to show in stats
+
+# Timeouts (in seconds)
+SSH_TIMEOUT = 300  # 5 minutes for SSH operations
+SCP_TIMEOUT = 60  # 1 minute for single file copy
+
+# Work period detection (in seconds)
+WORK_PERIOD_GAP_THRESHOLD = 30 * 60  # 30 minutes gap starts new work period
+
+# Display formatting
+DISPLAY_SEPARATOR_WIDTH = 60  # Width of separator lines
+
+# Cached workspace prefixes
+CACHED_REMOTE_PREFIX = "remote_"
+CACHED_WSL_PREFIX = "wsl_"
+CACHED_WINDOWS_PREFIX = "windows_"
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+
+def is_cached_workspace(name: str) -> bool:
+    """Check if a workspace/directory name is a cached remote, WSL, or Windows workspace.
+
+    Cached workspaces are created when fetching from remote SSH hosts, WSL
+    distributions, or Windows (from WSL). They have prefixes like:
+    - 'remote_hostname_...'
+    - 'wsl_distro_...'
+    - 'windows_username_...'
+
+    Args:
+        name: Workspace or directory name to check
+
+    Returns:
+        True if this is a cached workspace, False otherwise.
+    """
+    return (
+        name.startswith(CACHED_REMOTE_PREFIX)
+        or name.startswith(CACHED_WSL_PREFIX)
+        or name.startswith(CACHED_WINDOWS_PREFIX)
+    )
+
+
+def is_native_workspace(name: str) -> bool:
+    """Check if a workspace/directory name is a native (non-cached) workspace.
+
+    This is the inverse of is_cached_workspace().
+
+    Args:
+        name: Workspace or directory name to check
+
+    Returns:
+        True if this is a native workspace, False if cached.
+    """
+    return not is_cached_workspace(name)
+
+
+# ============================================================================
+# External Command Paths (Security)
+# ============================================================================
+
+# Cache for resolved command paths
+_COMMAND_PATHS = {}
+
+
+def get_command_path(cmd: str) -> str:
+    """Get absolute path for an external command.
+
+    Uses shutil.which() to find the command in PATH, then caches the result.
+    Falls back to the command name if not found (lets subprocess handle the error).
+
+    Args:
+        cmd: Command name (e.g., 'ssh', 'rsync', 'wsl')
+
+    Returns:
+        Absolute path to the command, or the original name if not found.
+    """
+    if cmd not in _COMMAND_PATHS:
+        path = shutil.which(cmd)
+        _COMMAND_PATHS[cmd] = path if path else cmd
+    return _COMMAND_PATHS[cmd]
 
 
 # ============================================================================
@@ -215,7 +355,7 @@ def estimate_message_lines(msg_content: str, has_metadata: bool) -> int:
     lines += len(msg_content.split("\n"))  # Content
     lines += 1  # Empty line
     if has_metadata:
-        lines += 20  # Approximate metadata section
+        lines += METADATA_LINES_ESTIMATE
         lines += 1  # Empty line
     lines += 1  # Separator (---)
     lines += 1  # Empty line
@@ -243,10 +383,10 @@ def find_best_split_point(messages, target_lines: int, minimal: bool) -> int:
     Returns message index to start part 2 (exclusive end of part 1).
     Returns None if no split needed.
     """
-    min_lines = int(target_lines * 0.8)  # 80% of target
-    max_lines = int(target_lines * 1.3)  # 130% of target (more flexible)
+    min_lines = int(target_lines * SPLIT_MIN_FACTOR)
+    max_lines = int(target_lines * SPLIT_MAX_FACTOR)
 
-    current_lines = 30  # Approximate header lines
+    current_lines = HEADER_LINES_ESTIMATE
     best_split = None
     best_score = -1
 
@@ -265,23 +405,23 @@ def find_best_split_point(messages, target_lines: int, minimal: bool) -> int:
 
             # Priority 1: Next message is User (best - starting new topic)
             if i + 1 < len(messages) and messages[i + 1]["role"] == "user":
-                score += 100
+                score += SCORE_USER_MESSAGE_NEXT
 
             # Priority 2: Current message is tool result (action complete)
             if is_tool_result_message(msg["content"]):
-                score += 50
+                score += SCORE_TOOL_RESULT
 
-            # Priority 3: Time gap > 5 minutes before next message
+            # Priority 3: Time gap before next message
             if i + 1 < len(messages):
                 time_gap = calculate_time_gap(msg, messages[i + 1])
-                if time_gap > 300:  # 5 minutes
-                    score += 30
-                elif time_gap > 60:  # 1 minute
-                    score += 10
+                if time_gap > TIME_GAP_LARGE:
+                    score += SCORE_TIME_GAP_LARGE
+                elif time_gap > TIME_GAP_MEDIUM:
+                    score += SCORE_TIME_GAP_MEDIUM
 
             # Slight preference for being closer to target
             distance_from_target = abs(current_lines - target_lines)
-            score -= distance_from_target * 0.05
+            score -= distance_from_target * SCORE_DISTANCE_PENALTY
 
             if score > best_score:
                 best_score = score
@@ -763,22 +903,14 @@ def resolve_workspace_input(workspace_input: str, source_key: str = "local", arg
             projects_dir = get_wsl_projects_dir(distro)
             if not projects_dir:
                 return []
-            workspaces = [
-                d.name
-                for d in projects_dir.iterdir()
-                if d.is_dir() and not d.name.startswith("remote_") and not d.name.startswith("wsl_")
-            ]
+            workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and is_native_workspace(d.name)]
         elif source_key.startswith("windows"):
             # source_key is 'windows' or 'windows:username'
             user = source_key[8:] if source_key.startswith("windows:") else None
             projects_dir = get_windows_projects_dir(user)
             if not projects_dir:
                 return []
-            workspaces = [
-                d.name
-                for d in projects_dir.iterdir()
-                if d.is_dir() and not d.name.startswith("remote_") and not d.name.startswith("wsl_")
-            ]
+            workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and is_native_workspace(d.name)]
         elif source_key.startswith("remote:"):
             hostname = source_key[7:]
             remote_host = getattr(args, "remote", hostname) if args else hostname
@@ -787,11 +919,7 @@ def resolve_workspace_input(workspace_input: str, source_key: str = "local", arg
         else:
             # Local
             projects_dir = get_claude_projects_dir()
-            workspaces = [
-                d.name
-                for d in projects_dir.iterdir()
-                if d.is_dir() and not d.name.startswith("remote_") and not d.name.startswith("wsl_")
-            ]
+            workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and is_native_workspace(d.name)]
     except Exception:
         return []
 
@@ -960,7 +1088,7 @@ def check_current_workspace_exists():
             continue
         # Skip cached remote/wsl directories
         dirname = workspace_dir.name
-        if dirname.startswith("remote_") or dirname.startswith("wsl_"):
+        if is_cached_workspace(dirname):
             continue
         if pattern in dirname:
             return pattern, True
@@ -969,7 +1097,12 @@ def check_current_workspace_exists():
 
 
 def get_workspace_sessions(
-    workspace_pattern: str, quiet: bool = False, since_date=None, until_date=None, include_cached: bool = False
+    workspace_pattern: str,
+    quiet: bool = False,
+    since_date=None,
+    until_date=None,
+    include_cached: bool = False,
+    projects_dir: Path = None,
 ):
     """Find all sessions in workspaces matching the pattern.
 
@@ -979,8 +1112,10 @@ def get_workspace_sessions(
         since_date: Only include sessions modified on or after this date (datetime object)
         until_date: Only include sessions modified on or before this date (datetime object)
         include_cached: If True, include remote_* and wsl_* cached workspaces (default: False)
+        projects_dir: Explicit projects directory path (default: auto-detect via get_claude_projects_dir())
     """
-    projects_dir = get_claude_projects_dir()
+    if projects_dir is None:
+        projects_dir = get_claude_projects_dir()
     sessions = []
 
     # If pattern is empty, "*", or "all", match everything
@@ -1009,17 +1144,18 @@ def get_workspace_sessions(
         if not workspace_dir.is_dir():
             continue
 
+        # Security: Validate workspace directory name and ensure it stays within projects_dir
+        dir_name = workspace_dir.name
+        if not validate_workspace_name(dir_name):
+            continue  # Skip directories with invalid names (potential path traversal)
+        if not is_safe_path(projects_dir, workspace_dir):
+            continue  # Skip if path escapes the projects directory
+
         # Skip cached remote/WSL workspaces to prevent circular fetching
         # These are already fetched data from other sources
         # Unless include_cached is True (for exporting from cached remote data)
-        dir_name = workspace_dir.name
         if not include_cached:
-            if (
-                dir_name.startswith("remote_")
-                or dir_name.startswith("wsl_")
-                or dir_name.startswith("-remote-")
-                or dir_name.startswith("--wsl-")
-            ):
+            if is_cached_workspace(dir_name) or dir_name.startswith("-remote-") or dir_name.startswith("--wsl-"):
                 continue
 
         # Check if workspace path matches our pattern
@@ -1106,13 +1242,19 @@ def get_windows_home_from_wsl(username: str = None):
     # Primary approach: use Windows USERPROFILE
     try:
         result = subprocess.run(
-            ["cmd.exe", "/c", "echo %USERPROFILE%"], capture_output=True, text=True, check=True, timeout=5
+            [get_command_path("cmd.exe"), "/c", "echo %USERPROFILE%"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
         )
         win_path = result.stdout.strip()
 
         if win_path and win_path != "%USERPROFILE%":
             # Convert Windows path to WSL path
-            result = subprocess.run(["wslpath", win_path], capture_output=True, text=True, check=True, timeout=5)
+            result = subprocess.run(
+                [get_command_path("wslpath"), win_path], capture_output=True, text=True, check=True, timeout=5
+            )
             wsl_path = Path(result.stdout.strip())
 
             if wsl_path.exists() and (wsl_path / ".claude" / "projects").exists():
@@ -1236,12 +1378,12 @@ def get_workspace_name_from_path(workspace_dir_name: str) -> str:
         'wsl_ubuntu_home-sankar-projects-auth' -> 'auth'
     """
     # Remove source tags if present
-    if workspace_dir_name.startswith("remote_"):
+    if workspace_dir_name.startswith(CACHED_REMOTE_PREFIX):
         # remote_hostname_path -> path
         parts = workspace_dir_name.split("_", 2)
         if len(parts) >= 3:
             workspace_dir_name = parts[2]
-    elif workspace_dir_name.startswith("wsl_"):
+    elif workspace_dir_name.startswith(CACHED_WSL_PREFIX):
         # wsl_distro_path -> path
         parts = workspace_dir_name.split("_", 2)
         if len(parts) >= 3:
@@ -1279,7 +1421,7 @@ def get_wsl_distributions() -> list:
 
     try:
         # Get list of WSL distributions
-        result = subprocess.run(["wsl", "--list", "--quiet"], capture_output=True, timeout=5)
+        result = subprocess.run([get_command_path("wsl"), "--list", "--quiet"], capture_output=True, timeout=5)
 
         if result.returncode != 0:
             return []
@@ -1296,7 +1438,7 @@ def get_wsl_distributions() -> list:
             # Get username for this distro
             try:
                 user_result = subprocess.run(
-                    ["wsl", "-d", distro_name, "whoami"], capture_output=True, text=True, timeout=5
+                    [get_command_path("wsl"), "-d", distro_name, "whoami"], capture_output=True, text=True, timeout=5
                 )
 
                 if user_result.returncode != 0:
@@ -1338,7 +1480,9 @@ def get_wsl_projects_dir(distro_name: str) -> Path:
 
     # Get username from WSL
     try:
-        result = subprocess.run(["wsl", "-d", distro_name, "whoami"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            [get_command_path("wsl"), "-d", distro_name, "whoami"], capture_output=True, text=True, timeout=5
+        )
 
         if result.returncode != 0:
             sys.stderr.write(f"Error: Could not get username for WSL distribution '{distro_name}'\n")
@@ -1442,7 +1586,7 @@ def check_ssh_connection(remote_host: str) -> bool:
     try:
         # Try SSH with BatchMode (no password prompts) and short timeout
         result = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", remote_host, "echo ok"],
+            [get_command_path("ssh"), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", remote_host, "echo ok"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -1532,7 +1676,9 @@ done
         script_unix = script.replace("\r\n", "\n").replace("\r", "\n")
         script_bytes = script_unix.encode("utf-8")
 
-        result = subprocess.run(["ssh", remote_host, "bash -s"], input=script_bytes, capture_output=True, timeout=30)
+        result = subprocess.run(
+            [get_command_path("ssh"), remote_host, "bash -s"], input=script_bytes, capture_output=True, timeout=30
+        )
 
         if result.returncode != 0:
             return []
@@ -1606,13 +1752,15 @@ def normalize_remote_workspace_name(remote_host: str, workspace_dir_name: str) -
     generate_paths(parts, 0, [])
 
     # Limit candidates to reasonable number
-    candidates = candidates[:20]
+    candidates = candidates[:MAX_WORKSPACE_CANDIDATES]
 
     # Test all candidates in ONE SSH call
     test_commands = " || ".join([f'test -e "/{path}" && echo "/{path}"' for path in candidates])
 
     try:
-        result = subprocess.run(["ssh", remote_host, test_commands], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            [get_command_path("ssh"), remote_host, test_commands], capture_output=True, text=True, timeout=10
+        )
 
         if result.stdout.strip():
             # Return the first (longest) match
@@ -1644,7 +1792,10 @@ def list_remote_workspaces(remote_host: str) -> list:
     try:
         # List directories in remote ~/.claude/projects/ (simple and fast)
         result = subprocess.run(
-            ["ssh", remote_host, 'ls -1 ~/.claude/projects/ | grep "^-"'], capture_output=True, text=True, timeout=30
+            [get_command_path("ssh"), remote_host, 'ls -1 ~/.claude/projects/ | grep "^-"'],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
 
         if result.returncode != 0:
@@ -1657,7 +1808,7 @@ def list_remote_workspaces(remote_host: str) -> list:
         # - remote_* = SSH remote caches
         # - wsl_* = WSL caches
         # These are already fetched data and shouldn't be re-fetched
-        workspaces = [ws for ws in all_workspaces if not ws.startswith("remote_") and not ws.startswith("wsl_")]
+        workspaces = [ws for ws in all_workspaces if is_native_workspace(ws)]
 
         return workspaces
 
@@ -1699,7 +1850,7 @@ def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
                       echo "$f|$size|$mtime|$lines"; \
                   done"""
 
-        result = subprocess.run(["ssh", remote_host, cmd], capture_output=True, text=True, timeout=30)
+        result = subprocess.run([get_command_path("ssh"), remote_host, cmd], capture_output=True, text=True, timeout=30)
 
         if result.returncode != 0:
             return []
@@ -1759,6 +1910,10 @@ def fetch_workspace_files(remote_host: str, remote_workspace: str, local_project
     local_workspace = f"remote_{hostname}_{workspace_path}"
     local_dir = local_projects_dir / local_workspace
 
+    # Security: Verify the constructed path stays within projects directory
+    if not is_safe_path(local_projects_dir, local_dir):
+        return {"success": False, "files_copied": 0, "bytes": 0, "error": "Path traversal detected"}
+
     # Create local directory
     local_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1793,13 +1948,13 @@ def fetch_workspace_files(remote_host: str, remote_workspace: str, local_project
         else:
             local_path_str = local_path_posix + "/"
 
-        rsync_cmd = ["rsync", "-avh", "--include=*.jsonl", "--exclude=*", remote_path, local_path_str]
+        rsync_cmd = [get_command_path("rsync"), "-avh", "--include=*.jsonl", "--exclude=*", remote_path, local_path_str]
 
         result = subprocess.run(
             rsync_cmd,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minute timeout
+            timeout=SSH_TIMEOUT,
         )
 
         if result.returncode != 0:
@@ -1871,10 +2026,14 @@ def save_config(data: dict) -> bool:
 
     try:
         config_dir.mkdir(parents=True, exist_ok=True)
+        # Set secure permissions on config directory (owner-only access)
+        os.chmod(config_dir, 0o700)
         if "version" not in data:
             data["version"] = 1
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        # Set secure permissions on config file (owner read/write only)
+        os.chmod(config_file, 0o600)
         return True
     except OSError as e:
         sys.stderr.write(f"Error saving config: {e}\n")
@@ -1915,6 +2074,8 @@ def save_aliases(data: dict) -> bool:
     try:
         # Create directory if needed
         aliases_dir.mkdir(parents=True, exist_ok=True)
+        # Set secure permissions on aliases directory (owner-only access)
+        os.chmod(aliases_dir, 0o700)
 
         # Ensure version is set
         if "version" not in data:
@@ -1922,6 +2083,8 @@ def save_aliases(data: dict) -> bool:
 
         with open(aliases_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        # Set secure permissions on aliases file (owner read/write only)
+        os.chmod(aliases_file, 0o600)
         return True
     except OSError as e:
         sys.stderr.write(f"Error: Could not save aliases: {e}\n")
@@ -2044,45 +2207,22 @@ def get_sessions_for_source(
         elif source_key.startswith("windows:"):
             # Windows sessions (from WSL)
             username = source_key.split(":", 1)[1]
-            projects_dir = get_windows_projects_dir(username)
-
-            # Temporarily override get_claude_projects_dir
-            original_get_claude = get_claude_projects_dir
-
-            def temp_override():
-                return projects_dir
-
-            current_module = sys.modules[__name__]
-            current_module.get_claude_projects_dir = temp_override
-
-            try:
-                sessions = get_workspace_sessions(workspace, quiet=True, since_date=since_date, until_date=until_date)
-                return sessions
-            finally:
-                current_module.get_claude_projects_dir = original_get_claude
+            windows_projects_dir = get_windows_projects_dir(username)
+            return get_workspace_sessions(
+                workspace, quiet=True, since_date=since_date, until_date=until_date, projects_dir=windows_projects_dir
+            )
 
         elif source_key.startswith("wsl:"):
             # WSL sessions (from Windows)
             distro = source_key.split(":", 1)[1]
-            projects_dir = get_wsl_projects_dir(distro)
+            wsl_projects_dir = get_wsl_projects_dir(distro)
 
-            if projects_dir is None:
+            if wsl_projects_dir is None:
                 return []
 
-            # Temporarily override get_claude_projects_dir
-            original_get_claude = get_claude_projects_dir
-
-            def temp_override():
-                return projects_dir
-
-            current_module = sys.modules[__name__]
-            current_module.get_claude_projects_dir = temp_override
-
-            try:
-                sessions = get_workspace_sessions(workspace, quiet=True, since_date=since_date, until_date=until_date)
-                return sessions
-            finally:
-                current_module.get_claude_projects_dir = original_get_claude
+            return get_workspace_sessions(
+                workspace, quiet=True, since_date=since_date, until_date=until_date, projects_dir=wsl_projects_dir
+            )
 
         elif source_key.startswith("remote:"):
             # Remote sessions via SSH
@@ -2398,11 +2538,7 @@ def interactive_workspace_picker(source_key: str, args) -> list:
             if not projects_dir:
                 sys.stderr.write(f"Error: Cannot access WSL '{distro}'\n")
                 return []
-            workspaces = [
-                d.name
-                for d in projects_dir.iterdir()
-                if d.is_dir() and not d.name.startswith("remote_") and not d.name.startswith("wsl_")
-            ]
+            workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and is_native_workspace(d.name)]
         elif source_key.startswith("windows"):
             # source_key is 'windows' or 'windows:username'
             user = source_key[8:] if source_key.startswith("windows:") else None
@@ -2410,11 +2546,7 @@ def interactive_workspace_picker(source_key: str, args) -> list:
             if not projects_dir:
                 sys.stderr.write("Error: Cannot access Windows\n")
                 return []
-            workspaces = [
-                d.name
-                for d in projects_dir.iterdir()
-                if d.is_dir() and not d.name.startswith("remote_") and not d.name.startswith("wsl_")
-            ]
+            workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and is_native_workspace(d.name)]
         elif source_key.startswith("remote:"):
             hostname = source_key[7:]
             # Find original remote format
@@ -2424,11 +2556,7 @@ def interactive_workspace_picker(source_key: str, args) -> list:
         else:
             # Local
             projects_dir = get_claude_projects_dir()
-            workspaces = [
-                d.name
-                for d in projects_dir.iterdir()
-                if d.is_dir() and not d.name.startswith("remote_") and not d.name.startswith("wsl_")
-            ]
+            workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and is_native_workspace(d.name)]
     except Exception as e:
         sys.stderr.write(f"Error listing workspaces: {e}\n")
         return []
@@ -2725,9 +2853,6 @@ import sqlite3
 
 METRICS_DB_VERSION = 3
 
-# Gap threshold for work period detection (30 minutes in seconds)
-WORK_PERIOD_GAP_THRESHOLD = 30 * 60
-
 
 def get_metrics_db_path() -> Path:
     """Get the metrics database file path."""
@@ -2742,10 +2867,18 @@ def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
     if db_path is None:
         db_path = get_metrics_db_path()
 
-    # Ensure directory exists
+    # Ensure directory exists with secure permissions
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(db_path.parent, 0o700)
+
+    # Track if this is a new database
+    is_new_db = not db_path.exists()
 
     conn = sqlite3.connect(str(db_path))
+
+    # Set secure permissions on new database file
+    if is_new_db:
+        os.chmod(db_path, 0o600)
     conn.row_factory = sqlite3.Row  # Enable column access by name
 
     # Create tables
@@ -3188,7 +3321,7 @@ def cmd_stats_sync(args):
                 continue
 
             # Skip cached remote/WSL directories
-            if workspace_dir.name.startswith("remote_") or workspace_dir.name.startswith("wsl_"):
+            if is_cached_workspace(workspace_dir.name):
                 continue
 
             # Check pattern match
@@ -3562,9 +3695,9 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
     cache_hit_ratio = (cache_read / cache_total * 100) if cache_total > 0 else 0
 
     # Display
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("CLAUDE CODE METRICS SUMMARY")
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
 
     total_sessions = session_stats["total_sessions"] or 0
     main_sessions = session_stats["main_sessions"] or 0
@@ -3638,9 +3771,9 @@ def display_tool_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     )
     tools = cursor.fetchall()
 
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("TOOL USAGE STATISTICS")
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
 
     print(f"\n{'Tool':<25} {'Uses':>10} {'Errors':>10} {'Error %':>10}")
     print("-" * 55)
@@ -3674,9 +3807,9 @@ def display_model_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     )
     models = cursor.fetchall()
 
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("MODEL USAGE STATISTICS")
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
 
     print(f"\n{'Model':<35} {'Messages':>10} {'Sessions':>10} {'Avg Out':>10}")
     print("-" * 65)
@@ -3755,9 +3888,9 @@ def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: li
         else:
             unaliased.append({"name": ws_name, "source": source, "sessions": sessions, "messages": messages})
 
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("WORKSPACE STATISTICS")
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
 
     # Show aliases first
     if alias_stats:
@@ -3771,11 +3904,11 @@ def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: li
             print(f"@{alias_name:<29} {sources_str:<15} {stats['sessions']:>8,} {stats['messages']:>10,}")
 
     # Show unaliased workspaces
-    print("\nIndividual Workspaces (Top 20)")
+    print(f"\nIndividual Workspaces (Top {MAX_TOP_WORKSPACES})")
     print(f"{'Workspace':<30} {'Source':<10} {'Sessions':>8} {'Messages':>10}")
-    print("-" * 60)
+    print("-" * DISPLAY_SEPARATOR_WIDTH)
 
-    for row in unaliased[:20]:
+    for row in unaliased[:MAX_TOP_WORKSPACES]:
         ws_name = row["name"][:28] if len(row["name"]) > 28 else row["name"]
         print(f"{ws_name:<30} {row['source']:<10} {row['sessions']:>8,} {row['messages']:>10,}")
 
@@ -3809,9 +3942,9 @@ def display_daily_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     )
     days = cursor.fetchall()
 
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("DAILY STATISTICS (Last 30 days)")
-    print("=" * 60)
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
 
     print(f"\n{'Date':<12} {'Sessions':>10} {'Messages':>10} {'Input Tokens':>15}")
     print("-" * 50)
@@ -4037,70 +4170,52 @@ def cmd_list(args):
                 username = remote_host[10:]  # Remove 'windows://' prefix
 
             # Get Windows projects directory (uses /mnt/c/Users/... path)
-            projects_dir = get_windows_projects_dir(username)
+            windows_projects_dir = get_windows_projects_dir(username)
 
-            # Use local file operations on Windows filesystem
-            # Temporarily override get_claude_projects_dir to return Windows path
-            original_get_claude_projects_dir = get_claude_projects_dir
+            # Get patterns list (multiple patterns support)
+            patterns = getattr(args, "patterns", None)
+            if patterns is None:
+                patterns = [getattr(args, "workspace", "")]
 
-            def get_windows_override():
-                return projects_dir
+            # Collect sessions from all patterns with deduplication
+            all_sessions = []
+            seen_files = set()
+            for pattern in patterns:
+                pattern_sessions = get_workspace_sessions(
+                    pattern, since_date=since_date, until_date=until_date, projects_dir=windows_projects_dir
+                )
+                for session in pattern_sessions:
+                    file_key = str(session["file"])
+                    if file_key not in seen_files:
+                        seen_files.add(file_key)
+                        all_sessions.append(session)
 
-            # Replace function temporarily
-            current_module = sys.modules[__name__]
-            current_module.get_claude_projects_dir = get_windows_override
+            # Filter out remote caches to prevent showing cached data
+            # Only show native Windows workspaces, not cached remote/wsl data
+            sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
 
-            try:
-                # Get patterns list (multiple patterns support)
-                patterns = getattr(args, "patterns", None)
-                if patterns is None:
-                    patterns = [getattr(args, "workspace", "")]
+            if not sessions:
+                sys.stderr.write("Error: No native sessions found in Windows\n")
+                sys.exit(1)
 
-                # Collect sessions from all patterns with deduplication
-                all_sessions = []
-                seen_files = set()
-                for pattern in patterns:
-                    pattern_sessions = get_workspace_sessions(pattern, since_date=since_date, until_date=until_date)
-                    for session in pattern_sessions:
-                        file_key = str(session["file"])
-                        if file_key not in seen_files:
-                            seen_files.add(file_key)
-                            all_sessions.append(session)
+            workspaces_only = getattr(args, "workspaces_only", False)
 
-                # Filter out remote caches to prevent showing cached data
-                # Only show native Windows workspaces, not cached remote/wsl data
-                sessions = [
-                    s
-                    for s in all_sessions
-                    if not s["workspace"].startswith("remote_") and not s["workspace"].startswith("wsl_")
-                ]
+            if workspaces_only:
+                # Just print workspace names
+                workspaces = set()
+                for session in sessions:
+                    workspaces.add(session["workspace_readable"])
 
-                if not sessions:
-                    sys.stderr.write("Error: No native sessions found in Windows\n")
-                    sys.exit(1)
-
-                workspaces_only = getattr(args, "workspaces_only", False)
-
-                if workspaces_only:
-                    # Just print workspace names
-                    workspaces = set()
-                    for session in sessions:
-                        workspaces.add(session["workspace_readable"])
-
-                    for ws in sorted(workspaces):
-                        print(ws)
-                else:
-                    # Print header and sessions
-                    source_label = f"Windows ({username})" if username else "Windows"
-                    print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
-                    for session in sessions:
-                        print(
-                            f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
-                        )
-
-            finally:
-                # Restore original function
-                current_module.get_claude_projects_dir = original_get_claude_projects_dir
+                for ws in sorted(workspaces):
+                    print(ws)
+            else:
+                # Print header and sessions
+                source_label = f"Windows ({username})" if username else "Windows"
+                print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+                for session in sessions:
+                    print(
+                        f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+                    )
 
             return  # Done with Windows handling
 
@@ -4110,69 +4225,52 @@ def cmd_list(args):
             distro_name = remote_host[6:]  # Remove 'wsl://' prefix
 
             # Get WSL projects directory (uses Windows path //wsl.localhost/...)
-            projects_dir = get_wsl_projects_dir(distro_name)
+            wsl_projects_dir = get_wsl_projects_dir(distro_name)
 
-            # Use local file operations on WSL filesystem
-            # Temporarily override get_claude_projects_dir to return WSL path
-            original_get_claude_projects_dir = get_claude_projects_dir
+            # Get patterns list (multiple patterns support)
+            patterns = getattr(args, "patterns", None)
+            if patterns is None:
+                patterns = [getattr(args, "workspace", "")]
 
-            def get_wsl_override():
-                return projects_dir
+            # Collect sessions from all patterns with deduplication
+            all_sessions = []
+            seen_files = set()
+            for pattern in patterns:
+                pattern_sessions = get_workspace_sessions(
+                    pattern, since_date=since_date, until_date=until_date, projects_dir=wsl_projects_dir
+                )
+                for session in pattern_sessions:
+                    file_key = str(session["file"])
+                    if file_key not in seen_files:
+                        seen_files.add(file_key)
+                        all_sessions.append(session)
 
-            # Replace function temporarily
-            current_module = sys.modules[__name__]
-            current_module.get_claude_projects_dir = get_wsl_override
+            # Filter out remote caches to prevent showing cached data
+            # Only show native WSL workspaces, not cached remote/wsl data
+            sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
 
-            try:
-                # Get patterns list (multiple patterns support)
-                patterns = getattr(args, "patterns", None)
-                if patterns is None:
-                    patterns = [getattr(args, "workspace", "")]
+            if not sessions:
+                sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
+                sys.exit(1)
 
-                # Collect sessions from all patterns with deduplication
-                all_sessions = []
-                seen_files = set()
-                for pattern in patterns:
-                    pattern_sessions = get_workspace_sessions(pattern, since_date=since_date, until_date=until_date)
-                    for session in pattern_sessions:
-                        file_key = str(session["file"])
-                        if file_key not in seen_files:
-                            seen_files.add(file_key)
-                            all_sessions.append(session)
+            workspaces_only = getattr(args, "workspaces_only", False)
 
-                # Filter out remote caches to prevent showing cached data
-                # Only show native WSL workspaces, not cached remote/wsl data
-                sessions = [
-                    s
-                    for s in all_sessions
-                    if not s["workspace"].startswith("remote_") and not s["workspace"].startswith("wsl_")
-                ]
+            if workspaces_only:
+                # Just print workspace names
+                workspaces = set()
+                for session in sessions:
+                    workspaces.add(session["workspace_readable"])
 
-                if not sessions:
-                    sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
-                    sys.exit(1)
-
-                workspaces_only = getattr(args, "workspaces_only", False)
-
-                if workspaces_only:
-                    # Just print workspace names
-                    workspaces = set()
-                    for session in sessions:
-                        workspaces.add(session["workspace_readable"])
-
-                    for ws in sorted(workspaces):
-                        print(ws)
-                else:
-                    # Print header and sessions
-                    source_label = f"WSL ({distro_name})"
-                    print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
-                    for session in sessions:
-                        print(
-                            f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
-                        )
-            finally:
-                # Restore original function
-                current_module.get_claude_projects_dir = original_get_claude_projects_dir
+                for ws in sorted(workspaces):
+                    print(ws)
+            else:
+                # Print header and sessions
+                source_label = f"WSL ({distro_name})"
+                print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+                for session in sessions:
+                    print(
+                        f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+                    )
 
             return  # Done with WSL handling
 
@@ -4352,7 +4450,10 @@ def cmd_convert(args):
         try:
             # Use scp to download the file
             result = subprocess.run(
-                ["scp", f"{remote_host}:{args.jsonl_file}", str(tmp_path)], capture_output=True, text=True, timeout=60
+                [get_command_path("scp"), f"{remote_host}:{args.jsonl_file}", str(tmp_path)],
+                capture_output=True,
+                text=True,
+                timeout=SCP_TIMEOUT,
             )
 
             if result.returncode != 0:
@@ -4434,48 +4535,29 @@ def cmd_batch(args):
                 username = remote_host[10:]  # Remove 'windows://' prefix
 
             # Get Windows projects directory (uses /mnt/c/Users/... path)
-            projects_dir = get_windows_projects_dir(username)
+            windows_projects_dir = get_windows_projects_dir(username)
 
-            # Use local file operations on Windows filesystem
-            # Temporarily override get_claude_projects_dir to return Windows path
-            original_get_claude_projects_dir = get_claude_projects_dir
+            # Get patterns list (multiple patterns support)
+            patterns = getattr(args, "patterns", None)
+            if patterns is None:
+                patterns = [getattr(args, "workspace", "")]
 
-            def get_windows_override():
-                return projects_dir
+            # Collect sessions from all patterns with deduplication
+            all_sessions = []
+            seen_files = set()
+            for pattern in patterns if patterns else [""]:
+                pattern_sessions = get_workspace_sessions(
+                    pattern, quiet=True, since_date=since_date, until_date=until_date, projects_dir=windows_projects_dir
+                )
+                for session in pattern_sessions:
+                    file_key = str(session["file"])
+                    if file_key not in seen_files:
+                        seen_files.add(file_key)
+                        all_sessions.append(session)
 
-            # Replace function temporarily
-            current_module = sys.modules[__name__]
-            current_module.get_claude_projects_dir = get_windows_override
-
-            try:
-                # Get patterns list (multiple patterns support)
-                patterns = getattr(args, "patterns", None)
-                if patterns is None:
-                    patterns = [getattr(args, "workspace", "")]
-
-                # Collect sessions from all patterns with deduplication
-                all_sessions = []
-                seen_files = set()
-                for pattern in patterns if patterns else [""]:
-                    pattern_sessions = get_workspace_sessions(
-                        pattern, quiet=True, since_date=since_date, until_date=until_date
-                    )
-                    for session in pattern_sessions:
-                        file_key = str(session["file"])
-                        if file_key not in seen_files:
-                            seen_files.add(file_key)
-                            all_sessions.append(session)
-
-                # Filter out remote caches to prevent circular fetching
-                # Only export native Windows workspaces, not cached remote/wsl data
-                sessions = [
-                    s
-                    for s in all_sessions
-                    if not s["workspace"].startswith("remote_") and not s["workspace"].startswith("wsl_")
-                ]
-            finally:
-                # Restore original function
-                current_module.get_claude_projects_dir = original_get_claude_projects_dir
+            # Filter out remote caches to prevent circular fetching
+            # Only export native Windows workspaces, not cached remote/wsl data
+            sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
 
             if not sessions:
                 sys.stderr.write("Error: No native sessions found in Windows\n")
@@ -4489,48 +4571,29 @@ def cmd_batch(args):
             distro_name = remote_host[6:]  # Remove 'wsl://' prefix
 
             # Get WSL projects directory (uses Windows path //wsl.localhost/...)
-            projects_dir = get_wsl_projects_dir(distro_name)
+            wsl_projects_dir = get_wsl_projects_dir(distro_name)
 
-            # Use local file operations on WSL filesystem
-            # Temporarily override get_claude_projects_dir to return WSL path
-            original_get_claude_projects_dir = get_claude_projects_dir
+            # Get patterns list (multiple patterns support)
+            patterns = getattr(args, "patterns", None)
+            if patterns is None:
+                patterns = [getattr(args, "workspace", "")]
 
-            def get_wsl_override():
-                return projects_dir
+            # Collect sessions from all patterns with deduplication
+            all_sessions = []
+            seen_files = set()
+            for pattern in patterns if patterns else [""]:
+                pattern_sessions = get_workspace_sessions(
+                    pattern, quiet=True, since_date=since_date, until_date=until_date, projects_dir=wsl_projects_dir
+                )
+                for session in pattern_sessions:
+                    file_key = str(session["file"])
+                    if file_key not in seen_files:
+                        seen_files.add(file_key)
+                        all_sessions.append(session)
 
-            # Replace function temporarily
-            current_module = sys.modules[__name__]
-            current_module.get_claude_projects_dir = get_wsl_override
-
-            try:
-                # Get patterns list (multiple patterns support)
-                patterns = getattr(args, "patterns", None)
-                if patterns is None:
-                    patterns = [getattr(args, "workspace", "")]
-
-                # Collect sessions from all patterns with deduplication
-                all_sessions = []
-                seen_files = set()
-                for pattern in patterns if patterns else [""]:
-                    pattern_sessions = get_workspace_sessions(
-                        pattern, quiet=True, since_date=since_date, until_date=until_date
-                    )
-                    for session in pattern_sessions:
-                        file_key = str(session["file"])
-                        if file_key not in seen_files:
-                            seen_files.add(file_key)
-                            all_sessions.append(session)
-
-                # Filter out remote caches to prevent circular fetching
-                # Only export native WSL workspaces, not cached remote/wsl data
-                sessions = [
-                    s
-                    for s in all_sessions
-                    if not s["workspace"].startswith("remote_") and not s["workspace"].startswith("wsl_")
-                ]
-            finally:
-                # Restore original function
-                current_module.get_claude_projects_dir = original_get_claude_projects_dir
+            # Filter out remote caches to prevent circular fetching
+            # Only export native WSL workspaces, not cached remote/wsl data
+            sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
 
             if not sessions:
                 sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
@@ -4821,11 +4884,13 @@ def cmd_list_all_homes(args):
     all_results = []  # List of (source_label, sessions)
 
     # Helper to get sessions for multiple patterns with deduplication
-    def get_sessions_for_patterns(patterns_list, since_date, until_date):
+    def get_sessions_for_patterns(patterns_list, since_date, until_date, projects_dir=None):
         all_sessions = []
         seen_files = set()
         for pattern in patterns_list:
-            sessions = get_workspace_sessions(pattern, since_date=since_date, until_date=until_date, quiet=True)
+            sessions = get_workspace_sessions(
+                pattern, since_date=since_date, until_date=until_date, quiet=True, projects_dir=projects_dir
+            )
             for session in sessions:
                 file_key = str(session["file"])
                 if file_key not in seen_files:
@@ -4837,14 +4902,8 @@ def cmd_list_all_homes(args):
     try:
         local_label = "Local (WSL)" if in_wsl else "Local"
         sessions = get_sessions_for_patterns(patterns, since_date, until_date)
-        # Filter out cached remote/wsl workspaces
-        native_sessions = [
-            s
-            for s in sessions
-            if not s["workspace"].startswith("remote_")
-            and not s["workspace"].startswith("wsl_")
-            and not s["workspace"].startswith("windows_")
-        ]
+        # Filter out cached remote/wsl/windows workspaces
+        native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
         if native_sessions:
             all_results.append((local_label, native_sessions))
     except Exception as e:
@@ -4856,26 +4915,13 @@ def cmd_list_all_homes(args):
             windows_users = get_windows_users_with_claude()
             for user in windows_users:
                 try:
-                    projects_dir = get_windows_projects_dir(user["username"])
-                    original_get_claude = get_claude_projects_dir
-
-                    def temp_override():
-                        return projects_dir
-
-                    current_module = sys.modules[__name__]
-                    current_module.get_claude_projects_dir = temp_override
-
-                    try:
-                        sessions = get_sessions_for_patterns(patterns, since_date, until_date)
-                        native_sessions = [
-                            s
-                            for s in sessions
-                            if not s["workspace"].startswith("remote_") and not s["workspace"].startswith("wsl_")
-                        ]
-                        if native_sessions:
-                            all_results.append((f"Windows ({user['username']})", native_sessions))
-                    finally:
-                        current_module.get_claude_projects_dir = original_get_claude
+                    windows_projects_dir = get_windows_projects_dir(user["username"])
+                    sessions = get_sessions_for_patterns(
+                        patterns, since_date, until_date, projects_dir=windows_projects_dir
+                    )
+                    native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
+                    if native_sessions:
+                        all_results.append((f"Windows ({user['username']})", native_sessions))
                 except Exception as e:
                     sys.stderr.write(f"Error accessing Windows ({user['username']}): {e}\n")
         except Exception as e:
@@ -4889,26 +4935,13 @@ def cmd_list_all_homes(args):
 
             for distro in claude_distros:
                 try:
-                    projects_dir = get_wsl_projects_dir(distro["name"])
-                    original_get_claude = get_claude_projects_dir
-
-                    def temp_override():
-                        return projects_dir
-
-                    current_module = sys.modules[__name__]
-                    current_module.get_claude_projects_dir = temp_override
-
-                    try:
-                        sessions = get_sessions_for_patterns(patterns, since_date, until_date)
-                        native_sessions = [
-                            s
-                            for s in sessions
-                            if not s["workspace"].startswith("remote_") and not s["workspace"].startswith("wsl_")
-                        ]
-                        if native_sessions:
-                            all_results.append((f"WSL ({distro['name']})", native_sessions))
-                    finally:
-                        current_module.get_claude_projects_dir = original_get_claude
+                    wsl_projects_dir = get_wsl_projects_dir(distro["name"])
+                    sessions = get_sessions_for_patterns(
+                        patterns, since_date, until_date, projects_dir=wsl_projects_dir
+                    )
+                    native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
+                    if native_sessions:
+                        all_results.append((f"WSL ({distro['name']})", native_sessions))
                 except Exception as e:
                     sys.stderr.write(f"Error accessing WSL ({distro['name']}): {e}\n")
         except Exception as e:
@@ -5341,11 +5374,13 @@ def cmd_export_all(args):
     total_errors = 0
 
     # Helper to get sessions for multiple patterns with deduplication
-    def get_sessions_for_patterns(patterns_list, quiet=True, since_date=None, until_date=None):
+    def get_sessions_for_patterns(patterns_list, quiet=True, since_date=None, until_date=None, projects_dir=None):
         all_sessions = []
         seen_files = set()
         for pattern in patterns_list if patterns_list else [""]:
-            sessions = get_workspace_sessions(pattern, quiet=quiet, since_date=since_date, until_date=until_date)
+            sessions = get_workspace_sessions(
+                pattern, quiet=quiet, since_date=since_date, until_date=until_date, projects_dir=projects_dir
+            )
             for session in sessions:
                 file_key = str(session["file"])
                 if file_key not in seen_files:
@@ -5413,25 +5448,13 @@ def cmd_export_all(args):
                         WindowsExportArgs.workspace = patterns[0] if patterns else ""
 
                         # Count sessions first
-                        projects_dir = get_windows_projects_dir(username)
-                        original_get_claude = get_claude_projects_dir
-
-                        def temp_override():
-                            return projects_dir
-
-                        current_module = sys.modules[__name__]
-                        current_module.get_claude_projects_dir = temp_override
-                        try:
-                            win_sessions = get_sessions_for_patterns(patterns, quiet=True)
-                            # Filter out cached data
-                            native_sessions = [
-                                s
-                                for s in win_sessions
-                                if not s["workspace"].startswith("remote_") and not s["workspace"].startswith("wsl_")
-                            ]
-                            session_count = len(native_sessions)
-                        finally:
-                            current_module.get_claude_projects_dir = original_get_claude
+                        windows_projects_dir = get_windows_projects_dir(username)
+                        win_sessions = get_sessions_for_patterns(
+                            patterns, quiet=True, projects_dir=windows_projects_dir
+                        )
+                        # Filter out cached data
+                        native_sessions = [s for s in win_sessions if is_native_workspace(s["workspace"])]
+                        session_count = len(native_sessions)
 
                         if session_count > 0:
                             cmd_batch(WindowsExportArgs())
@@ -5478,19 +5501,9 @@ def cmd_export_all(args):
                         WslExportArgs.workspace = patterns[0] if patterns else ""
 
                         # Count sessions first
-                        projects_dir = get_wsl_projects_dir(distro["name"])
-                        original_get_claude = get_claude_projects_dir
-
-                        def temp_override():
-                            return projects_dir
-
-                        current_module = sys.modules[__name__]
-                        current_module.get_claude_projects_dir = temp_override
-                        try:
-                            wsl_sessions = get_sessions_for_patterns(patterns, quiet=True)
-                            session_count = len(wsl_sessions)
-                        finally:
-                            current_module.get_claude_projects_dir = original_get_claude
+                        wsl_projects_dir = get_wsl_projects_dir(distro["name"])
+                        wsl_sessions = get_sessions_for_patterns(patterns, quiet=True, projects_dir=wsl_projects_dir)
+                        session_count = len(wsl_sessions)
 
                         if session_count > 0:
                             cmd_batch(WslExportArgs())
@@ -5599,11 +5612,11 @@ def generate_index_manifest(output_dir: Path, sources_info: list):
             # Group by source
             sources = {"local": 0, "wsl": 0, "windows": 0, "remote": 0}
             for session_file in sessions:
-                if session_file.name.startswith("wsl_"):
+                if session_file.name.startswith(CACHED_WSL_PREFIX):
                     sources["wsl"] += 1
-                elif session_file.name.startswith("windows_"):
+                elif session_file.name.startswith(CACHED_WINDOWS_PREFIX):
                     sources["windows"] += 1
-                elif session_file.name.startswith("remote_"):
+                elif session_file.name.startswith(CACHED_REMOTE_PREFIX):
                     sources["remote"] += 1
                 else:
                     sources["local"] += 1

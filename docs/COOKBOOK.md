@@ -124,7 +124,7 @@ claude-history export @myproject --since 2025-11-01 -o ./recent/
 
 ## Recipe 9: Configure SSH Remotes (One-Time Setup)
 
-Configure SSH remotes once so `--as` uses them automatically:
+Configure SSH remotes once so `--ah` uses them automatically:
 
 ```bash
 # Add your SSH remotes (WSL/Windows are auto-detected)
