@@ -122,17 +122,17 @@ scp aliases.json user@newmachine:~/
 
 ---
 
-## Recipe 9: Configure Saved Sources (One-Time Setup)
+## Recipe 9: Configure SSH Remotes (One-Time Setup)
 
 Configure SSH remotes once so `--as` uses them automatically:
 
 ```bash
 # Add your SSH remotes (WSL/Windows are auto-detected)
-./claude-history sources add user@vm01
-./claude-history sources add user@vm02
+./claude-history lsh add user@vm01
+./claude-history lsh add user@vm02
 
 # Verify saved sources
-./claude-history sources
+./claude-history lsh
 
 # Now --as includes saved remotes automatically
 ./claude-history lsw --as              # includes vm01 and vm02

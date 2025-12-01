@@ -6,45 +6,65 @@ Detailed documentation for all `claude-history` commands and options.
 
 | Command | Description |
 |---------|-------------|
-| `lsh` | List hosts (local, WSL, Windows installations) |
+| `lsh` | List hosts and manage SSH remotes |
 | `lsw` | List workspaces |
 | `lss` | List sessions |
 | `export` | Export sessions to markdown |
 | `alias` | Manage workspace aliases |
-| `sources` | Manage saved SSH remote sources |
 | `stats` | Show usage statistics and metrics |
 
 ---
 
-## `lsh` - List Hosts
+## `lsh` - List Hosts & Manage SSH Remotes
 
-List all Claude Code installations across local, WSL, and Windows environments.
+List all Claude Code installations and manage SSH remote sources.
 
 ```bash
-./claude-history lsh [--local|--wsl|--windows]
+./claude-history lsh [--local|--wsl|--windows|--remotes]
+./claude-history lsh add <user@hostname>
+./claude-history lsh remove <user@hostname>
+./claude-history lsh clear
 ```
 
-**Options:**
-- No flags: Show all hosts (local + WSL + Windows)
+**Subcommands:**
+- `add <user@hostname>`: Add an SSH remote
+- `remove <user@hostname>`: Remove an SSH remote
+- `clear`: Remove all SSH remotes
+
+**Filter Options:**
+- No flags: Show all (local + WSL + Windows + SSH remotes)
 - `--local`: Show only local installation
 - `--wsl`: Show only WSL distributions
 - `--windows`: Show only Windows users
+- `--remotes`: Show only SSH remotes
 
 **Examples:**
 ```bash
-# Show all hosts
+# Show all hosts and SSH remotes
 $ ./claude-history lsh
 Local:
   /home/alice/.claude	10 workspaces
 
-WSL Distributions:
-  Ubuntu          alice           5 workspaces     \\wsl.localhost\Ubuntu\home\alice\.claude\projects
+SSH Remotes:
+  alice@server.example.com
 
-Windows Users:
-  alice       /mnt/c/Users/alice        16 workspaces
+# Add an SSH remote
+$ ./claude-history lsh add alice@server.example.com
+Added source: alice@server.example.com
 
-# Show only WSL distributions
-$ ./claude-history lsh --wsl
+# Remove an SSH remote
+$ ./claude-history lsh remove alice@server.example.com
+Removed source: alice@server.example.com
+
+# Show only SSH remotes
+$ ./claude-history lsh --remotes
+```
+
+Once configured, `--as` automatically includes saved SSH remotes:
+```bash
+./claude-history lsw --as              # includes saved remotes
+./claude-history export --as           # exports from all sources
+./claude-history stats --time --as     # syncs from all sources
 ```
 
 ---
@@ -280,40 +300,6 @@ When running commands without arguments from an aliased workspace:
 
 # Force current workspace only
 ./claude-history lss --this
-```
-
----
-
-## `sources` - Manage Saved Sources
-
-Manage saved SSH remote sources for `--as` flag.
-
-```bash
-./claude-history sources [list|add|remove|clear]
-```
-
-**Note:** WSL/Windows are auto-detected by `--as`. This command is only for SSH remotes.
-
-**Examples:**
-```bash
-# List saved sources
-./claude-history sources
-
-# Add SSH remotes
-./claude-history sources add user@vm01
-./claude-history sources add user@vm02
-
-# Remove a source
-./claude-history sources remove user@vm02
-
-# Clear all sources
-./claude-history sources clear
-```
-
-Once configured, `--as` automatically includes saved sources:
-```bash
-./claude-history lsw --as              # includes vm01 and vm02
-./claude-history stats --time --as     # syncs from vm01 and vm02
 ```
 
 ---

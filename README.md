@@ -48,12 +48,11 @@ sudo mv claude-history /usr/local/bin/
 
 | Command | Description |
 |---------|-------------|
-| `lsh` | List hosts (local, WSL, Windows) |
+| `lsh` | List hosts and manage SSH remotes |
 | `lsw` | List workspaces |
 | `lss` | List sessions |
 | `export` | Export to markdown |
 | `alias` | Manage workspace aliases |
-| `sources` | Manage SSH remotes |
 | `stats` | Usage statistics |
 
 ## Common Examples
@@ -81,8 +80,12 @@ sudo mv claude-history /usr/local/bin/
 ## Multi-Environment Access
 
 ```bash
-# Discover all Claude installations
+# Discover all Claude installations and SSH remotes
 ./claude-history lsh
+
+# Add/remove SSH remotes
+./claude-history lsh add user@server
+./claude-history lsh remove user@server
 
 # Access WSL (from Windows)
 python claude-history lss --wsl
@@ -93,7 +96,7 @@ python claude-history lss --wsl
 # Access SSH remote
 ./claude-history lss -r user@server
 
-# All sources at once
+# All sources at once (includes saved SSH remotes)
 ./claude-history export --as
 ```
 

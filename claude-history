@@ -2709,83 +2709,37 @@ def cmd_alias_config_import(args):
 # ============================================================================
 
 def cmd_sources_list(args):
-    """List saved remote sources."""
+    """List saved remote sources. (Deprecated - use 'lsh' instead)"""
+    sys.stderr.write("Note: 'sources' is deprecated. Use 'lsh' instead.\n\n")
     sources = get_saved_sources()
 
     if not sources:
-        print("No remote sources configured.")
+        print("No SSH remotes configured.")
         print("\nAdd SSH remotes with:")
-        print("  claude-history sources add user@hostname")
-        print("\nNote: WSL/Windows are auto-detected by --as flag, no need to add them.")
+        print("  claude-history lsh add user@hostname")
         return
 
-    print("Configured remote sources:")
+    print("Configured SSH remotes:")
     for source in sources:
         print(f"  {source}")
 
 
 def cmd_sources_add(args):
-    """Add a remote source to configuration."""
-    source = args.source
-
-    # WSL and Windows are auto-detected, no need to save them
-    if source.startswith('wsl://') or source == 'windows':
-        sys.stderr.write(f"Note: {source} is auto-detected by --as flag, no need to add it.\n")
-        sys.stderr.write("This command is for SSH remotes (user@hostname).\n")
-        return
-
-    # Validate source format (SSH remote)
-    if '@' not in source:
-        sys.stderr.write(f"Error: Invalid source format: {source}\n")
-        sys.stderr.write("Expected: user@hostname (e.g., alice@server.example.com)\n")
-        sys.exit(1)
-
-    config = load_config()
-    sources = config.get('sources', [])
-
-    if source in sources:
-        print(f"Source '{source}' already configured.")
-        return
-
-    sources.append(source)
-    config['sources'] = sources
-
-    if save_config(config):
-        print(f"✅ Added source: {source}")
-    else:
-        sys.exit(1)
+    """Add a remote source. (Deprecated - use 'lsh add' instead)"""
+    sys.stderr.write("Note: 'sources add' is deprecated. Use 'lsh add' instead.\n\n")
+    cmd_lsh_add(args)
 
 
 def cmd_sources_remove(args):
-    """Remove a remote source from configuration."""
-    source = args.source
-
-    config = load_config()
-    sources = config.get('sources', [])
-
-    if source not in sources:
-        sys.stderr.write(f"Error: Source '{source}' not found.\n")
-        sys.stderr.write(f"Configured sources: {', '.join(sources) if sources else '(none)'}\n")
-        sys.exit(1)
-
-    sources.remove(source)
-    config['sources'] = sources
-
-    if save_config(config):
-        print(f"✅ Removed source: {source}")
-    else:
-        sys.exit(1)
+    """Remove a remote source. (Deprecated - use 'lsh remove' instead)"""
+    sys.stderr.write("Note: 'sources remove' is deprecated. Use 'lsh remove' instead.\n\n")
+    cmd_lsh_remove(args)
 
 
 def cmd_sources_clear(args):
-    """Clear all saved remote sources."""
-    config = load_config()
-    config['sources'] = []
-
-    if save_config(config):
-        print("✅ Cleared all remote sources.")
-    else:
-        sys.exit(1)
+    """Clear all remote sources. (Deprecated - use 'lsh clear' instead)"""
+    sys.stderr.write("Note: 'sources clear' is deprecated. Use 'lsh clear' instead.\n\n")
+    cmd_lsh_clear(args)
 
 
 # ============================================================================
@@ -4941,14 +4895,29 @@ def cmd_list_all_sources(args):
 
 def cmd_lsh(args):
     """List all home folders with Claude Code installations."""
+    # Check for subcommands first
+    lsh_action = getattr(args, 'lsh_action', None)
+
+    if lsh_action == 'add':
+        cmd_lsh_add(args)
+        return
+    elif lsh_action == 'remove':
+        cmd_lsh_remove(args)
+        return
+    elif lsh_action == 'clear':
+        cmd_lsh_clear(args)
+        return
+
+    # Default: list all hosts
     in_wsl = is_running_in_wsl()
 
     # Determine what to show based on flags
     # If no flags are specified, show all
     # If any flag is specified, show only that one
-    show_local = args.local or (not args.wsl and not args.windows)
+    show_local = args.local or (not args.wsl and not args.windows and not args.remotes)
     show_wsl = args.wsl
     show_windows = args.windows
+    show_remotes = getattr(args, 'remotes', False) or (not args.local and not args.wsl and not args.windows)
 
     # 1. Show local home folder
     if show_local:
@@ -4998,6 +4967,81 @@ def cmd_lsh(args):
             print()
         except Exception as e:
             sys.stderr.write(f"Error accessing Windows: {e}\n")
+
+    # 4. Show configured SSH remotes
+    if show_remotes:
+        sources = get_saved_sources()
+        print("SSH Remotes:")
+        if sources:
+            for source in sources:
+                print(f"  {source}")
+        else:
+            print("  (none configured)")
+        print()
+
+
+def cmd_lsh_add(args):
+    """Add a remote source to configuration."""
+    source = args.source
+
+    # WSL and Windows are auto-detected, no need to save them
+    if source.startswith('wsl://') or source == 'windows':
+        sys.stderr.write(f"Note: {source} is auto-detected by --as flag, no need to add it.\n")
+        sys.stderr.write("This command is for SSH remotes (user@hostname).\n")
+        return
+
+    # Validate source format (SSH remote)
+    if '@' not in source:
+        sys.stderr.write(f"Error: Invalid source format: {source}\n")
+        sys.stderr.write("Expected: user@hostname (e.g., alice@server.example.com)\n")
+        sys.exit(1)
+
+    config = load_config()
+    sources = config.get('sources', [])
+
+    if source in sources:
+        print(f"Source '{source}' already configured.")
+        return
+
+    sources.append(source)
+    config['sources'] = sources
+
+    if save_config(config):
+        print(f"Added source: {source}")
+    else:
+        sys.exit(1)
+
+
+def cmd_lsh_remove(args):
+    """Remove a remote source from configuration."""
+    source = args.source
+
+    config = load_config()
+    sources = config.get('sources', [])
+
+    if source not in sources:
+        sys.stderr.write(f"Error: Source '{source}' not found.\n")
+        sys.stderr.write(f"Configured sources: {', '.join(sources) if sources else '(none)'}\n")
+        sys.exit(1)
+
+    sources.remove(source)
+    config['sources'] = sources
+
+    if save_config(config):
+        print(f"Removed source: {source}")
+    else:
+        sys.exit(1)
+
+
+def cmd_lsh_clear(args):
+    """Clear all saved remote sources."""
+    config = load_config()
+    config['sources'] = []
+
+    if save_config(config):
+        print("Cleared all SSH remotes.")
+    else:
+        sys.exit(1)
 
 
 def cmd_fetch(args):
@@ -5617,9 +5661,31 @@ EXAMPLES:
 
     # ========== lsh - list hosts ==========
     parser_lsh = subparsers.add_parser('lsh',
-        help='List hosts',
-        description='List all home folders with Claude Code (.claude directories)')
+        help='List hosts and manage SSH remotes',
+        description='List all Claude Code installations (local, WSL, Windows, SSH remotes)')
 
+    lsh_subparsers = parser_lsh.add_subparsers(dest='lsh_action')
+
+    # lsh add
+    parser_lsh_add = lsh_subparsers.add_parser('add',
+        help='Add an SSH remote',
+        description='Add an SSH remote (user@hostname)')
+    parser_lsh_add.add_argument('source',
+        help='SSH remote (user@hostname)')
+
+    # lsh remove
+    parser_lsh_remove = lsh_subparsers.add_parser('remove',
+        help='Remove an SSH remote',
+        description='Remove an SSH remote from configuration')
+    parser_lsh_remove.add_argument('source',
+        help='SSH remote to remove')
+
+    # lsh clear
+    lsh_subparsers.add_parser('clear',
+        help='Clear all SSH remotes',
+        description='Remove all saved SSH remotes')
+
+    # Filter flags for listing (default action)
     parser_lsh.add_argument('--wsl',
         action='store_true',
         help='Show WSL distributions only')
@@ -5631,6 +5697,10 @@ EXAMPLES:
     parser_lsh.add_argument('--local',
         action='store_true',
         help='Show local home folder only')
+
+    parser_lsh.add_argument('--remotes',
+        action='store_true',
+        help='Show SSH remotes only')
 
     # ========== export command ==========
     parser_export = subparsers.add_parser('export',
