@@ -91,9 +91,9 @@ EXAMPLES:
     claude-history lss myproject -r user@server    # remote sessions
 
   Export (unified interface with orthogonal flags):
-    claude-history export                     # current workspace, local source
+    claude-history export                     # current workspace, local home
     claude-history export --al                # current workspace, all homes
-    claude-history export --aw                # all workspaces, local source
+    claude-history export --aw                # all workspaces, local home
     claude-history export --al --aw           # all workspaces, all homes
 
     claude-history export myproject           # specific workspace, local
@@ -182,7 +182,7 @@ claude-history lss --windows
 # Access SSH remote
 claude-history lss -r user@server
 
-# All sources at once (includes saved SSH remotes)
+# All homes at once (includes saved SSH remotes)
 claude-history export --al
 ```
 

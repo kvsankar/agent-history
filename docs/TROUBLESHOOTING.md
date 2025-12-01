@@ -77,7 +77,7 @@ No SSH or rsync needed - uses direct filesystem access.
 
 Yes! Combine flags:
 ```bash
-claude-history lsw --al                    # All sources
+claude-history lsw --al                    # All homes
 claude-history lss myproject --wsl         # WSL
 claude-history lss myproject --windows     # Windows (from WSL)
 claude-history lss myproject -r user@host  # SSH remote

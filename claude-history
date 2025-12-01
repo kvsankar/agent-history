@@ -3595,7 +3595,7 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
         print(f"   Error rate: {error_rate:.1f}%")
 
     if sources:
-        print("\nSources")
+        print("\nHomes")
         for src in sources:
             print(f"   {src['source']}: {src['count']:,} sessions")
 
@@ -4958,9 +4958,9 @@ def cmd_list_all_homes(args):
     # Output results
     if not all_results:
         if workspaces_only:
-            sys.stderr.write("No workspaces found across any sources.\n")
+            sys.stderr.write("No workspaces found.\n")
         else:
-            sys.stderr.write("No sessions found across any sources.\n")
+            sys.stderr.write("No sessions found.\n")
         return
 
     if workspaces_only:
@@ -5329,7 +5329,7 @@ def cmd_export_all(args):
         print("\nPlease fix the issues above and try again.")
         sys.exit(1)
 
-    print("All sources accessible\n")
+    print("All homes accessible\n")
 
     # Create output directory
     output_dir = Path(args.output_dir)

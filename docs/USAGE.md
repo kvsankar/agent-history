@@ -18,7 +18,7 @@ Detailed documentation for all `claude-history` commands and options.
 
 ## `lsh` - List Hosts & Manage SSH Remotes
 
-List all Claude Code installations and manage SSH remote sources.
+List all Claude Code installations and manage SSH remote homes.
 
 ```bash
 claude-history lsh [--local|--wsl|--windows|--remotes]
@@ -190,19 +190,19 @@ claude-history export [WORKSPACE...] [OPTIONS]
 | Command | Workspace Scope | Source Scope |
 |---------|----------------|--------------|
 | `export` | Current | Local only |
-| `export --as` | Current | All sources |
+| `export --as` | Current | All homes |
 | `export --aw` | All | Local only |
-| `export --al --aw` | All | All sources |
+| `export --al --aw` | All | All homes |
 
 **Examples:**
 ```bash
-# Current workspace, local source (default)
+# Current workspace, local home (default)
 claude-history export
 
 # Current workspace, all homes
 claude-history export --al
 
-# All workspaces, local source
+# All workspaces, local home
 claude-history export --aw
 
 # All workspaces, all homes
