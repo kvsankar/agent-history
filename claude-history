@@ -22,7 +22,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-__version__ = "1.4.2"
+__version__ = "1.4.3"
 
 
 # ============================================================================
@@ -231,6 +231,154 @@ def is_native_workspace(name: str) -> bool:
         True if this is a native workspace, False if cached.
     """
     return not is_cached_workspace(name)
+
+
+def matches_any_pattern(workspace_name: str, patterns: list) -> bool:
+    """Check if workspace name matches any pattern in the list.
+
+    A pattern matches if it is a substring of the workspace name.
+    Empty patterns ('', '*', 'all') match all workspaces.
+
+    Args:
+        workspace_name: Workspace name to check
+        patterns: List of patterns to match against
+
+    Returns:
+        True if workspace matches any pattern, False otherwise.
+    """
+    if not patterns or patterns == [""] or patterns == ["*"] or patterns == ["all"]:
+        return True
+    return any(pattern and pattern in workspace_name for pattern in patterns)
+
+
+def parse_and_validate_dates(since_str: str, until_str: str) -> tuple:
+    """Parse and validate date filter arguments.
+
+    Args:
+        since_str: Start date string (YYYY-MM-DD) or None
+        until_str: End date string (YYYY-MM-DD) or None
+
+    Returns:
+        Tuple of (since_date, until_date) as datetime objects or None.
+        Exits with error if validation fails.
+    """
+    since_date = parse_date_string(since_str) if since_str else None
+    until_date = parse_date_string(until_str) if until_str else None
+
+    if since_str and since_date is None:
+        sys.stderr.write(f"Error: Invalid date format for --since: '{since_str}'\n")
+        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-01)\n")
+        sys.exit(1)
+
+    if until_str and until_date is None:
+        sys.stderr.write(f"Error: Invalid date format for --until: '{until_str}'\n")
+        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-30)\n")
+        sys.exit(1)
+
+    if since_date and until_date and since_date > until_date:
+        sys.stderr.write("Error: --since date must be before --until date\n")
+        sys.exit(1)
+
+    return since_date, until_date
+
+
+def get_patterns_from_args(args) -> list:
+    """Extract workspace patterns from command arguments.
+
+    Handles both new-style 'patterns' attribute and legacy 'workspace' attribute.
+
+    Args:
+        args: Parsed argument object
+
+    Returns:
+        List of patterns (may contain empty string for 'all')
+    """
+    patterns = getattr(args, "patterns", None)
+    if patterns is None:
+        patterns = [getattr(args, "workspace", "")]
+    return patterns
+
+
+def collect_sessions_with_dedup(
+    patterns: list,
+    since_date=None,
+    until_date=None,
+    projects_dir: Path = None,
+    quiet: bool = True,
+    include_cached: bool = False,
+) -> list:
+    """Collect sessions from multiple patterns with automatic deduplication.
+
+    This is a common operation used by cmd_list, cmd_batch, and cmd_export_all.
+    Sessions are deduplicated by file path.
+
+    Args:
+        patterns: List of workspace patterns to search
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+        projects_dir: Optional projects directory (for WSL/Windows access)
+        quiet: If True, suppress "not found" warnings
+        include_cached: If True, include cached remote/WSL workspaces
+
+    Returns:
+        List of session dictionaries, deduplicated by file path.
+    """
+    all_sessions = []
+    seen_files = set()
+
+    for pattern in patterns if patterns else [""]:
+        pattern_sessions = get_workspace_sessions(
+            pattern,
+            quiet=quiet,
+            since_date=since_date,
+            until_date=until_date,
+            projects_dir=projects_dir,
+        )
+        for session in pattern_sessions:
+            file_key = str(session["file"])
+            if file_key not in seen_files:
+                seen_files.add(file_key)
+                all_sessions.append(session)
+
+    # Filter out cached workspaces if requested
+    if not include_cached:
+        all_sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
+
+    return all_sessions
+
+
+def format_session_line(session: dict, source_label: str) -> str:
+    """Format a session as a tab-separated output line.
+
+    Args:
+        session: Session dictionary with workspace_readable, filename, etc.
+        source_label: Source label (e.g., 'Local', 'WSL (Ubuntu)', 'Remote (host)')
+
+    Returns:
+        Tab-separated string for output.
+    """
+    return (
+        f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t"
+        f"{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+    )
+
+
+def print_sessions_output(sessions: list, source_label: str, workspaces_only: bool):
+    """Print sessions in appropriate format (workspaces-only or full details).
+
+    Args:
+        sessions: List of session dictionaries
+        source_label: Source label for output
+        workspaces_only: If True, print only unique workspace names
+    """
+    if workspaces_only:
+        workspaces = sorted({s["workspace_readable"] for s in sessions})
+        for ws in workspaces:
+            print(ws)
+    else:
+        print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+        for session in sessions:
+            print(format_session_line(session, source_label))
 
 
 # ============================================================================
@@ -4133,299 +4281,193 @@ def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
 # ============================================================================
 
 
-def cmd_list(args):
-    """List sessions for a workspace."""
-    # Check if remote flag is set
+def _list_windows_sessions(args, patterns: list, since_date, until_date):
+    """List sessions from Windows (called from WSL).
+
+    Args:
+        args: Parsed arguments
+        patterns: List of workspace patterns
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+    """
+    remote_host = getattr(args, "remote", None)
+    username = None
+    if remote_host and remote_host.startswith("windows://"):
+        username = remote_host[10:]
+
+    windows_projects_dir = get_windows_projects_dir(username)
+    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=windows_projects_dir)
+
+    if not sessions:
+        sys.stderr.write("Error: No native sessions found in Windows\n")
+        sys.exit(1)
+
+    source_label = f"Windows ({username})" if username else "Windows"
+    workspaces_only = getattr(args, "workspaces_only", False)
+    print_sessions_output(sessions, source_label, workspaces_only)
+
+
+def _list_wsl_sessions(args, patterns: list, since_date, until_date):
+    """List sessions from WSL (called from Windows).
+
+    Args:
+        args: Parsed arguments
+        patterns: List of workspace patterns
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+    """
+    remote_host = getattr(args, "remote", None)
+    distro_name = remote_host[6:]  # Remove 'wsl://' prefix
+
+    wsl_projects_dir = get_wsl_projects_dir(distro_name)
+    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=wsl_projects_dir)
+
+    if not sessions:
+        sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
+        sys.exit(1)
+
+    source_label = f"WSL ({distro_name})"
+    workspaces_only = getattr(args, "workspaces_only", False)
+    print_sessions_output(sessions, source_label, workspaces_only)
+
+
+def _list_ssh_remote_sessions(args, patterns: list, since_date, until_date):
+    """List sessions from SSH remote.
+
+    Args:
+        args: Parsed arguments
+        patterns: List of workspace patterns
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+    """
     remote_host = getattr(args, "remote", None)
 
-    # Parse date filters
-    since_str = getattr(args, "since", None)
-    until_str = getattr(args, "until", None)
-
-    since_date = parse_date_string(since_str) if since_str else None
-    until_date = parse_date_string(until_str) if until_str else None
-
-    # Validate date formats
-    if since_str and since_date is None:
-        sys.stderr.write(f"Error: Invalid date format for --since: '{since_str}'\n")
-        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-01)\n")
+    if not check_ssh_connection(remote_host):
+        sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+        sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
         sys.exit(1)
 
-    if until_str and until_date is None:
-        sys.stderr.write(f"Error: Invalid date format for --until: '{until_str}'\n")
-        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-30)\n")
-        sys.exit(1)
+    workspaces_only = getattr(args, "workspaces_only", False)
 
-    if since_date and until_date and since_date > until_date:
-        sys.stderr.write("Error: --since date must be before --until date\n")
-        sys.exit(1)
+    # Use fast batch approach for workspaces-only mode
+    if workspaces_only:
+        batch_workspaces = get_remote_workspaces_batch(remote_host)
 
-    # Handle WSL, Windows, or remote listing
-    if remote_host:
-        # Check if this is a Windows remote (windows or windows://username)
-        if is_windows_remote(remote_host):
-            # Extract username if specified (windows://username)
-            username = None
-            if remote_host.startswith("windows://"):
-                username = remote_host[10:]  # Remove 'windows://' prefix
-
-            # Get Windows projects directory (uses /mnt/c/Users/... path)
-            windows_projects_dir = get_windows_projects_dir(username)
-
-            # Get patterns list (multiple patterns support)
-            patterns = getattr(args, "patterns", None)
-            if patterns is None:
-                patterns = [getattr(args, "workspace", "")]
-
-            # Collect sessions from all patterns with deduplication
-            all_sessions = []
-            seen_files = set()
-            for pattern in patterns:
-                pattern_sessions = get_workspace_sessions(
-                    pattern, since_date=since_date, until_date=until_date, projects_dir=windows_projects_dir
-                )
-                for session in pattern_sessions:
-                    file_key = str(session["file"])
-                    if file_key not in seen_files:
-                        seen_files.add(file_key)
-                        all_sessions.append(session)
-
-            # Filter out remote caches to prevent showing cached data
-            # Only show native Windows workspaces, not cached remote/wsl data
-            sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
-
-            if not sessions:
-                sys.stderr.write("Error: No native sessions found in Windows\n")
-                sys.exit(1)
-
-            workspaces_only = getattr(args, "workspaces_only", False)
-
-            if workspaces_only:
-                # Just print workspace names
-                workspaces = set()
-                for session in sessions:
-                    workspaces.add(session["workspace_readable"])
-
-                for ws in sorted(workspaces):
-                    print(ws)
-            else:
-                # Print header and sessions
-                source_label = f"Windows ({username})" if username else "Windows"
-                print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
-                for session in sessions:
-                    print(
-                        f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
-                    )
-
-            return  # Done with Windows handling
-
-        # Check if this is a WSL remote (wsl://DistroName)
-        elif is_wsl_remote(remote_host):
-            # Extract distro name from wsl://DistroName
-            distro_name = remote_host[6:]  # Remove 'wsl://' prefix
-
-            # Get WSL projects directory (uses Windows path //wsl.localhost/...)
-            wsl_projects_dir = get_wsl_projects_dir(distro_name)
-
-            # Get patterns list (multiple patterns support)
-            patterns = getattr(args, "patterns", None)
-            if patterns is None:
-                patterns = [getattr(args, "workspace", "")]
-
-            # Collect sessions from all patterns with deduplication
-            all_sessions = []
-            seen_files = set()
-            for pattern in patterns:
-                pattern_sessions = get_workspace_sessions(
-                    pattern, since_date=since_date, until_date=until_date, projects_dir=wsl_projects_dir
-                )
-                for session in pattern_sessions:
-                    file_key = str(session["file"])
-                    if file_key not in seen_files:
-                        seen_files.add(file_key)
-                        all_sessions.append(session)
-
-            # Filter out remote caches to prevent showing cached data
-            # Only show native WSL workspaces, not cached remote/wsl data
-            sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
-
-            if not sessions:
-                sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
-                sys.exit(1)
-
-            workspaces_only = getattr(args, "workspaces_only", False)
-
-            if workspaces_only:
-                # Just print workspace names
-                workspaces = set()
-                for session in sessions:
-                    workspaces.add(session["workspace_readable"])
-
-                for ws in sorted(workspaces):
-                    print(ws)
-            else:
-                # Print header and sessions
-                source_label = f"WSL ({distro_name})"
-                print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
-                for session in sessions:
-                    print(
-                        f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
-                    )
-
-            return  # Done with WSL handling
-
-        # SSH remote handling
-        # Check SSH connectivity
-        if not check_ssh_connection(remote_host):
-            sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
-            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+        if not batch_workspaces:
+            sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
             sys.exit(1)
 
-        # Get patterns list (multiple patterns support)
-        patterns = getattr(args, "patterns", None)
-        if patterns is None:
-            patterns = [getattr(args, "workspace", "")]
-        workspaces_only = getattr(args, "workspaces_only", False)
+        # Filter by patterns
+        batch_workspaces = [ws for ws in batch_workspaces if matches_any_pattern(ws["encoded"], patterns)]
 
-        # Helper to check if workspace matches any pattern
-        def matches_any_pattern(ws_name, patterns_list):
-            if not patterns_list or patterns_list == [""] or patterns_list == ["*"] or patterns_list == ["all"]:
-                return True
-            return any(pattern in ws_name for pattern in patterns_list if pattern)
+        if not batch_workspaces:
+            pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
+            sys.stderr.write(f"Error: No workspaces matching pattern '{pattern_str}'\n")
+            sys.exit(1)
 
-        # Use fast batch approach for workspaces-only mode
-        if workspaces_only:
-            batch_workspaces = get_remote_workspaces_batch(remote_host)
-
-            if not batch_workspaces:
-                sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
-                sys.exit(1)
-
-            # Filter by patterns (any pattern matches)
-            batch_workspaces = [ws for ws in batch_workspaces if matches_any_pattern(ws["encoded"], patterns)]
-
-            if not batch_workspaces:
-                pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
-                sys.stderr.write(f"Error: No workspaces matching pattern '{pattern_str}'\n")
-                sys.exit(1)
-
-            # Just print workspace names, one per line
-            for ws_info in sorted(batch_workspaces, key=lambda x: x["decoded"]):
-                print(ws_info["decoded"])
-
-        else:
-            # Detailed mode - get full session info
-            remote_workspaces = list_remote_workspaces(remote_host)
-
-            if not remote_workspaces:
-                sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
-                sys.exit(1)
-
-            # Filter by patterns (any pattern matches)
-            remote_workspaces = [ws for ws in remote_workspaces if matches_any_pattern(ws, patterns)]
-
-            if not remote_workspaces:
-                pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
-                sys.stderr.write(f"Error: No workspaces matching pattern '{pattern_str}'\n")
-                sys.exit(1)
-
-            # Get session info for each workspace
-            sessions = []
-
-            for remote_workspace in remote_workspaces:
-                readable_name = normalize_remote_workspace_name(remote_host, remote_workspace)
-
-                # Get session files from this workspace
-                workspace_sessions = get_remote_session_info(remote_host, remote_workspace)
-
-                for session_info in workspace_sessions:
-                    # Apply date filtering
-                    modified_date = session_info["modified"].replace(hour=0, minute=0, second=0, microsecond=0)
-                    if since_date and modified_date < since_date:
-                        continue
-                    if until_date and modified_date > until_date:
-                        continue
-
-                    sessions.append(
-                        {
-                            "workspace": remote_workspace,
-                            "workspace_readable": readable_name,
-                            "filename": session_info["filename"],
-                            "size_kb": session_info["size_kb"],
-                            "modified": session_info["modified"],
-                            "message_count": session_info["message_count"],
-                        }
-                    )
-
-            if not sessions:
-                sys.stderr.write("Error: No sessions found\n")
-                sys.exit(1)
-
-            # Print header and sessions in simple format
-            source_label = f"Remote ({remote_host})"
-            print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
-            for session in sessions:
-                print(
-                    f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
-                )
-
+        for ws_info in sorted(batch_workspaces, key=lambda x: x["decoded"]):
+            print(ws_info["decoded"])
     else:
-        # Local listing - handle multiple patterns
-        patterns = getattr(args, "patterns", None)
-        if patterns is None:
-            # Backward compatibility: use single workspace attribute
-            patterns = [getattr(args, "workspace", "")]
+        # Detailed mode - get full session info
+        remote_workspaces = list_remote_workspaces(remote_host)
 
-        # Collect sessions from all patterns
-        all_sessions = []
-        seen_files = set()  # Deduplicate by file path
-        for pattern in patterns:
-            sessions = get_workspace_sessions(pattern, since_date=since_date, until_date=until_date)
-            for session in sessions:
-                file_key = str(session["file"])
-                if file_key not in seen_files:
-                    seen_files.add(file_key)
-                    all_sessions.append(session)
+        if not remote_workspaces:
+            sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
+            sys.exit(1)
 
-        # Check if workspaces-only mode
-        workspaces_only = getattr(args, "workspaces_only", False)
+        remote_workspaces = [ws for ws in remote_workspaces if matches_any_pattern(ws, patterns)]
 
-        if not all_sessions:
-            # For workspaces listing (lsw), silently return empty (no error)
-            # For sessions listing (lss), show error message
-            if not workspaces_only:
-                pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
-                if since_date or until_date:
-                    date_range = []
-                    if since_date:
-                        date_range.append(f"from {since_date.strftime('%Y-%m-%d')}")
-                    if until_date:
-                        date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
-                    sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
-                else:
-                    sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
-                sys.exit(1)
-            # For lsw with no matches, just exit successfully with no output
-            return
+        if not remote_workspaces:
+            pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
+            sys.stderr.write(f"Error: No workspaces matching pattern '{pattern_str}'\n")
+            sys.exit(1)
 
-        if workspaces_only:
-            # Just print workspace names, one per line
-            workspaces = set()
-            for session in all_sessions:
-                workspaces.add(session["workspace_readable"])
+        sessions = []
+        for remote_workspace in remote_workspaces:
+            readable_name = normalize_remote_workspace_name(remote_host, remote_workspace)
+            workspace_sessions = get_remote_session_info(remote_host, remote_workspace)
 
-            for ws in sorted(workspaces):
-                print(ws)
+            for session_info in workspace_sessions:
+                modified_date = session_info["modified"].replace(hour=0, minute=0, second=0, microsecond=0)
+                if since_date and modified_date < since_date:
+                    continue
+                if until_date and modified_date > until_date:
+                    continue
 
-        else:
-            # Print header and sessions in simple format
-            in_wsl = is_running_in_wsl()
-            source_label = "Local (WSL)" if in_wsl else "Local"
-            print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
-            for session in all_sessions:
-                print(
-                    f"{source_label}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+                sessions.append(
+                    {
+                        "workspace": remote_workspace,
+                        "workspace_readable": readable_name,
+                        "filename": session_info["filename"],
+                        "size_kb": session_info["size_kb"],
+                        "modified": session_info["modified"],
+                        "message_count": session_info["message_count"],
+                    }
                 )
+
+        if not sessions:
+            sys.stderr.write("Error: No sessions found\n")
+            sys.exit(1)
+
+        source_label = f"Remote ({remote_host})"
+        print_sessions_output(sessions, source_label, workspaces_only=False)
+
+
+def _list_local_sessions(args, patterns: list, since_date, until_date):
+    """List sessions from local filesystem.
+
+    Args:
+        args: Parsed arguments
+        patterns: List of workspace patterns
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+    """
+    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, include_cached=True)
+
+    workspaces_only = getattr(args, "workspaces_only", False)
+
+    if not sessions:
+        if not workspaces_only:
+            pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
+            if since_date or until_date:
+                date_range = []
+                if since_date:
+                    date_range.append(f"from {since_date.strftime('%Y-%m-%d')}")
+                if until_date:
+                    date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
+                sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
+            else:
+                sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
+            sys.exit(1)
+        return
+
+    in_wsl = is_running_in_wsl()
+    source_label = "Local (WSL)" if in_wsl else "Local"
+    print_sessions_output(sessions, source_label, workspaces_only)
+
+
+def cmd_list(args):
+    """List sessions for a workspace."""
+    remote_host = getattr(args, "remote", None)
+
+    # Parse and validate date filters
+    since_str = getattr(args, "since", None)
+    until_str = getattr(args, "until", None)
+    since_date, until_date = parse_and_validate_dates(since_str, until_str)
+
+    # Get patterns
+    patterns = get_patterns_from_args(args)
+
+    # Dispatch to appropriate handler based on source type
+    if remote_host:
+        if is_windows_remote(remote_host):
+            _list_windows_sessions(args, patterns, since_date, until_date)
+        elif is_wsl_remote(remote_host):
+            _list_wsl_sessions(args, patterns, since_date, until_date)
+        else:
+            _list_ssh_remote_sessions(args, patterns, since_date, until_date)
+    else:
+        _list_local_sessions(args, patterns, since_date, until_date)
 
 
 def cmd_convert(args):
@@ -4496,200 +4538,247 @@ def cmd_convert(args):
             sys.exit(1)
 
 
-def cmd_batch(args):
-    """Batch convert all sessions from a workspace."""
-    # Check if remote flag is set
+def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) -> list:
+    """Get sessions from Windows for batch export.
+
+    Args:
+        args: Parsed arguments
+        patterns: List of workspace patterns
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+
+    Returns:
+        List of session dictionaries.
+    """
     remote_host = getattr(args, "remote", None)
+    username = None
+    if remote_host and remote_host.startswith("windows://"):
+        username = remote_host[10:]
 
-    # Parse date filters
-    since_str = getattr(args, "since", None)
-    until_str = getattr(args, "until", None)
-
-    since_date = parse_date_string(since_str) if since_str else None
-    until_date = parse_date_string(until_str) if until_str else None
-
-    # Validate date formats
-    if since_str and since_date is None:
-        sys.stderr.write(f"Error: Invalid date format for --since: '{since_str}'\n")
-        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-01)\n")
-        sys.exit(1)
-
-    if until_str and until_date is None:
-        sys.stderr.write(f"Error: Invalid date format for --until: '{until_str}'\n")
-        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-30)\n")
-        sys.exit(1)
-
-    if since_date and until_date and since_date > until_date:
-        sys.stderr.write("Error: --since date must be before --until date\n")
-        sys.exit(1)
-
-    output_dir = Path(args.output_dir)
-
-    # Handle Windows, WSL, or remote export
-    if remote_host:
-        # Check if this is a Windows remote (windows or windows://username)
-        if is_windows_remote(remote_host):
-            # Extract username if specified (windows://username)
-            username = None
-            if remote_host.startswith("windows://"):
-                username = remote_host[10:]  # Remove 'windows://' prefix
-
-            # Get Windows projects directory (uses /mnt/c/Users/... path)
-            windows_projects_dir = get_windows_projects_dir(username)
-
-            # Get patterns list (multiple patterns support)
-            patterns = getattr(args, "patterns", None)
-            if patterns is None:
-                patterns = [getattr(args, "workspace", "")]
-
-            # Collect sessions from all patterns with deduplication
-            all_sessions = []
-            seen_files = set()
-            for pattern in patterns if patterns else [""]:
-                pattern_sessions = get_workspace_sessions(
-                    pattern, quiet=True, since_date=since_date, until_date=until_date, projects_dir=windows_projects_dir
-                )
-                for session in pattern_sessions:
-                    file_key = str(session["file"])
-                    if file_key not in seen_files:
-                        seen_files.add(file_key)
-                        all_sessions.append(session)
-
-            # Filter out remote caches to prevent circular fetching
-            # Only export native Windows workspaces, not cached remote/wsl data
-            sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
-
-            if not sessions:
-                sys.stderr.write("Error: No native sessions found in Windows\n")
-                sys.exit(1)
-
-            # Continue with export processing below (same as local)
-
-        # Check if this is a WSL remote (wsl://DistroName)
-        elif is_wsl_remote(remote_host):
-            # Extract distro name from wsl://DistroName
-            distro_name = remote_host[6:]  # Remove 'wsl://' prefix
-
-            # Get WSL projects directory (uses Windows path //wsl.localhost/...)
-            wsl_projects_dir = get_wsl_projects_dir(distro_name)
-
-            # Get patterns list (multiple patterns support)
-            patterns = getattr(args, "patterns", None)
-            if patterns is None:
-                patterns = [getattr(args, "workspace", "")]
-
-            # Collect sessions from all patterns with deduplication
-            all_sessions = []
-            seen_files = set()
-            for pattern in patterns if patterns else [""]:
-                pattern_sessions = get_workspace_sessions(
-                    pattern, quiet=True, since_date=since_date, until_date=until_date, projects_dir=wsl_projects_dir
-                )
-                for session in pattern_sessions:
-                    file_key = str(session["file"])
-                    if file_key not in seen_files:
-                        seen_files.add(file_key)
-                        all_sessions.append(session)
-
-            # Filter out remote caches to prevent circular fetching
-            # Only export native WSL workspaces, not cached remote/wsl data
-            sessions = [s for s in all_sessions if is_native_workspace(s["workspace"])]
-
-            if not sessions:
-                sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
-                sys.exit(1)
-
-            # Continue with export processing below (same as local)
-
-        else:
-            # SSH remote handling - Check SSH connectivity
-            if not check_ssh_connection(remote_host):
-                sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
-                sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
-                sys.exit(1)
-
-            # Get patterns list (multiple patterns support)
-            patterns = getattr(args, "patterns", None)
-            if patterns is None:
-                patterns = [getattr(args, "workspace", "")]
-
-            # Get remote workspaces
-            all_remote_workspaces = list_remote_workspaces(remote_host)
-
-            if not all_remote_workspaces:
-                sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
-                sys.exit(1)
-
-            # Filter by patterns (any pattern matches) - be lenient
-            def matches_any_pattern(ws_name, patterns_list):
-                if not patterns_list or patterns_list == [""] or patterns_list == ["*"] or patterns_list == ["all"]:
-                    return True
-                return any(pattern in ws_name for pattern in patterns_list if pattern)
-
-            remote_workspaces = [ws for ws in all_remote_workspaces if matches_any_pattern(ws, patterns)]
-
-            if not remote_workspaces:
-                # Be lenient - just return empty sessions, don't exit
-                sessions = []
-            else:
-                # Fetch each workspace to local cache (silent)
-                local_projects_dir = get_claude_projects_dir()
-                hostname = get_remote_hostname(remote_host)
-
-                for remote_workspace in remote_workspaces:
-                    result = fetch_workspace_files(remote_host, remote_workspace, local_projects_dir, hostname)
-
-                    if not result["success"]:
-                        sys.stderr.write(f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n")
-
-                # Now export from cached location with deduplication
-                cached_prefix = f"remote_{hostname}_"
-                all_sessions = []
-                seen_files = set()
-
-                # Get all sessions from remote cache (prefix matches all cached workspaces)
-                # Use include_cached=True to access remote_* directories
-                all_cached_sessions = get_workspace_sessions(
-                    cached_prefix, quiet=True, since_date=since_date, until_date=until_date, include_cached=True
-                )
-
-                # Filter by patterns if specified (pattern matches workspace name)
-                for session in all_cached_sessions:
-                    ws_name = session["workspace"]
-                    if not patterns or patterns == [""] or patterns == ["*"] or patterns == ["all"]:
-                        matches = True
-                    else:
-                        matches = any(pattern in ws_name for pattern in patterns if pattern)
-
-                    if matches:
-                        file_key = str(session["file"])
-                        if file_key not in seen_files:
-                            seen_files.add(file_key)
-                            all_sessions.append(session)
-
-                sessions = all_sessions
-
-    else:
-        # Local export - handle multiple patterns
-        patterns = getattr(args, "patterns", None)
-        if patterns is None:
-            patterns = [getattr(args, "workspace", "")]
-
-        # Collect sessions from all patterns with deduplication
-        all_sessions = []
-        seen_files = set()
-        for pattern in patterns if patterns else [""]:
-            pattern_sessions = get_workspace_sessions(pattern, quiet=True, since_date=since_date, until_date=until_date)
-            for session in pattern_sessions:
-                file_key = str(session["file"])
-                if file_key not in seen_files:
-                    seen_files.add(file_key)
-                    all_sessions.append(session)
-
-        sessions = all_sessions
+    windows_projects_dir = get_windows_projects_dir(username)
+    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=windows_projects_dir)
 
     if not sessions:
-        # Check if we should be lenient (called from export-all)
+        sys.stderr.write("Error: No native sessions found in Windows\n")
+        sys.exit(1)
+
+    return sessions
+
+
+def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> list:
+    """Get sessions from WSL for batch export.
+
+    Args:
+        args: Parsed arguments
+        patterns: List of workspace patterns
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+
+    Returns:
+        List of session dictionaries.
+    """
+    remote_host = getattr(args, "remote", None)
+    distro_name = remote_host[6:]  # Remove 'wsl://' prefix
+
+    wsl_projects_dir = get_wsl_projects_dir(distro_name)
+    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=wsl_projects_dir)
+
+    if not sessions:
+        sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
+        sys.exit(1)
+
+    return sessions
+
+
+def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> list:
+    """Get sessions from SSH remote for batch export.
+
+    Fetches remote files to local cache first, then returns cached sessions.
+
+    Args:
+        args: Parsed arguments
+        patterns: List of workspace patterns
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+
+    Returns:
+        List of session dictionaries (from local cache).
+    """
+    remote_host = getattr(args, "remote", None)
+
+    if not check_ssh_connection(remote_host):
+        sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+        sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+        sys.exit(1)
+
+    all_remote_workspaces = list_remote_workspaces(remote_host)
+
+    if not all_remote_workspaces:
+        sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
+        sys.exit(1)
+
+    remote_workspaces = [ws for ws in all_remote_workspaces if matches_any_pattern(ws, patterns)]
+
+    if not remote_workspaces:
+        return []
+
+    # Fetch each workspace to local cache
+    local_projects_dir = get_claude_projects_dir()
+    hostname = get_remote_hostname(remote_host)
+
+    for remote_workspace in remote_workspaces:
+        result = fetch_workspace_files(remote_host, remote_workspace, local_projects_dir, hostname)
+        if not result["success"]:
+            sys.stderr.write(f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n")
+
+    # Get sessions from cached location
+    cached_prefix = f"remote_{hostname}_"
+    all_cached_sessions = get_workspace_sessions(
+        cached_prefix, quiet=True, since_date=since_date, until_date=until_date, include_cached=True
+    )
+
+    # Filter by patterns if specified
+    sessions = []
+    seen_files = set()
+    for session in all_cached_sessions:
+        if matches_any_pattern(session["workspace"], patterns):
+            file_key = str(session["file"])
+            if file_key not in seen_files:
+                seen_files.add(file_key)
+                sessions.append(session)
+
+    return sessions
+
+
+def _get_batch_local_sessions(patterns: list, since_date, until_date) -> list:
+    """Get sessions from local filesystem for batch export.
+
+    Args:
+        patterns: List of workspace patterns
+        since_date: Optional start date filter
+        until_date: Optional end date filter
+
+    Returns:
+        List of session dictionaries.
+    """
+    return collect_sessions_with_dedup(patterns, since_date, until_date, include_cached=True)
+
+
+def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
+    """Export sessions to markdown files.
+
+    Args:
+        sessions: List of session dictionaries
+        args: Parsed arguments (for force, flat, minimal, split, remote)
+        output_dir: Output directory path
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    force = getattr(args, "force", False)
+    flat = getattr(args, "flat", False)
+    remote_host = getattr(args, "remote", None)
+    minimal = getattr(args, "minimal", False)
+    split_lines = getattr(args, "split", None)
+
+    for session in sessions:
+        jsonl_file = session["file"]
+
+        # Extract first timestamp for filename
+        first_ts = get_first_timestamp(jsonl_file)
+        ts_prefix = None
+        if first_ts:
+            try:
+                dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+                ts_prefix = dt.strftime("%Y%m%d%H%M%S")
+            except Exception:
+                pass
+
+        # Generate filename
+        if not flat:
+            source_tag = get_source_tag(remote_host)
+            output_name = (
+                f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md" if ts_prefix else f"{source_tag}{jsonl_file.stem}.md"
+            )
+            workspace_name = get_workspace_name_from_path(session["workspace"])
+            workspace_subdir = output_dir / workspace_name
+            workspace_subdir.mkdir(parents=True, exist_ok=True)
+            output_file = workspace_subdir / output_name
+        else:
+            output_name = f"{ts_prefix}_{jsonl_file.stem}.md" if ts_prefix else f"{jsonl_file.stem}.md"
+            output_file = output_dir / output_name
+
+        # Skip if up-to-date (incremental export)
+        if not force and output_file.exists():
+            if output_file.stat().st_mtime >= jsonl_file.stat().st_mtime:
+                continue
+
+        try:
+            messages = read_jsonl_messages(jsonl_file)
+
+            if split_lines and len(messages) > 0:
+                parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+                if parts:
+                    _write_split_parts(parts, output_name, output_file)
+                else:
+                    _write_single_file(jsonl_file, output_file, minimal)
+            else:
+                _write_single_file(jsonl_file, output_file, minimal)
+        except Exception as e:
+            sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
+
+
+def _write_split_parts(parts: list, output_name: str, output_file: Path):
+    """Write split conversation parts with navigation links."""
+    base_name = output_name.rsplit(".md", 1)[0]
+    total_parts = len(parts)
+
+    for part_num, _, part_md, _, _ in parts:
+        part_filename = f"{base_name}_part{part_num}.md"
+        part_file = output_file.parent / part_filename
+
+        # Build navigation footer
+        nav_parts = [f"**Part {part_num} of {total_parts}**"]
+        if part_num > 1:
+            nav_parts.append(f"[← Part {part_num - 1}]({base_name}_part{part_num - 1}.md)")
+        if part_num < total_parts:
+            nav_parts.append(f"[Part {part_num + 1} →]({base_name}_part{part_num + 1}.md)")
+
+        part_file.write_text(part_md + "\n---\n\n> " + " | ".join(nav_parts), encoding="utf-8")
+        print(part_file)
+
+
+def _write_single_file(jsonl_file: Path, output_file: Path, minimal: bool):
+    """Write a single markdown file."""
+    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+    output_file.write_text(markdown, encoding="utf-8")
+    print(output_file)
+
+
+def cmd_batch(args):
+    """Batch convert all sessions from a workspace."""
+    remote_host = getattr(args, "remote", None)
+
+    # Parse and validate date filters
+    since_str = getattr(args, "since", None)
+    until_str = getattr(args, "until", None)
+    since_date, until_date = parse_and_validate_dates(since_str, until_str)
+
+    # Get patterns
+    patterns = get_patterns_from_args(args)
+
+    # Get sessions based on source type
+    if remote_host:
+        if is_windows_remote(remote_host):
+            sessions = _get_batch_windows_sessions(args, patterns, since_date, until_date)
+        elif is_wsl_remote(remote_host):
+            sessions = _get_batch_wsl_sessions(args, patterns, since_date, until_date)
+        else:
+            sessions = _get_batch_ssh_sessions(args, patterns, since_date, until_date)
+    else:
+        sessions = _get_batch_local_sessions(patterns, since_date, until_date)
+
+    # Handle empty sessions
+    if not sessions:
         lenient = getattr(args, "lenient", False)
         if not lenient:
             pattern_str = ", ".join(patterns) if patterns and len(patterns) > 1 else (patterns[0] if patterns else "")
@@ -4703,114 +4792,11 @@ def cmd_batch(args):
             else:
                 sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
             sys.exit(1)
-        # In lenient mode, just return without error
         return
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Convert each session
-    force = getattr(args, "force", False)
-    flat = getattr(args, "flat", False)
-    remote_host = getattr(args, "remote", None)
-
-    for session in sessions:
-        jsonl_file = session["file"]
-
-        # Extract first timestamp and create timestamped filename
-        first_ts = get_first_timestamp(jsonl_file)
-        if first_ts:
-            try:
-                dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
-                ts_prefix = dt.strftime("%Y%m%d%H%M%S")
-            except Exception:
-                ts_prefix = None
-        else:
-            ts_prefix = None
-
-        # Generate filename with optional source tag
-        if not flat:
-            # Organized structure (default) - workspace subdirectories with source tags
-            # Get source tag
-            source_tag = get_source_tag(remote_host)
-
-            # Generate filename: [source_]timestamp_sessionid.md
-            if ts_prefix:
-                output_name = f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
-            else:
-                output_name = f"{source_tag}{jsonl_file.stem}.md"
-
-            # Create workspace subdirectory
-            workspace_name = get_workspace_name_from_path(session["workspace"])
-            workspace_subdir = output_dir / workspace_name
-            workspace_subdir.mkdir(parents=True, exist_ok=True)
-            output_file = workspace_subdir / output_name
-        else:
-            # Flat structure - all files in one directory, no source tags
-            if ts_prefix:
-                output_name = f"{ts_prefix}_{jsonl_file.stem}.md"
-            else:
-                output_name = f"{jsonl_file.stem}.md"
-            output_file = output_dir / output_name
-
-        # Check if we should skip (incremental export)
-        if not force and output_file.exists():
-            source_mtime = jsonl_file.stat().st_mtime
-            output_mtime = output_file.stat().st_mtime
-
-            if output_mtime >= source_mtime:
-                continue
-
-        try:
-            minimal = getattr(args, "minimal", False)
-            split_lines = getattr(args, "split", None)
-
-            # Read messages from JSONL
-            messages = read_jsonl_messages(jsonl_file)
-
-            # Check if we should split into multiple parts
-            if split_lines and len(messages) > 0:
-                parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
-
-                if parts:
-                    # Save multiple part files
-                    for part_num, total_parts, part_md, start_msg, end_msg in parts:
-                        base_name = output_name.rsplit(".md", 1)[0]
-                        part_filename = f"{base_name}_part{part_num}.md"
-                        part_file = output_file.parent / part_filename
-
-                        # Add navigation footer (remove emoji)
-                        nav_lines = ["\n---\n"]
-                        nav_parts = [f"**Part {part_num} of {total_parts}**"]
-
-                        if part_num > 1:
-                            prev_filename = f"{base_name}_part{part_num - 1}.md"
-                            nav_parts.append(f"[← Part {part_num - 1}]({prev_filename})")
-
-                        if part_num < total_parts:
-                            next_filename = f"{base_name}_part{part_num + 1}.md"
-                            nav_parts.append(f"[Part {part_num + 1} →]({next_filename})")
-
-                        nav_lines.append("> " + " | ".join(nav_parts))
-
-                        # Write part file with navigation
-                        part_file.write_text(part_md + "\n".join(nav_lines), encoding="utf-8")
-
-                    # Print all part files
-                    for part_num in range(1, total_parts + 1):
-                        part_filename = f"{base_name}_part{part_num}.md"
-                        print(output_file.parent / part_filename)
-                else:
-                    # Splitting not needed, use single file
-                    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
-                    output_file.write_text(markdown, encoding="utf-8")
-                    print(output_file)
-            else:
-                # No splitting, use single file
-                markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
-                output_file.write_text(markdown, encoding="utf-8")
-                print(output_file)
-        except Exception as e:
-            sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
+    # Export sessions to markdown
+    output_dir = Path(args.output_dir)
+    _export_sessions_to_markdown(sessions, args, output_dir)
 
 
 def cmd_version(args):
