@@ -381,7 +381,7 @@ def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
     if is_agent:
         md_lines.append("")
         md_lines.append(
-            "> ⚠️ **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation."
+            "> **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation."
         )
         md_lines.append(">")
         md_lines.append("> - Messages labeled 'User' represent task instructions from the parent Claude session")
@@ -405,10 +405,8 @@ def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
         # Determine message label based on context
         if is_agent and i == 1 and msg["role"] == "user":
             # First message in agent conversation is the task prompt from parent Claude
-            role_emoji = "🔧"
             role_label = "Task Prompt (from Parent Claude)"
         else:
-            role_emoji = "👤" if msg["role"] == "user" else "🤖"
             role_label = msg["role"].title()
 
         # Add HTML anchor for this message's UUID (skip in minimal mode)
@@ -416,7 +414,7 @@ def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
             md_lines.append(f'<a name="msg-{msg["uuid"]}"></a>')
             md_lines.append("")
 
-        md_lines.append(f"## Message {i} - {role_emoji} {role_label}")
+        md_lines.append(f"## Message {i} - {role_label}")
         md_lines.append("")
         md_lines.append(f"*{msg['timestamp']}*")
         md_lines.append("")
@@ -594,7 +592,7 @@ def generate_markdown_for_messages(
     if is_agent:
         md_lines.append("")
         md_lines.append(
-            "> ⚠️ **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation."
+            "> **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation."
         )
         md_lines.append(">")
         md_lines.append("> - Messages labeled 'User' represent task instructions from the parent Claude session")
@@ -618,10 +616,8 @@ def generate_markdown_for_messages(
     for i, msg in enumerate(part_messages, start_msg_num):
         # Determine message label
         if is_agent and i == start_msg_num and msg["role"] == "user":
-            role_emoji = "🔧"
             role_label = "Task Prompt (from Parent Claude)"
         else:
-            role_emoji = "👤" if msg["role"] == "user" else "🤖"
             role_label = msg["role"].title()
 
         # Add HTML anchor (skip in minimal mode)
@@ -629,7 +625,7 @@ def generate_markdown_for_messages(
             md_lines.append(f'<a name="msg-{msg["uuid"]}"></a>')
             md_lines.append("")
 
-        md_lines.append(f"## Message {i} - {role_emoji} {role_label}")
+        md_lines.append(f"## Message {i} - {role_label}")
         md_lines.append("")
         md_lines.append(f"*{msg['timestamp']}*")
         md_lines.append("")
@@ -2116,11 +2112,11 @@ def get_sessions_for_source(
 
                 # Check SSH connection first
                 if not check_ssh_connection(remote_host):
-                    sys.stderr.write(f"⚠ Cannot connect to remote '{hostname}' - skipping\n")
+                    sys.stderr.write(f"Cannot connect to remote '{hostname}' - skipping\n")
                     return []
 
                 # Fetch the workspace
-                sys.stderr.write(f"📥 Fetching from {hostname}:{workspace}...\n")
+                sys.stderr.write(f"Fetching from {hostname}:{workspace}...\n")
                 result = fetch_workspace_files(remote_host, workspace, local_projects, hostname)
 
                 if result.get("success"):
@@ -2225,7 +2221,7 @@ def cmd_alias_create(args):
     aliases_data["aliases"][alias_name] = {}
 
     if save_aliases(aliases_data):
-        print(f"✅ Created alias '{alias_name}'")
+        print(f"Created alias '{alias_name}'")
     else:
         sys.exit(1)
 
@@ -2243,7 +2239,7 @@ def cmd_alias_delete(args):
     del aliases_data["aliases"][alias_name]
 
     if save_aliases(aliases_data):
-        print(f"✅ Deleted alias '{alias_name}'")
+        print(f"Deleted alias '{alias_name}'")
     else:
         sys.exit(1)
 
@@ -2340,7 +2336,7 @@ def cmd_alias_add(args):
                 total_added += added
 
         if save_aliases(aliases_data):
-            print(f"✅ Added {total_added} workspace(s) to alias '{alias_name}' from all sources")
+            print(f"Added {total_added} workspace(s) to alias '{alias_name}' from all sources")
         else:
             sys.exit(1)
         return
@@ -2387,7 +2383,7 @@ def cmd_alias_add(args):
             added += 1
 
     if save_aliases(aliases_data):
-        print(f"✅ Added {added} workspace(s) to alias '{alias_name}' [{source_key}]")
+        print(f"Added {added} workspace(s) to alias '{alias_name}' [{source_key}]")
     else:
         sys.exit(1)
 
@@ -2509,7 +2505,7 @@ def cmd_alias_remove(args):
         del alias_config[source_key]
 
     if save_aliases(aliases_data):
-        print(f"✅ Removed workspace from alias '{alias_name}' [{source_key}]")
+        print(f"Removed workspace from alias '{alias_name}' [{source_key}]")
     else:
         sys.exit(1)
 
@@ -2656,7 +2652,7 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
 
     # Print summary
     if total_exported > 0 or total_skipped > 0:
-        print(f"\n✅ Alias '{alias_name}': {total_exported} exported, {total_skipped} skipped, {total_failed} failed")
+        print(f"\nAlias '{alias_name}': {total_exported} exported, {total_skipped} skipped, {total_failed} failed")
 
 
 def cmd_alias_config_import(args):
@@ -2708,7 +2704,7 @@ def cmd_alias_config_import(args):
     if save_aliases(new_data):
         alias_count = len(new_data.get("aliases", {}))
         mode_str = "Replaced" if replace_mode else "Merged"
-        print(f"✅ {mode_str} aliases ({alias_count} aliases)")
+        print(f"{mode_str} aliases ({alias_count} aliases)")
     else:
         sys.exit(1)
 
@@ -3177,7 +3173,7 @@ def cmd_stats_sync(args):
         if not projects_dir or not projects_dir.exists():
             return
 
-        print(f"🔍 Scanning {source_label}...")
+        print(f"Scanning {source_label}...")
 
         for workspace_dir in projects_dir.iterdir():
             if not workspace_dir.is_dir():
@@ -3200,7 +3196,7 @@ def cmd_stats_sync(args):
                     else:
                         skipped += 1
                 except Exception as e:
-                    sys.stderr.write(f"  ❌ Error syncing {jsonl_file.name}: {e}\n")
+                    sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
                     errors += 1
 
     # Sync local
@@ -3239,11 +3235,11 @@ def cmd_stats_sync(args):
         else:
             # SSH remote - fetch files first, then sync
             hostname = get_remote_hostname(remote)
-            print(f"🔍 Fetching from remote {remote}...")
+            print(f"Fetching from remote {remote}...")
 
             # Check SSH connectivity
             if not check_ssh_connection(remote):
-                sys.stderr.write(f"  ❌ Cannot connect to {remote}\n")
+                sys.stderr.write(f"  Cannot connect to {remote}\n")
                 errors += 1
                 continue
 
@@ -3279,15 +3275,15 @@ def cmd_stats_sync(args):
                                 else:
                                     skipped += 1
                             except Exception as e:
-                                sys.stderr.write(f"  ❌ Error syncing {jsonl_file.name}: {e}\n")
+                                sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
                                 errors += 1
                 except Exception as e:
-                    sys.stderr.write(f"  ❌ Error fetching {ws}: {e}\n")
+                    sys.stderr.write(f"  Error fetching {ws}: {e}\n")
                     errors += 1
 
     conn.close()
 
-    print(f"\n✅ Sync complete: {synced} synced, {skipped} up-to-date, {errors} errors")
+    print(f"\nSync complete: {synced} synced, {skipped} up-to-date, {errors} errors")
 
 
 def cmd_stats(args):
@@ -3295,7 +3291,7 @@ def cmd_stats(args):
     db_path = get_metrics_db_path()
 
     if not db_path.exists():
-        print("❌ No metrics database found. Run 'stats --sync' first.")
+        print("No metrics database found. Run 'stats --sync' first.")
         print("\nUsage:")
         print("  claude-history stats --sync        # Sync local sessions")
         print("  claude-history stats --sync --as   # Sync from all sources")
@@ -3323,7 +3319,7 @@ def cmd_stats(args):
             if alias_name:
                 # Use the alias instead of just the current workspace
                 workspace_patterns = [f"@{alias_name}"]
-                sys.stderr.write(f"📎 Using alias @{alias_name} (use --this for current workspace only)\n")
+                sys.stderr.write(f"Using alias @{alias_name} (use --this for current workspace only)\n")
             else:
                 workspace_patterns = [ws_name]
         else:
@@ -3352,7 +3348,7 @@ def cmd_stats(args):
                                 ws_conditions.append("s.workspace = ?")
                                 params.append(ws_name)
                 else:
-                    print(f"⚠️  Alias '{alias_name}' not found. Treating as workspace pattern.")
+                    print(f" Alias '{alias_name}' not found. Treating as workspace pattern.")
                     ws_conditions.append("s.workspace LIKE ?")
                     params.append(f"%{alias_name}%")
             else:
@@ -3567,13 +3563,13 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
     agent_sessions = session_stats["agent_sessions"] or 0
     total_messages = session_stats["total_messages"] or 0
 
-    print("\n📊 Sessions")
+    print("\nSessions")
     print(f"   Total: {total_sessions:,}")
     print(f"   Main sessions: {main_sessions:,}")
     print(f"   Agent tasks: {agent_sessions:,}")
     print(f"   Total messages: {total_messages:,}")
 
-    print("\n🔤 Tokens")
+    print("\nTokens")
     print(f"   Input: {total_input:,}")
     print(f"   Output: {total_output:,}")
     print(f"   Cache created: {cache_creation:,}")
@@ -3583,7 +3579,7 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
     total_tool_uses = tool_stats["total_tool_uses"] or 0
     tool_errors = tool_stats["tool_errors"] or 0
 
-    print("\n🔧 Tools")
+    print("\nTools")
     print(f"   Total uses: {total_tool_uses:,}")
     print(f"   Errors: {tool_errors:,}")
     if total_tool_uses > 0:
@@ -3591,12 +3587,12 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
         print(f"   Error rate: {error_rate:.1f}%")
 
     if sources:
-        print("\n📍 Sources")
+        print("\nSources")
         for src in sources:
             print(f"   {src['source']}: {src['count']:,} sessions")
 
     if models:
-        print("\n🤖 Models (top 3)")
+        print("\nModels (top 3)")
         for model in models:
             model_name = model["model"] or "unknown"
             # Shorten model name for display
@@ -3604,7 +3600,7 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
             print(f"   {short_name}: {model['count']:,} messages")
 
     if top_workspaces:
-        print("\n📁 Top Workspaces")
+        print("\nTop Workspaces")
         for ws in top_workspaces:
             if ws.get("is_alias"):
                 # Show alias with workspace count
@@ -3757,7 +3753,7 @@ def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: li
 
     # Show aliases first
     if alias_stats:
-        print("\n📦 Aliases")
+        print("\nAliases")
         print(f"{'Alias':<30} {'Sources':<15} {'Sessions':>8} {'Messages':>10}")
         print("-" * 65)
 
@@ -3767,7 +3763,7 @@ def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: li
             print(f"@{alias_name:<29} {sources_str:<15} {stats['sessions']:>8,} {stats['messages']:>10,}")
 
     # Show unaliased workspaces
-    print("\n📁 Individual Workspaces (Top 20)")
+    print("\nIndividual Workspaces (Top 20)")
     print(f"{'Workspace':<30} {'Source':<10} {'Sessions':>8} {'Messages':>10}")
     print("-" * 60)
 
@@ -3967,7 +3963,7 @@ def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     print("TIME TRACKING")
     print("=" * 70)
 
-    print("\n📊 Summary")
+    print("\nSummary")
     print(f"   Total work time: {format_duration_hm(total_work)}")
     print(f"   Work periods: {total_periods}")
     print(f"   Session files: {num_files}")
@@ -3975,7 +3971,7 @@ def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
         print(f"   Date range: {first_date} to {last_date}")
 
     if daily_stats:
-        print("\n📅 Daily Breakdown")
+        print("\nDaily Breakdown")
         print(f"\n{'Date':<12} {'Work Time':>12} {'Periods':>10} {'Messages':>10}")
         print("-" * 46)
 
@@ -5223,9 +5219,9 @@ def validate_export_all_sources(args, in_wsl):
     try:
         projects_dir = get_claude_projects_dir()
         if not projects_dir.exists():
-            errors.append(f"❌ Local: Claude projects directory not found: {projects_dir}")
+            errors.append(f"Local: Claude projects directory not found: {projects_dir}")
     except Exception as e:
-        errors.append(f"❌ Local: {e}")
+        errors.append(f"Local: {e}")
 
     # 2. Check Windows users (when in WSL)
     if in_wsl:
@@ -5236,11 +5232,11 @@ def validate_export_all_sources(args, in_wsl):
                     try:
                         projects_dir = get_windows_projects_dir(user["username"])
                         if not projects_dir or not projects_dir.exists():
-                            errors.append(f"❌ Windows ({user['username']}): Projects directory not accessible")
+                            errors.append(f"Windows ({user['username']}): Projects directory not accessible")
                     except Exception as e:
-                        errors.append(f"❌ Windows ({user['username']}): {e}")
+                        errors.append(f"Windows ({user['username']}): {e}")
         except Exception as e:
-            errors.append(f"❌ Windows: {e}")
+            errors.append(f"Windows: {e}")
 
     # 3. Check WSL distributions (when on Windows)
     if not in_wsl:
@@ -5252,11 +5248,11 @@ def validate_export_all_sources(args, in_wsl):
                     try:
                         projects_dir = get_wsl_projects_dir(distro["name"])
                         if not projects_dir or not projects_dir.exists():
-                            errors.append(f"❌ WSL ({distro['name']}): Projects directory not accessible")
+                            errors.append(f"WSL ({distro['name']}): Projects directory not accessible")
                     except Exception as e:
-                        errors.append(f"❌ WSL ({distro['name']}): {e}")
+                        errors.append(f"WSL ({distro['name']}): {e}")
         except Exception as e:
-            errors.append(f"❌ WSL: {e}")
+            errors.append(f"WSL: {e}")
 
     # 4. Check SSH remotes (if specified)
     if hasattr(args, "remotes") and args.remotes:
@@ -5267,7 +5263,7 @@ def validate_export_all_sources(args, in_wsl):
 
             # Check SSH connectivity
             if not check_ssh_connection(remote_host):
-                errors.append(f"❌ Remote ({remote_host}): Cannot connect via passwordless SSH")
+                errors.append(f"Remote ({remote_host}): Cannot connect via passwordless SSH")
 
     return (len(errors) == 0, errors)
 
@@ -5298,13 +5294,13 @@ def cmd_export_all(args):
     valid, errors = validate_export_all_sources(args, in_wsl)
 
     if not valid:
-        print("\n❌ Export aborted: Cannot access all sources\n")
+        print("\nExport aborted: Cannot access all sources\n")
         for error in errors:
             print(error)
         print("\nPlease fix the issues above and try again.")
         sys.exit(1)
 
-    print("✅ All sources accessible\n")
+    print("All sources accessible\n")
 
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -6084,7 +6080,7 @@ EXAMPLES:
                 claude_distros = [d for d in wsl_distros if d["has_claude"]]
                 if claude_distros:
                     return f"wsl://{claude_distros[0]['name']}"
-            sys.stderr.write("❌ Error: No WSL distributions with Claude Code found\n")
+            sys.stderr.write("Error: No WSL distributions with Claude Code found\n")
             sys.exit(1)
 
         if windows_flag:
@@ -6179,7 +6175,7 @@ EXAMPLES:
                     alias_for_ws = get_alias_for_workspace(pattern, "local")
                     if alias_for_ws:
                         # Use alias-based listing instead
-                        sys.stderr.write(f"📎 Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+                        sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
                         cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
                         return  # Early return after alias listing
                     patterns = [pattern]
@@ -6216,7 +6212,7 @@ EXAMPLES:
                     alias_for_ws = get_alias_for_workspace(pattern, "local")
                     if alias_for_ws:
                         # Use alias-based listing instead
-                        sys.stderr.write(f"📎 Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+                        sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
                         since_date = parse_date_string(args.since) if args.since else None
                         until_date = parse_date_string(args.until) if args.until else None
                         cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
@@ -6284,7 +6280,7 @@ EXAMPLES:
                     alias_for_ws = get_alias_for_workspace(pattern, "local")
                     if alias_for_ws:
                         # Use alias-based export instead
-                        sys.stderr.write(f"📎 Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+                        sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
                         cmd_alias_export(alias_for_ws, final_output_dir, args)
                         return  # Early return after alias export
 
