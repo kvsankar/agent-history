@@ -21,6 +21,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -4337,9 +4338,11 @@ def display_daily_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     print("-" * 50)
 
     for row in days:
-        print(
-            f"{row['date'] or 'unknown':<12} {row['sessions']:>10,} {row['messages'] or 0:>10,} {row['input_tokens'] or 0:>15,}"
-        )
+        date_str = row["date"] or "unknown"
+        sessions = row["sessions"]
+        messages = row["messages"] or 0
+        tokens = row["input_tokens"] or 0
+        print(f"{date_str:<12} {sessions:>10,} {messages:>10,} {tokens:>15,}")
 
     print()
 
@@ -4729,9 +4732,6 @@ def cmd_convert(args):
 
     if remote_host:
         # Handle remote file conversion
-        import subprocess
-        import tempfile
-
         # Check SSH connectivity
         if not check_ssh_connection(remote_host):
             sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
@@ -5148,27 +5148,12 @@ def cmd_list_all_homes(args):
 
     all_results = []  # List of (source_label, sessions)
 
-    # Helper to get sessions for multiple patterns with deduplication
-    def get_sessions_for_patterns(patterns_list, since_date, until_date, projects_dir=None):
-        all_sessions = []
-        seen_files = set()
-        for pattern in patterns_list:
-            sessions = get_workspace_sessions(
-                pattern, since_date=since_date, until_date=until_date, quiet=True, projects_dir=projects_dir
-            )
-            for session in sessions:
-                file_key = str(session["file"])
-                if file_key not in seen_files:
-                    seen_files.add(file_key)
-                    all_sessions.append(session)
-        return all_sessions
-
     # 1. Get from local
     try:
         local_label = "Local (WSL)" if in_wsl else "Local"
-        sessions = get_sessions_for_patterns(patterns, since_date, until_date)
-        # Filter out cached remote/wsl/windows workspaces
-        native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
+        native_sessions = collect_sessions_with_dedup(
+            patterns, since_date=since_date, until_date=until_date, include_cached=False
+        )
         if native_sessions:
             all_results.append((local_label, native_sessions))
     except (OSError, PermissionError) as e:
@@ -5181,10 +5166,13 @@ def cmd_list_all_homes(args):
             for user in windows_users:
                 try:
                     windows_projects_dir = get_windows_projects_dir(user["username"])
-                    sessions = get_sessions_for_patterns(
-                        patterns, since_date, until_date, projects_dir=windows_projects_dir
+                    native_sessions = collect_sessions_with_dedup(
+                        patterns,
+                        since_date=since_date,
+                        until_date=until_date,
+                        projects_dir=windows_projects_dir,
+                        include_cached=False,
                     )
-                    native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
                     if native_sessions:
                         all_results.append((f"Windows ({user['username']})", native_sessions))
                 except (OSError, PermissionError) as e:
@@ -5201,10 +5189,13 @@ def cmd_list_all_homes(args):
             for distro in claude_distros:
                 try:
                     wsl_projects_dir = get_wsl_projects_dir(distro["name"])
-                    sessions = get_sessions_for_patterns(
-                        patterns, since_date, until_date, projects_dir=wsl_projects_dir
+                    native_sessions = collect_sessions_with_dedup(
+                        patterns,
+                        since_date=since_date,
+                        until_date=until_date,
+                        projects_dir=wsl_projects_dir,
+                        include_cached=False,
                     )
-                    native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
                     if native_sessions:
                         all_results.append((f"WSL ({distro['name']})", native_sessions))
                 except (OSError, PermissionError) as e:
@@ -5638,21 +5629,6 @@ def cmd_export_all(args):
     total_sessions = 0
     total_errors = 0
 
-    # Helper to get sessions for multiple patterns with deduplication
-    def get_sessions_for_patterns(patterns_list, quiet=True, since_date=None, until_date=None, projects_dir=None):
-        all_sessions = []
-        seen_files = set()
-        for pattern in patterns_list if patterns_list else [""]:
-            sessions = get_workspace_sessions(
-                pattern, quiet=quiet, since_date=since_date, until_date=until_date, projects_dir=projects_dir
-            )
-            for session in sessions:
-                file_key = str(session["file"])
-                if file_key not in seen_files:
-                    seen_files.add(file_key)
-                    all_sessions.append(session)
-        return all_sessions
-
     # 1. Export from local (WSL or Windows depending on environment)
     print(f"[Local] Exporting from {local_label}...")
     try:
@@ -5666,7 +5642,7 @@ def cmd_export_all(args):
         )
 
         # Get local sessions count before export
-        local_sessions = get_sessions_for_patterns(patterns, quiet=True)
+        local_sessions = collect_sessions_with_dedup(patterns, include_cached=False)
         if local_sessions:
             cmd_batch(config)
             sources_processed.append({"source": local_label, "sessions": len(local_sessions)})
@@ -5692,11 +5668,9 @@ def cmd_export_all(args):
 
                         # Count sessions first
                         windows_projects_dir = get_windows_projects_dir(username)
-                        win_sessions = get_sessions_for_patterns(
-                            patterns, quiet=True, projects_dir=windows_projects_dir
+                        native_sessions = collect_sessions_with_dedup(
+                            patterns, projects_dir=windows_projects_dir, include_cached=False
                         )
-                        # Filter out cached data
-                        native_sessions = [s for s in win_sessions if is_native_workspace(s["workspace"])]
                         session_count = len(native_sessions)
 
                         if session_count > 0:
@@ -5738,7 +5712,9 @@ def cmd_export_all(args):
 
                         # Count sessions first
                         wsl_projects_dir = get_wsl_projects_dir(distro["name"])
-                        wsl_sessions = get_sessions_for_patterns(patterns, quiet=True, projects_dir=wsl_projects_dir)
+                        wsl_sessions = collect_sessions_with_dedup(
+                            patterns, projects_dir=wsl_projects_dir, include_cached=False
+                        )
                         session_count = len(wsl_sessions)
 
                         if session_count > 0:
@@ -5835,8 +5811,6 @@ def cmd_export_all(args):
 
 def generate_index_manifest(output_dir: Path, sources_info: list):
     """Generate index.md manifest file summarizing all exported sessions."""
-    from datetime import datetime
-
     index_path = output_dir / "index.md"
 
     # Scan all workspace directories
