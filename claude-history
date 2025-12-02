@@ -22,7 +22,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-__version__ = "1.4.3"
+__version__ = "1.5.0"
 
 
 # ============================================================================
@@ -5651,27 +5651,8 @@ def generate_index_manifest(output_dir: Path, sources_info: list):
 # Main
 # ============================================================================
 
-
-def main():
-    # Fix Unicode encoding for Windows console (emojis in output)
-    import sys
-
-    if sys.platform == "win32":
-        try:
-            sys.stdout.reconfigure(encoding="utf-8")
-            sys.stderr.reconfigure(encoding="utf-8")
-        except AttributeError:
-            # Python < 3.7 doesn't have reconfigure
-            import codecs
-
-            sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "strict")
-            sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "strict")
-
-    parser = argparse.ArgumentParser(
-        prog="claude-history",
-        description="Browse and export Claude Code conversation history",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+# Help text for argument parser
+HELP_EPILOG = """
 EXAMPLES:
 
   List workspaces:
@@ -5721,24 +5702,86 @@ EXAMPLES:
     claude-history lsw --windows                    # list Windows workspaces
     claude-history lss myproject --windows          # list Windows sessions
     claude-history export myproject --windows       # export from Windows
-        """,
-    )
+"""
 
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
-    # Create subparsers for commands
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute", required=False)
+def _setup_windows_encoding():
+    """Fix Unicode encoding for Windows console (emojis in output)."""
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+            sys.stderr.reconfigure(encoding="utf-8")
+        except AttributeError:
+            # Python < 3.7 doesn't have reconfigure
+            import codecs
 
-    # ========== lsw - list workspaces ==========
-    parser_lsw = subparsers.add_parser(
-        "lsw", help="List workspaces", description="List all workspaces (local or remote)"
-    )
+            sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "strict")
+            sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "strict")
 
-    parser_lsw.add_argument(
+
+def _resolve_remote_flag(args):
+    """Convert --wsl and --windows flags to remote format.
+
+    Args:
+        args: Parsed arguments with wsl, windows, and remotes attributes
+
+    Returns:
+        Remote string (e.g., 'wsl://Ubuntu', 'windows', 'user@host') or None
+    """
+    remotes = getattr(args, "remotes", None)
+    remote = remotes[0] if remotes else None
+    wsl_flag = getattr(args, "wsl", False)
+    windows_flag = getattr(args, "windows", False)
+
+    if wsl_flag:
+        wsl_distros = get_wsl_distributions()
+        if wsl_distros:
+            claude_distros = [d for d in wsl_distros if d["has_claude"]]
+            if claude_distros:
+                return f"wsl://{claude_distros[0]['name']}"
+        sys.stderr.write("Error: No WSL distributions with Claude Code found\n")
+        sys.exit(1)
+
+    if windows_flag:
+        return "windows"
+
+    return remote
+
+
+def _resolve_remote_list(args):
+    """Convert --wsl and --windows flags to remote list for export command.
+
+    Args:
+        args: Parsed arguments with wsl, windows, and remotes attributes
+
+    Returns:
+        List of remote strings or None if empty
+    """
+    remotes = getattr(args, "remotes", None) or []
+    wsl_flag = getattr(args, "wsl", False)
+    windows_flag = getattr(args, "windows", False)
+
+    if wsl_flag:
+        wsl_distros = get_wsl_distributions()
+        if wsl_distros:
+            claude_distros = [d for d in wsl_distros if d["has_claude"]]
+            if claude_distros:
+                remotes.append(f"wsl://{claude_distros[0]['name']}")
+
+    if windows_flag:
+        remotes.append("windows")
+
+    return remotes if remotes else None
+
+
+def _add_lsw_parser(subparsers):
+    """Add lsw (list workspaces) subparser."""
+    parser = subparsers.add_parser("lsw", help="List workspaces", description="List all workspaces (local or remote)")
+
+    parser.add_argument(
         "pattern", nargs="*", help="Optional pattern(s) to filter workspaces (multiple patterns supported)"
     )
-
-    parser_lsw.add_argument(
+    parser.add_argument(
         "-r",
         "--remote",
         metavar="HOST",
@@ -5746,29 +5789,28 @@ EXAMPLES:
         dest="remotes",
         help="List workspaces from remote host via SSH (user@hostname) - can be used multiple times with --as",
     )
-
-    parser_lsw.add_argument("--wsl", action="store_true", help="List workspaces from WSL (auto-detects distribution)")
-
-    parser_lsw.add_argument("--windows", action="store_true", help="List workspaces from Windows (auto-detects user)")
-
-    parser_lsw.add_argument(
+    parser.add_argument("--wsl", action="store_true", help="List workspaces from WSL (auto-detects distribution)")
+    parser.add_argument("--windows", action="store_true", help="List workspaces from Windows (auto-detects user)")
+    parser.add_argument(
         "--ah",
         "--all-homes",
         dest="all_homes",
         action="store_true",
         help="List workspaces from all homes (local + WSL/Windows + remotes)",
     )
+    return parser
 
-    # ========== lss - list sessions ==========
-    parser_lss = subparsers.add_parser(
+
+def _add_lss_parser(subparsers):
+    """Add lss (list sessions) subparser."""
+    parser = subparsers.add_parser(
         "lss", help="List sessions", description="List sessions in a workspace (defaults to current workspace)"
     )
 
-    parser_lss.add_argument(
+    parser.add_argument(
         "workspace", nargs="*", help="Workspace name(s) (default: current workspace, multiple patterns supported)"
     )
-
-    parser_lss.add_argument(
+    parser.add_argument(
         "-r",
         "--remote",
         metavar="HOST",
@@ -5776,96 +5818,89 @@ EXAMPLES:
         dest="remotes",
         help="List sessions from remote host via SSH (user@hostname) - can be used multiple times with --as",
     )
-
-    parser_lss.add_argument("--wsl", action="store_true", help="List sessions from WSL (auto-detects distribution)")
-
-    parser_lss.add_argument("--windows", action="store_true", help="List sessions from Windows (auto-detects user)")
-
-    parser_lss.add_argument(
+    parser.add_argument("--wsl", action="store_true", help="List sessions from WSL (auto-detects distribution)")
+    parser.add_argument("--windows", action="store_true", help="List sessions from Windows (auto-detects user)")
+    parser.add_argument(
         "--since", metavar="DATE", help="Only include sessions modified on or after this date (YYYY-MM-DD)"
     )
-
-    parser_lss.add_argument(
+    parser.add_argument(
         "--until", metavar="DATE", help="Only include sessions modified on or before this date (YYYY-MM-DD)"
     )
-
-    parser_lss.add_argument(
+    parser.add_argument(
         "--ah",
         "--all-homes",
         dest="all_homes",
         action="store_true",
         help="List sessions from all homes (local + WSL/Windows + remotes)",
     )
-
-    parser_lss.add_argument(
+    parser.add_argument(
         "--alias", metavar="NAME", help="Use alias instead of workspace pattern (alternative to @name syntax)"
     )
-
-    parser_lss.add_argument(
+    parser.add_argument(
         "--this", action="store_true", dest="this_only", help="Use current workspace only, not its alias (if aliased)"
     )
+    return parser
 
-    # ========== lsh - list homes ==========
-    parser_lsh = subparsers.add_parser(
+
+def _add_lsh_parser(subparsers):
+    """Add lsh (list homes) subparser."""
+    parser = subparsers.add_parser(
         "lsh",
         help="List homes and manage SSH remotes",
         description="List all Claude Code installations (local, WSL, Windows, SSH remotes)",
     )
 
-    lsh_subparsers = parser_lsh.add_subparsers(dest="lsh_action")
+    lsh_subparsers = parser.add_subparsers(dest="lsh_action")
 
     # lsh add
-    parser_lsh_add = lsh_subparsers.add_parser(
+    parser_add = lsh_subparsers.add_parser(
         "add", help="Add an SSH remote", description="Add an SSH remote (user@hostname)"
     )
-    parser_lsh_add.add_argument("source", help="SSH remote (user@hostname)")
+    parser_add.add_argument("source", help="SSH remote (user@hostname)")
 
     # lsh remove
-    parser_lsh_remove = lsh_subparsers.add_parser(
+    parser_remove = lsh_subparsers.add_parser(
         "remove", help="Remove an SSH remote", description="Remove an SSH remote from configuration"
     )
-    parser_lsh_remove.add_argument("source", help="SSH remote to remove")
+    parser_remove.add_argument("source", help="SSH remote to remove")
 
     # lsh clear
     lsh_subparsers.add_parser("clear", help="Clear all SSH remotes", description="Remove all saved SSH remotes")
 
     # Filter flags for listing (default action)
-    parser_lsh.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
+    parser.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
+    parser.add_argument("--windows", action="store_true", help="Show Windows users only")
+    parser.add_argument("--local", action="store_true", help="Show local home folder only")
+    parser.add_argument("--remotes", action="store_true", help="Show SSH remotes only")
+    return parser
 
-    parser_lsh.add_argument("--windows", action="store_true", help="Show Windows users only")
 
-    parser_lsh.add_argument("--local", action="store_true", help="Show local home folder only")
-
-    parser_lsh.add_argument("--remotes", action="store_true", help="Show SSH remotes only")
-
-    # ========== export command ==========
-    parser_export = subparsers.add_parser(
+def _add_export_parser(subparsers):
+    """Add export subparser."""
+    parser = subparsers.add_parser(
         "export", help="Export to markdown", description="Export workspace or single file to markdown"
     )
 
-    parser_export.add_argument(
+    parser.add_argument(
         "target",
         nargs="*",
         default=[],
         help="Workspace pattern(s) or file.jsonl (optional, multiple patterns supported)",
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "output_dir",
         nargs="?",
         default="./claude-conversations",
         help="Output directory (default: ./claude-conversations)",
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "-o",
         "--output",
         metavar="DIR",
         dest="output_override",
         help="Output directory (overrides positional output_dir)",
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "-a",
         "--all",
         "--aw",
@@ -5874,16 +5909,14 @@ EXAMPLES:
         dest="all_workspaces",
         help="Export all workspaces (default: current workspace)",
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "--ah",
         "--all-homes",
         action="store_true",
         dest="all_homes",
         help="Export from all homes: local + WSL + Windows + remotes (default: local only)",
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "-r",
         "--remote",
         metavar="HOST",
@@ -5891,52 +5924,45 @@ EXAMPLES:
         dest="remotes",
         help="Export from remote host via SSH (user@hostname) - can be used multiple times",
     )
-
-    parser_export.add_argument("--wsl", action="store_true", help="Export from WSL (auto-detects distribution)")
-
-    parser_export.add_argument("--windows", action="store_true", help="Export from Windows (auto-detects user)")
-
-    parser_export.add_argument("--force", action="store_true", help="Force re-export (default: incremental)")
-
-    parser_export.add_argument(
+    parser.add_argument("--wsl", action="store_true", help="Export from WSL (auto-detects distribution)")
+    parser.add_argument("--windows", action="store_true", help="Export from Windows (auto-detects user)")
+    parser.add_argument("--force", action="store_true", help="Force re-export (default: incremental)")
+    parser.add_argument(
         "--minimal", action="store_true", help="Minimal export: omit metadata, keep only conversation content"
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "--split",
         metavar="LINES",
         type=validate_split_lines,
         help="Split long conversations into parts (e.g., --split 500)",
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "--since", metavar="DATE", help="Only include sessions modified on or after this date (YYYY-MM-DD)"
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "--until", metavar="DATE", help="Only include sessions modified on or before this date (YYYY-MM-DD)"
     )
-
-    parser_export.add_argument(
+    parser.add_argument(
         "--flat",
         action="store_true",
         help="Use flat directory structure (default: organized by workspace with source tags)",
     )
-
-    parser_export.add_argument("--alias", metavar="NAME", help="Export using alias (alternative to @name syntax)")
-
-    parser_export.add_argument(
+    parser.add_argument("--alias", metavar="NAME", help="Export using alias (alternative to @name syntax)")
+    parser.add_argument(
         "--this", action="store_true", dest="this_only", help="Use current workspace only, not its alias (if aliased)"
     )
+    return parser
 
-    # ========== alias command ==========
-    parser_alias = subparsers.add_parser(
+
+def _add_alias_parser(subparsers):
+    """Add alias subparser."""
+    parser = subparsers.add_parser(
         "alias",
         help="Manage workspace aliases",
         description="Create and manage workspace aliases for consolidated exports",
     )
 
-    alias_subparsers = parser_alias.add_subparsers(dest="alias_command", help="Alias subcommand")
+    alias_subparsers = parser.add_subparsers(dest="alias_command", help="Alias subcommand")
 
     # alias list
     alias_subparsers.add_parser(
@@ -5944,42 +5970,36 @@ EXAMPLES:
     )
 
     # alias show
-    parser_alias_show = alias_subparsers.add_parser(
+    parser_show = alias_subparsers.add_parser(
         "show", help="Show alias details", description="Show details of a single alias"
     )
-    parser_alias_show.add_argument("name", help="Alias name")
+    parser_show.add_argument("name", help="Alias name")
 
     # alias create
-    parser_alias_create = alias_subparsers.add_parser(
+    parser_create = alias_subparsers.add_parser(
         "create", help="Create a new alias", description="Create a new empty alias"
     )
-    parser_alias_create.add_argument("name", help="Alias name")
+    parser_create.add_argument("name", help="Alias name")
 
     # alias delete
-    parser_alias_delete = alias_subparsers.add_parser(
+    parser_delete = alias_subparsers.add_parser(
         "delete", help="Delete an alias", description="Delete an alias and all its workspace associations"
     )
-    parser_alias_delete.add_argument("name", help="Alias name")
+    parser_delete.add_argument("name", help="Alias name")
 
     # alias add
-    parser_alias_add = alias_subparsers.add_parser(
+    parser_add = alias_subparsers.add_parser(
         "add", help="Add workspace(s) to alias", description="Add one or more workspaces to an alias"
     )
-    parser_alias_add.add_argument(
+    parser_add.add_argument(
         "name", nargs="?", default="", help="Alias name (default: auto-detect from current directory)"
     )
-    parser_alias_add.add_argument("workspaces", nargs="*", help="Workspace names to add (encoded directory names)")
-    parser_alias_add.add_argument("--pick", action="store_true", help="Interactive workspace picker")
-    parser_alias_add.add_argument(
-        "-r", "--remote", metavar="HOST", help="Add workspace from remote host (user@hostname)"
-    )
-    parser_alias_add.add_argument(
-        "--wsl", action="store_true", help="Add workspace from WSL (auto-detects distribution)"
-    )
-    parser_alias_add.add_argument(
-        "--windows", action="store_true", help="Add workspace from Windows (auto-detects user)"
-    )
-    parser_alias_add.add_argument(
+    parser_add.add_argument("workspaces", nargs="*", help="Workspace names to add (encoded directory names)")
+    parser_add.add_argument("--pick", action="store_true", help="Interactive workspace picker")
+    parser_add.add_argument("-r", "--remote", metavar="HOST", help="Add workspace from remote host (user@hostname)")
+    parser_add.add_argument("--wsl", action="store_true", help="Add workspace from WSL (auto-detects distribution)")
+    parser_add.add_argument("--windows", action="store_true", help="Add workspace from Windows (auto-detects user)")
+    parser_add.add_argument(
         "--ah",
         "--all-homes",
         action="store_true",
@@ -5988,14 +6008,14 @@ EXAMPLES:
     )
 
     # alias remove
-    parser_alias_remove = alias_subparsers.add_parser(
+    parser_remove = alias_subparsers.add_parser(
         "remove", help="Remove workspace from alias", description="Remove a workspace from an alias"
     )
-    parser_alias_remove.add_argument("name", help="Alias name")
-    parser_alias_remove.add_argument("workspace", help="Workspace name to remove (encoded directory name)")
-    parser_alias_remove.add_argument("-r", "--remote", metavar="HOST", help="Remove workspace from remote source")
-    parser_alias_remove.add_argument("--wsl", action="store_true", help="Remove workspace from WSL source")
-    parser_alias_remove.add_argument("--windows", action="store_true", help="Remove workspace from Windows source")
+    parser_remove.add_argument("name", help="Alias name")
+    parser_remove.add_argument("workspace", help="Workspace name to remove (encoded directory name)")
+    parser_remove.add_argument("-r", "--remote", metavar="HOST", help="Remove workspace from remote source")
+    parser_remove.add_argument("--wsl", action="store_true", help="Remove workspace from WSL source")
+    parser_remove.add_argument("--windows", action="store_true", help="Remove workspace from Windows source")
 
     # alias export
     alias_subparsers.add_parser(
@@ -6003,68 +6023,50 @@ EXAMPLES:
     )
 
     # alias import
-    parser_alias_import = alias_subparsers.add_parser(
+    parser_import = alias_subparsers.add_parser(
         "import", help="Import aliases from JSON", description="Import aliases from JSON file or stdin"
     )
-    parser_alias_import.add_argument("file", nargs="?", help="JSON file to import (default: stdin)")
-    parser_alias_import.add_argument("--replace", action="store_true", help="Replace all aliases instead of merging")
+    parser_import.add_argument("file", nargs="?", help="JSON file to import (default: stdin)")
+    parser_import.add_argument("--replace", action="store_true", help="Replace all aliases instead of merging")
 
-    # ========== stats command ==========
-    parser_stats = subparsers.add_parser(
+    return parser
+
+
+def _add_stats_parser(subparsers):
+    """Add stats subparser."""
+    parser = subparsers.add_parser(
         "stats",
         help="Show usage statistics and metrics",
         description="Display Claude Code usage statistics from synced metrics database",
     )
 
-    parser_stats.add_argument("workspace", nargs="*", default=None, help="Filter by workspace pattern(s) or @alias")
-
-    parser_stats.add_argument("--sync", action="store_true", help="Sync JSONL files to metrics database")
-
-    parser_stats.add_argument("--force", action="store_true", help="Force re-sync all files (ignore mtime)")
-
-    parser_stats.add_argument("--tools", action="store_true", help="Show tool usage statistics")
-
-    parser_stats.add_argument("--models", action="store_true", help="Show model usage statistics")
-
-    parser_stats.add_argument("--time", action="store_true", help="Show time tracking with daily breakdown")
-
-    parser_stats.add_argument("--by-workspace", action="store_true", help="Show statistics grouped by workspace")
-
-    parser_stats.add_argument("--by-day", action="store_true", help="Show daily statistics")
-
-    parser_stats.add_argument(
-        "--source", metavar="SOURCE", help="Filter by source (local, wsl:distro, windows, remote:host)"
-    )
-
-    parser_stats.add_argument("--since", metavar="DATE", help="Filter sessions starting from this date (YYYY-MM-DD)")
-
-    parser_stats.add_argument("--until", metavar="DATE", help="Filter sessions until this date (YYYY-MM-DD)")
-
-    parser_stats.add_argument(
+    parser.add_argument("workspace", nargs="*", default=None, help="Filter by workspace pattern(s) or @alias")
+    parser.add_argument("--sync", action="store_true", help="Sync JSONL files to metrics database")
+    parser.add_argument("--force", action="store_true", help="Force re-sync all files (ignore mtime)")
+    parser.add_argument("--tools", action="store_true", help="Show tool usage statistics")
+    parser.add_argument("--models", action="store_true", help="Show model usage statistics")
+    parser.add_argument("--time", action="store_true", help="Show time tracking with daily breakdown")
+    parser.add_argument("--by-workspace", action="store_true", help="Show statistics grouped by workspace")
+    parser.add_argument("--by-day", action="store_true", help="Show daily statistics")
+    parser.add_argument("--source", metavar="SOURCE", help="Filter by source (local, wsl:distro, windows, remote:host)")
+    parser.add_argument("--since", metavar="DATE", help="Filter sessions starting from this date (YYYY-MM-DD)")
+    parser.add_argument("--until", metavar="DATE", help="Filter sessions until this date (YYYY-MM-DD)")
+    parser.add_argument(
         "--aw",
         "--all-workspaces",
         action="store_true",
         dest="all_workspaces",
         help="Show stats for all workspaces (default: current workspace)",
     )
-
-    parser_stats.add_argument(
+    parser.add_argument(
         "--this", action="store_true", dest="this_only", help="Use current workspace only, not its alias (if aliased)"
     )
-
-    parser_stats.add_argument(
-        "--ah",
-        "--all-homes",
-        action="store_true",
-        dest="all_homes",
-        help="Sync from all homes (local + WSL/Windows)",
+    parser.add_argument(
+        "--ah", "--all-homes", action="store_true", dest="all_homes", help="Sync from all homes (local + WSL/Windows)"
     )
-
-    parser_stats.add_argument("--wsl", action="store_true", help="Include WSL source")
-
-    parser_stats.add_argument("--windows", action="store_true", help="Include Windows source")
-
-    parser_stats.add_argument(
+    parser.add_argument("--wsl", action="store_true", help="Include WSL source")
+    parser.add_argument("--windows", action="store_true", help="Include Windows source")
+    parser.add_argument(
         "-r",
         "--remote",
         action="append",
@@ -6072,329 +6074,306 @@ EXAMPLES:
         metavar="HOST",
         help="Include remote source (can be repeated)",
     )
+    return parser
 
-    # ========== reset command ==========
-    parser_reset = subparsers.add_parser(
+
+def _add_reset_parser(subparsers):
+    """Add reset subparser."""
+    parser = subparsers.add_parser(
         "reset",
         help="Reset stored data (database, settings, aliases)",
         description="Delete metrics database, settings, and/or aliases.",
     )
 
-    parser_reset.add_argument(
+    parser.add_argument(
         "what",
         nargs="?",
         choices=["db", "settings", "aliases", "all"],
         default="all",
         help="What to reset: db (metrics), settings (SSH remotes), aliases, or all (default: all)",
     )
+    parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    return parser
 
-    parser_reset.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
 
-    # Parse arguments
-    args = parser.parse_args()
+def _create_argument_parser():
+    """Create and configure the argument parser.
 
-    # Helper function to resolve remote flags
-    def resolve_remote_flag(args):
-        """Convert --wsl and --windows flags to remote format."""
-        remotes = getattr(args, "remotes", None)
-        remote = remotes[0] if remotes else None  # Use first remote for single-remote commands
-        wsl_flag = getattr(args, "wsl", False)
-        windows_flag = getattr(args, "windows", False)
+    Returns:
+        Configured argparse.ArgumentParser instance
+    """
+    parser = argparse.ArgumentParser(
+        prog="claude-history",
+        description="Browse and export Claude Code conversation history",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=HELP_EPILOG,
+    )
 
-        # Convert boolean flags to remote format (auto-detect)
-        if wsl_flag:
-            wsl_distros = get_wsl_distributions()
-            if wsl_distros:
-                claude_distros = [d for d in wsl_distros if d["has_claude"]]
-                if claude_distros:
-                    return f"wsl://{claude_distros[0]['name']}"
-            sys.stderr.write("Error: No WSL distributions with Claude Code found\n")
-            sys.exit(1)
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
-        if windows_flag:
-            return "windows"
+    # Create subparsers for commands
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute", required=False)
 
-        return remote
+    # Add all command parsers
+    _add_lsw_parser(subparsers)
+    _add_lss_parser(subparsers)
+    _add_lsh_parser(subparsers)
+    _add_export_parser(subparsers)
+    _add_alias_parser(subparsers)
+    _add_stats_parser(subparsers)
+    _add_reset_parser(subparsers)
 
-    def resolve_remote_list(args):
-        """Convert --wsl and --windows flags to remote list for export command."""
-        remotes = getattr(args, "remotes", None) or []
-        wsl_flag = getattr(args, "wsl", False)
-        windows_flag = getattr(args, "windows", False)
+    return parser
 
-        # Add --wsl to remotes list (auto-detect first available distro)
-        if wsl_flag:
-            wsl_distros = get_wsl_distributions()
-            if wsl_distros:
-                claude_distros = [d for d in wsl_distros if d["has_claude"]]
-                if claude_distros:
-                    remotes.append(f"wsl://{claude_distros[0]['name']}")
 
-        # Add --windows to remotes list (auto-detect)
-        if windows_flag:
-            remotes.append("windows")
+# ============================================================================
+# Command Dispatch
+# ============================================================================
 
-        return remotes if remotes else None
 
-    # Dispatch to command handlers
-    if args.command == "lsw":
-        # List workspaces - handle multiple patterns
-        patterns = args.pattern if args.pattern else [""]
+def _dispatch_lsw(args):
+    """Dispatch lsw (list workspaces) command."""
+    patterns = args.pattern if args.pattern else [""]
 
-        # Check for --all-homes flag
-        if getattr(args, "all_homes", False):
-            # Get remotes list
-            lsw_remotes = getattr(args, "remotes", None) or []
+    if getattr(args, "all_homes", False):
+        lsw_remotes = getattr(args, "remotes", None) or []
 
-            class LswAllArgs:
-                workspaces_only = True
-                since_date = None
-                until_date = None
+        class LswAllArgs:
+            workspaces_only = True
+            since_date = None
+            until_date = None
 
-            LswAllArgs.remotes = lsw_remotes
-            LswAllArgs.patterns = patterns
+        LswAllArgs.remotes = lsw_remotes
+        LswAllArgs.patterns = patterns
+        cmd_list_all_homes(LswAllArgs())
+    else:
 
-            cmd_list_all_homes(LswAllArgs())
-        else:
+        class LswArgs:
+            remote = _resolve_remote_flag(args)
+            workspaces_only = True
 
-            class LswArgs:
-                remote = resolve_remote_flag(args)
-                workspaces_only = True  # lsw always lists workspaces
+        LswArgs.patterns = patterns
+        LswArgs.workspace = patterns[0] if patterns and patterns[0] else ""
+        cmd_list(LswArgs())
 
-            LswArgs.patterns = patterns
-            # Add workspace for backward compatibility with remote handlers
-            LswArgs.workspace = patterns[0] if patterns and patterns[0] else ""
-            cmd_list(LswArgs())
 
-    elif args.command == "lss":
-        # Handle multiple patterns - args.workspace is now a list
-        workspace_list = args.workspace if args.workspace else []
-        alias_flag = getattr(args, "alias", None)
+def _dispatch_lss(args):
+    """Dispatch lss (list sessions) command."""
+    workspace_list = args.workspace if args.workspace else []
+    alias_flag = getattr(args, "alias", None)
 
-        # Detect @ prefix in first workspace (alias syntax)
-        alias_name = None
-        if alias_flag:
-            alias_name = alias_flag
-        elif workspace_list and workspace_list[0].startswith("@"):
-            alias_name = workspace_list[0][1:]
+    # Detect @ prefix in first workspace (alias syntax)
+    alias_name = None
+    if alias_flag:
+        alias_name = alias_flag
+    elif workspace_list and workspace_list[0].startswith("@"):
+        alias_name = workspace_list[0][1:]
 
-        if alias_name:
-            # Use alias-based listing
-            since_date = parse_date_string(args.since) if args.since else None
-            until_date = parse_date_string(args.until) if args.until else None
-            cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date)
-        elif getattr(args, "all_homes", False):
-            # List from all homes
-            this_only = getattr(args, "this_only", False)
-            since_date = parse_date_string(args.since) if args.since else None
-            until_date = parse_date_string(args.until) if args.until else None
-            lss_remotes = getattr(args, "remotes", None) or []
+    if alias_name:
+        since_date = parse_date_string(args.since) if args.since else None
+        until_date = parse_date_string(args.until) if args.until else None
+        cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date)
+        return
 
-            # Determine patterns - check for alias if no workspace specified
-            if workspace_list:
-                patterns = workspace_list
-            else:
-                # Check if current directory is a valid workspace
-                pattern, exists = check_current_workspace_exists()
-                if not exists:
-                    # Not in a workspace - list all workspaces from all homes
-                    patterns = [""]
-                elif not this_only:
-                    alias_for_ws = get_alias_for_workspace(pattern, "local")
-                    if alias_for_ws:
-                        # Use alias-based listing instead
-                        sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
-                        cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
-                        return  # Early return after alias listing
-                    patterns = [pattern]
-                else:
-                    patterns = [pattern]
-
-            class LssAllArgs:
-                workspaces_only = False
-
-            LssAllArgs.patterns = patterns
-            LssAllArgs.since_date = since_date
-            LssAllArgs.until_date = until_date
-            LssAllArgs.remotes = lss_remotes
-
-            cmd_list_all_homes(LssAllArgs())
-        else:
-            # Regular workspace listing
-            this_only = getattr(args, "this_only", False)
-            if workspace_list:
-                patterns = workspace_list
-            else:
-                # No workspace specified - check if current directory is a known workspace
-                pattern, exists = check_current_workspace_exists()
-                if not exists:
-                    print("Error: Not in a Claude Code workspace.", file=sys.stderr)
-                    print("\nTo list sessions, either:", file=sys.stderr)
-                    print("  • Run from within a workspace directory", file=sys.stderr)
-                    print("  • Specify a workspace pattern: lss <pattern>", file=sys.stderr)
-                    print("  • Use --ah to list from all homes: lss --as", file=sys.stderr)
-                    sys.exit(1)
-
-                # Check if current workspace belongs to an alias (unless --this is used)
-                if not this_only:
-                    alias_for_ws = get_alias_for_workspace(pattern, "local")
-                    if alias_for_ws:
-                        # Use alias-based listing instead
-                        sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
-                        since_date = parse_date_string(args.since) if args.since else None
-                        until_date = parse_date_string(args.until) if args.until else None
-                        cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
-                        return  # Early return after alias listing
-
-                patterns = [pattern]
-
-            class LssArgs:
-                since = args.since
-                until = args.until
-                remote = resolve_remote_flag(args)
-                workspaces_only = False  # lss always lists sessions
-
-            LssArgs.patterns = patterns
-            cmd_list(LssArgs())
-
-    elif args.command == "lsh":
-        # List homes
-        cmd_lsh(args)
-
-    elif args.command == "export":
-        # Determine output directory (-o overrides positional)
-        final_output_dir = (
-            args.output_override if hasattr(args, "output_override") and args.output_override else args.output_dir
-        )
-
-        # Handle target(s) - now a list
-        targets = args.target if args.target else []
-
-        # Check for alias (@ prefix or --alias flag)
-        alias_flag = getattr(args, "alias", None)
-        alias_name = None
-        if alias_flag:
-            alias_name = alias_flag
-        elif targets and targets[0].startswith("@"):
-            alias_name = targets[0][1:]
-
-        if alias_name:
-            # Use alias-based export
-            cmd_alias_export(alias_name, final_output_dir, args)
-            return
-
-        # Get patterns (default to current workspace if empty)
-        # Skip workspace check if --aw is set (all workspaces)
-        # Also skip if --ah is set and not in a workspace (implies --aw)
+    if getattr(args, "all_homes", False):
         this_only = getattr(args, "this_only", False)
-        if not targets and not args.all_workspaces:
-            # No workspace specified - check if current directory is a known workspace
+        since_date = parse_date_string(args.since) if args.since else None
+        until_date = parse_date_string(args.until) if args.until else None
+        lss_remotes = getattr(args, "remotes", None) or []
+
+        if workspace_list:
+            patterns = workspace_list
+        else:
             pattern, exists = check_current_workspace_exists()
             if not exists:
-                # If --ah is used from outside a workspace, treat as --aw
-                if args.all_homes:
-                    args.all_workspaces = True
-                else:
-                    print("Error: Not in a Claude Code workspace.", file=sys.stderr)
-                    print("\nTo export sessions, either:", file=sys.stderr)
-                    print("  • Run from within a workspace directory", file=sys.stderr)
-                    print("  • Specify a workspace pattern: export <pattern>", file=sys.stderr)
-                    print("  • Use --aw to export all workspaces: export --aw", file=sys.stderr)
-                    print("  • Use --ah to export from all homes: export --as", file=sys.stderr)
-                    sys.exit(1)
+                patterns = [""]
+            elif not this_only:
+                alias_for_ws = get_alias_for_workspace(pattern, "local")
+                if alias_for_ws:
+                    sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+                    cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
+                    return
+                patterns = [pattern]
             else:
-                # Check if current workspace belongs to an alias (unless --this is used)
-                if not this_only:
-                    alias_for_ws = get_alias_for_workspace(pattern, "local")
-                    if alias_for_ws:
-                        # Use alias-based export instead
-                        sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
-                        cmd_alias_export(alias_for_ws, final_output_dir, args)
-                        return  # Early return after alias export
+                patterns = [pattern]
 
-                targets = [pattern]
+        class LssAllArgs:
+            workspaces_only = False
 
-        # Check for single file export (one target ending with .jsonl)
-        if len(targets) == 1 and targets[0].endswith(".jsonl"):
-            final_remotes = resolve_remote_list(args)
-            final_remote = final_remotes[0] if final_remotes else None
+        LssAllArgs.patterns = patterns
+        LssAllArgs.since_date = since_date
+        LssAllArgs.until_date = until_date
+        LssAllArgs.remotes = lss_remotes
+        cmd_list_all_homes(LssAllArgs())
+    else:
+        this_only = getattr(args, "this_only", False)
+        if workspace_list:
+            patterns = workspace_list
+        else:
+            pattern, exists = check_current_workspace_exists()
+            if not exists:
+                print("Error: Not in a Claude Code workspace.", file=sys.stderr)
+                print("\nTo list sessions, either:", file=sys.stderr)
+                print("  • Run from within a workspace directory", file=sys.stderr)
+                print("  • Specify a workspace pattern: lss <pattern>", file=sys.stderr)
+                print("  • Use --ah to list from all homes: lss --as", file=sys.stderr)
+                sys.exit(1)
 
-            class ConvertArgs:
-                jsonl_file = targets[0]
-                output = None  # Use default
-                remote = final_remote
+            if not this_only:
+                alias_for_ws = get_alias_for_workspace(pattern, "local")
+                if alias_for_ws:
+                    sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+                    since_date = parse_date_string(args.since) if args.since else None
+                    until_date = parse_date_string(args.until) if args.until else None
+                    cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
+                    return
 
-            cmd_convert(ConvertArgs())
-            return
+            patterns = [pattern]
 
-        # Resolve remotes (including --wsl and --windows flags)
-        final_remotes = resolve_remote_list(args)
+        class LssArgs:
+            since = args.since
+            until = args.until
+            remote = _resolve_remote_flag(args)
+            workspaces_only = False
 
-        # Handle --all-homes flag (export from all homes)
+        LssArgs.patterns = patterns
+        cmd_list(LssArgs())
+
+
+def _dispatch_export(args):
+    """Dispatch export command."""
+    final_output_dir = (
+        args.output_override if hasattr(args, "output_override") and args.output_override else args.output_dir
+    )
+    targets = args.target if args.target else []
+
+    # Check for alias
+    alias_flag = getattr(args, "alias", None)
+    alias_name = None
+    if alias_flag:
+        alias_name = alias_flag
+    elif targets and targets[0].startswith("@"):
+        alias_name = targets[0][1:]
+
+    if alias_name:
+        cmd_alias_export(alias_name, final_output_dir, args)
+        return
+
+    this_only = getattr(args, "this_only", False)
+    if not targets and not args.all_workspaces:
+        pattern, exists = check_current_workspace_exists()
+        if not exists:
+            if args.all_homes:
+                args.all_workspaces = True
+            else:
+                print("Error: Not in a Claude Code workspace.", file=sys.stderr)
+                print("\nTo export sessions, either:", file=sys.stderr)
+                print("  • Run from within a workspace directory", file=sys.stderr)
+                print("  • Specify a workspace pattern: export <pattern>", file=sys.stderr)
+                print("  • Use --aw to export all workspaces: export --aw", file=sys.stderr)
+                print("  • Use --ah to export from all homes: export --as", file=sys.stderr)
+                sys.exit(1)
+        else:
+            if not this_only:
+                alias_for_ws = get_alias_for_workspace(pattern, "local")
+                if alias_for_ws:
+                    sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+                    cmd_alias_export(alias_for_ws, final_output_dir, args)
+                    return
+            targets = [pattern]
+
+    # Check for single file export
+    if len(targets) == 1 and targets[0].endswith(".jsonl"):
+        final_remotes = _resolve_remote_list(args)
+        final_remote = final_remotes[0] if final_remotes else None
+
+        class ConvertArgs:
+            jsonl_file = targets[0]
+            output = None
+            remote = final_remote
+
+        cmd_convert(ConvertArgs())
+        return
+
+    final_remotes = _resolve_remote_list(args)
+
+    if args.all_homes:
+        final_patterns = [] if args.all_workspaces else targets
+
+        class ExportAllArgs:
+            patterns = final_patterns
+            workspace = ""
+            output_dir = final_output_dir
+            remotes = final_remotes
+            since = args.since
+            until = args.until
+            force = args.force
+            minimal = args.minimal
+            split = args.split
+
+        cmd_export_all(ExportAllArgs())
+    else:
+        final_patterns = [] if args.all_workspaces else targets
+        final_remote = final_remotes[0] if final_remotes else None
+
+        class ExportArgs:
+            patterns = final_patterns
+            workspace = final_patterns[0] if final_patterns else ""
+            output_dir = final_output_dir
+            since = args.since
+            until = args.until
+            force = args.force
+            minimal = args.minimal
+            split = args.split
+            flat = args.flat
+            remote = final_remote
+
+        cmd_batch(ExportArgs())
+
+
+def _dispatch_alias(args):
+    """Dispatch alias command."""
+    alias_cmd = getattr(args, "alias_command", None)
+
+    if alias_cmd == "list" or alias_cmd is None:
+        cmd_alias_list(args)
+    elif alias_cmd == "show":
+        cmd_alias_show(args)
+    elif alias_cmd == "create":
+        cmd_alias_create(args)
+    elif alias_cmd == "delete":
+        cmd_alias_delete(args)
+    elif alias_cmd == "add":
+        cmd_alias_add(args)
+    elif alias_cmd == "remove":
+        cmd_alias_remove(args)
+    elif alias_cmd == "export":
+        cmd_alias_config_export(args)
+    elif alias_cmd == "import":
+        cmd_alias_config_import(args)
+
+
+def _dispatch_stats(args):
+    """Dispatch stats command."""
+    if args.sync:
+        remotes = getattr(args, "remotes", None) or []
+        if args.wsl:
+            wsl_distros = get_wsl_distributions()
+            claude_distros = [d for d in wsl_distros if d.get("has_claude")]
+            if claude_distros:
+                remotes.append(f"wsl://{claude_distros[0]['name']}")
+        if args.windows:
+            remotes.append("windows")
+
+        class SyncArgs:
+            force = args.force
+            all_homes = args.all_homes
+            patterns = [args.workspace] if args.workspace else [""]
+
+        SyncArgs.remotes = remotes
+        cmd_stats_sync(SyncArgs())
+    else:
         if args.all_homes:
-            # Export from all homes (local + WSL + Windows + remotes)
-            # Pass patterns list for multiple pattern support
-            final_patterns = [] if args.all_workspaces else targets
-
-            class ExportAllArgs:
-                patterns = final_patterns
-                workspace = ""  # Backward compat: empty means all or use patterns
-                output_dir = final_output_dir
-                remotes = final_remotes
-                since = args.since
-                until = args.until
-                force = args.force
-                minimal = args.minimal
-                split = args.split
-
-            cmd_export_all(ExportAllArgs())
-        else:
-            # Regular export - single source
-            final_patterns = [] if args.all_workspaces else targets
-            final_remote = final_remotes[0] if final_remotes else None
-
-            class ExportArgs:
-                patterns = final_patterns
-                workspace = final_patterns[0] if final_patterns else ""  # Backward compat
-                output_dir = final_output_dir
-                since = args.since
-                until = args.until
-                force = args.force
-                minimal = args.minimal
-                split = args.split
-                flat = args.flat
-                remote = final_remote
-
-            cmd_batch(ExportArgs())
-
-    elif args.command == "alias":
-        # Alias management commands
-        alias_cmd = getattr(args, "alias_command", None)
-
-        if alias_cmd == "list" or alias_cmd is None:
-            cmd_alias_list(args)
-        elif alias_cmd == "show":
-            cmd_alias_show(args)
-        elif alias_cmd == "create":
-            cmd_alias_create(args)
-        elif alias_cmd == "delete":
-            cmd_alias_delete(args)
-        elif alias_cmd == "add":
-            cmd_alias_add(args)
-        elif alias_cmd == "remove":
-            cmd_alias_remove(args)
-        elif alias_cmd == "export":
-            cmd_alias_config_export(args)
-        elif alias_cmd == "import":
-            cmd_alias_config_import(args)
-        else:
-            # Show alias help if unknown subcommand
-            parser_alias.print_help()
-
-    elif args.command == "stats":
-        # Stats/metrics commands
-        if args.sync:
-            # Build remotes list from flags
             remotes = getattr(args, "remotes", None) or []
             if args.wsl:
                 wsl_distros = get_wsl_distributions()
@@ -6406,60 +6385,64 @@ EXAMPLES:
 
             class SyncArgs:
                 force = args.force
-                all_homes = args.all_homes
+                all_homes = True
                 patterns = [args.workspace] if args.workspace else [""]
 
             SyncArgs.remotes = remotes
             cmd_stats_sync(SyncArgs())
-        else:
-            # Display stats
-            # If --ah is given, sync first then display
-            if args.all_homes:
-                remotes = getattr(args, "remotes", None) or []
-                if args.wsl:
-                    wsl_distros = get_wsl_distributions()
-                    claude_distros = [d for d in wsl_distros if d.get("has_claude")]
-                    if claude_distros:
-                        remotes.append(f"wsl://{claude_distros[0]['name']}")
-                if args.windows:
-                    remotes.append("windows")
+            print()
 
-                class SyncArgs:
-                    force = args.force
-                    all_homes = True
-                    patterns = [args.workspace] if args.workspace else [""]
+        class StatsArgs:
+            workspace = args.workspace
+            source = args.source
+            since = args.since
+            until = args.until
+            tools = args.tools
+            models = args.models
+            time = getattr(args, "time", False)
+            by_workspace = getattr(args, "by_workspace", False)
+            by_day = getattr(args, "by_day", False)
+            all_workspaces = getattr(args, "all_workspaces", False)
 
-                SyncArgs.remotes = remotes
-                cmd_stats_sync(SyncArgs())
-                print()  # Blank line between sync and display
+        cmd_stats(StatsArgs())
 
-            # --ah and --aw are orthogonal:
-            # --ah = sync from all homes first
-            # --aw = query all workspaces
-            class StatsArgs:
-                workspace = args.workspace
-                source = args.source
-                since = args.since
-                until = args.until
-                tools = args.tools
-                models = args.models
-                time = getattr(args, "time", False)
-                by_workspace = getattr(args, "by_workspace", False)
-                by_day = getattr(args, "by_day", False)
-                all_workspaces = getattr(args, "all_workspaces", False)
 
-            cmd_stats(StatsArgs())
+def _dispatch_command(args):
+    """Dispatch parsed arguments to appropriate command handler.
 
+    Args:
+        args: Parsed argparse.Namespace object
+    """
+    if args.command == "lsw":
+        _dispatch_lsw(args)
+    elif args.command == "lss":
+        _dispatch_lss(args)
+    elif args.command == "lsh":
+        cmd_lsh(args)
+    elif args.command == "export":
+        _dispatch_export(args)
+    elif args.command == "alias":
+        _dispatch_alias(args)
+    elif args.command == "stats":
+        _dispatch_stats(args)
     elif args.command == "reset":
         cmd_reset(args)
+
+
+def main():
+    """Main entry point."""
+    _setup_windows_encoding()
+    parser = _create_argument_parser()
+    args = parser.parse_args()
+    _dispatch_command(args)
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        sys.stderr.write("\nInterrupted\n")
+        sys.stderr.write("\\nInterrupted\\n")
         sys.exit(130)
     except Exception as e:
-        sys.stderr.write(f"\nError: {e}\n")
+        sys.stderr.write(f"\\nError: {e}\\n")
         sys.exit(1)
