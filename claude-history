@@ -411,6 +411,7 @@ def collect_sessions_with_dedup(
     projects_dir: Path = None,
     quiet: bool = True,
     include_cached: bool = False,
+    skip_message_count: bool = False,
 ) -> list:
     """Collect sessions from multiple patterns with automatic deduplication.
 
@@ -424,6 +425,7 @@ def collect_sessions_with_dedup(
         projects_dir: Optional projects directory (for WSL/Windows access)
         quiet: If True, suppress "not found" warnings
         include_cached: If True, include cached remote/WSL workspaces
+        skip_message_count: If True, skip counting messages (faster for slow filesystems)
 
     Returns:
         List of session dictionaries, deduplicated by file path.
@@ -438,6 +440,7 @@ def collect_sessions_with_dedup(
             since_date=since_date,
             until_date=until_date,
             projects_dir=projects_dir,
+            skip_message_count=skip_message_count,
         )
         for session in pattern_sessions:
             file_key = str(session["file"])
@@ -1459,6 +1462,7 @@ def get_workspace_sessions(
     until_date=None,
     include_cached: bool = False,
     projects_dir: Path = None,
+    skip_message_count: bool = False,
 ):
     """Find all Claude Code sessions in workspaces matching the pattern.
 
@@ -1474,6 +1478,7 @@ def get_workspace_sessions(
         until_date: Filter to sessions modified on or before this date
         include_cached: If True, include remote_* and wsl_* cached workspaces
         projects_dir: Explicit projects directory path (default: auto-detect)
+        skip_message_count: If True, skip counting messages (faster for slow filesystems)
 
     Returns:
         List of session dicts, each containing:
@@ -1548,12 +1553,16 @@ def get_workspace_sessions(
                     continue
 
                 # Count messages (each line is a message)
-                try:
-                    with open(jsonl_file, encoding="utf-8") as f:
-                        message_count = sum(1 for _ in f)
-                except OSError:
-                    # File became inaccessible between stat and read
+                # Skip if requested (for slow filesystems like WSL mounts)
+                if skip_message_count:
                     message_count = 0
+                else:
+                    try:
+                        with open(jsonl_file, encoding="utf-8") as f:
+                            message_count = sum(1 for _ in f)
+                    except OSError:
+                        # File became inaccessible between stat and read
+                        message_count = 0
 
                 sessions.append(
                     {
@@ -1662,7 +1671,9 @@ def get_windows_users_with_claude():
         return results
 
     for drive in sorted(mnt.iterdir()):
-        if drive.is_dir() and drive.name not in ["wsl", "wslg"]:
+        # Only check single-letter Windows drive mounts (c, d, e, etc.)
+        # Skip wsl, wslg, and any other mounts (network drives, etc.) that may hang
+        if drive.is_dir() and len(drive.name) == 1 and drive.name.isalpha():
             users_dir = drive / "Users"
             if users_dir.exists():
                 for user_dir in users_dir.iterdir():
@@ -4545,7 +4556,13 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         sys.stderr.write("  • Try: claude-history lsh --windows\n")
         sys.exit(1)
 
-    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=windows_projects_dir)
+    sessions = collect_sessions_with_dedup(
+        patterns,
+        since_date,
+        until_date,
+        projects_dir=windows_projects_dir,
+        skip_message_count=True,  # Slow over WSL mount
+    )
 
     if not sessions:
         sys.stderr.write("Error: No native sessions found in Windows\n")
@@ -4576,7 +4593,13 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
         sys.stderr.write("  • Try: claude-history lsh --wsl\n")
         sys.exit(1)
 
-    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=wsl_projects_dir)
+    sessions = collect_sessions_with_dedup(
+        patterns,
+        since_date,
+        until_date,
+        projects_dir=wsl_projects_dir,
+        skip_message_count=True,  # Slow over Windows/WSL boundary
+    )
 
     if not sessions:
         sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
@@ -4816,7 +4839,13 @@ def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) ->
         sys.stderr.write("  • Try: claude-history lsh --windows\n")
         sys.exit(1)
 
-    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=windows_projects_dir)
+    sessions = collect_sessions_with_dedup(
+        patterns,
+        since_date,
+        until_date,
+        projects_dir=windows_projects_dir,
+        skip_message_count=True,  # Slow over WSL mount
+    )
 
     if not sessions:
         sys.stderr.write("Error: No native sessions found in Windows\n")
@@ -4848,7 +4877,13 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
         sys.stderr.write("  • Try: claude-history lsh --wsl\n")
         sys.exit(1)
 
-    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=wsl_projects_dir)
+    sessions = collect_sessions_with_dedup(
+        patterns,
+        since_date,
+        until_date,
+        projects_dir=wsl_projects_dir,
+        skip_message_count=True,  # Slow over Windows/WSL boundary
+    )
 
     if not sessions:
         sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
@@ -5172,6 +5207,7 @@ def cmd_list_all_homes(args):
                         until_date=until_date,
                         projects_dir=windows_projects_dir,
                         include_cached=False,
+                        skip_message_count=True,  # Slow over WSL mount
                     )
                     if native_sessions:
                         all_results.append((f"Windows ({user['username']})", native_sessions))
@@ -5195,6 +5231,7 @@ def cmd_list_all_homes(args):
                         until_date=until_date,
                         projects_dir=wsl_projects_dir,
                         include_cached=False,
+                        skip_message_count=True,  # Slow over Windows/WSL boundary
                     )
                     if native_sessions:
                         all_results.append((f"WSL ({distro['name']})", native_sessions))
@@ -5959,6 +5996,9 @@ def _resolve_remote_flag(args):
     windows_flag = getattr(args, "windows", False)
 
     if wsl_flag:
+        # If already in WSL, --wsl is a no-op (use local)
+        if is_running_in_wsl():
+            return None
         wsl_distros = get_wsl_distributions()
         if wsl_distros:
             claude_distros = [d for d in wsl_distros if d["has_claude"]]
@@ -5968,6 +6008,9 @@ def _resolve_remote_flag(args):
         sys.exit(1)
 
     if windows_flag:
+        # If already on Windows, --windows is a no-op (use local)
+        if platform.system() == "Windows":
+            return None
         return "windows"
 
     return remote
@@ -5987,14 +6030,18 @@ def _resolve_remote_list(args):
     windows_flag = getattr(args, "windows", False)
 
     if wsl_flag:
-        wsl_distros = get_wsl_distributions()
-        if wsl_distros:
-            claude_distros = [d for d in wsl_distros if d["has_claude"]]
-            if claude_distros:
-                remotes.append(f"wsl://{claude_distros[0]['name']}")
+        # If already in WSL, --wsl is a no-op (skip adding to remotes)
+        if not is_running_in_wsl():
+            wsl_distros = get_wsl_distributions()
+            if wsl_distros:
+                claude_distros = [d for d in wsl_distros if d["has_claude"]]
+                if claude_distros:
+                    remotes.append(f"wsl://{claude_distros[0]['name']}")
 
     if windows_flag:
-        remotes.append("windows")
+        # If already on Windows, --windows is a no-op (skip adding to remotes)
+        if platform.system() != "Windows":
+            remotes.append("windows")
 
     return remotes if remotes else None
 
@@ -6661,6 +6708,9 @@ def main():
     _setup_windows_encoding()
     parser = _create_argument_parser()
     args = parser.parse_args()
+    if not hasattr(args, "command") or args.command is None:
+        parser.print_help()
+        sys.exit(0)
     _dispatch_command(args)
 
 

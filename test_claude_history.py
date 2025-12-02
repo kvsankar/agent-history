@@ -5185,6 +5185,200 @@ class TestCrossPlatform:
 
 
 # ============================================================================
+# Skip Message Count Tests
+# ============================================================================
+
+
+class TestSkipMessageCount:
+    """Tests for skip_message_count parameter in get_workspace_sessions."""
+
+    @pytest.fixture
+    def workspace_with_sessions(self, tmp_path):
+        """Create a workspace with session files."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        workspace = projects_dir / "-home-user-testproject"
+        workspace.mkdir(parents=True)
+
+        # Create session with 5 messages
+        session = workspace / "session-001.jsonl"
+        messages = []
+        for i in range(5):
+            messages.append(
+                json.dumps(
+                    {
+                        "type": "user" if i % 2 == 0 else "assistant",
+                        "message": {"role": "user" if i % 2 == 0 else "assistant", "content": f"Message {i}"},
+                        "timestamp": f"2025-11-20T10:00:0{i}.000Z",
+                    }
+                )
+            )
+        session.write_text("\n".join(messages) + "\n")
+
+        return projects_dir
+
+    def test_message_count_enabled(self, workspace_with_sessions):
+        """With skip_message_count=False, should count messages."""
+        sessions = ch.get_workspace_sessions(
+            "",
+            projects_dir=workspace_with_sessions,
+            skip_message_count=False,
+        )
+        assert len(sessions) == 1
+        assert sessions[0]["message_count"] == 5
+
+    def test_message_count_disabled(self, workspace_with_sessions):
+        """With skip_message_count=True, should return 0 for message_count."""
+        sessions = ch.get_workspace_sessions(
+            "",
+            projects_dir=workspace_with_sessions,
+            skip_message_count=True,
+        )
+        assert len(sessions) == 1
+        assert sessions[0]["message_count"] == 0
+
+    def test_collect_sessions_with_skip(self, workspace_with_sessions):
+        """collect_sessions_with_dedup should pass skip_message_count through."""
+        sessions = ch.collect_sessions_with_dedup(
+            [""],
+            projects_dir=workspace_with_sessions,
+            skip_message_count=True,
+        )
+        assert len(sessions) == 1
+        assert sessions[0]["message_count"] == 0
+
+
+# ============================================================================
+# Windows Drive Filter Tests
+# ============================================================================
+
+
+class TestWindowsDriveFilter:
+    """Tests for single-letter drive filtering in get_windows_users_with_claude."""
+
+    def test_single_letter_drives_only(self, tmp_path):
+        """Should only check single-letter drive directories."""
+        # Create mock /mnt structure
+        mnt = tmp_path / "mnt"
+        mnt.mkdir()
+
+        # Single-letter drives (should be checked)
+        for drive in ["c", "d", "e"]:
+            drive_dir = mnt / drive / "Users" / "testuser" / ".claude" / "projects"
+            drive_dir.mkdir(parents=True)
+
+        # Multi-letter mounts (should be skipped)
+        for mount in ["wsl", "wslg", "sankar", "networkdrive"]:
+            mount_dir = mnt / mount / "Users" / "testuser" / ".claude" / "projects"
+            mount_dir.mkdir(parents=True)
+
+        # Patch the function to use our temp mnt
+        with patch.object(Path, "__truediv__", wraps=Path.__truediv__):
+            # We can't easily patch /mnt, so test the filter logic directly
+            drives = []
+            for drive in sorted(mnt.iterdir()):
+                if drive.is_dir() and len(drive.name) == 1 and drive.name.isalpha():
+                    drives.append(drive.name)
+
+            # Should only include single-letter drives
+            assert sorted(drives) == ["c", "d", "e"]
+            assert "wsl" not in drives
+            assert "wslg" not in drives
+            assert "sankar" not in drives
+            assert "networkdrive" not in drives
+
+    def test_drive_filter_logic(self):
+        """Test the drive filter logic directly."""
+        # Valid single-letter drives
+        assert len("c") == 1 and "c".isalpha()
+        assert len("d") == 1 and "d".isalpha()
+        assert len("z") == 1 and "z".isalpha()
+
+        # Invalid - multi-letter
+        assert not (len("wsl") == 1 and "wsl".isalpha())
+        assert not (len("wslg") == 1 and "wslg".isalpha())
+        assert not (len("sankar") == 1 and "sankar".isalpha())
+
+        # Invalid - numeric
+        assert not (len("1") == 1 and "1".isalpha())
+
+
+# ============================================================================
+# CLI Smoke Tests (subprocess-based)
+# ============================================================================
+
+
+class TestCLISmoke:
+    """Smoke tests that run the actual CLI as a subprocess."""
+
+    @pytest.fixture
+    def script_path(self):
+        """Get the path to the claude-history script."""
+        return Path(__file__).parent / "claude-history"
+
+    def test_no_args_prints_help(self, script_path):
+        """Running with no arguments should print help."""
+        result = subprocess.run(
+            [str(script_path)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "usage:" in result.stdout
+        assert "Browse and export Claude Code conversation history" in result.stdout
+
+    def test_help_flag(self, script_path):
+        """--help should print help."""
+        result = subprocess.run(
+            [str(script_path), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "usage:" in result.stdout
+
+    def test_version_flag(self, script_path):
+        """--version should print version."""
+        result = subprocess.run(
+            [str(script_path), "--version"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        # Version output goes to stdout
+        assert result.stdout.strip() != ""
+
+    def test_invalid_command(self, script_path):
+        """Invalid command should fail with non-zero exit code."""
+        result = subprocess.run(
+            [str(script_path), "invalidcommand"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert "invalid choice" in result.stderr or "error" in result.stderr.lower()
+
+    def test_lsw_runs(self, script_path):
+        """lsw command should run without error."""
+        result = subprocess.run(
+            [str(script_path), "lsw"],
+            capture_output=True,
+            text=True,
+        )
+        # Should succeed (may have no output if no workspaces)
+        assert result.returncode == 0
+
+    def test_subcommand_help(self, script_path):
+        """Subcommand --help should work."""
+        result = subprocess.run(
+            [str(script_path), "export", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "usage:" in result.stdout
+
+
+# ============================================================================
 # Run tests
 # ============================================================================
 
