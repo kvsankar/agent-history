@@ -18,6 +18,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import platform
 import subprocess
 import tempfile
 from datetime import datetime
@@ -1156,6 +1157,7 @@ class TestMetricsDatabase:
 
         conn.close()
 
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix permissions not applicable on Windows")
     def test_init_metrics_db_sets_permissions(self, tmp_path):
         """Should set secure file permissions."""
         db_path = tmp_path / "secure.db"
@@ -1164,7 +1166,6 @@ class TestMetricsDatabase:
         conn.close()
 
         # Check file permissions (Unix only)
-
         mode = db_path.stat().st_mode
         # Should be 0o600 (owner read/write only)
         assert mode & 0o777 == 0o600
@@ -5096,20 +5097,24 @@ class TestPlatformWindowsWithWSL:
     """Tests that require WSL available from Windows."""
 
     def test_platform_wsl_distributions(self):
-        """get_wsl_distributions returns available distros."""
+        """get_wsl_distributions returns available distros as dicts."""
         distros = ch.get_wsl_distributions()
         assert len(distros) > 0
 
         for distro in distros:
-            assert isinstance(distro, str)
-            assert len(distro) > 0
+            assert isinstance(distro, dict)
+            assert "name" in distro
+            assert "username" in distro
+            assert "has_claude" in distro
+            assert isinstance(distro["name"], str)
+            assert len(distro["name"]) > 0
 
     def test_platform_wsl_projects_dir(self):
         """get_wsl_projects_dir returns path for a distro."""
         distros = ch.get_wsl_distributions()
         if distros:
             first_distro = distros[0]
-            projects_dir = ch.get_wsl_projects_dir(first_distro)
+            projects_dir = ch.get_wsl_projects_dir(first_distro["name"])
             # May be None if Claude not installed in that distro
             if projects_dir:
                 assert isinstance(projects_dir, Path)
