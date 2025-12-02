@@ -30,3 +30,8 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["claude_history"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.4",
+]

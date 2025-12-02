@@ -14,15 +14,73 @@ import argparse
 import base64
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
+
+
+# ============================================================================
+# Data Classes
+# ============================================================================
+
+
+@dataclass
+class ExportConfig:
+    """Configuration for batch export operations.
+
+    This dataclass replaces ad-hoc argument classes used throughout the codebase,
+    providing type safety and a single source of truth for export parameters.
+    """
+
+    output_dir: str
+    patterns: list = field(default_factory=list)
+    since: Optional[str] = None
+    until: Optional[str] = None
+    force: bool = False
+    minimal: bool = False
+    split: Optional[int] = None
+    flat: bool = False
+    remote: Optional[str] = None
+    lenient: bool = False
+
+    @property
+    def workspace(self) -> str:
+        """First pattern as workspace (backward compatibility)."""
+        return self.patterns[0] if self.patterns else ""
+
+    @classmethod
+    def from_args(cls, args, **overrides) -> "ExportConfig":
+        """Create ExportConfig from argparse args with optional overrides.
+
+        Args:
+            args: Parsed argparse arguments
+            **overrides: Values to override from args
+
+        Returns:
+            ExportConfig instance
+        """
+        return cls(
+            output_dir=overrides.get("output_dir", getattr(args, "output_dir", ".")),
+            patterns=overrides.get("patterns", getattr(args, "patterns", [])),
+            since=overrides.get("since", getattr(args, "since", None)),
+            until=overrides.get("until", getattr(args, "until", None)),
+            force=overrides.get("force", getattr(args, "force", False)),
+            minimal=overrides.get("minimal", getattr(args, "minimal", False)),
+            split=overrides.get("split", getattr(args, "split", None)),
+            flat=overrides.get("flat", getattr(args, "flat", False)),
+            remote=overrides.get("remote", getattr(args, "remote", None)),
+            lenient=overrides.get("lenient", getattr(args, "lenient", False)),
+        )
 
 
 # ============================================================================
@@ -193,6 +251,54 @@ CACHED_WSL_PREFIX = "wsl_"
 CACHED_WINDOWS_PREFIX = "windows_"
 
 # ============================================================================
+# Error Handling Utilities
+# ============================================================================
+
+
+def exit_with_error(message: str, suggestions: list = None, exit_code: int = 1):
+    """Exit with formatted error message and optional actionable suggestions.
+
+    This centralizes error formatting to provide consistent, helpful error
+    messages throughout the CLI. Following Rhodes' principle that errors
+    should guide users to solutions.
+
+    Args:
+        message: The main error message (without "Error:" prefix)
+        suggestions: Optional list of actionable suggestions for the user
+        exit_code: Exit code (default: 1)
+
+    Example:
+        exit_with_error(
+            "Not in a Claude Code workspace",
+            suggestions=[
+                "Run from within a workspace directory",
+                "Specify a workspace pattern: lss <pattern>",
+                "Use --aw to list all workspaces"
+            ]
+        )
+    """
+    sys.stderr.write(f"Error: {message}\n")
+    if suggestions:
+        sys.stderr.write("\nTo resolve, try:\n")
+        for suggestion in suggestions:
+            sys.stderr.write(f"  • {suggestion}\n")
+    sys.exit(exit_code)
+
+
+def exit_with_date_error(flag_name: str, invalid_value: str):
+    """Exit with date format error message.
+
+    Args:
+        flag_name: The flag that received invalid date (e.g., "--since")
+        invalid_value: The invalid date string provided
+    """
+    exit_with_error(
+        f"Invalid date format for {flag_name}: '{invalid_value}'",
+        suggestions=["Use YYYY-MM-DD format (e.g., 2025-11-01)"],
+    )
+
+
+# ============================================================================
 # Utility Functions
 # ============================================================================
 
@@ -254,6 +360,9 @@ def matches_any_pattern(workspace_name: str, patterns: list) -> bool:
 def parse_and_validate_dates(since_str: str, until_str: str) -> tuple:
     """Parse and validate date filter arguments.
 
+    Validates that date strings are in YYYY-MM-DD format and that
+    the since date comes before the until date (if both provided).
+
     Args:
         since_str: Start date string (YYYY-MM-DD) or None
         until_str: End date string (YYYY-MM-DD) or None
@@ -266,18 +375,13 @@ def parse_and_validate_dates(since_str: str, until_str: str) -> tuple:
     until_date = parse_date_string(until_str) if until_str else None
 
     if since_str and since_date is None:
-        sys.stderr.write(f"Error: Invalid date format for --since: '{since_str}'\n")
-        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-01)\n")
-        sys.exit(1)
+        exit_with_date_error("--since", since_str)
 
     if until_str and until_date is None:
-        sys.stderr.write(f"Error: Invalid date format for --until: '{until_str}'\n")
-        sys.stderr.write("Use YYYY-MM-DD format (e.g., 2025-11-30)\n")
-        sys.exit(1)
+        exit_with_date_error("--until", until_str)
 
     if since_date and until_date and since_date > until_date:
-        sys.stderr.write("Error: --since date must be before --until date\n")
-        sys.exit(1)
+        exit_with_error("--since date must be before --until date")
 
     return since_date, until_date
 
@@ -412,16 +516,45 @@ def get_command_path(cmd: str) -> str:
 # ============================================================================
 
 
-def decode_content(encoded_str):
-    """Decode base64 content."""
+def decode_content(encoded_str: str) -> str:
+    """Decode base64-encoded content from Claude API responses.
+
+    Some content in .jsonl files (particularly large tool outputs) is stored
+    base64-encoded to preserve binary data and special characters.
+
+    Args:
+        encoded_str: Base64-encoded string from API response
+
+    Returns:
+        Decoded UTF-8 string, or error message if decoding fails.
+        Returns error message rather than raising to allow partial
+        conversation recovery when some content is corrupted.
+    """
     try:
         return base64.b64decode(encoded_str).decode("utf-8")
-    except Exception as e:
+    except (ValueError, UnicodeDecodeError) as e:
+        # ValueError: invalid base64, UnicodeDecodeError: not valid UTF-8
         return f"[Error decoding content: {e}]"
 
 
-def extract_content(message_obj):
-    """Extract text content from message object, preserving all information."""
+def extract_content(message_obj: dict) -> str:
+    """Extract text content from message object, preserving all information.
+
+    Claude API messages contain different content structures:
+    - User messages: Simple string content
+    - Assistant messages: Array of content blocks (text, tool_use, tool_result)
+
+    This function converts all content types to markdown, preserving:
+    - Text responses from Claude
+    - Tool use requests with JSON input parameters
+    - Tool results with their outputs
+
+    Args:
+        message_obj: Message dictionary from JSONL entry
+
+    Returns:
+        Markdown-formatted string of all message content.
+    """
     content_parts = []
 
     if "content" in message_obj:
@@ -475,7 +608,12 @@ def extract_content(message_obj):
 
 
 def get_first_timestamp(jsonl_file: Path) -> str:
-    """Extract the first message timestamp from a .jsonl file."""
+    """Extract the first message timestamp from a .jsonl file.
+
+    Scans the file line by line looking for the first user or assistant
+    message with a timestamp. Returns None if file cannot be read or
+    contains no valid messages.
+    """
     try:
         with open(jsonl_file, encoding="utf-8") as f:
             for line in f:
@@ -488,7 +626,8 @@ def get_first_timestamp(jsonl_file: Path) -> str:
                             return timestamp
                 except json.JSONDecodeError:
                     continue
-    except Exception:
+    except OSError:
+        # File doesn't exist, permission denied, or other I/O error
         pass
     return None
 
@@ -515,21 +654,52 @@ def is_tool_result_message(msg_content: str) -> bool:
     return "**[Tool Result:" in msg_content
 
 
-def calculate_time_gap(msg1, msg2) -> float:
-    """Calculate time gap in seconds between two messages."""
+def calculate_time_gap(msg1: dict, msg2: dict) -> float:
+    """Calculate time gap in seconds between two messages.
+
+    Used by the conversation splitting algorithm to identify natural
+    break points - longer gaps suggest topic changes or session breaks.
+
+    Args:
+        msg1: First message dictionary (must have 'timestamp' key)
+        msg2: Second message dictionary (must have 'timestamp' key)
+
+    Returns:
+        Absolute time difference in seconds between messages.
+        Returns 0 if timestamps are missing or malformed, which
+        causes the split algorithm to rely on other signals.
+    """
     try:
         ts1 = datetime.fromisoformat(msg1["timestamp"].replace("Z", "+00:00"))
         ts2 = datetime.fromisoformat(msg2["timestamp"].replace("Z", "+00:00"))
         return abs((ts2 - ts1).total_seconds())
     except (ValueError, KeyError, TypeError):
+        # Timestamps missing or malformed - expected for some messages
         return 0
 
 
-def find_best_split_point(messages, target_lines: int, minimal: bool) -> int:
-    """Find the best message index to split at, near target_lines.
+def find_best_split_point(messages: list, target_lines: int, minimal: bool) -> int:
+    """Find the optimal message index to split a conversation.
 
-    Returns message index to start part 2 (exclusive end of part 1).
-    Returns None if no split needed.
+    Splits should occur at semantically meaningful boundaries to preserve
+    conversation flow. This function uses a scoring system to find the
+    best split point near the target line count:
+
+    Scoring factors (higher = better split point):
+    - Next message is User (+100): Cleanest break, starting new topic
+    - Current message is tool result (+50): Action complete
+    - Time gap > 5 minutes (+30): Strong session break indicator
+    - Time gap > 1 minute (+10): Weak session break indicator
+    - Distance from target (-0.05 per line): Prefer closer to target
+
+    Args:
+        messages: List of message dictionaries with content and timestamps
+        target_lines: Target number of lines per split part
+        minimal: Whether minimal mode is used (affects line estimation)
+
+    Returns:
+        Message index where part 2 should start (exclusive end of part 1),
+        or None if the conversation is too short to split.
     """
     min_lines = int(target_lines * SPLIT_MIN_FACTOR)
     max_lines = int(target_lines * SPLIT_MAX_FACTOR)
@@ -579,10 +749,23 @@ def find_best_split_point(messages, target_lines: int, minimal: bool) -> int:
 
 
 def read_jsonl_messages(jsonl_file: Path):
-    """Read and parse messages from a JSONL file.
+    """Read and parse all messages from a Claude Code JSONL session file.
+
+    Parses each line of the JSONL file, extracting user and assistant
+    messages along with their metadata. Invalid JSON lines are skipped
+    with a warning.
+
+    Args:
+        jsonl_file: Path to the .jsonl session file
 
     Returns:
-        List of message dictionaries with role, content, timestamp, and metadata.
+        List of message dicts containing:
+        - role: "user" or "assistant"
+        - content: Extracted and formatted message content
+        - timestamp: ISO 8601 timestamp string
+        - uuid, parentUuid, sessionId, agentId: Message identifiers
+        - cwd, version, gitBranch: Context information
+        - model, usage, stop_reason: Assistant message metadata
     """
     messages = []
 
@@ -629,14 +812,32 @@ def read_jsonl_messages(jsonl_file: Path):
     return messages
 
 
-def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
-    """Parse a .jsonl file and convert to markdown.
+def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False, messages: list = None) -> str:
+    """Convert a Claude Code JSONL session file to readable Markdown.
+
+    This is the main conversion function that transforms Claude's JSONL
+    format into human-readable documentation. Each message becomes a
+    section with its content, metadata, and navigation links.
 
     Args:
         jsonl_file: Path to the JSONL file to convert
-        minimal: If True, omit metadata and only include conversation content
+        minimal: If True, produce cleaner output suitable for sharing:
+            - Omit UUID/metadata sections
+            - Skip HTML anchor links
+            - Keep only message content, tool usage, and timestamps
+        messages: Pre-read messages list (optional). If provided, avoids
+            re-reading the file. Use when messages were already read
+            for other purposes (e.g., timestamp extraction).
+
+    Returns:
+        Complete markdown document as a string, including:
+        - Header with file info and message count
+        - Agent conversation warnings (if applicable)
+        - All messages with content and optional metadata
+        - Navigation links between related messages
     """
-    messages = read_jsonl_messages(jsonl_file)
+    if messages is None:
+        messages = read_jsonl_messages(jsonl_file)
 
     # Check if this is an agent conversation
     is_agent = any(msg.get("isSidechain") for msg in messages)
@@ -1068,7 +1269,8 @@ def resolve_workspace_input(workspace_input: str, source_key: str = "local", arg
             # Local
             projects_dir = get_claude_projects_dir()
             workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and is_native_workspace(d.name)]
-    except Exception:
+    except (OSError, PermissionError):
+        # Directory access errors - return empty list gracefully
         return []
 
     # Find workspaces matching the pattern
@@ -1076,8 +1278,112 @@ def resolve_workspace_input(workspace_input: str, source_key: str = "local", arg
     return matches
 
 
+def _is_windows_encoded_path(name: str) -> bool:
+    """Check if name is a Windows-style encoded path (e.g., 'C--path-to-dir')."""
+    return len(name) >= 3 and name[1:3] == "--"
+
+
+def _resolve_path_segments(parts: list, base_path: Path) -> list:
+    """Resolve dash-separated parts to actual filesystem path segments.
+
+    Tries progressively longer combinations of parts to handle directory
+    names that contain dashes (e.g., 'my-project' encoded as 'my-project').
+
+    Args:
+        parts: List of dash-split path components
+        base_path: Base path to verify against filesystem
+
+    Returns:
+        List of resolved path segments
+    """
+    path_segments = []
+    i = 0
+
+    while i < len(parts):
+        # Build current path to check children against
+        if path_segments:
+            current_path = base_path / "/".join(path_segments)
+        else:
+            current_path = base_path
+
+        # Try progressively longer combinations (longest first)
+        best_match = None
+        best_match_len = 0
+
+        for j in range(len(parts), i, -1):
+            candidate_segment = "-".join(parts[i:j])
+            candidate_path = current_path / candidate_segment
+
+            if candidate_path.exists() and candidate_path.is_dir():
+                best_match = candidate_segment
+                best_match_len = j - i
+                break
+
+        if best_match:
+            path_segments.append(best_match)
+            i += best_match_len
+        else:
+            path_segments.append(parts[i])
+            i += 1
+
+    return path_segments
+
+
+def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
+    """Normalize a Windows-style encoded path (e.g., 'C--sankar-projects').
+
+    Args:
+        workspace_dir_name: Encoded name starting with drive letter and '--'
+        verify_local: If True, verify against /mnt/<drive>/ filesystem
+
+    Returns:
+        Decoded path (e.g., '/C/sankar/projects')
+    """
+    drive_letter = workspace_dir_name[0].upper()
+    rest = workspace_dir_name[3:]  # Skip 'C--'
+
+    if verify_local:
+        mnt_base = Path(f"/mnt/{drive_letter.lower()}")
+        if mnt_base.exists():
+            parts = rest.split("-")
+            path_segments = _resolve_path_segments(parts, mnt_base)
+            if path_segments:
+                return f"/{drive_letter}/" + "/".join(path_segments)
+
+    # Fallback: simple replacement (may break hyphenated names)
+    return f"/{drive_letter}/" + rest.replace("-", "/")
+
+
+def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = None) -> str:
+    """Normalize a Unix-style encoded path (e.g., 'home-user-my-project').
+
+    Args:
+        encoded: Encoded path without leading dash
+        verify_local: If True, verify against filesystem
+        base_path: Base path for verification (e.g., //wsl.localhost/Ubuntu)
+
+    Returns:
+        Decoded path (e.g., '/home/user/my-project')
+    """
+    if not verify_local:
+        return "/" + encoded.replace("-", "/")
+
+    parts = encoded.split("-")
+    effective_base = base_path if base_path else Path("/")
+    path_segments = _resolve_path_segments(parts, effective_base)
+
+    if not path_segments:
+        return "/" + encoded.replace("-", "/")
+
+    return "/" + "/".join(path_segments)
+
+
 def normalize_workspace_name(workspace_dir_name: str, verify_local: bool = True, base_path: Path = None) -> str:
     """Convert workspace directory name to readable path.
+
+    Claude Code encodes workspace paths by replacing '/' with '-'. This function
+    reverses that encoding, optionally verifying against the filesystem to
+    correctly handle directory names that contain dashes.
 
     Args:
         workspace_dir_name: Encoded workspace name (e.g., '-home-user-my-project')
@@ -1085,115 +1391,16 @@ def normalize_workspace_name(workspace_dir_name: str, verify_local: bool = True,
         base_path: Base path to prepend when verifying (for WSL: //wsl.localhost/Ubuntu)
 
     Returns:
-        Decoded path (e.g., 'home/user/my-project')
+        Decoded path (e.g., '/home/user/my-project')
     """
     # Handle Windows-style paths (e.g., 'C--sankar-projects-claude-history')
-    # These start with a drive letter followed by double dash
-    if len(workspace_dir_name) >= 3 and workspace_dir_name[1:3] == "--":
-        drive_letter = workspace_dir_name[0].upper()
-        rest = workspace_dir_name[3:]  # Skip 'C--'
-
-        # For Windows paths accessed from WSL, verify against /mnt/<drive>/
-        if verify_local:
-            mnt_base = Path(f"/mnt/{drive_letter.lower()}")
-            if mnt_base.exists():
-                # Verify path segments against filesystem
-                parts = rest.split("-")
-                path_segments = []
-                i = 0
-
-                while i < len(parts):
-                    current_path = mnt_base / "/".join(path_segments) if path_segments else mnt_base
-
-                    # Try progressively longer combinations (longest first)
-                    best_match = None
-                    best_match_len = 0
-
-                    for j in range(len(parts), i, -1):
-                        candidate_segment = "-".join(parts[i:j])
-                        candidate_path = current_path / candidate_segment
-
-                        if candidate_path.exists() and candidate_path.is_dir():
-                            best_match = candidate_segment
-                            best_match_len = j - i
-                            break
-
-                    if best_match:
-                        path_segments.append(best_match)
-                        i += best_match_len
-                    else:
-                        path_segments.append(parts[i])
-                        i += 1
-
-                if path_segments:
-                    return f"/{drive_letter}/" + "/".join(path_segments)
-
-        # Fallback: simple replacement (may break hyphenated names)
-        return f"/{drive_letter}/" + rest.replace("-", "/")
+    if _is_windows_encoded_path(workspace_dir_name):
+        return _normalize_windows_path(workspace_dir_name, verify_local)
 
     # Remove leading dash for Unix paths
-    if workspace_dir_name.startswith("-"):
-        encoded = workspace_dir_name[1:]
-    else:
-        encoded = workspace_dir_name
+    encoded = workspace_dir_name[1:] if workspace_dir_name.startswith("-") else workspace_dir_name
 
-    # If not verifying, just replace all dashes (legacy behavior)
-    if not verify_local:
-        return "/" + encoded.replace("-", "/")
-
-    # Try to reconstruct the original path by checking filesystem
-    # Split by dashes and try to build the path, preferring longer matches
-    parts = encoded.split("-")
-    path_segments = []
-    i = 0
-
-    while i < len(parts):
-        # Build current path to check children against
-        if path_segments:
-            current_path_str = "/" + "/".join(path_segments)
-            if base_path:
-                current_path = base_path / current_path_str.lstrip("/")
-            else:
-                current_path = Path(current_path_str)
-        else:
-            # Starting from root
-            if base_path:
-                current_path = base_path
-            else:
-                current_path = Path("/")
-
-        # Try progressively longer combinations (longest first for better matching)
-        best_match = None
-        best_match_len = 0
-
-        # Try from longest to shortest to prefer longer directory names with dashes
-        for j in range(len(parts), i, -1):
-            # Try combining parts[i:j] with dashes
-            candidate_segment = "-".join(parts[i:j])
-
-            # Check if this directory name exists as a child of current_path
-            candidate_path = current_path / candidate_segment
-
-            if candidate_path.exists() and candidate_path.is_dir():
-                # This exact directory exists - use it
-                best_match = candidate_segment
-                best_match_len = j - i
-                break  # Found the longest match, stop searching
-
-        if best_match:
-            # Use the match we found
-            path_segments.append(best_match)
-            i += best_match_len
-        else:
-            # No match found, use single part and move on
-            path_segments.append(parts[i])
-            i += 1
-
-    # If we couldn't build a valid path, fall back to simple replacement
-    if len(path_segments) == 0:
-        return "/" + encoded.replace("-", "/")
-
-    return "/" + "/".join(path_segments)
+    return _normalize_unix_path(encoded, verify_local, base_path)
 
 
 def get_current_workspace_pattern():
@@ -1252,15 +1459,30 @@ def get_workspace_sessions(
     include_cached: bool = False,
     projects_dir: Path = None,
 ):
-    """Find all sessions in workspaces matching the pattern.
+    """Find all Claude Code sessions in workspaces matching the pattern.
+
+    Scans the Claude projects directory for workspace folders matching the
+    given pattern. For each matching workspace, finds all .jsonl session
+    files and returns metadata about each session.
 
     Args:
-        workspace_pattern: Pattern to match workspace names
-        quiet: Suppress output if True
-        since_date: Only include sessions modified on or after this date (datetime object)
-        until_date: Only include sessions modified on or before this date (datetime object)
-        include_cached: If True, include remote_* and wsl_* cached workspaces (default: False)
-        projects_dir: Explicit projects directory path (default: auto-detect via get_claude_projects_dir())
+        workspace_pattern: Substring to match workspace names. Use "", "*",
+            or "all" to match all workspaces.
+        quiet: Suppress progress output if True
+        since_date: Filter to sessions modified on or after this date
+        until_date: Filter to sessions modified on or before this date
+        include_cached: If True, include remote_* and wsl_* cached workspaces
+        projects_dir: Explicit projects directory path (default: auto-detect)
+
+    Returns:
+        List of session dicts, each containing:
+        - workspace: Encoded workspace directory name
+        - workspace_readable: Human-readable workspace path
+        - file: Path object to the .jsonl file
+        - filename: Just the filename
+        - size_kb: File size in kilobytes
+        - modified: Modification datetime
+        - message_count: Number of lines (messages) in file
     """
     if projects_dir is None:
         projects_dir = get_claude_projects_dir()
@@ -1328,7 +1550,8 @@ def get_workspace_sessions(
                 try:
                     with open(jsonl_file, encoding="utf-8") as f:
                         message_count = sum(1 for _ in f)
-                except Exception:
+                except OSError:
+                    # File became inaccessible between stat and read
                     message_count = 0
 
                 sessions.append(
@@ -1374,8 +1597,6 @@ def get_windows_home_from_wsl(username: str = None):
     Returns:
         Path to Windows home directory, or None if not found.
     """
-    import subprocess
-
     if username:
         # Try specific username across all drives
         mnt = Path("/mnt")
@@ -1560,9 +1781,6 @@ def get_wsl_distributions() -> list:
     Returns:
         List of dicts with distro info: {'name': str, 'username': str, 'has_claude': bool}
     """
-    import platform
-    import subprocess
-
     # WSL only available on Windows
     if platform.system() != "Windows":
         return []
@@ -1615,17 +1833,16 @@ def get_wsl_distributions() -> list:
         return []
 
 
-def get_wsl_projects_dir(distro_name: str) -> Path:
+def get_wsl_projects_dir(distro_name: str):
     """Get Claude projects directory for a WSL distribution.
 
     Args:
         distro_name: WSL distribution name (e.g., 'Ubuntu', 'Debian')
 
     Returns:
-        Path to .claude/projects in WSL, accessible from Windows
+        Path to .claude/projects in WSL, accessible from Windows.
+        Returns None if the distribution is inaccessible or Claude is not installed.
     """
-    import subprocess
-
     # Get username from WSL
     try:
         result = subprocess.run(
@@ -1633,8 +1850,7 @@ def get_wsl_projects_dir(distro_name: str) -> Path:
         )
 
         if result.returncode != 0:
-            sys.stderr.write(f"Error: Could not get username for WSL distribution '{distro_name}'\n")
-            sys.exit(1)
+            return None
 
         username = result.stdout.strip()
 
@@ -1642,53 +1858,36 @@ def get_wsl_projects_dir(distro_name: str) -> Path:
         projects_dir = Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects")
 
         if not projects_dir.exists():
-            sys.stderr.write(f"Error: Claude projects directory not found in WSL '{distro_name}'\n")
-            sys.stderr.write(f"Expected path: {projects_dir}\n")
-            sys.exit(1)
+            return None
 
         return projects_dir
 
-    except subprocess.TimeoutExpired:
-        sys.stderr.write(f"Error: Timeout accessing WSL distribution '{distro_name}'\n")
-        sys.exit(1)
-    except FileNotFoundError:
-        sys.stderr.write("Error: WSL not found. Is it installed?\n")
-        sys.exit(1)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
 
 
-def get_windows_projects_dir(username: str = None) -> Path:
+def get_windows_projects_dir(username: str = None):
     """Get Claude projects directory for Windows from WSL.
 
     Args:
         username: Optional Windows username. If None, auto-detects from USERPROFILE.
 
     Returns:
-        Path to .claude/projects in Windows, accessible from WSL
+        Path to .claude/projects in Windows, accessible from WSL.
+        Returns None if not running in WSL, user not found, or Claude not installed.
     """
     if not is_running_in_wsl():
-        sys.stderr.write("Error: Not running in WSL. Windows access is only available from WSL.\n")
-        sys.exit(1)
+        return None
 
     windows_home = get_windows_home_from_wsl(username)
 
     if not windows_home:
-        if username:
-            sys.stderr.write(f"Error: Could not find Windows user '{username}' with Claude Code\n")
-        else:
-            sys.stderr.write("Error: Could not find Windows home directory with Claude Code\n")
-        sys.stderr.write("\nTips:\n")
-        sys.stderr.write("  • Make sure Claude Code is installed on Windows\n")
-        sys.stderr.write("  • Try: ./claude-history --list-windows\n")
-        if not username:
-            sys.stderr.write("  • Or specify username: -r windows://username\n")
-        sys.exit(1)
+        return None
 
     projects_dir = windows_home / ".claude" / "projects"
 
     if not projects_dir.exists():
-        sys.stderr.write("Error: Claude projects directory not found in Windows\n")
-        sys.stderr.write(f"Expected path: {projects_dir}\n")
-        sys.exit(1)
+        return None
 
     return projects_dir
 
@@ -1724,8 +1923,6 @@ def check_ssh_connection(remote_host: str) -> bool:
     Returns:
         True if connection successful, False otherwise
     """
-    import subprocess
-
     # Validate remote host to prevent command injection (security fix)
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
@@ -1766,8 +1963,6 @@ def get_remote_workspaces_batch(remote_host: str) -> list:
     Returns:
         List of dicts with workspace info including decoded paths
     """
-    import subprocess
-
     # Validate remote host to prevent command injection (security fix)
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
@@ -1849,7 +2044,8 @@ done
 
         return workspaces
 
-    except Exception:
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
+        # SSH command failed, timed out, or couldn't execute
         return []
 
 
@@ -1863,8 +2059,6 @@ def normalize_remote_workspace_name(remote_host: str, workspace_dir_name: str) -
     Returns:
         Decoded path
     """
-    import subprocess
-
     # Validate inputs to prevent command injection (security fix)
     if not validate_remote_host(remote_host):
         # Fall back to simple replacement without remote verification
@@ -1930,8 +2124,6 @@ def list_remote_workspaces(remote_host: str) -> list:
         List of workspace directory names (e.g., ['-home-user-project', ...])
         Excludes remote caches (remote_* and wsl_*) to prevent circular fetching
     """
-    import subprocess
-
     # Validate remote host to prevent command injection (security fix)
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
@@ -1974,8 +2166,6 @@ def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
     Returns:
         List of session info dicts with filename, size_kb, modified, message_count
     """
-    import subprocess
-
     # Validate inputs to prevent command injection (security fix)
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
@@ -2034,17 +2224,23 @@ def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
 def fetch_workspace_files(remote_host: str, remote_workspace: str, local_projects_dir: Path, hostname: str) -> dict:
     """Fetch all files from a remote workspace using rsync.
 
+    Downloads .jsonl files from a remote workspace to a local cache directory.
+    Uses rsync for efficient incremental transfers.
+
     Args:
-        remote_host: Remote host specification
+        remote_host: Remote host specification (user@hostname)
         remote_workspace: Remote workspace directory name (e.g., '-home-user-project')
         local_projects_dir: Local ~/.claude/projects/ directory
-        hostname: Clean hostname for prefix
+        hostname: Clean hostname for directory prefix
 
     Returns:
         Dict with stats: {'success': bool, 'files_copied': int, 'bytes': int}
-    """
-    import subprocess
 
+    Side Effects:
+        - Creates local cache directory: {local_projects_dir}/remote_{hostname}_{workspace}/
+        - Downloads .jsonl files from remote via rsync
+        - Runs subprocess: rsync -avh --include='*.jsonl' ...
+    """
     # Validate inputs to prevent command injection (security fix)
     if not validate_remote_host(remote_host):
         return {"success": False, "files_copied": 0, "bytes": 0, "error": f"Invalid remote host: {remote_host}"}
@@ -2168,7 +2364,18 @@ def load_config() -> dict:
 
 
 def save_config(data: dict) -> bool:
-    """Save config to storage file. Returns True on success."""
+    """Save config to storage file.
+
+    Args:
+        data: Config data dictionary with 'version' and settings
+
+    Returns:
+        True on success, False on failure (error printed to stderr)
+
+    Side Effects:
+        - Creates ~/.claude-history/ directory with mode 0o700 if missing
+        - Writes to ~/.claude-history/config.json with mode 0o600
+    """
     config_dir = get_config_dir()
     config_file = get_config_file()
 
@@ -2215,7 +2422,18 @@ def load_aliases() -> dict:
 
 
 def save_aliases(data: dict) -> bool:
-    """Save aliases to storage file. Returns True on success."""
+    """Save aliases to storage file.
+
+    Args:
+        data: Alias data dictionary with 'version' and 'aliases' keys
+
+    Returns:
+        True on success, False on failure (error printed to stderr)
+
+    Side Effects:
+        - Creates ~/.claude-history/ directory with mode 0o700 if missing
+        - Writes to ~/.claude-history/aliases.json
+    """
     aliases_dir = get_aliases_dir()
     aliases_file = get_aliases_file()
 
@@ -2422,7 +2640,8 @@ def get_sessions_for_source(
             # Unknown source type
             return []
 
-    except Exception:
+    except (OSError, PermissionError):
+        # Filesystem access errors - return empty list gracefully
         return []
 
 
@@ -2705,7 +2924,7 @@ def interactive_workspace_picker(source_key: str, args) -> list:
             # Local
             projects_dir = get_claude_projects_dir()
             workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and is_native_workspace(d.name)]
-    except Exception as e:
+    except (OSError, PermissionError) as e:
         sys.stderr.write(f"Error listing workspaces: {e}\n")
         return []
 
@@ -2886,15 +3105,26 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
             for session in sessions:
                 jsonl_file = session["file"]
 
-                # Generate output filename with source tag
-                first_ts = get_first_timestamp(jsonl_file)
-                if first_ts:
+                # Read messages once - used for timestamp and markdown generation
+                try:
+                    messages = read_jsonl_messages(jsonl_file)
+                except (OSError, json.JSONDecodeError) as e:
+                    sys.stderr.write(f"Error reading {jsonl_file}: {e}\n")
+                    total_failed += 1
+                    continue
+
+                # Extract timestamp from pre-read messages
+                ts_prefix = None
+                if messages and messages[0].get("timestamp"):
                     try:
-                        dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+                        dt = datetime.fromisoformat(messages[0]["timestamp"].replace("Z", "+00:00"))
                         ts_prefix = dt.strftime("%Y%m%d%H%M%S")
-                        output_name = f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
                     except (ValueError, AttributeError):
-                        output_name = f"{source_tag}{jsonl_file.stem}.md"
+                        pass
+
+                # Generate output filename with source tag
+                if ts_prefix:
+                    output_name = f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
                 else:
                     output_name = f"{source_tag}{jsonl_file.stem}.md"
 
@@ -2910,27 +3140,25 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
 
                 try:
                     # Handle splitting
-                    if split_lines:
-                        messages = read_jsonl_messages(jsonl_file)
-                        if messages and len(messages) > 3:
-                            parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
-                            if parts:
-                                base_name = output_name[:-3]  # Remove .md
-                                for part_num, total_parts, part_md, start_msg, end_msg in parts:
-                                    part_filename = f"{base_name}_part{part_num}.md"
-                                    part_file = ws_output_path / part_filename
-                                    part_file.write_text(part_md, encoding="utf-8")
-                                    print(part_file)
-                                total_exported += 1
-                                continue
+                    if split_lines and messages and len(messages) > 3:
+                        parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+                        if parts:
+                            base_name = output_name[:-3]  # Remove .md
+                            for part_num, total_parts, part_md, start_msg, end_msg in parts:
+                                part_filename = f"{base_name}_part{part_num}.md"
+                                part_file = ws_output_path / part_filename
+                                part_file.write_text(part_md, encoding="utf-8")
+                                print(part_file)
+                            total_exported += 1
+                            continue
 
-                    # Regular export (no splitting)
-                    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+                    # Regular export (no splitting) - pass pre-read messages
+                    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal, messages=messages)
                     output_file.write_text(markdown, encoding="utf-8")
                     print(output_file)
                     total_exported += 1
 
-                except Exception as e:
+                except (OSError, json.JSONDecodeError) as e:
                     sys.stderr.write(f"Error exporting {jsonl_file}: {e}\n")
                     total_failed += 1
 
@@ -2997,8 +3225,6 @@ def cmd_alias_config_import(args):
 # Metrics Database (SQLite)
 # ============================================================================
 
-import sqlite3
-
 METRICS_DB_VERSION = 3
 
 
@@ -3010,7 +3236,19 @@ def get_metrics_db_path() -> Path:
 def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
     """Initialize the metrics database, creating tables if needed.
 
-    Returns an open connection to the database.
+    Opens (or creates) the SQLite metrics database and ensures the schema
+    is up to date. Handles migrations from older schema versions.
+
+    Args:
+        db_path: Path to database file. Defaults to ~/.claude-history/metrics.db
+
+    Returns:
+        Open sqlite3.Connection with row_factory set to sqlite3.Row
+
+    Side Effects:
+        - Creates parent directory (~/.claude-history/) with mode 0o700 if missing
+        - Creates database file with mode 0o600 if missing
+        - Runs schema migrations if database version is outdated
     """
     if db_path is None:
         db_path = get_metrics_db_path()
@@ -3301,7 +3539,7 @@ def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
                 except json.JSONDecodeError:
                     continue
 
-    except Exception as e:
+    except OSError as e:
         sys.stderr.write(f"Warning: Error reading {jsonl_file}: {e}\n")
 
     # Calculate work periods from collected timestamps
@@ -3484,7 +3722,7 @@ def cmd_stats_sync(args):
                         synced += 1
                     else:
                         skipped += 1
-                except Exception as e:
+                except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
                     sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
                     errors += 1
 
@@ -3507,7 +3745,8 @@ def cmd_stats_sync(args):
             win_projects = get_windows_projects_dir()
             if win_projects:
                 sync_source(win_projects, "windows", "Windows")
-        except Exception:
+        except (OSError, PermissionError):
+            # Windows not accessible from this environment
             pass
 
     # Sync remotes
@@ -3563,10 +3802,10 @@ def cmd_stats_sync(args):
                                     synced += 1
                                 else:
                                     skipped += 1
-                            except Exception as e:
+                            except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
                                 sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
                                 errors += 1
-                except Exception as e:
+                except (OSError, subprocess.SubprocessError) as e:
                     sys.stderr.write(f"  Error fetching {ws}: {e}\n")
                     errors += 1
 
@@ -4296,6 +4535,13 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         username = remote_host[10:]
 
     windows_projects_dir = get_windows_projects_dir(username)
+    if not windows_projects_dir:
+        sys.stderr.write("Error: Cannot access Windows projects directory\n")
+        sys.stderr.write("\nTips:\n")
+        sys.stderr.write("  • Make sure Claude Code is installed on Windows\n")
+        sys.stderr.write("  • Try: claude-history lsh --windows\n")
+        sys.exit(1)
+
     sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=windows_projects_dir)
 
     if not sessions:
@@ -4320,6 +4566,13 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
     distro_name = remote_host[6:]  # Remove 'wsl://' prefix
 
     wsl_projects_dir = get_wsl_projects_dir(distro_name)
+    if not wsl_projects_dir:
+        sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
+        sys.stderr.write("\nTips:\n")
+        sys.stderr.write("  • Make sure Claude Code is installed in WSL\n")
+        sys.stderr.write("  • Try: claude-history lsh --wsl\n")
+        sys.exit(1)
+
     sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=wsl_projects_dir)
 
     if not sessions:
@@ -4533,7 +4786,7 @@ def cmd_convert(args):
             output_file.write_text(markdown, encoding="utf-8")
 
             print(output_file)
-        except Exception as e:
+        except (OSError, json.JSONDecodeError) as e:
             sys.stderr.write(f"Error converting file: {e}\n")
             sys.exit(1)
 
@@ -4556,6 +4809,13 @@ def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) ->
         username = remote_host[10:]
 
     windows_projects_dir = get_windows_projects_dir(username)
+    if not windows_projects_dir:
+        sys.stderr.write("Error: Cannot access Windows projects directory\n")
+        sys.stderr.write("\nTips:\n")
+        sys.stderr.write("  • Make sure Claude Code is installed on Windows\n")
+        sys.stderr.write("  • Try: claude-history lsh --windows\n")
+        sys.exit(1)
+
     sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=windows_projects_dir)
 
     if not sessions:
@@ -4581,6 +4841,13 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
     distro_name = remote_host[6:]  # Remove 'wsl://' prefix
 
     wsl_projects_dir = get_wsl_projects_dir(distro_name)
+    if not wsl_projects_dir:
+        sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
+        sys.stderr.write("\nTips:\n")
+        sys.stderr.write("  • Make sure Claude Code is installed in WSL\n")
+        sys.stderr.write("  • Try: claude-history lsh --wsl\n")
+        sys.exit(1)
+
     sessions = collect_sessions_with_dedup(patterns, since_date, until_date, projects_dir=wsl_projects_dir)
 
     if not sessions:
@@ -4683,14 +4950,21 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
     for session in sessions:
         jsonl_file = session["file"]
 
-        # Extract first timestamp for filename
-        first_ts = get_first_timestamp(jsonl_file)
+        # Read messages once - used for timestamp extraction and markdown generation
+        try:
+            messages = read_jsonl_messages(jsonl_file)
+        except (OSError, json.JSONDecodeError) as e:
+            sys.stderr.write(f"Error reading {jsonl_file.name}: {e}\n")
+            continue
+
+        # Extract first timestamp for filename from pre-read messages
         ts_prefix = None
-        if first_ts:
+        if messages and messages[0].get("timestamp"):
             try:
-                dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(messages[0]["timestamp"].replace("Z", "+00:00"))
                 ts_prefix = dt.strftime("%Y%m%d%H%M%S")
-            except Exception:
+            except ValueError:
+                # Invalid ISO timestamp format - use filename without timestamp prefix
                 pass
 
         # Generate filename
@@ -4713,17 +4987,15 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
                 continue
 
         try:
-            messages = read_jsonl_messages(jsonl_file)
-
             if split_lines and len(messages) > 0:
                 parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
                 if parts:
                     _write_split_parts(parts, output_name, output_file)
                 else:
-                    _write_single_file(jsonl_file, output_file, minimal)
+                    _write_single_file(jsonl_file, output_file, minimal, messages=messages)
             else:
-                _write_single_file(jsonl_file, output_file, minimal)
-        except Exception as e:
+                _write_single_file(jsonl_file, output_file, minimal, messages=messages)
+        except (OSError, json.JSONDecodeError) as e:
             sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
 
 
@@ -4747,9 +5019,16 @@ def _write_split_parts(parts: list, output_name: str, output_file: Path):
         print(part_file)
 
 
-def _write_single_file(jsonl_file: Path, output_file: Path, minimal: bool):
-    """Write a single markdown file."""
-    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+def _write_single_file(jsonl_file: Path, output_file: Path, minimal: bool, messages: list = None):
+    """Write a single markdown file.
+
+    Args:
+        jsonl_file: Source JSONL file path
+        output_file: Destination markdown file path
+        minimal: If True, produce minimal output without metadata
+        messages: Pre-read messages (optional, avoids re-reading file)
+    """
+    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal, messages=messages)
     output_file.write_text(markdown, encoding="utf-8")
     print(output_file)
 
@@ -4892,7 +5171,7 @@ def cmd_list_all_homes(args):
         native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
         if native_sessions:
             all_results.append((local_label, native_sessions))
-    except Exception as e:
+    except (OSError, PermissionError) as e:
         sys.stderr.write(f"Error accessing local: {e}\n")
 
     # 2a. Get from Windows (when running in WSL)
@@ -4908,9 +5187,9 @@ def cmd_list_all_homes(args):
                     native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
                     if native_sessions:
                         all_results.append((f"Windows ({user['username']})", native_sessions))
-                except Exception as e:
+                except (OSError, PermissionError) as e:
                     sys.stderr.write(f"Error accessing Windows ({user['username']}): {e}\n")
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             sys.stderr.write(f"Error listing Windows users: {e}\n")
 
     # 2b. Get from WSL (when running on Windows)
@@ -4928,9 +5207,9 @@ def cmd_list_all_homes(args):
                     native_sessions = [s for s in sessions if is_native_workspace(s["workspace"])]
                     if native_sessions:
                         all_results.append((f"WSL ({distro['name']})", native_sessions))
-                except Exception as e:
+                except (OSError, PermissionError) as e:
                     sys.stderr.write(f"Error accessing WSL ({distro['name']}): {e}\n")
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             sys.stderr.write(f"Error listing WSL distributions: {e}\n")
 
     # 3. Get from SSH remotes
@@ -4971,7 +5250,7 @@ def cmd_list_all_homes(args):
 
                 if remote_sessions:
                     all_results.append((f"Remote ({hostname})", remote_sessions))
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             sys.stderr.write(f"Error accessing remote {remote}: {e}\n")
 
     # Output results
@@ -5037,7 +5316,7 @@ def cmd_lsh(args):
                 print("Local:")
                 print(f"  {projects_dir.parent}\t{workspace_count} workspaces")
                 print()
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             sys.stderr.write(f"Error accessing local: {e}\n")
 
     # 2. Show WSL distributions (when on Windows)
@@ -5059,7 +5338,7 @@ def cmd_lsh(args):
             else:
                 print("  No WSL distributions with Claude Code found")
             print()
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             sys.stderr.write(f"Error accessing WSL: {e}\n")
 
     # 3. Show Windows users (when on WSL)
@@ -5074,7 +5353,7 @@ def cmd_lsh(args):
             else:
                 print("  No Windows users with Claude Code found")
             print()
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             sys.stderr.write(f"Error accessing Windows: {e}\n")
 
     # 4. Show configured SSH remotes
@@ -5268,7 +5547,7 @@ def validate_export_all_homes(args, in_wsl):
         projects_dir = get_claude_projects_dir()
         if not projects_dir.exists():
             errors.append(f"Local: Claude projects directory not found: {projects_dir}")
-    except Exception as e:
+    except (OSError, PermissionError) as e:
         errors.append(f"Local: {e}")
 
     # 2. Check Windows users (when in WSL)
@@ -5281,9 +5560,9 @@ def validate_export_all_homes(args, in_wsl):
                         projects_dir = get_windows_projects_dir(user["username"])
                         if not projects_dir or not projects_dir.exists():
                             errors.append(f"Windows ({user['username']}): Projects directory not accessible")
-                    except Exception as e:
+                    except (OSError, PermissionError) as e:
                         errors.append(f"Windows ({user['username']}): {e}")
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             errors.append(f"Windows: {e}")
 
     # 3. Check WSL distributions (when on Windows)
@@ -5297,9 +5576,9 @@ def validate_export_all_homes(args, in_wsl):
                         projects_dir = get_wsl_projects_dir(distro["name"])
                         if not projects_dir or not projects_dir.exists():
                             errors.append(f"WSL ({distro['name']}): Projects directory not accessible")
-                    except Exception as e:
+                    except (OSError, PermissionError) as e:
                         errors.append(f"WSL ({distro['name']}): {e}")
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             errors.append(f"WSL: {e}")
 
     # 4. Check SSH remotes (if specified)
@@ -5377,32 +5656,25 @@ def cmd_export_all(args):
     # 1. Export from local (WSL or Windows depending on environment)
     print(f"[Local] Exporting from {local_label}...")
     try:
-        output_dir_str = str(output_dir)
-
-        class LocalExportArgs:
-            output_dir = output_dir_str
-            since = getattr(args, "since", None)
-            until = getattr(args, "until", None)
-            force = getattr(args, "force", False)
-            minimal = getattr(args, "minimal", False)
-            split = getattr(args, "split", None)
-            flat = False  # Always organized for export-all
-            remote = None  # Local
-            lenient = True  # Don't fail on empty - export-all handles this
-
-        LocalExportArgs.patterns = patterns
-        LocalExportArgs.workspace = patterns[0] if patterns else ""  # Backward compat
+        config = ExportConfig.from_args(
+            args,
+            output_dir=str(output_dir),
+            patterns=patterns,
+            flat=False,  # Always organized for export-all
+            remote=None,  # Local
+            lenient=True,  # Don't fail on empty - export-all handles this
+        )
 
         # Get local sessions count before export
         local_sessions = get_sessions_for_patterns(patterns, quiet=True)
         if local_sessions:
-            cmd_batch(LocalExportArgs())
+            cmd_batch(config)
             sources_processed.append({"source": local_label, "sessions": len(local_sessions)})
             total_sessions += len(local_sessions)
             print(f"[OK] Local: {len(local_sessions)} sessions exported\n")
         else:
             print("[OK] Local: No matching sessions\n")
-    except Exception as e:
+    except (OSError, json.JSONDecodeError) as e:
         print(f"[ERROR] Local export failed: {e}\n")
         total_errors += 1
 
@@ -5416,22 +5688,7 @@ def cmd_export_all(args):
                 for user in windows_users:
                     print(f"  Exporting from Windows: {user['username']}...")
                     try:
-                        output_dir_str = str(output_dir)
                         username = user["username"]
-
-                        class WindowsExportArgs:
-                            output_dir = output_dir_str
-                            since = getattr(args, "since", None)
-                            until = getattr(args, "until", None)
-                            force = getattr(args, "force", False)
-                            minimal = getattr(args, "minimal", False)
-                            split = getattr(args, "split", None)
-                            flat = False  # Always organized
-                            remote = f"windows://{username}"
-                            lenient = True  # Don't fail on empty
-
-                        WindowsExportArgs.patterns = patterns
-                        WindowsExportArgs.workspace = patterns[0] if patterns else ""
 
                         # Count sessions first
                         windows_projects_dir = get_windows_projects_dir(username)
@@ -5443,19 +5700,27 @@ def cmd_export_all(args):
                         session_count = len(native_sessions)
 
                         if session_count > 0:
-                            cmd_batch(WindowsExportArgs())
+                            config = ExportConfig.from_args(
+                                args,
+                                output_dir=str(output_dir),
+                                patterns=patterns,
+                                flat=False,  # Always organized
+                                remote=f"windows://{username}",
+                                lenient=True,
+                            )
+                            cmd_batch(config)
                             sources_processed.append({"source": f"Windows: {username}", "sessions": session_count})
                             total_sessions += session_count
                             print(f"  [OK] {username}: {session_count} sessions exported")
                         else:
                             print(f"  [OK] {username}: No matching sessions")
-                    except Exception as e:
+                    except (OSError, json.JSONDecodeError) as e:
                         print(f"  [ERROR] {username} failed: {e}")
                         total_errors += 1
                 print()
             else:
                 print("  No Windows users with Claude Code found\n")
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             print(f"[ERROR] Windows export failed: {e}\n")
 
     # 2b. Export from all WSL distributions (when running on Windows)
@@ -5469,22 +5734,7 @@ def cmd_export_all(args):
                 for distro in claude_distros:
                     print(f"  Exporting from WSL: {distro['name']}...")
                     try:
-                        output_dir_str = str(output_dir)
                         distro_name = distro["name"]
-
-                        class WslExportArgs:
-                            output_dir = output_dir_str
-                            since = getattr(args, "since", None)
-                            until = getattr(args, "until", None)
-                            force = getattr(args, "force", False)
-                            minimal = getattr(args, "minimal", False)
-                            split = getattr(args, "split", None)
-                            flat = False  # Always organized
-                            remote = f"wsl://{distro_name}"
-                            lenient = True  # Don't fail on empty
-
-                        WslExportArgs.patterns = patterns
-                        WslExportArgs.workspace = patterns[0] if patterns else ""
 
                         # Count sessions first
                         wsl_projects_dir = get_wsl_projects_dir(distro["name"])
@@ -5492,19 +5742,27 @@ def cmd_export_all(args):
                         session_count = len(wsl_sessions)
 
                         if session_count > 0:
-                            cmd_batch(WslExportArgs())
+                            config = ExportConfig.from_args(
+                                args,
+                                output_dir=str(output_dir),
+                                patterns=patterns,
+                                flat=False,  # Always organized
+                                remote=f"wsl://{distro_name}",
+                                lenient=True,
+                            )
+                            cmd_batch(config)
                             sources_processed.append({"source": f"WSL: {distro['name']}", "sessions": session_count})
                             total_sessions += session_count
                             print(f"  [OK] {distro['name']}: {session_count} sessions exported")
                         else:
                             print(f"  [OK] {distro['name']}: No matching sessions")
-                    except Exception as e:
+                    except (OSError, json.JSONDecodeError) as e:
                         print(f"  [ERROR] {distro['name']} failed: {e}")
                         total_errors += 1
                 print()
             else:
                 print("  No WSL distributions with Claude Code found\n")
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             print(f"[ERROR] WSL export failed: {e}\n")
 
     # 3. Export from remote hosts (if specified)
@@ -5513,25 +5771,18 @@ def cmd_export_all(args):
         for remote_host in args.remotes:
             print(f"  Exporting from {remote_host}...")
             try:
-                output_dir_str = str(output_dir)
-
-                class RemoteExportArgs:
-                    output_dir = output_dir_str
-                    since = getattr(args, "since", None)
-                    until = getattr(args, "until", None)
-                    force = getattr(args, "force", False)
-                    minimal = getattr(args, "minimal", False)
-                    split = getattr(args, "split", None)
-                    flat = False
-                    remote = remote_host
-                    lenient = True  # Don't fail on empty
-
-                RemoteExportArgs.patterns = patterns
-                RemoteExportArgs.workspace = patterns[0] if patterns else ""
+                config = ExportConfig.from_args(
+                    args,
+                    output_dir=str(output_dir),
+                    patterns=patterns,
+                    flat=False,
+                    remote=remote_host,
+                    lenient=True,
+                )
 
                 # Try to export - cmd_batch will handle "no sessions" gracefully
                 try:
-                    cmd_batch(RemoteExportArgs())
+                    cmd_batch(config)
                 except SystemExit:
                     # cmd_batch might exit on "no sessions" - catch and report
                     pass
@@ -5559,7 +5810,7 @@ def cmd_export_all(args):
                     print(f"  [OK] {remote_host}: {session_count} sessions exported")
                 else:
                     print(f"  [OK] {remote_host}: No matching sessions")
-            except Exception as e:
+            except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as e:
                 print(f"  [ERROR] {remote_host} failed: {e}")
                 total_errors += 1
         print()
@@ -6300,6 +6551,8 @@ def _dispatch_export(args):
     if args.all_homes:
         final_patterns = [] if args.all_workspaces else targets
 
+        # ExportAllArgs - used by cmd_export_all which handles multi-home export
+        # It builds ExportConfig internally for each source
         class ExportAllArgs:
             patterns = final_patterns
             workspace = ""
@@ -6316,19 +6569,19 @@ def _dispatch_export(args):
         final_patterns = [] if args.all_workspaces else targets
         final_remote = final_remotes[0] if final_remotes else None
 
-        class ExportArgs:
-            patterns = final_patterns
-            workspace = final_patterns[0] if final_patterns else ""
-            output_dir = final_output_dir
-            since = args.since
-            until = args.until
-            force = args.force
-            minimal = args.minimal
-            split = args.split
-            flat = args.flat
-            remote = final_remote
-
-        cmd_batch(ExportArgs())
+        config = ExportConfig(
+            output_dir=final_output_dir,
+            patterns=final_patterns,
+            since=args.since,
+            until=args.until,
+            force=args.force,
+            minimal=args.minimal,
+            split=args.split,
+            flat=args.flat,
+            remote=final_remote,
+            lenient=False,
+        )
+        cmd_batch(config)
 
 
 def _dispatch_alias(args):
