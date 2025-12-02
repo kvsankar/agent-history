@@ -5303,6 +5303,92 @@ class TestWindowsDriveFilter:
 
 
 # ============================================================================
+# Idempotent Flag Tests
+# ============================================================================
+
+
+class TestIdempotentFlags:
+    """Tests for --wsl and --windows flag idempotent behavior."""
+
+    def test_wsl_flag_on_wsl_returns_none(self):
+        """--wsl on WSL should return None (use local)."""
+        with patch.object(ch, "is_running_in_wsl", return_value=True):
+
+            class Args:
+                remotes = None
+                wsl = True
+                windows = False
+
+            result = ch._resolve_remote_flag(Args())
+            assert result is None
+
+    def test_wsl_flag_on_windows_returns_wsl_remote(self):
+        """--wsl on Windows should return wsl:// remote."""
+        with patch.object(ch, "is_running_in_wsl", return_value=False):
+            with patch.object(
+                ch,
+                "get_wsl_distributions",
+                return_value=[{"name": "Ubuntu", "has_claude": True}],
+            ):
+
+                class Args:
+                    remotes = None
+                    wsl = True
+                    windows = False
+
+                result = ch._resolve_remote_flag(Args())
+                assert result == "wsl://Ubuntu"
+
+    def test_windows_flag_on_windows_returns_none(self):
+        """--windows on Windows should return None (use local)."""
+        with patch("platform.system", return_value="Windows"):
+
+            class Args:
+                remotes = None
+                wsl = False
+                windows = True
+
+            result = ch._resolve_remote_flag(Args())
+            assert result is None
+
+    def test_windows_flag_on_wsl_returns_windows(self):
+        """--windows on WSL/Linux should return 'windows'."""
+        with patch("platform.system", return_value="Linux"):
+
+            class Args:
+                remotes = None
+                wsl = False
+                windows = True
+
+            result = ch._resolve_remote_flag(Args())
+            assert result == "windows"
+
+    def test_resolve_remote_list_wsl_on_wsl_skips(self):
+        """--wsl on WSL should not add to remotes list."""
+        with patch.object(ch, "is_running_in_wsl", return_value=True):
+
+            class Args:
+                remotes = None
+                wsl = True
+                windows = False
+
+            result = ch._resolve_remote_list(Args())
+            assert result is None
+
+    def test_resolve_remote_list_windows_on_windows_skips(self):
+        """--windows on Windows should not add to remotes list."""
+        with patch("platform.system", return_value="Windows"):
+
+            class Args:
+                remotes = None
+                wsl = False
+                windows = True
+
+            result = ch._resolve_remote_list(Args())
+            assert result is None
+
+
+# ============================================================================
 # CLI Smoke Tests (subprocess-based)
 # ============================================================================
 
