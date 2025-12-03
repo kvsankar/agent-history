@@ -6053,6 +6053,286 @@ class TestLocalFlagBehavior:
 
 
 # ============================================================================
+# Section 14: Stats SQL Aggregation Integration Tests
+# ============================================================================
+
+
+class TestStatsAggregation:
+    """Integration tests for stats display functions with SQL aggregation."""
+
+    @pytest.fixture
+    def stats_db_env(self, tmp_path):
+        """Create test environment with populated metrics database."""
+        # Create projects directory with multiple workspaces
+        projects_dir = tmp_path / ".claude" / "projects"
+
+        # Workspace 1: 2 sessions
+        ws1 = projects_dir / "-test-workspace1"
+        ws1.mkdir(parents=True)
+
+        session1 = ws1 / "session1.jsonl"
+        session1.write_text(
+            '{"type":"user","message":{"role":"user","content":"Hello"},"timestamp":"2025-01-15T10:00:00Z","uuid":"u1","sessionId":"s1"}\n'
+            '{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-20250514","usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"text","text":"Hi"},{"type":"tool_use","name":"Bash","id":"t1","input":{"command":"ls"}}]},"timestamp":"2025-01-15T10:01:00Z","uuid":"u2","sessionId":"s1"}\n'
+        )
+
+        session2 = ws1 / "session2.jsonl"
+        session2.write_text(
+            '{"type":"user","message":{"role":"user","content":"Test"},"timestamp":"2025-01-16T10:00:00Z","uuid":"u3","sessionId":"s2"}\n'
+            '{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-20250514","usage":{"input_tokens":80,"output_tokens":40},"content":[{"type":"text","text":"Response"},{"type":"tool_use","name":"Read","id":"t2","input":{"file":"test.py"}}]},"timestamp":"2025-01-16T10:01:00Z","uuid":"u4","sessionId":"s2"}\n'
+        )
+
+        # Workspace 2: 1 session with different model
+        ws2 = projects_dir / "-test-workspace2"
+        ws2.mkdir(parents=True)
+
+        session3 = ws2 / "session3.jsonl"
+        session3.write_text(
+            '{"type":"user","message":{"role":"user","content":"Query"},"timestamp":"2025-01-17T10:00:00Z","uuid":"u5","sessionId":"s3"}\n'
+            '{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-20250514","usage":{"input_tokens":200,"output_tokens":100},"content":[{"type":"text","text":"Answer"},{"type":"tool_use","name":"Bash","id":"t3","input":{"command":"pwd"}}]},"timestamp":"2025-01-17T10:01:00Z","uuid":"u6","sessionId":"s3"}\n'
+        )
+
+        # Create and populate database
+        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = ch.init_metrics_db(db_path)
+
+        # Sync all session files
+        ch.sync_file_to_db(conn, session1, source="local", force=True)
+        ch.sync_file_to_db(conn, session2, source="local", force=True)
+        ch.sync_file_to_db(conn, session3, source="local", force=True)
+        conn.close()
+
+        return {
+            "projects_dir": projects_dir,
+            "db_path": db_path,
+            "tmp_path": tmp_path,
+        }
+
+    def test_stats_summary_aggregates_sessions(self, stats_db_env):
+        """14.1: Stats summary correctly aggregates session counts."""
+        db_path = stats_db_env["db_path"]
+        conn = ch.init_metrics_db(db_path)
+
+        # Query session count
+        cursor = conn.execute("SELECT COUNT(DISTINCT session_id) FROM sessions")
+        session_count = cursor.fetchone()[0]
+        conn.close()
+
+        assert session_count == 3
+
+    def test_stats_tool_aggregates_usage(self, stats_db_env):
+        """14.2: Stats tool correctly aggregates tool usage counts."""
+        db_path = stats_db_env["db_path"]
+        conn = ch.init_metrics_db(db_path)
+
+        # Query tool usage
+        cursor = conn.execute(
+            "SELECT tool_name, COUNT(*) FROM tool_uses GROUP BY tool_name ORDER BY COUNT(*) DESC"
+        )
+        tools = {row[0]: row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        assert tools.get("Bash") == 2  # Used in session1 and session3
+        assert tools.get("Read") == 1  # Used in session2
+
+    def test_stats_model_aggregates_usage(self, stats_db_env):
+        """14.3: Stats model correctly aggregates model usage."""
+        db_path = stats_db_env["db_path"]
+        conn = ch.init_metrics_db(db_path)
+
+        # Query model usage
+        cursor = conn.execute(
+            "SELECT model, COUNT(*) FROM messages WHERE model IS NOT NULL GROUP BY model"
+        )
+        models = {row[0]: row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        assert models.get("claude-sonnet-4-20250514") == 2
+        assert models.get("claude-opus-4-20250514") == 1
+
+    def test_stats_token_aggregates_totals(self, stats_db_env):
+        """14.4: Stats correctly aggregates token totals."""
+        db_path = stats_db_env["db_path"]
+        conn = ch.init_metrics_db(db_path)
+
+        # Query token totals
+        cursor = conn.execute("SELECT SUM(input_tokens), SUM(output_tokens) FROM messages")
+        row = cursor.fetchone()
+        conn.close()
+
+        total_input = row[0] or 0
+        total_output = row[1] or 0
+        # 100+80+200=380 input, 50+40+100=190 output
+        assert total_input == 380
+        assert total_output == 190
+
+    def test_stats_workspace_groups_correctly(self, stats_db_env):
+        """14.5: Stats correctly groups by workspace."""
+        db_path = stats_db_env["db_path"]
+        conn = ch.init_metrics_db(db_path)
+
+        # Query sessions per workspace
+        cursor = conn.execute(
+            "SELECT workspace, COUNT(*) FROM sessions GROUP BY workspace ORDER BY workspace"
+        )
+        workspaces = {row[0]: row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        assert workspaces.get("test-workspace1") == 2
+        assert workspaces.get("test-workspace2") == 1
+
+
+# ============================================================================
+# Section 15: Alias End-to-End Integration Tests
+# ============================================================================
+
+
+class TestAliasEndToEnd:
+    """End-to-end tests for alias usage in lss and export commands."""
+
+    @pytest.fixture
+    def alias_e2e_env(self, tmp_path):
+        """Create test environment with workspaces, sessions, and alias."""
+        # Create projects directory with workspaces
+        projects_dir = tmp_path / ".claude" / "projects"
+
+        # Workspace 1: project-frontend (Jan 20)
+        ws1 = projects_dir / "-home-user-project-frontend"
+        ws1.mkdir(parents=True)
+        session1 = ws1 / "frontend-session.jsonl"
+        session1.write_text(
+            '{"type":"user","message":{"role":"user","content":"Frontend work"},"timestamp":"2025-01-20T10:00:00Z","uuid":"f1","sessionId":"frontend1"}\n'
+            '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done"}]},"timestamp":"2025-01-20T10:01:00Z","uuid":"f2","sessionId":"frontend1"}\n'
+        )
+        # Set file mtime to Jan 20, 2025
+        jan20_ts = datetime(2025, 1, 20, 10, 0, 0).timestamp()
+        os.utime(session1, (jan20_ts, jan20_ts))
+
+        # Workspace 2: project-backend (Jan 21)
+        ws2 = projects_dir / "-home-user-project-backend"
+        ws2.mkdir(parents=True)
+        session2 = ws2 / "backend-session.jsonl"
+        session2.write_text(
+            '{"type":"user","message":{"role":"user","content":"Backend work"},"timestamp":"2025-01-21T10:00:00Z","uuid":"b1","sessionId":"backend1"}\n'
+            '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Completed"}]},"timestamp":"2025-01-21T10:01:00Z","uuid":"b2","sessionId":"backend1"}\n'
+        )
+        # Set file mtime to Jan 21, 2025
+        jan21_ts = datetime(2025, 1, 21, 10, 0, 0).timestamp()
+        os.utime(session2, (jan21_ts, jan21_ts))
+
+        # Create config directory and alias file
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        aliases_file = config_dir / "aliases.json"
+
+        # Create alias "myproject" that includes both workspaces
+        aliases_data = {
+            "version": 1,
+            "aliases": {
+                "myproject": {
+                    "local": [
+                        "-home-user-project-frontend",
+                        "-home-user-project-backend",
+                    ]
+                }
+            },
+        }
+        aliases_file.write_text(json.dumps(aliases_data))
+
+        return {
+            "projects_dir": projects_dir,
+            "config_dir": config_dir,
+            "aliases_file": aliases_file,
+            "tmp_path": tmp_path,
+        }
+
+    def test_alias_lss_returns_sessions_from_all_workspaces(self, alias_e2e_env):
+        """15.1: lss @myproject returns sessions from all alias workspaces."""
+        with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
+            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+                with patch.object(
+                    ch, "get_claude_projects_dir", return_value=alias_e2e_env["projects_dir"]
+                ):
+                    # Get sessions via alias
+                    aliases_data = ch.load_aliases()
+                    alias_config = aliases_data["aliases"]["myproject"]
+
+                    all_sessions = ch._collect_alias_sessions(alias_config, None, None)
+
+                    # Should have 2 sessions (one from each workspace)
+                    assert len(all_sessions) == 2
+
+                    # Verify session IDs
+                    session_ids = {s.get("filename") for s in all_sessions}
+                    assert "frontend-session.jsonl" in session_ids
+                    assert "backend-session.jsonl" in session_ids
+
+    def test_alias_export_exports_all_workspaces(self, alias_e2e_env):
+        """15.2: export @myproject exports sessions from all alias workspaces."""
+        output_dir = alias_e2e_env["tmp_path"] / "exports"
+        output_dir.mkdir()
+
+        with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
+            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+                with patch.object(
+                    ch, "get_claude_projects_dir", return_value=alias_e2e_env["projects_dir"]
+                ):
+                    # Create a mock args object
+                    class MockArgs:
+                        since = None
+                        until = None
+                        force = True
+                        minimal = False
+                        split = None
+                        flat = True  # Flat for easier testing
+
+                    # Export via alias
+                    ch.cmd_alias_export("myproject", output_dir, MockArgs())
+
+                    # Check that markdown files were created
+                    md_files = list(output_dir.glob("**/*.md"))
+                    assert len(md_files) == 2
+
+    def test_alias_resolve_workspaces_returns_correct_list(self, alias_e2e_env):
+        """15.3: resolve_alias_workspaces returns all workspaces in alias."""
+        with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
+            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+                workspaces = ch.resolve_alias_workspaces("myproject")
+
+                assert len(workspaces) == 2
+                # Returns tuples of (source_type, workspace)
+                assert ("local", "-home-user-project-frontend") in workspaces
+                assert ("local", "-home-user-project-backend") in workspaces
+
+    def test_alias_lss_with_date_filter(self, alias_e2e_env):
+        """15.4: lss @myproject --since filters correctly."""
+        with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
+            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+                with patch.object(
+                    ch, "get_claude_projects_dir", return_value=alias_e2e_env["projects_dir"]
+                ):
+                    aliases_data = ch.load_aliases()
+                    alias_config = aliases_data["aliases"]["myproject"]
+
+                    # Filter to only sessions from Jan 21 onwards
+                    # Use datetime (not date) for comparison with session modified times
+                    since_date = datetime(2025, 1, 21)
+                    filtered_sessions = ch._collect_alias_sessions(alias_config, since_date, None)
+
+                    # Should only get backend session (Jan 21)
+                    assert len(filtered_sessions) == 1
+                    assert filtered_sessions[0]["filename"] == "backend-session.jsonl"
+
+    def test_alias_nonexistent_returns_empty(self, alias_e2e_env):
+        """15.5: Nonexistent alias returns empty workspace list."""
+        with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
+            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+                workspaces = ch.resolve_alias_workspaces("nonexistent")
+                assert workspaces == []
+
+
+# ============================================================================
 # Run tests
 # ============================================================================
 

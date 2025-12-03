@@ -5300,10 +5300,14 @@ def _get_batch_sessions(args, patterns: list, since_date, until_date) -> list:
     return _get_batch_ssh_sessions(args, patterns, since_date, until_date)
 
 
-def _handle_empty_sessions(patterns: list, since_date, until_date, lenient: bool):
-    """Handle case when no sessions found."""
+def _handle_empty_sessions(patterns: list, since_date, until_date, lenient: bool) -> bool:
+    """Handle case when no sessions found.
+
+    Returns:
+        True if should continue (lenient mode), False if error (caller should exit).
+    """
     if lenient:
-        return
+        return True
 
     pattern_str = (
         ", ".join(patterns) if patterns and len(patterns) > 1 else (patterns[0] if patterns else "")
@@ -5317,11 +5321,15 @@ def _handle_empty_sessions(patterns: list, since_date, until_date, lenient: bool
         sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
     else:
         sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
-    sys.exit(1)
+    return False
 
 
-def cmd_batch(args):
-    """Batch convert all sessions from a workspace."""
+def cmd_batch(args) -> bool:
+    """Batch convert all sessions from a workspace.
+
+    Returns:
+        True on success, False if no sessions found (and not lenient).
+    """
     since_str = getattr(args, "since", None)
     until_str = getattr(args, "until", None)
     since_date, until_date = parse_and_validate_dates(since_str, until_str)
@@ -5330,10 +5338,12 @@ def cmd_batch(args):
     sessions = _get_batch_sessions(args, patterns, since_date, until_date)
 
     if not sessions:
-        _handle_empty_sessions(patterns, since_date, until_date, getattr(args, "lenient", False))
-        return
+        return _handle_empty_sessions(
+            patterns, since_date, until_date, getattr(args, "lenient", False)
+        )
 
     _export_sessions_to_markdown(sessions, args, Path(args.output_dir))
+    return True
 
 
 def cmd_version(args):
@@ -6076,12 +6086,8 @@ def _export_remote_host(args, output_dir: Path, patterns: list, remote_host: str
             lenient=True,
         )
 
-        # Try to export - cmd_batch will handle "no sessions" gracefully
-        try:
-            cmd_batch(config)
-        except SystemExit:
-            # cmd_batch might exit on "no sessions" - catch and report
-            pass
+        # Export - with lenient=True, cmd_batch returns True even if no sessions
+        cmd_batch(config)
 
         # Count sessions (cached)
         hostname = get_remote_hostname(remote_host)
@@ -7317,7 +7323,8 @@ def _route_export(args, output_dir: Path, final_patterns: list, final_remotes):
         _dispatch_export_all_homes(args, output_dir, final_patterns, final_remotes)
     else:
         final_remote = final_remotes[0] if final_remotes else None
-        cmd_batch(_build_export_config(args, output_dir, final_patterns, final_remote))
+        if not cmd_batch(_build_export_config(args, output_dir, final_patterns, final_remote)):
+            sys.exit(1)
 
 
 def _dispatch_export(args):
