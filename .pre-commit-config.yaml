@@ -5,3 +5,28 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  # Code complexity checks with radon
+  - repo: local
+    hooks:
+      - id: radon-cc
+        name: radon-cc (cyclomatic complexity)
+        entry: uv run python scripts/check_complexity.py
+        language: system
+        types: [python]
+        pass_filenames: true
+        # Also check claude-history (no .py extension)
+        files: (\.py$|^claude-history$)
+        exclude: ^test_
+
+      - id: radon-mi
+        name: radon-mi (maintainability index)
+        entry: uv run radon mi
+        language: system
+        types: [python]
+        args: [-s, --min, "B"]  # Show grade B or worse
+        pass_filenames: true
+        files: (\.py$|^claude-history$)
+        exclude: ^test_
+        # MI is informational, don't fail
+        verbose: true

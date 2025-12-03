@@ -34,4 +34,14 @@ known-first-party = ["claude_history"]
 [dependency-groups]
 dev = [
     "pytest>=7.4.4",
+    "radon>=6.0.1",
 ]
+
+# Radon complexity thresholds (documented here, enforced in scripts/check_complexity.py)
+# CC grades: A (1-5), B (6-10), C (11-20), D (21-30), E (31-40), F (41+)
+# MI grades: A (20-100), B (10-19), C (0-9)
+#
+# Stringent thresholds enforced:
+# - New functions: max complexity C (<=20), reject D/E/F
+# - Existing high-complexity functions are tracked for refactoring
+# - Maintainability index: warn on C grade (0-9)
