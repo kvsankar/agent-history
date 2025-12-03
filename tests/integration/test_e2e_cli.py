@@ -73,8 +73,13 @@ def test_e2e_wsl_from_windows(tmp_path: Path):
 
     r1 = run_cli(["lsw", "--wsl"], env=env)
     assert r1.returncode == 0, r1.stderr
-    # On Windows we print UNC paths for WSL
-    assert "wsl.localhost" in r1.stdout or "wsl$" in r1.stdout or "/home/test/distro/svc" in r1.stdout
+    # On Windows we may print UNC paths for WSL, or normalized POSIX fallback
+    assert (
+        "wsl.localhost" in r1.stdout
+        or "wsl$" in r1.stdout
+        or "/home/test/distro/svc" in r1.stdout
+        or "/home/test/distro-svc" in r1.stdout
+    )
 
     r2 = run_cli(["lss", "--wsl"], env=env)
     assert r2.returncode == 0, r2.stderr
