@@ -5599,6 +5599,306 @@ class TestLocalFlag:
         assert args.remotes == ["user@host"]
 
 
+class TestLocalFlagBehavior:
+    """Tests for actual behavior of --local additive functions."""
+
+    def test_lsw_additive_local_only_no_remotes(self, temp_projects_dir, capsys):
+        """_dispatch_lsw_additive with empty remotes should show only local."""
+
+        class Args:
+            patterns = ["myproject"]
+            remotes = []
+            workspaces_only = True
+
+        with patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir):
+            ch._dispatch_lsw_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should show local header
+        assert "Local" in captured.out
+        # Should show myproject workspace
+        assert "myproject" in captured.out
+
+    def test_lsw_additive_with_mocked_remote(self, temp_projects_dir, capsys):
+        """_dispatch_lsw_additive should show both local and remote workspaces."""
+
+        class Args:
+            patterns = [""]
+            remotes = ["user@testhost"]
+            workspaces_only = True
+
+        mock_remote_workspaces = ["-home-user-remoteproject"]
+
+        with (
+            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
+            patch.object(ch, "check_ssh_connection", return_value=True),
+            patch.object(ch, "list_remote_workspaces", return_value=mock_remote_workspaces),
+            patch.object(ch, "get_remote_hostname", return_value="testhost"),
+        ):
+            ch._dispatch_lsw_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should show local header
+        assert "Local" in captured.out
+        # Should show remote header
+        assert "Remote (testhost)" in captured.out
+        # Should show local workspace
+        assert "myproject" in captured.out
+        # Should show remote workspace
+        assert "remoteproject" in captured.out
+
+    def test_lsw_additive_ssh_connection_failure(self, temp_projects_dir, capsys):
+        """_dispatch_lsw_additive should handle SSH connection failure gracefully."""
+
+        class Args:
+            patterns = [""]
+            remotes = ["user@badhost"]
+            workspaces_only = True
+
+        with (
+            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
+            patch.object(ch, "check_ssh_connection", return_value=False),
+        ):
+            ch._dispatch_lsw_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should show local results
+        assert "Local" in captured.out
+        # Should show error for remote
+        assert "Cannot connect to remote" in captured.err
+
+    def test_lsw_additive_pattern_filtering(self, temp_projects_dir, capsys):
+        """_dispatch_lsw_additive should filter both local and remote by pattern."""
+
+        class Args:
+            patterns = ["myproject"]
+            remotes = ["user@testhost"]
+            workspaces_only = True
+
+        mock_remote_workspaces = ["-home-user-myproject", "-home-user-otherproject"]
+
+        with (
+            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
+            patch.object(ch, "check_ssh_connection", return_value=True),
+            patch.object(ch, "list_remote_workspaces", return_value=mock_remote_workspaces),
+            patch.object(ch, "get_remote_hostname", return_value="testhost"),
+        ):
+            ch._dispatch_lsw_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should show myproject
+        assert "myproject" in captured.out
+        # Should NOT show otherproject (filtered out)
+        assert "otherproject" not in captured.out
+
+    def test_lss_additive_local_only(self, temp_projects_dir, capsys):
+        """_dispatch_lss_additive with empty remotes should show only local."""
+
+        class Args:
+            patterns = ["myproject"]
+            remotes = []
+            since_date = None
+            until_date = None
+
+        with patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir):
+            ch._dispatch_lss_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should show header
+        assert "HOME" in captured.out
+        assert "WORKSPACE" in captured.out
+        # Should show local sessions
+        assert "Local" in captured.out
+        # Should show myproject
+        assert "myproject" in captured.out
+
+    def test_lss_additive_with_mocked_remote(self, temp_projects_dir, capsys):
+        """_dispatch_lss_additive should show both local and remote sessions."""
+        from datetime import datetime
+
+        class Args:
+            patterns = [""]
+            remotes = ["user@testhost"]
+            since_date = None
+            until_date = None
+
+        mock_remote_workspaces = ["-home-user-remoteproject"]
+        mock_remote_sessions = [
+            {
+                "filename": "session1.jsonl",
+                "size_kb": 10.5,
+                "modified": datetime(2025, 11, 20, 10, 30),
+                "message_count": 5,
+            }
+        ]
+
+        with (
+            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
+            patch.object(ch, "check_ssh_connection", return_value=True),
+            patch.object(ch, "list_remote_workspaces", return_value=mock_remote_workspaces),
+            patch.object(ch, "get_remote_hostname", return_value="testhost"),
+            patch.object(ch, "get_remote_session_info", return_value=mock_remote_sessions),
+        ):
+            ch._dispatch_lss_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should show header
+        assert "HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE" in captured.out
+        # Should show local sessions
+        assert "Local" in captured.out
+        # Should show remote sessions
+        assert "Remote (testhost)" in captured.out
+        # Should show remote workspace
+        assert "remoteproject" in captured.out
+
+    def test_lss_additive_date_filtering(self, temp_projects_dir, capsys):
+        """_dispatch_lss_additive should filter remote sessions by date."""
+        from datetime import datetime
+
+        class Args:
+            patterns = [""]
+            remotes = ["user@testhost"]
+            since_date = datetime(2025, 11, 15)
+            until_date = datetime(2025, 11, 25)
+
+        mock_remote_workspaces = ["-home-user-project"]
+        mock_remote_sessions = [
+            {
+                "filename": "old.jsonl",
+                "size_kb": 10,
+                "modified": datetime(2025, 11, 1),  # Before since_date
+                "message_count": 5,
+            },
+            {
+                "filename": "current.jsonl",
+                "size_kb": 20,
+                "modified": datetime(2025, 11, 20),  # Within range
+                "message_count": 10,
+            },
+            {
+                "filename": "future.jsonl",
+                "size_kb": 15,
+                "modified": datetime(2025, 12, 1),  # After until_date
+                "message_count": 8,
+            },
+        ]
+
+        with (
+            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
+            patch.object(ch, "check_ssh_connection", return_value=True),
+            patch.object(ch, "list_remote_workspaces", return_value=mock_remote_workspaces),
+            patch.object(ch, "get_remote_hostname", return_value="testhost"),
+            patch.object(ch, "get_remote_session_info", return_value=mock_remote_sessions),
+        ):
+            ch._dispatch_lss_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should show current.jsonl (within date range)
+        assert "current.jsonl" in captured.out
+        # Should NOT show old.jsonl or future.jsonl
+        assert "old.jsonl" not in captured.out
+        assert "future.jsonl" not in captured.out
+
+    def test_lss_additive_ssh_failure(self, temp_projects_dir, capsys):
+        """_dispatch_lss_additive should handle SSH failure gracefully."""
+
+        class Args:
+            patterns = [""]
+            remotes = ["user@badhost"]
+            since_date = None
+            until_date = None
+
+        with (
+            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
+            patch.object(ch, "check_ssh_connection", return_value=False),
+        ):
+            ch._dispatch_lss_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should still show local sessions
+        assert "Local" in captured.out
+        # Should show error for remote
+        assert "Cannot connect to remote" in captured.err
+
+    def test_lss_additive_multiple_remotes(self, temp_projects_dir, capsys):
+        """_dispatch_lss_additive should handle multiple remotes."""
+        from datetime import datetime
+
+        class Args:
+            patterns = [""]
+            remotes = ["user@host1", "user@host2"]
+            since_date = None
+            until_date = None
+
+        mock_sessions = [
+            {
+                "filename": "session.jsonl",
+                "size_kb": 10,
+                "modified": datetime(2025, 11, 20),
+                "message_count": 5,
+            }
+        ]
+
+        # Track which host is being queried
+        hostnames = iter(["host1", "host2"])
+
+        def mock_hostname(remote):
+            return next(hostnames)
+
+        with (
+            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
+            patch.object(ch, "check_ssh_connection", return_value=True),
+            patch.object(ch, "list_remote_workspaces", return_value=["-home-user-project"]),
+            patch.object(ch, "get_remote_hostname", side_effect=mock_hostname),
+            patch.object(ch, "get_remote_session_info", return_value=mock_sessions),
+        ):
+            ch._dispatch_lss_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should show both remotes
+        assert "Remote (host1)" in captured.out
+        assert "Remote (host2)" in captured.out
+
+    def test_lss_additive_empty_remote_results(self, temp_projects_dir, capsys):
+        """_dispatch_lss_additive should handle empty remote results."""
+
+        class Args:
+            patterns = ["nonexistent"]
+            remotes = ["user@testhost"]
+            since_date = None
+            until_date = None
+
+        with (
+            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
+            patch.object(ch, "check_ssh_connection", return_value=True),
+            patch.object(ch, "list_remote_workspaces", return_value=[]),  # No workspaces
+            patch.object(ch, "get_remote_hostname", return_value="testhost"),
+        ):
+            ch._dispatch_lss_additive(Args)
+
+        captured = capsys.readouterr()
+        # Should not show remote header if no results
+        assert "Remote (testhost)" not in captured.out
+
+    def test_export_additive_condition(self):
+        """Export additive mode should trigger with --local and -r."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["export", "--local", "-r", "user@host", "myproject"])
+
+        # Check the condition used in _dispatch_export
+        local_flag = getattr(args, "local", False)
+        final_remotes = args.remotes or []
+        assert local_flag and final_remotes
+
+    def test_export_additive_not_triggered_without_local(self):
+        """Export should not use additive mode without --local."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["export", "-r", "user@host", "myproject"])
+
+        local_flag = getattr(args, "local", False)
+        assert not local_flag  # --local not set
+
+
 # ============================================================================
 # Run tests
 # ============================================================================
