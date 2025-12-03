@@ -29,20 +29,10 @@ GRADE_ORDER = ["A", "B", "C", "D", "E", "F"]
 # Baselined functions - existing tech debt with high complexity
 # These are allowed to pass but should be refactored over time
 # Format: (filename, function_name): max_allowed_complexity
+# NOTE: All D-grade functions have been refactored to C or better.
+# The baseline below allows C-grade functions (complexity 11-20).
 BASELINE = {
-    ("claude-history", "_dispatch_lss"): 29,
-    ("claude-history", "_dispatch_lss_additive"): 28,
-    ("claude-history", "resolve_workspace_input"): 26,
-    ("claude-history", "interactive_workspace_picker"): 26,
-    ("claude-history", "_dispatch_export"): 26,
-    ("claude-history", "_print_summary_stats"): 21,
-    ("claude-history", "cmd_alias_export"): 25,
-    ("claude-history", "cmd_stats"): 24,
-    ("claude-history", "validate_export_all_homes"): 24,
-    ("claude-history", "get_workspace_sessions"): 23,
-    ("claude-history", "get_windows_home_from_wsl"): 22,
-    ("claude-history", "extract_metrics_from_jsonl"): 22,
-    ("claude-history", "_list_ssh_remote_sessions"): 21,
+    # No D-grade functions remaining - all refactored!
 }
 
 
