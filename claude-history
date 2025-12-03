@@ -4201,10 +4201,13 @@ def _query_tool_stats(conn: sqlite3.Connection, where_sql: str, params: list) ->
     return cursor.fetchone()
 
 
-def _build_workspace_to_alias_map() -> dict:
+def _build_workspace_to_alias_map(aliases: dict = None) -> dict:
     """Build mapping from (workspace, source) to alias name."""
-    aliases_data = load_aliases()
-    aliases = aliases_data.get("aliases", {})
+    if aliases is None:
+        aliases_data = load_aliases()
+        aliases = aliases_data.get("aliases", {})
+    else:
+        aliases = aliases or {}
 
     workspace_to_alias = {}
     for alias_name, alias_config in aliases.items():
@@ -4453,23 +4456,8 @@ def display_model_stats(conn: sqlite3.Connection, where_sql: str, params: list):
         avg_output = (row["output_tokens"] / messages) if messages > 0 else 0
         print(f"{short_model:<35} {messages:>10,} {row['sessions']:>10,} {avg_output:>10,.0f}")
 
-    print()
 
-
-def _build_workspace_to_alias_map(aliases: dict) -> dict:
-    """Build mapping from (workspace_name, source) to alias_name."""
-    workspace_to_alias = {}
-    for alias_name, alias_config in aliases.items():
-        for source_key, workspaces in alias_config.items():
-            if isinstance(workspaces, list):
-                normalized_source = "windows" if source_key.startswith("windows:") else source_key
-                for ws in workspaces:
-                    ws_name = get_workspace_name_from_path(ws)
-                    workspace_to_alias[(ws_name, normalized_source)] = alias_name
-    return workspace_to_alias
-
-
-def _aggregate_workspace_stats(all_workspaces: list, workspace_to_alias: dict) -> tuple:
+def _aggregate_workspace_stats_detailed(all_workspaces: list, workspace_to_alias: dict) -> tuple:
     """Aggregate workspace stats by alias. Returns (alias_stats, unaliased)."""
     alias_stats = {}
     unaliased = []
@@ -4511,7 +4499,7 @@ def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: li
 
     aliases_data = load_aliases()
     workspace_to_alias = _build_workspace_to_alias_map(aliases_data.get("aliases", {}))
-    alias_stats, unaliased = _aggregate_workspace_stats(all_workspaces, workspace_to_alias)
+    alias_stats, unaliased = _aggregate_workspace_stats_detailed(all_workspaces, workspace_to_alias)
 
     print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("WORKSPACE STATISTICS")

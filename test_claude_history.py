@@ -19,11 +19,14 @@ import importlib.util
 import json
 import os
 import platform
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -6184,7 +6187,148 @@ class TestStatsAggregation:
 
 
 # ============================================================================
-# Section 15: Alias End-to-End Integration Tests
+# Section 15: End-to-End Stats and Export Tests
+# ============================================================================
+
+
+class TestStatsAndExportEndToEnd:
+    """Full command integration tests for stats sync and multi-home export."""
+
+    def test_cmd_stats_sync_inserts_sessions_for_workspace(
+        self, tmp_path, sample_jsonl_content, monkeypatch
+    ):
+        """15.1: cmd_stats_sync should sync matching workspaces without crashing."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        workspace_dir = projects_dir / "-home-user-myproject"
+        workspace_dir.mkdir(parents=True)
+        session_file = workspace_dir / "session.jsonl"
+        session_file.write_text(
+            "\n".join(json.dumps(msg) for msg in sample_jsonl_content),
+            encoding="utf-8",
+        )
+
+        db_path = tmp_path / "metrics.db"
+
+        monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+        monkeypatch.setattr(ch, "get_metrics_db_path", lambda: db_path)
+        monkeypatch.setattr(ch, "get_saved_sources", lambda: [])
+        monkeypatch.setattr(ch, "get_wsl_distributions", lambda: [])
+        monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: [])
+        monkeypatch.setattr(ch, "get_windows_projects_dir", lambda username=None: None)
+
+        args = SimpleNamespace(force=False, all_homes=False, remotes=[], patterns=["myproject"])
+        ch.cmd_stats_sync(args)
+
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute("SELECT workspace FROM sessions").fetchall()
+        conn.close()
+
+        assert rows == [("user-myproject",)]
+
+    def test_cmd_export_all_combines_local_and_windows_sources(
+        self, tmp_path, sample_jsonl_content, monkeypatch
+    ):
+        """15.2: cmd_export_all should export from local and Windows sources."""
+        local_projects = tmp_path / "local_projects"
+        local_ws = local_projects / "-home-user-localproj"
+        local_ws.mkdir(parents=True)
+        local_file = local_ws / "local.jsonl"
+
+        windows_projects = tmp_path / "windows_projects"
+        windows_ws = windows_projects / "C--Users-winuser-winproj"
+        windows_ws.mkdir(parents=True)
+        windows_file = windows_ws / "windows.jsonl"
+
+        for json_file in (local_file, windows_file):
+            json_file.write_text(
+                "\n".join(json.dumps(msg) for msg in sample_jsonl_content),
+                encoding="utf-8",
+            )
+
+        output_dir = tmp_path / "exports"
+
+        monkeypatch.setattr(ch, "is_running_in_wsl", lambda: True)
+        monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: local_projects)
+        monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: [{"username": "winuser"}])
+        monkeypatch.setattr(ch, "get_windows_projects_dir", lambda username=None: windows_projects)
+        monkeypatch.setattr(ch, "get_saved_sources", lambda: [])
+        monkeypatch.setattr(ch, "validate_export_all_homes", lambda args, _: (True, []))
+
+        args = SimpleNamespace(
+            output_dir=str(output_dir),
+            remotes=[],
+            workspace="",
+            patterns=[],
+            since=None,
+            until=None,
+            force=False,
+            minimal=False,
+            split=None,
+            index=True,
+        )
+
+        ch.cmd_export_all(args)
+
+        md_files = [
+            path for path in output_dir.rglob("*.md") if path.is_file() and path.name != "index.md"
+        ]
+        assert len(md_files) == 2
+        assert any("windows_" in path.name for path in md_files)
+        assert any("windows_" not in path.name for path in md_files)
+
+    def test_cmd_stats_prints_summary_for_workspace(
+        self, tmp_path, sample_jsonl_content, monkeypatch, capsys
+    ):
+        """15.3: cmd_stats prints dashboard output after syncing."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        workspace_dir = projects_dir / "-home-user-myproject"
+        workspace_dir.mkdir(parents=True)
+        session_file = workspace_dir / "session.jsonl"
+        session_file.write_text(
+            "\n".join(json.dumps(msg) for msg in sample_jsonl_content),
+            encoding="utf-8",
+        )
+
+        db_path = tmp_path / "metrics.db"
+        aliases_file = tmp_path / ".claude-history" / "aliases.json"
+        aliases_file.parent.mkdir(parents=True, exist_ok=True)
+        aliases_file.write_text(json.dumps({"version": 1, "aliases": {}}))
+
+        monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+        monkeypatch.setattr(ch, "get_metrics_db_path", lambda: db_path)
+        monkeypatch.setattr(ch, "get_saved_sources", lambda: [])
+        monkeypatch.setattr(ch, "get_wsl_distributions", lambda: [])
+        monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: [])
+        monkeypatch.setattr(ch, "get_windows_projects_dir", lambda username=None: None)
+        monkeypatch.setattr(ch, "get_aliases_file", lambda: aliases_file)
+        monkeypatch.setattr(ch, "get_aliases_dir", lambda: aliases_file.parent)
+
+        sync_args = SimpleNamespace(
+            force=False, all_homes=False, remotes=[], patterns=["myproject"]
+        )
+        ch.cmd_stats_sync(sync_args)
+
+        stats_args = SimpleNamespace(
+            workspace=["myproject"],
+            source=None,
+            since=None,
+            until=None,
+            tools=False,
+            models=False,
+            time=False,
+            by_workspace=False,
+            by_day=False,
+            all_workspaces=False,
+        )
+        ch.cmd_stats(stats_args)
+
+        captured = capsys.readouterr()
+        assert "CLAUDE CODE METRICS SUMMARY" in captured.out
+        assert "Total: 1" in captured.out
+
+
+# ============================================================================
+# Section 16: Alias End-to-End Integration Tests
 # ============================================================================
 
 
@@ -6248,7 +6392,7 @@ class TestAliasEndToEnd:
         }
 
     def test_alias_lss_returns_sessions_from_all_workspaces(self, alias_e2e_env):
-        """15.1: lss @myproject returns sessions from all alias workspaces."""
+        """16.1: lss @myproject returns sessions from all alias workspaces."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
                 with patch.object(
@@ -6269,7 +6413,7 @@ class TestAliasEndToEnd:
                     assert "backend-session.jsonl" in session_ids
 
     def test_alias_export_exports_all_workspaces(self, alias_e2e_env):
-        """15.2: export @myproject exports sessions from all alias workspaces."""
+        """16.2: export @myproject exports sessions from all alias workspaces."""
         output_dir = alias_e2e_env["tmp_path"] / "exports"
         output_dir.mkdir()
 
@@ -6295,7 +6439,7 @@ class TestAliasEndToEnd:
                     assert len(md_files) == 2
 
     def test_alias_resolve_workspaces_returns_correct_list(self, alias_e2e_env):
-        """15.3: resolve_alias_workspaces returns all workspaces in alias."""
+        """16.3: resolve_alias_workspaces returns all workspaces in alias."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
                 workspaces = ch.resolve_alias_workspaces("myproject")
@@ -6306,7 +6450,7 @@ class TestAliasEndToEnd:
                 assert ("local", "-home-user-project-backend") in workspaces
 
     def test_alias_lss_with_date_filter(self, alias_e2e_env):
-        """15.4: lss @myproject --since filters correctly."""
+        """16.4: lss @myproject --since filters correctly."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
                 with patch.object(
@@ -6325,7 +6469,7 @@ class TestAliasEndToEnd:
                     assert filtered_sessions[0]["filename"] == "backend-session.jsonl"
 
     def test_alias_nonexistent_returns_empty(self, alias_e2e_env):
-        """15.5: Nonexistent alias returns empty workspace list."""
+        """16.5: Nonexistent alias returns empty workspace list."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
                 workspaces = ch.resolve_alias_workspaces("nonexistent")
@@ -6333,7 +6477,59 @@ class TestAliasEndToEnd:
 
 
 # ============================================================================
-# Section 16: Regression Tests for Bug Fixes
+# Section 17: Export Incremental Behavior Tests
+# ============================================================================
+
+
+class TestExportIncremental:
+    """Validate incremental export behavior for cmd_batch."""
+
+    def test_cmd_batch_skips_unchanged_files(self, tmp_path, sample_jsonl_content, monkeypatch):
+        """17.1: cmd_batch should skip files whose output is up to date."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        workspace_dir = projects_dir / "-home-user-incrproj"
+        workspace_dir.mkdir(parents=True)
+        session_file = workspace_dir / "session.jsonl"
+        session_file.write_text(
+            "\n".join(json.dumps(msg) for msg in sample_jsonl_content),
+            encoding="utf-8",
+        )
+
+        output_dir = tmp_path / "exports"
+        monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+
+        args = SimpleNamespace(
+            output_dir=str(output_dir),
+            patterns=["incrproj"],
+            since=None,
+            until=None,
+            force=False,
+            minimal=False,
+            split=None,
+            flat=True,
+            remote=None,
+            lenient=False,
+        )
+
+        ch.cmd_batch(args)
+        md_files = list(output_dir.glob("*.md"))
+        assert len(md_files) == 1
+        export_file = md_files[0]
+        first_mtime = export_file.stat().st_mtime
+
+        ch.cmd_batch(args)
+        second_mtime = export_file.stat().st_mtime
+        assert second_mtime == pytest.approx(first_mtime, rel=0, abs=0)
+
+        time.sleep(1.1)
+        session_file.write_text(session_file.read_text() + "\n", encoding="utf-8")
+        ch.cmd_batch(args)
+        third_mtime = export_file.stat().st_mtime
+        assert third_mtime > second_mtime
+
+
+# ============================================================================
+# Section 18: Regression Tests for Bug Fixes
 # ============================================================================
 
 
@@ -6341,7 +6537,7 @@ class TestRegressionBugFixes:
     """Regression tests to prevent reintroduction of fixed bugs."""
 
     def test_build_sync_args_patterns_not_double_wrapped(self):
-        """16.1: _build_sync_args should not wrap workspace list in another list.
+        """17.1: _build_sync_args should not wrap workspace list in another list.
 
         Bug: patterns = [args.workspace] when args.workspace is already a list
         Fix: patterns = args.workspace if args.workspace else [""]
@@ -6359,7 +6555,7 @@ class TestRegressionBugFixes:
         assert not isinstance(sync_args.patterns[0], list)
 
     def test_build_sync_args_patterns_empty_default(self):
-        """16.2: _build_sync_args should default to [""] for empty workspace."""
+        """17.2: _build_sync_args should default to [\"\"] for empty workspace."""
 
         class MockArgs:
             workspace = []
@@ -6370,7 +6566,7 @@ class TestRegressionBugFixes:
         assert sync_args.patterns == [""]
 
     def test_get_source_key_preserves_ssh_username(self):
-        """16.3: get_source_key should preserve full remote spec with username.
+        """17.3: get_source_key should preserve full remote spec with username.
 
         Bug: hostname = remote_host.split("@")[-1] discarded username
         Fix: Preserve full remote spec for SSH authentication
@@ -6384,7 +6580,7 @@ class TestRegressionBugFixes:
         assert key == "remote:server.example.com"
 
     def test_get_remote_sessions_uses_full_spec_for_ssh(self):
-        """16.4: _get_remote_sessions should use full spec for SSH, hostname for cache."""
+        """17.4: _get_remote_sessions should use full spec for SSH, hostname for cache."""
         # This tests the internal behavior by checking the function signature
         # and parameter usage via mocking
         import inspect
@@ -6396,7 +6592,7 @@ class TestRegressionBugFixes:
         assert params[0] == "remote_spec"
 
     def test_build_all_homes_sources_wsl_distro_name(self):
-        """16.5: _build_all_homes_sources should extract distro name from dict.
+        """17.5: _build_all_homes_sources should extract distro name from dict.
 
         Bug: sources.append((f"wsl:{distro}", distro)) where distro is dict
         Fix: distro_name = distro["name"]; sources.append((f"wsl:{distro_name}", distro_name))
@@ -6425,7 +6621,7 @@ class TestRegressionBugFixes:
                 assert ("wsl:Debian", "Debian") in wsl_sources
 
     def test_build_all_homes_sources_remote_full_spec(self):
-        """16.6: _build_all_homes_sources should store full remote spec."""
+        """17.6: _build_all_homes_sources should store full remote spec."""
 
         class MockArgs:
             remotes = ["alice@vm01", "bob@vm02"]
