@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 import platform
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -1882,12 +1883,14 @@ class TestSection2LocalOperations:
         }
 
     # Section 2.1: lsh - List Hosts (Local)
-    def test_local_lsh_show(self):
+    def test_local_lsh_show(self, tmp_path, monkeypatch):
         """2.1.1: lsh shows local installation."""
-        # get_claude_projects_dir should return a path
+        projects_dir = tmp_path / ".claude" / "projects"
+        projects_dir.mkdir(parents=True)
+        monkeypatch.setenv("CLAUDE_PROJECTS_DIR", str(projects_dir))
         result = ch.get_claude_projects_dir()
-        # Should return a Path (may or may not exist in test env)
-        assert result is None or isinstance(result, Path)
+        assert isinstance(result, Path)
+        assert result == projects_dir
 
     # Section 2.2: lsw - List Workspaces (Local)
     def test_local_lsw_all(self, local_test_env):
@@ -5288,8 +5291,11 @@ class TestPlatformWindowsWithWSL:
 class TestCrossPlatform:
     """Tests that should pass on all platforms."""
 
-    def test_platform_local_projects_dir(self):
+    def test_platform_local_projects_dir(self, tmp_path, monkeypatch):
         """get_claude_projects_dir returns a path."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        projects_dir.mkdir(parents=True)
+        monkeypatch.setenv("CLAUDE_PROJECTS_DIR", str(projects_dir))
         projects_dir = ch.get_claude_projects_dir()
         assert projects_dir is not None
         assert isinstance(projects_dir, Path)
@@ -5548,12 +5554,19 @@ class TestCLISmoke:
     """Smoke tests that run the actual CLI as a subprocess."""
 
     @pytest.fixture
-    def script_cmd(self):
+    def script_cmd(self, tmp_path, monkeypatch):
         """Get the command to run the claude-history script.
 
         On Windows, scripts without .py extension need to be run through Python.
         """
         script_path = Path(__file__).parent / "claude-history"
+        projects_dir = tmp_path / ".claude" / "projects"
+        workspace = projects_dir / "-home-user-cli"
+        workspace.mkdir(parents=True)
+        (workspace / "session.jsonl").write_text(
+            json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}})
+        )
+        monkeypatch.setenv("CLAUDE_PROJECTS_DIR", str(projects_dir))
         return [sys.executable, str(script_path)]
 
     def test_no_args_prints_help(self, script_cmd):
@@ -6477,7 +6490,180 @@ class TestAliasEndToEnd:
 
 
 # ============================================================================
-# Section 17: Export Incremental Behavior Tests
+# Section 17: Command Combination Matrix Tests
+# ============================================================================
+
+
+@pytest.fixture
+def command_matrix_env(tmp_path, sample_jsonl_content):
+    """Set up directories for combinatorial command testing."""
+    projects_dir = tmp_path / ".claude" / "projects"
+    content = "\n".join(json.dumps(msg) for msg in sample_jsonl_content)
+
+    local_workspaces = {}
+    for name in ("projA", "projB"):
+        encoded = f"-home-user-{name}"
+        ws_dir = projects_dir / encoded
+        ws_dir.mkdir(parents=True)
+        (ws_dir / f"{name}.jsonl").write_text(content, encoding="utf-8")
+        local_workspaces[name] = encoded
+
+    windows_projects = tmp_path / "windows-projects"
+    windows_ws = windows_projects / "C--Users-winuser-winproj"
+    windows_ws.mkdir(parents=True)
+    (windows_ws / "windows.jsonl").write_text(content, encoding="utf-8")
+
+    remote_template = tmp_path / "remote-template"
+    remote_ws = remote_template / "-home-user-remoteproj"
+    remote_ws.mkdir(parents=True)
+    (remote_ws / "remote.jsonl").write_text(content, encoding="utf-8")
+
+    return {
+        "projects_dir": projects_dir,
+        "local_workspaces": local_workspaces,
+        "windows_projects": windows_projects,
+        "windows_users": [
+            {
+                "username": "winuser",
+                "drive": "C:",
+                "workspace_count": 1,
+                "path": str(windows_projects),
+            }
+        ],
+        "remote_template": remote_template,
+    }
+
+
+class TestCommandCombinationMatrix:
+    """Ensure high-level commands behave across combinations of context/homes/workspaces."""
+
+    @pytest.mark.parametrize(
+        "description,in_workspace,workspace_args,use_all_homes,include_remote,expect_sources,expected_rows,expect_error",
+        [
+            ("inside workspace implicit local", True, [], False, False, {"Local"}, 1, False),
+            ("outside explicit local", False, ["projA"], False, False, {"Local"}, 1, False),
+            ("outside multi local", False, ["projA", "projB"], False, False, {"Local"}, 2, False),
+            ("outside no workspace specified", False, [], False, False, None, 0, True),
+            ("outside nonexistent pattern", False, ["missing"], False, False, None, 0, True),
+            (
+                "outside all homes local+windows",
+                False,
+                [],
+                True,
+                False,
+                {"Local", "Windows"},
+                3,
+                False,
+            ),
+            (
+                "outside all homes with remote",
+                False,
+                [],
+                True,
+                True,
+                {"Local", "Windows", "Remote (mock)"},
+                4,
+                False,
+            ),
+        ],
+    )
+    def test_lss_combination_matrix(
+        self,
+        description,
+        in_workspace,
+        workspace_args,
+        use_all_homes,
+        include_remote,
+        expect_sources,
+        expected_rows,
+        expect_error,
+        command_matrix_env,
+        monkeypatch,
+        capsys,
+    ):
+        """Run lss with different workspace/home combinations."""
+        env = command_matrix_env
+        projects_dir = env["projects_dir"]
+        monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+        monkeypatch.setattr(
+            ch, "get_windows_projects_dir", lambda username=None: env["windows_projects"]
+        )
+        monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: env["windows_users"])
+        monkeypatch.setattr(
+            ch, "get_saved_sources", lambda: ["user@mock"] if include_remote else []
+        )
+        monkeypatch.setattr(ch, "is_running_in_wsl", lambda: True)
+        monkeypatch.setattr(ch, "check_ssh_connection", lambda host: True)
+        monkeypatch.setattr(ch, "list_remote_workspaces", lambda host: ["-home-user-remoteproj"])
+        monkeypatch.setattr(ch, "get_remote_hostname", lambda host: "mock")
+
+        def fake_fetch(remote_host, remote_workspace, local_projects_dir, hostname):
+            src = env["remote_template"] / remote_workspace
+            cached_name = f"remote_{hostname}_{remote_workspace.lstrip('-')}"
+            dest = local_projects_dir / cached_name
+            dest.mkdir(parents=True, exist_ok=True)
+            for file in src.glob("*.jsonl"):
+                shutil.copy(file, dest / file.name)
+            return {"success": True, "files_copied": 1}
+
+        monkeypatch.setattr(ch, "fetch_workspace_files", fake_fetch)
+        monkeypatch.setattr(
+            ch,
+            "get_remote_session_info",
+            lambda *_: [
+                {
+                    "filename": "remote.jsonl",
+                    "size_kb": 1,
+                    "modified": datetime.utcnow(),
+                    "message_count": 2,
+                }
+            ],
+        )
+
+        if in_workspace:
+            monkeypatch.setattr(
+                ch, "check_current_workspace_exists", lambda: ("-home-user-projA", True)
+            )
+            monkeypatch.setattr(ch, "get_current_workspace_pattern", lambda: "-home-user-projA")
+        else:
+            monkeypatch.setattr(ch, "check_current_workspace_exists", lambda: ("unknown", False))
+            monkeypatch.setattr(ch, "get_current_workspace_pattern", lambda: "unknown")
+
+        cli_args = ["lss"]
+        if use_all_homes:
+            cli_args.append("--ah")
+        cli_args.extend(workspace_args)
+
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(cli_args)
+
+        if expect_error:
+            with pytest.raises(SystemExit):
+                ch._dispatch_lss(args)
+            return
+
+        ch._dispatch_lss(args)
+        captured = capsys.readouterr()
+        data_lines = [
+            line
+            for line in captured.out.strip().splitlines()
+            if line and not line.startswith("HOME") and "\t" in line
+        ]
+
+        def normalize_label(label: str) -> str:
+            if label.startswith("Local"):
+                return "Local"
+            if label.startswith("Windows"):
+                return "Windows"
+            return label
+
+        sources = {normalize_label(line.split("\t")[0]) for line in data_lines}
+        assert sources == expect_sources, f"Scenario: {description}"
+        assert len(data_lines) == expected_rows, f"Scenario: {description}"
+
+
+# ============================================================================
+# Section 18: Export Incremental Behavior Tests
 # ============================================================================
 
 
@@ -6529,7 +6715,7 @@ class TestExportIncremental:
 
 
 # ============================================================================
-# Section 18: Regression Tests for Bug Fixes
+# Section 19: Regression Tests for Bug Fixes
 # ============================================================================
 
 

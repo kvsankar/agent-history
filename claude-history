@@ -1247,7 +1247,11 @@ def generate_markdown_for_messages(
 
 def get_claude_projects_dir():
     """Get the Claude projects directory, with error handling."""
-    projects_dir = Path.home() / ".claude" / "projects"
+    env_override = os.environ.get("CLAUDE_PROJECTS_DIR")
+    if env_override:
+        projects_dir = Path(env_override).expanduser()
+    else:
+        projects_dir = Path.home() / ".claude" / "projects"
 
     if not projects_dir.exists():
         sys.stderr.write(f"Error: Claude projects directory not found at {projects_dir}\n")
