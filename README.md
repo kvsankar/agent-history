@@ -174,6 +174,28 @@ export HOME=/tmp/cfg               # WSL/Linux
 CI: GitHub Actions runs unit and integration tests on `ubuntu-latest` and `windows-latest`.
 Hosted Windows runners do not include WSL; WSL flows are exercised via env overrides.
 
+## Contributing
+
+Thanks for considering a contribution! A few quick notes to get you productive:
+
+- Discuss: Open an issue for feature ideas or larger changes.
+- Scope: Keep PRs focused; add tests that demonstrate behavior.
+- Tests: Ensure both unit and integration suites pass.
+  - All tests: `uv run pytest`
+  - Unit only: `uv run pytest -m "not integration"`
+  - Integration only: `uv run pytest -m integration tests/integration`
+  - Make targets: `make test`, `make test-unit`, `make test-integration`
+  - Windows helper: `scripts\\run-tests.ps1 [-Unit | -Integration]`
+- Cross‑boundary flows (optional):
+  - On Windows, simulate WSL: set `CLAUDE_WSL_TEST_DISTRO`, `CLAUDE_WSL_PROJECTS_DIR`
+  - On WSL, simulate Windows: set `CLAUDE_WINDOWS_PROJECTS_DIR`
+  - Isolate config/DB during tests: set `USERPROFILE` (Windows) or `HOME` (WSL/Linux)
+- Style: Match existing patterns (stdlib only, explicit errors, platform‑safe paths).
+- Commits: Use descriptive messages; include a brief rationale. Example:
+  - `fix(wsl): tolerate UTF-16 BOM in distro list`
+
+We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do not include WSL, so WSL flows are validated via the environment overrides described above.
+
 ## Commands
 
 | Command | Description |
