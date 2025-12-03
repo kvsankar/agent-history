@@ -1467,8 +1467,11 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
     effective_base = base_path if base_path else Path("/")
     path_segments = _resolve_path_segments(parts, effective_base)
 
-    if not path_segments:
-        return "/" + encoded.replace("-", "/")
+    # If resolution found no real merges (pure fallback), keep hyphens in the last segment
+    if path_segments == parts:
+        if len(parts) > 2:
+            return "/" + "/".join(parts[:2] + ["-".join(parts[2:])])
+        return "/" + "/".join(parts)
 
     return "/" + "/".join(path_segments)
 
