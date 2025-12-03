@@ -599,6 +599,41 @@ def decode_content(encoded_str: str) -> str:
         return f"[Error decoding content: {e}]"
 
 
+def _format_tool_use_block(block: dict) -> list:
+    """Format a tool_use block as markdown lines."""
+    tool_name = block.get("name", "unknown")
+    tool_id = block.get("id", "")
+    tool_input = block.get("input", {})
+
+    lines = [f"\n**[Tool Use: {tool_name}]**"]
+    if tool_id:
+        lines.append(f"Tool ID: `{tool_id}`")
+    lines.extend(["\nInput:", "```json", json.dumps(tool_input, indent=2), "```\n"])
+    return lines
+
+
+def _format_tool_result_block(block: dict) -> list:
+    """Format a tool_result block as markdown lines."""
+    tool_use_id = block.get("tool_use_id", "")
+    is_error = block.get("is_error", False)
+    result_content = block.get("content", "")
+
+    # Handle both string and list content in tool results
+    if isinstance(result_content, list):
+        result_text = "\n".join(
+            item.get("text", "") if isinstance(item, dict) else str(item) for item in result_content
+        )
+    else:
+        result_text = result_content
+
+    status = "ERROR" if is_error else "Success"
+    lines = [f"\n**[Tool Result: {status}]**"]
+    if tool_use_id:
+        lines.append(f"Tool Use ID: `{tool_use_id}`")
+    lines.extend(["\n```", result_text, "```\n"])
+    return lines
+
+
 def extract_content(message_obj: dict) -> str:
     """Extract text content from message object, preserving all information.
 
@@ -606,66 +641,34 @@ def extract_content(message_obj: dict) -> str:
     - User messages: Simple string content
     - Assistant messages: Array of content blocks (text, tool_use, tool_result)
 
-    This function converts all content types to markdown, preserving:
-    - Text responses from Claude
-    - Tool use requests with JSON input parameters
-    - Tool results with their outputs
-
     Args:
         message_obj: Message dictionary from JSONL entry
 
     Returns:
         Markdown-formatted string of all message content.
     """
+    if "content" not in message_obj:
+        return "[No content]"
+
+    content = message_obj["content"]
+
+    # User messages have simple string content
+    if isinstance(content, str):
+        return content
+
+    # Assistant messages have array of content blocks
+    if not isinstance(content, list):
+        return "[No content]"
+
     content_parts = []
-
-    if "content" in message_obj:
-        content = message_obj["content"]
-
-        # User messages have simple string content
-        if isinstance(content, str):
-            return content
-
-        # Assistant messages have array of content blocks
-        if isinstance(content, list):
-            for block in content:
-                if block.get("type") == "text":
-                    content_parts.append(block.get("text", ""))
-
-                elif block.get("type") == "tool_use":
-                    tool_name = block.get("name", "unknown")
-                    tool_id = block.get("id", "")
-                    tool_input = block.get("input", {})
-
-                    content_parts.append(f"\n**[Tool Use: {tool_name}]**")
-                    if tool_id:
-                        content_parts.append(f"Tool ID: `{tool_id}`")
-                    content_parts.append("\nInput:")
-                    content_parts.append("```json")
-                    content_parts.append(json.dumps(tool_input, indent=2))
-                    content_parts.append("```\n")
-
-                elif block.get("type") == "tool_result":
-                    tool_use_id = block.get("tool_use_id", "")
-                    is_error = block.get("is_error", False)
-                    result_content = block.get("content", "")
-
-                    # Handle both string and list content in tool results
-                    if isinstance(result_content, list):
-                        result_text = "\n".join(
-                            item.get("text", "") if isinstance(item, dict) else str(item)
-                            for item in result_content
-                        )
-                    else:
-                        result_text = result_content
-
-                    status = "ERROR" if is_error else "Success"
-                    content_parts.append(f"\n**[Tool Result: {status}]**")
-                    if tool_use_id:
-                        content_parts.append(f"Tool Use ID: `{tool_use_id}`")
-                    content_parts.append("\n```")
-                    content_parts.append(result_text)
-                    content_parts.append("```\n")
+    for block in content:
+        block_type = block.get("type")
+        if block_type == "text":
+            content_parts.append(block.get("text", ""))
+        elif block_type == "tool_use":
+            content_parts.extend(_format_tool_use_block(block))
+        elif block_type == "tool_result":
+            content_parts.extend(_format_tool_result_block(block))
 
     return "\n".join(content_parts) if content_parts else "[No content]"
 
@@ -741,29 +744,35 @@ def calculate_time_gap(msg1: dict, msg2: dict) -> float:
         return 0
 
 
+def _calculate_split_score(
+    messages: list, index: int, msg: dict, current_lines: int, target_lines: int
+) -> float:
+    """Calculate score for splitting after message at index."""
+    score = 0
+
+    # Priority 1: Next message is User (best - starting new topic)
+    if index + 1 < len(messages) and messages[index + 1]["role"] == "user":
+        score += SCORE_USER_MESSAGE_NEXT
+
+    # Priority 2: Current message is tool result (action complete)
+    if is_tool_result_message(msg["content"]):
+        score += SCORE_TOOL_RESULT
+
+    # Priority 3: Time gap before next message
+    if index + 1 < len(messages):
+        time_gap = calculate_time_gap(msg, messages[index + 1])
+        if time_gap > TIME_GAP_LARGE:
+            score += SCORE_TIME_GAP_LARGE
+        elif time_gap > TIME_GAP_MEDIUM:
+            score += SCORE_TIME_GAP_MEDIUM
+
+    # Slight preference for being closer to target
+    score -= abs(current_lines - target_lines) * SCORE_DISTANCE_PENALTY
+    return score
+
+
 def find_best_split_point(messages: list, target_lines: int, minimal: bool) -> int:
-    """Find the optimal message index to split a conversation.
-
-    Splits should occur at semantically meaningful boundaries to preserve
-    conversation flow. This function uses a scoring system to find the
-    best split point near the target line count:
-
-    Scoring factors (higher = better split point):
-    - Next message is User (+100): Cleanest break, starting new topic
-    - Current message is tool result (+50): Action complete
-    - Time gap > 5 minutes (+30): Strong session break indicator
-    - Time gap > 1 minute (+10): Weak session break indicator
-    - Distance from target (-0.05 per line): Prefer closer to target
-
-    Args:
-        messages: List of message dictionaries with content and timestamps
-        target_lines: Target number of lines per split part
-        minimal: Whether minimal mode is used (affects line estimation)
-
-    Returns:
-        Message index where part 2 should start (exclusive end of part 1),
-        or None if the conversation is too short to split.
-    """
+    """Find the optimal message index to split a conversation."""
     min_lines = int(target_lines * SPLIT_MIN_FACTOR)
     max_lines = int(target_lines * SPLIT_MAX_FACTOR)
 
@@ -771,42 +780,17 @@ def find_best_split_point(messages: list, target_lines: int, minimal: bool) -> i
     best_split = None
     best_score = -1
 
-    for i in range(len(messages)):
-        msg = messages[i]
-        msg_lines = estimate_message_lines(msg["content"], not minimal)
-        current_lines += msg_lines
+    for i, msg in enumerate(messages):
+        current_lines += estimate_message_lines(msg["content"], not minimal)
 
-        # If we're past max_lines, must break before this message
         if current_lines > max_lines:
             return i if i > 0 else 1
 
-        # If we're in the sweet spot, evaluate this as a break point
         if current_lines >= min_lines:
-            score = 0
-
-            # Priority 1: Next message is User (best - starting new topic)
-            if i + 1 < len(messages) and messages[i + 1]["role"] == "user":
-                score += SCORE_USER_MESSAGE_NEXT
-
-            # Priority 2: Current message is tool result (action complete)
-            if is_tool_result_message(msg["content"]):
-                score += SCORE_TOOL_RESULT
-
-            # Priority 3: Time gap before next message
-            if i + 1 < len(messages):
-                time_gap = calculate_time_gap(msg, messages[i + 1])
-                if time_gap > TIME_GAP_LARGE:
-                    score += SCORE_TIME_GAP_LARGE
-                elif time_gap > TIME_GAP_MEDIUM:
-                    score += SCORE_TIME_GAP_MEDIUM
-
-            # Slight preference for being closer to target
-            distance_from_target = abs(current_lines - target_lines)
-            score -= distance_from_target * SCORE_DISTANCE_PENALTY
-
+            score = _calculate_split_score(messages, i, msg, current_lines, target_lines)
             if score > best_score:
                 best_score = score
-                best_split = i + 1  # Split after this message
+                best_split = i + 1
 
     return best_split
 
@@ -981,82 +965,54 @@ def _generate_message_section(
     return lines
 
 
+def _generate_markdown_file_header(jsonl_file: Path, messages: list, is_agent: bool) -> list:
+    """Generate the file header section of markdown."""
+    lines = ["# Claude Conversation (Agent)" if is_agent else "# Claude Conversation", ""]
+    lines.append(f"**File:** {jsonl_file.name}")
+    lines.append(f"**Messages:** {len(messages)}")
+    if messages:
+        lines.append(f"**First message:** {messages[0]['timestamp']}")
+        lines.append(f"**Last message:** {messages[-1]['timestamp']}")
+    return lines
+
+
+def _generate_agent_conversation_notice(parent_session_id: str, agent_id: str) -> list:
+    """Generate the agent conversation notice section."""
+    lines = [
+        "",
+        "> **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation.",
+        ">",
+        "> - Messages labeled 'User' represent task instructions from the parent Claude session",
+        "> - Messages labeled 'Assistant' are responses from this agent",
+    ]
+    if parent_session_id:
+        lines.append(f"> - **Parent Session ID:** `{parent_session_id}`")
+    if agent_id:
+        lines.append(f"> - **Agent ID:** `{agent_id}`")
+    return lines
+
+
+def _get_agent_info(messages: list) -> tuple:
+    """Extract agent info from messages. Returns (is_agent, parent_session_id, agent_id)."""
+    is_agent = any(msg.get("isSidechain") for msg in messages)
+    if is_agent and messages:
+        return is_agent, messages[0].get("sessionId"), messages[0].get("agentId")
+    return False, None, None
+
+
 def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False, messages: list = None) -> str:
-    """Convert a Claude Code JSONL session file to readable Markdown.
-
-    This is the main conversion function that transforms Claude's JSONL
-    format into human-readable documentation. Each message becomes a
-    section with its content, metadata, and navigation links.
-
-    Args:
-        jsonl_file: Path to the JSONL file to convert
-        minimal: If True, produce cleaner output suitable for sharing:
-            - Omit UUID/metadata sections
-            - Skip HTML anchor links
-            - Keep only message content, tool usage, and timestamps
-        messages: Pre-read messages list (optional). If provided, avoids
-            re-reading the file. Use when messages were already read
-            for other purposes (e.g., timestamp extraction).
-
-    Returns:
-        Complete markdown document as a string, including:
-        - Header with file info and message count
-        - Agent conversation warnings (if applicable)
-        - All messages with content and optional metadata
-        - Navigation links between related messages
-    """
+    """Convert a Claude Code JSONL session file to readable Markdown."""
     if messages is None:
         messages = read_jsonl_messages(jsonl_file)
 
-    # Check if this is an agent conversation
-    is_agent = any(msg.get("isSidechain") for msg in messages)
-    parent_session_id = None
-    agent_id = None
-    if is_agent and messages:
-        parent_session_id = messages[0].get("sessionId")
-        agent_id = messages[0].get("agentId")
+    is_agent, parent_session_id, agent_id = _get_agent_info(messages)
 
-    # Generate markdown
-    md_lines = []
-
-    # Add title with agent indicator
+    md_lines = _generate_markdown_file_header(jsonl_file, messages, is_agent)
     if is_agent:
-        md_lines.append("# Claude Conversation (Agent)")
-    else:
-        md_lines.append("# Claude Conversation")
+        md_lines.extend(_generate_agent_conversation_notice(parent_session_id, agent_id))
+    md_lines.extend(["", "---", ""])
 
-    md_lines.append("")
-    md_lines.append(f"**File:** {jsonl_file.name}")
-    md_lines.append(f"**Messages:** {len(messages)}")
-
-    if messages:
-        md_lines.append(f"**First message:** {messages[0]['timestamp']}")
-        md_lines.append(f"**Last message:** {messages[-1]['timestamp']}")
-
-    # Add agent conversation notice
-    if is_agent:
-        md_lines.append("")
-        md_lines.append(
-            "> **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation."
-        )
-        md_lines.append(">")
-        md_lines.append(
-            "> - Messages labeled 'User' represent task instructions from the parent Claude session"
-        )
-        md_lines.append("> - Messages labeled 'Assistant' are responses from this agent")
-        if parent_session_id:
-            md_lines.append(f"> - **Parent Session ID:** `{parent_session_id}`")
-        if agent_id:
-            md_lines.append(f"> - **Agent ID:** `{agent_id}`")
-
-    md_lines.append("")
-    md_lines.append("---")
-    md_lines.append("")
-
-    # Build UUID to message index map for internal linking
     uuid_to_index = {msg["uuid"]: i for i, msg in enumerate(messages, 1) if msg.get("uuid")}
-
-    # Generate message sections
     for i, msg in enumerate(messages, 1):
         md_lines.extend(_generate_message_section(msg, i, is_agent, minimal, uuid_to_index))
 
@@ -1219,6 +1175,34 @@ def _generate_message_metadata(msg, uuid_to_index):
     return md_lines
 
 
+def _get_role_label(msg: dict, is_agent: bool, index: int, start_msg_num: int) -> str:
+    """Get display label for message role."""
+    if is_agent and index == start_msg_num and msg["role"] == "user":
+        return "Task Prompt (from Parent Claude)"
+    return msg["role"].title()
+
+
+def _generate_message_block(
+    msg: dict, index: int, is_agent: bool, start_msg_num: int, minimal: bool, uuid_to_index: dict
+) -> list:
+    """Generate markdown lines for a single message."""
+    lines = []
+    role_label = _get_role_label(msg, is_agent, index, start_msg_num)
+
+    if not minimal and msg.get("uuid"):
+        lines.extend([f'<a name="msg-{msg["uuid"]}"></a>', ""])
+
+    lines.extend(
+        [f"## Message {index} - {role_label}", "", f"*{msg['timestamp']}*", "", msg["content"], ""]
+    )
+
+    if not minimal:
+        lines.extend(_generate_message_metadata(msg, uuid_to_index))
+
+    lines.extend(["---", ""])
+    return lines
+
+
 def generate_markdown_for_messages(
     part_messages,
     jsonl_file,
@@ -1249,23 +1233,9 @@ def generate_markdown_for_messages(
 
     # Generate messages
     for i, msg in enumerate(part_messages, start_msg_num):
-        role_label = (
-            "Task Prompt (from Parent Claude)"
-            if is_agent and i == start_msg_num and msg["role"] == "user"
-            else msg["role"].title()
-        )
-
-        if not minimal and msg.get("uuid"):
-            md_lines.extend([f'<a name="msg-{msg["uuid"]}"></a>', ""])
-
         md_lines.extend(
-            [f"## Message {i} - {role_label}", "", f"*{msg['timestamp']}*", "", msg["content"], ""]
+            _generate_message_block(msg, i, is_agent, start_msg_num, minimal, uuid_to_index)
         )
-
-        if not minimal:
-            md_lines.extend(_generate_message_metadata(msg, uuid_to_index))
-
-        md_lines.extend(["---", ""])
 
     return "\n".join(md_lines)
 
@@ -1606,6 +1576,21 @@ def _get_session_from_file(
     }
 
 
+def _is_session_in_date_range(session: dict, since_date, until_date) -> bool:
+    """Check if session modification date is within the specified range."""
+    modified_date = session["modified"].replace(hour=0, minute=0, second=0, microsecond=0)
+    if since_date and modified_date < since_date:
+        return False
+    if until_date and modified_date > until_date:
+        return False
+    return True
+
+
+def _workspace_matches_pattern(dir_name: str, workspace_pattern: str, match_all: bool) -> bool:
+    """Check if workspace matches the pattern."""
+    return match_all or workspace_pattern in dir_name
+
+
 def get_workspace_sessions(
     workspace_pattern: str,
     quiet: bool = False,
@@ -1617,13 +1602,8 @@ def get_workspace_sessions(
 ):
     """Find all Claude Code sessions in workspaces matching the pattern.
 
-    Scans the Claude projects directory for workspace folders matching the
-    given pattern. For each matching workspace, finds all .jsonl session
-    files and returns metadata about each session.
-
     Args:
-        workspace_pattern: Substring to match workspace names. Use "", "*",
-            or "all" to match all workspaces.
+        workspace_pattern: Substring to match workspace names. Use "", "*", or "all" to match all.
         quiet: Suppress progress output if True
         since_date: Filter to sessions modified on or after this date
         until_date: Filter to sessions modified on or before this date
@@ -1648,11 +1628,9 @@ def get_workspace_sessions(
         dir_name = workspace_dir.name
         if not validate_workspace_name(dir_name) or not is_safe_path(projects_dir, workspace_dir):
             continue
-
         if _should_skip_workspace(dir_name, include_cached):
             continue
-
-        if not (match_all or workspace_pattern in dir_name):
+        if not _workspace_matches_pattern(dir_name, workspace_pattern, match_all):
             continue
 
         readable_name = normalize_workspace_name(dir_name, base_path=wsl_base)
@@ -1661,14 +1639,8 @@ def get_workspace_sessions(
             session = _get_session_from_file(
                 jsonl_file, workspace_dir, readable_name, skip_message_count
             )
-            modified_date = session["modified"].replace(hour=0, minute=0, second=0, microsecond=0)
-
-            if since_date and modified_date < since_date:
-                continue
-            if until_date and modified_date > until_date:
-                continue
-
-            sessions.append(session)
+            if _is_session_in_date_range(session, since_date, until_date):
+                sessions.append(session)
 
     sessions.sort(key=lambda s: s["modified"])
     return sessions
@@ -1731,6 +1703,18 @@ def _get_userprofile_via_cmd() -> Path:
     return None
 
 
+def _find_claude_user_in_drive(drive: Path) -> Path:
+    """Find first user with Claude installed in a drive."""
+    users_dir = drive / "Users"
+    if not users_dir.exists():
+        return None
+    for user_dir in users_dir.iterdir():
+        if user_dir.is_dir() and not user_dir.is_symlink():
+            if (user_dir / ".claude" / "projects").exists():
+                return user_dir
+    return None
+
+
 def _scan_drives_for_claude_user() -> Path:
     """Scan all drives for any user with Claude installed."""
     mnt = Path("/mnt")
@@ -1739,13 +1723,9 @@ def _scan_drives_for_claude_user() -> Path:
     for drive in sorted(mnt.iterdir()):
         if not (drive.is_dir() and len(drive.name) == 1 and drive.name.isalpha()):
             continue
-        users_dir = drive / "Users"
-        if not users_dir.exists():
-            continue
-        for user_dir in users_dir.iterdir():
-            if user_dir.is_dir() and not user_dir.is_symlink():
-                if (user_dir / ".claude" / "projects").exists():
-                    return user_dir
+        user_home = _find_claude_user_in_drive(drive)
+        if user_home:
+            return user_home
     return None
 
 
@@ -1771,13 +1751,36 @@ def get_windows_home_from_wsl(username: str = None):
     return _scan_drives_for_claude_user()
 
 
-def get_windows_users_with_claude():
-    """
-    Get list of all Windows users with Claude Code installed.
+def _is_valid_windows_drive(drive: Path) -> bool:
+    """Check if path is a valid single-letter Windows drive mount."""
+    return drive.is_dir() and len(drive.name) == 1 and drive.name.isalpha()
 
-    Returns:
-        List of dicts with 'username', 'path', and 'workspace_count'.
-    """
+
+def _scan_users_in_drive(drive: Path, results: list):
+    """Scan a drive for Windows users with Claude installed."""
+    users_dir = drive / "Users"
+    if not users_dir.exists():
+        return
+
+    for user_dir in users_dir.iterdir():
+        if not user_dir.is_dir() or user_dir.is_symlink():
+            continue
+        claude_dir = user_dir / ".claude" / "projects"
+        if claude_dir.exists():
+            workspace_count = len([d for d in claude_dir.iterdir() if d.is_dir()])
+            results.append(
+                {
+                    "username": user_dir.name,
+                    "drive": drive.name,
+                    "path": user_dir,
+                    "claude_dir": claude_dir,
+                    "workspace_count": workspace_count,
+                }
+            )
+
+
+def get_windows_users_with_claude():
+    """Get list of all Windows users with Claude Code installed."""
     results = []
     mnt = Path("/mnt")
 
@@ -1785,25 +1788,8 @@ def get_windows_users_with_claude():
         return results
 
     for drive in sorted(mnt.iterdir()):
-        # Only check single-letter Windows drive mounts (c, d, e, etc.)
-        # Skip wsl, wslg, and any other mounts (network drives, etc.) that may hang
-        if drive.is_dir() and len(drive.name) == 1 and drive.name.isalpha():
-            users_dir = drive / "Users"
-            if users_dir.exists():
-                for user_dir in users_dir.iterdir():
-                    if user_dir.is_dir() and not user_dir.is_symlink():
-                        claude_dir = user_dir / ".claude" / "projects"
-                        if claude_dir.exists():
-                            workspace_count = len([d for d in claude_dir.iterdir() if d.is_dir()])
-                            results.append(
-                                {
-                                    "username": user_dir.name,
-                                    "drive": drive.name,
-                                    "path": user_dir,
-                                    "claude_dir": claude_dir,
-                                    "workspace_count": workspace_count,
-                                }
-                            )
+        if _is_valid_windows_drive(drive):
+            _scan_users_in_drive(drive, results)
 
     return results
 
@@ -1901,73 +1887,68 @@ def get_workspace_name_from_path(workspace_dir_name: str) -> str:
     return path_parts[-1] if path_parts else workspace_dir_name
 
 
-def get_wsl_distributions() -> list:
-    """Get list of available WSL distributions.
-
-    Returns:
-        List of dicts with distro info: {'name': str, 'username': str, 'has_claude': bool}
-    """
-    # WSL only available on Windows
-    if platform.system() != "Windows":
-        return []
-
+def _get_wsl_distro_names() -> list:
+    """Get list of WSL distribution names."""
     try:
-        # Get list of WSL distributions
         result = subprocess.run(
             [get_command_path("wsl"), "--list", "--quiet"],
             check=False,
             capture_output=True,
             timeout=5,
         )
-
         if result.returncode != 0:
             return []
-
         # Parse distribution names (output is UTF-16 LE with BOM and null terminators)
         output = result.stdout.decode("utf-16-le", errors="ignore")
-        distros_raw = [line.strip().rstrip("\x00") for line in output.split("\n") if line.strip()]
-
-        distributions = []
-        for distro_name in distros_raw:
-            if not distro_name:
-                continue
-
-            # Get username for this distro
-            try:
-                user_result = subprocess.run(
-                    [get_command_path("wsl"), "-d", distro_name, "whoami"],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-
-                if user_result.returncode != 0:
-                    continue
-
-                username = user_result.stdout.strip()
-
-                # Check if .claude/projects exists
-                claude_path = Path(
-                    f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects"
-                )
-                has_claude = claude_path.exists()
-
-                distributions.append(
-                    {
-                        "name": distro_name,
-                        "username": username,
-                        "has_claude": has_claude,
-                        "path": str(claude_path) if has_claude else None,
-                    }
-                )
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
-
-        return distributions
-
+        return [line.strip().rstrip("\x00") for line in output.split("\n") if line.strip()]
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
+
+
+def _get_wsl_distro_info(distro_name: str) -> dict:
+    """Get info for a single WSL distribution. Returns None on failure."""
+    try:
+        user_result = subprocess.run(
+            [get_command_path("wsl"), "-d", distro_name, "whoami"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if user_result.returncode != 0:
+            return None
+
+        username = user_result.stdout.strip()
+        claude_path = Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects")
+        has_claude = claude_path.exists()
+
+        return {
+            "name": distro_name,
+            "username": username,
+            "has_claude": has_claude,
+            "path": str(claude_path) if has_claude else None,
+        }
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
+def get_wsl_distributions() -> list:
+    """Get list of available WSL distributions.
+
+    Returns:
+        List of dicts with distro info: {'name': str, 'username': str, 'has_claude': bool}
+    """
+    if platform.system() != "Windows":
+        return []
+
+    distributions = []
+    for distro_name in _get_wsl_distro_names():
+        if not distro_name:
+            continue
+        info = _get_wsl_distro_info(distro_name)
+        if info:
+            distributions.append(info)
+    return distributions
 
 
 def get_wsl_projects_dir(distro_name: str):
@@ -2395,29 +2376,8 @@ def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
         return []
 
 
-def fetch_workspace_files(
-    remote_host: str, remote_workspace: str, local_projects_dir: Path, hostname: str
-) -> dict:
-    """Fetch all files from a remote workspace using rsync.
-
-    Downloads .jsonl files from a remote workspace to a local cache directory.
-    Uses rsync for efficient incremental transfers.
-
-    Args:
-        remote_host: Remote host specification (user@hostname)
-        remote_workspace: Remote workspace directory name (e.g., '-home-user-project')
-        local_projects_dir: Local ~/.claude/projects/ directory
-        hostname: Clean hostname for directory prefix
-
-    Returns:
-        Dict with stats: {'success': bool, 'files_copied': int, 'bytes': int}
-
-    Side Effects:
-        - Creates local cache directory: {local_projects_dir}/remote_{hostname}_{workspace}/
-        - Downloads .jsonl files from remote via rsync
-        - Runs subprocess: rsync -avh --include='*.jsonl' ...
-    """
-    # Validate inputs to prevent command injection (security fix)
+def _validate_fetch_inputs(remote_host: str, remote_workspace: str) -> dict:
+    """Validate inputs for fetch_workspace_files. Returns error dict or None."""
     if not validate_remote_host(remote_host):
         return {
             "success": False,
@@ -2432,52 +2392,54 @@ def fetch_workspace_files(
             "bytes": 0,
             "error": f"Invalid workspace name: {remote_workspace}",
         }
+    return None
 
-    # Generate local directory name with remote prefix
-    # New naming: remote_hostname_path (consistent with export tags)
-    # Strip leading dash from remote_workspace if present
+
+def _convert_to_rsync_path(local_dir: Path) -> str:
+    """Convert local path to rsync-compatible format."""
+    import re
+
+    local_path_posix = str(local_dir).replace("\\", "/")
+
+    if ":" in local_path_posix and not local_path_posix.startswith("/"):
+        drive_match = re.match(r"([A-Za-z]):(.*)", local_path_posix)
+        if drive_match:
+            drive_letter = drive_match.group(1).lower()
+            path_part = drive_match.group(2)
+            return f"/cygdrive/{drive_letter}{path_part}/"
+    return local_path_posix + "/"
+
+
+def _count_rsync_files(output: str) -> int:
+    """Count files copied from rsync output."""
+    lines = output.split("\n")
+    return sum(
+        1
+        for line in lines
+        if line.strip() and not line.startswith(("sending", "sent", "total", "building"))
+    )
+
+
+def fetch_workspace_files(
+    remote_host: str, remote_workspace: str, local_projects_dir: Path, hostname: str
+) -> dict:
+    """Fetch all files from a remote workspace using rsync."""
+    validation_error = _validate_fetch_inputs(remote_host, remote_workspace)
+    if validation_error:
+        return validation_error
+
     workspace_path = remote_workspace.lstrip("-")
     local_workspace = f"remote_{hostname}_{workspace_path}"
     local_dir = local_projects_dir / local_workspace
 
-    # Security: Verify the constructed path stays within projects directory
     if not is_safe_path(local_projects_dir, local_dir):
         return {"success": False, "files_copied": 0, "bytes": 0, "error": "Path traversal detected"}
 
-    # Create local directory
     local_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build rsync command
-    # -a: archive mode (preserves timestamps, permissions, etc.)
-    # -v: verbose
-    # -h: human-readable
-    # --include='*.jsonl': only sync .jsonl files
-    # --exclude='*': exclude everything else
-    # Note: rsync handles quoting internally when using list arguments
     remote_path = f"{remote_host}:~/.claude/projects/{remote_workspace}/"
 
     try:
-        # Convert Windows path to Unix-style for rsync (even on Windows)
-        # rsync expects forward slashes
-        local_path_posix = str(local_dir).replace("\\", "/")
-
-        # On Windows, rsync interprets "C:" as a remote host
-        # Convert to /cygdrive/c/ notation which rsync understands
-        import re
-
-        if ":" in local_path_posix and not local_path_posix.startswith("/"):
-            # Windows absolute path with drive letter (e.g., C:/Users/...)
-            # Convert to Cygwin-style: /cygdrive/c/Users/...
-            drive_match = re.match(r"([A-Za-z]):(.*)", local_path_posix)
-            if drive_match:
-                drive_letter = drive_match.group(1).lower()
-                path_part = drive_match.group(2)
-                local_path_str = f"/cygdrive/{drive_letter}{path_part}/"
-            else:
-                local_path_str = local_path_posix + "/"
-        else:
-            local_path_str = local_path_posix + "/"
-
+        local_path_str = _convert_to_rsync_path(local_dir)
         rsync_cmd = [
             get_command_path("rsync"),
             "-avh",
@@ -2488,28 +2450,15 @@ def fetch_workspace_files(
         ]
 
         result = subprocess.run(
-            rsync_cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=SSH_TIMEOUT,
+            rsync_cmd, check=False, capture_output=True, text=True, timeout=SSH_TIMEOUT
         )
 
         if result.returncode != 0:
             return {"success": False, "files_copied": 0, "bytes": 0, "error": result.stderr}
 
-        # Parse rsync output to count files
-        # Look for lines that don't start with special characters
-        lines = result.stdout.split("\n")
-        files_copied = sum(
-            1
-            for line in lines
-            if line.strip() and not line.startswith(("sending", "sent", "total", "building"))
-        )
-
         return {
             "success": True,
-            "files_copied": files_copied,
+            "files_copied": _count_rsync_files(result.stdout),
             "local_dir": local_workspace,
             "output": result.stdout,
         }
@@ -2754,49 +2703,73 @@ def get_alias_for_workspace(workspace: str, source_key: str = "local") -> str:
     return None
 
 
+def _get_remote_sessions(
+    hostname: str, workspace: str, since_date, until_date, fetch_remote: bool
+) -> list:
+    """Get sessions from a remote source."""
+    try:
+        local_projects = get_claude_projects_dir()
+    except (OSError, SystemExit):
+        return []
+
+    cached_workspace = f"remote_{hostname}_{workspace.lstrip('-')}"
+    cached_path = local_projects / cached_workspace
+
+    if cached_path.exists():
+        return get_workspace_sessions(
+            cached_workspace,
+            quiet=True,
+            since_date=since_date,
+            until_date=until_date,
+            include_cached=True,
+        )
+
+    if not fetch_remote:
+        return []
+
+    if not check_ssh_connection(hostname):
+        sys.stderr.write(f"Cannot connect to remote '{hostname}' - skipping\n")
+        return []
+
+    sys.stderr.write(f"Fetching from {hostname}:{workspace}...\n")
+    result = fetch_workspace_files(hostname, workspace, local_projects, hostname)
+
+    if result.get("success"):
+        return get_workspace_sessions(
+            cached_workspace,
+            quiet=True,
+            since_date=since_date,
+            until_date=until_date,
+            include_cached=True,
+        )
+    return []
+
+
 def get_sessions_for_source(
     source_key: str, workspace: str, since_date=None, until_date=None, fetch_remote: bool = False
 ) -> list:
-    """
-    Get sessions from a workspace on a specific source.
-
-    Args:
-        source_key: Source identifier like 'local', 'windows:username', 'wsl:distro', 'remote:hostname'
-        workspace: Encoded workspace name (e.g., '-home-user-project' or 'C--user-project')
-        since_date: Optional start date filter
-        until_date: Optional end date filter
-        fetch_remote: If True, fetch remote sessions via SSH if not cached
-
-    Returns:
-        List of session dicts, or empty list if not accessible
-    """
+    """Get sessions from a workspace on a specific source."""
     try:
         if source_key == "local":
-            # Local sessions - use default get_workspace_sessions
             return get_workspace_sessions(
                 workspace, quiet=True, since_date=since_date, until_date=until_date
             )
 
-        elif source_key.startswith("windows:"):
-            # Windows sessions (from WSL)
+        if source_key.startswith("windows:"):
             username = source_key.split(":", 1)[1]
-            windows_projects_dir = get_windows_projects_dir(username)
             return get_workspace_sessions(
                 workspace,
                 quiet=True,
                 since_date=since_date,
                 until_date=until_date,
-                projects_dir=windows_projects_dir,
+                projects_dir=get_windows_projects_dir(username),
             )
 
-        elif source_key.startswith("wsl:"):
-            # WSL sessions (from Windows)
+        if source_key.startswith("wsl:"):
             distro = source_key.split(":", 1)[1]
             wsl_projects_dir = get_wsl_projects_dir(distro)
-
             if wsl_projects_dir is None:
                 return []
-
             return get_workspace_sessions(
                 workspace,
                 quiet=True,
@@ -2805,65 +2778,13 @@ def get_sessions_for_source(
                 projects_dir=wsl_projects_dir,
             )
 
-        elif source_key.startswith("remote:"):
-            # Remote sessions via SSH
+        if source_key.startswith("remote:"):
             hostname = source_key.split(":", 1)[1]
+            return _get_remote_sessions(hostname, workspace, since_date, until_date, fetch_remote)
 
-            # Get the local cache directory
-            try:
-                local_projects = get_claude_projects_dir()
-            except (OSError, SystemExit):
-                return []
-
-            # Build the cached workspace name
-            cached_workspace = f"remote_{hostname}_{workspace.lstrip('-')}"
-
-            # Check if cached workspace exists
-            cached_path = local_projects / cached_workspace
-            if cached_path.exists():
-                # Use the cached workspace (include_cached=True to allow remote_* pattern)
-                return get_workspace_sessions(
-                    cached_workspace,
-                    quiet=True,
-                    since_date=since_date,
-                    until_date=until_date,
-                    include_cached=True,
-                )
-            elif fetch_remote:
-                # Fetch from remote via SSH
-                # The hostname stored might be just hostname or user@hostname
-                remote_host = hostname
-
-                # Check SSH connection first
-                if not check_ssh_connection(remote_host):
-                    sys.stderr.write(f"Cannot connect to remote '{hostname}' - skipping\n")
-                    return []
-
-                # Fetch the workspace
-                sys.stderr.write(f"Fetching from {hostname}:{workspace}...\n")
-                result = fetch_workspace_files(remote_host, workspace, local_projects, hostname)
-
-                if result.get("success"):
-                    # Now get sessions from the cached workspace (include_cached=True)
-                    return get_workspace_sessions(
-                        cached_workspace,
-                        quiet=True,
-                        since_date=since_date,
-                        until_date=until_date,
-                        include_cached=True,
-                    )
-                else:
-                    return []
-            else:
-                # Remote not cached and fetch not requested
-                return []
-
-        else:
-            # Unknown source type
-            return []
+        return []
 
     except (OSError, PermissionError):
-        # Filesystem access errors - return empty list gracefully
         return []
 
 
@@ -3229,6 +3150,30 @@ def cmd_alias_config_export(args):
     print(json.dumps(aliases_data, indent=2))
 
 
+def _collect_alias_sessions(alias_config: dict, since_date, until_date) -> list:
+    """Collect sessions from all workspaces in an alias configuration."""
+    all_sessions = []
+    for source_key, workspaces in alias_config.items():
+        for workspace in workspaces:
+            sessions = get_sessions_for_source(
+                source_key, workspace, since_date=since_date, until_date=until_date
+            )
+            for session in sessions:
+                session["source"] = source_key
+                all_sessions.append(session)
+    return all_sessions
+
+
+def _format_date_range_message(since_date, until_date) -> str:
+    """Format date range for error messages."""
+    parts = []
+    if since_date:
+        parts.append(f"from {since_date.strftime('%Y-%m-%d')}")
+    if until_date:
+        parts.append(f"until {until_date.strftime('%Y-%m-%d')}")
+    return " ".join(parts)
+
+
 def cmd_alias_lss(alias_name: str, since_date=None, until_date=None):
     """List sessions across all workspaces in an alias."""
     aliases_data = load_aliases()
@@ -3238,31 +3183,17 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None):
         sys.exit(1)
 
     alias_config = aliases_data["aliases"][alias_name]
-    all_sessions = []
-
-    for source_key, workspaces in alias_config.items():
-        for workspace in workspaces:
-            # Use source-aware function to get sessions
-            sessions = get_sessions_for_source(
-                source_key, workspace, since_date=since_date, until_date=until_date
-            )
-            for session in sessions:
-                session["source"] = source_key
-                all_sessions.append(session)
+    all_sessions = _collect_alias_sessions(alias_config, since_date, until_date)
 
     if not all_sessions:
         if since_date or until_date:
-            date_range = []
-            if since_date:
-                date_range.append(f"from {since_date.strftime('%Y-%m-%d')}")
-            if until_date:
-                date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
-            sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
+            sys.stderr.write(
+                f"No sessions found {_format_date_range_message(since_date, until_date)}\n"
+            )
         else:
             sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'\n")
         sys.exit(1)
 
-    # Print header and sessions
     print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
     for session in all_sessions:
         print(
@@ -3294,6 +3225,41 @@ def _get_ws_output_path(output_path: Path, workspace: str, flat: bool) -> Path:
     return ws_path
 
 
+def _build_output_filename(jsonl_file: Path, source_tag: str, messages: list) -> str:
+    """Build output filename with optional timestamp prefix."""
+    ts_prefix = None
+    if messages and messages[0].get("timestamp"):
+        try:
+            dt = datetime.fromisoformat(messages[0]["timestamp"].replace("Z", "+00:00"))
+            ts_prefix = dt.strftime("%Y%m%d%H%M%S")
+        except (ValueError, AttributeError):
+            pass
+    return (
+        f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
+        if ts_prefix
+        else f"{source_tag}{jsonl_file.stem}.md"
+    )
+
+
+def _write_export_parts(
+    messages: list, jsonl_file: Path, ws_output_path: Path, output_name: str, opts: dict
+) -> bool:
+    """Write split parts if applicable. Returns True if parts were written."""
+    if not opts["split_lines"] or not messages or len(messages) <= 3:
+        return False
+
+    parts = generate_markdown_parts(messages, jsonl_file, opts["minimal"], opts["split_lines"])
+    if not parts:
+        return False
+
+    base_name = output_name[:-3]
+    for part_num, _, part_md, _, _ in parts:
+        part_file = ws_output_path / f"{base_name}_part{part_num}.md"
+        part_file.write_text(part_md, encoding="utf-8")
+        print(part_file)
+    return True
+
+
 def _export_session_file(
     session: dict, ws_output_path: Path, source_tag: str, opts: dict, stats: dict
 ):
@@ -3307,20 +3273,7 @@ def _export_session_file(
         stats["failed"] += 1
         return
 
-    # Build output filename
-    ts_prefix = None
-    if messages and messages[0].get("timestamp"):
-        try:
-            dt = datetime.fromisoformat(messages[0]["timestamp"].replace("Z", "+00:00"))
-            ts_prefix = dt.strftime("%Y%m%d%H%M%S")
-        except (ValueError, AttributeError):
-            pass
-
-    output_name = (
-        f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
-        if ts_prefix
-        else f"{source_tag}{jsonl_file.stem}.md"
-    )
+    output_name = _build_output_filename(jsonl_file, source_tag, messages)
     output_file = ws_output_path / output_name
 
     # Check incremental skip
@@ -3330,18 +3283,9 @@ def _export_session_file(
             return
 
     try:
-        if opts["split_lines"] and messages and len(messages) > 3:
-            parts = generate_markdown_parts(
-                messages, jsonl_file, opts["minimal"], opts["split_lines"]
-            )
-            if parts:
-                base_name = output_name[:-3]
-                for part_num, _, part_md, _, _ in parts:
-                    part_file = ws_output_path / f"{base_name}_part{part_num}.md"
-                    part_file.write_text(part_md, encoding="utf-8")
-                    print(part_file)
-                stats["exported"] += 1
-                return
+        if _write_export_parts(messages, jsonl_file, ws_output_path, output_name, opts):
+            stats["exported"] += 1
+            return
 
         markdown = parse_jsonl_to_markdown(jsonl_file, minimal=opts["minimal"], messages=messages)
         output_file.write_text(markdown, encoding="utf-8")
@@ -3391,18 +3335,13 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
         )
 
 
-def cmd_alias_config_import(args):
-    """Import aliases from JSON file or stdin."""
-    import_file = getattr(args, "file", None)
-    replace_mode = getattr(args, "replace", False)
-
+def _load_import_data(import_file: str) -> dict:
+    """Load import data from file or stdin."""
     try:
         if import_file:
             with open(import_file, encoding="utf-8") as f:
-                import_data = json.load(f)
-        else:
-            # Read from stdin
-            import_data = json.load(sys.stdin)
+                return json.load(f)
+        return json.load(sys.stdin)
     except json.JSONDecodeError as e:
         sys.stderr.write(f"Error: Invalid JSON: {e}\n")
         sys.exit(1)
@@ -3410,31 +3349,38 @@ def cmd_alias_config_import(args):
         sys.stderr.write(f"Error reading file: {e}\n")
         sys.exit(1)
 
+
+def _merge_alias_sources(existing_sources: dict, new_sources: dict):
+    """Merge new sources into existing alias sources."""
+    for source_key, workspaces in new_sources.items():
+        if source_key not in existing_sources:
+            existing_sources[source_key] = workspaces
+        else:
+            for ws in workspaces:
+                if ws not in existing_sources[source_key]:
+                    existing_sources[source_key].append(ws)
+
+
+def cmd_alias_config_import(args):
+    """Import aliases from JSON file or stdin."""
+    import_file = getattr(args, "file", None)
+    replace_mode = getattr(args, "replace", False)
+
+    import_data = _load_import_data(import_file)
+
     if "aliases" not in import_data:
         sys.stderr.write("Error: Invalid aliases format (missing 'aliases' key)\n")
         sys.exit(1)
 
     if replace_mode:
-        # Replace all aliases
         new_data = import_data
     else:
-        # Merge with existing
         existing_data = load_aliases()
-
         for alias_name, sources in import_data["aliases"].items():
             if alias_name not in existing_data["aliases"]:
                 existing_data["aliases"][alias_name] = sources
             else:
-                # Merge sources
-                for source_key, workspaces in sources.items():
-                    if source_key not in existing_data["aliases"][alias_name]:
-                        existing_data["aliases"][alias_name][source_key] = workspaces
-                    else:
-                        # Merge workspaces (avoid duplicates)
-                        for ws in workspaces:
-                            if ws not in existing_data["aliases"][alias_name][source_key]:
-                                existing_data["aliases"][alias_name][source_key].append(ws)
-
+                _merge_alias_sources(existing_data["aliases"][alias_name], sources)
         new_data = existing_data
 
     if save_aliases(new_data):
@@ -3909,6 +3855,13 @@ def sync_file_to_db(
     return True
 
 
+def _matches_pattern(name: str, patterns: list) -> bool:
+    """Check if name matches any of the patterns."""
+    if not patterns or not patterns[0]:
+        return True
+    return any(p in name for p in patterns)
+
+
 def _sync_source_to_db(
     conn, projects_dir: Path, source: str, source_label: str, patterns: list, force: bool
 ) -> dict:
@@ -3923,22 +3876,46 @@ def _sync_source_to_db(
     for workspace_dir in projects_dir.iterdir():
         if not workspace_dir.is_dir() or is_cached_workspace(workspace_dir.name):
             continue
-
-        # Check pattern match
-        if patterns and patterns[0] and not any(p in workspace_dir.name for p in patterns):
+        if not _matches_pattern(workspace_dir.name, patterns):
             continue
 
-        for jsonl_file in workspace_dir.glob("*.jsonl"):
-            try:
-                if sync_file_to_db(conn, jsonl_file, source, force):
-                    stats["synced"] += 1
-                else:
-                    stats["skipped"] += 1
-            except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
-                sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
-                stats["errors"] += 1
+        _sync_workspace_files_to_db(conn, workspace_dir, source, stats, force)
 
     return stats
+
+
+def _sync_workspace_files_to_db(conn, local_dir: Path, source_key: str, stats: dict, force: bool):
+    """Sync all JSONL files in a workspace directory to database."""
+    if not local_dir.exists():
+        return
+    for jsonl_file in local_dir.glob("*.jsonl"):
+        try:
+            if sync_file_to_db(conn, jsonl_file, source_key, force):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
+            sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
+            stats["errors"] += 1
+
+
+def _filter_workspaces_by_pattern(workspaces: list, patterns: list) -> list:
+    """Filter workspaces by patterns (substring match)."""
+    if not patterns or not patterns[0]:
+        return workspaces
+    return [ws for ws in workspaces if any(p in ws for p in patterns)]
+
+
+def _sync_remote_workspace(
+    conn, remote: str, ws: str, local_projects_dir: Path, hostname: str, stats: dict, force: bool
+):
+    """Sync a single remote workspace to database."""
+    fetch_result = fetch_workspace_files(remote, ws, local_projects_dir, hostname)
+    if not fetch_result.get("success"):
+        return
+    workspace_path = ws.lstrip("-")
+    local_dir = local_projects_dir / f"remote_{hostname}_{workspace_path}"
+    _sync_workspace_files_to_db(conn, local_dir, f"remote:{hostname}", stats, force)
 
 
 def _sync_ssh_remote_to_db(conn, remote: str, patterns: list, force: bool) -> dict:
@@ -3957,30 +3934,12 @@ def _sync_ssh_remote_to_db(conn, remote: str, patterns: list, force: bool) -> di
         print(f"  No workspaces found on {remote}")
         return stats
 
-    # Filter by patterns
-    if patterns and patterns[0]:
-        remote_workspaces = [ws for ws in remote_workspaces if any(p in ws for p in patterns)]
-
+    remote_workspaces = _filter_workspaces_by_pattern(remote_workspaces, patterns)
     local_projects_dir = get_claude_projects_dir()
+
     for ws in remote_workspaces:
         try:
-            fetch_result = fetch_workspace_files(remote, ws, local_projects_dir, hostname)
-            if not fetch_result.get("success"):
-                continue
-
-            workspace_path = ws.lstrip("-")
-            local_dir = local_projects_dir / f"remote_{hostname}_{workspace_path}"
-
-            if local_dir.exists():
-                for jsonl_file in local_dir.glob("*.jsonl"):
-                    try:
-                        if sync_file_to_db(conn, jsonl_file, f"remote:{hostname}", force):
-                            stats["synced"] += 1
-                        else:
-                            stats["skipped"] += 1
-                    except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
-                        sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
-                        stats["errors"] += 1
+            _sync_remote_workspace(conn, remote, ws, local_projects_dir, hostname, stats, force)
         except (OSError, subprocess.SubprocessError) as e:
             sys.stderr.write(f"  Error fetching {ws}: {e}\n")
             stats["errors"] += 1
@@ -3995,6 +3954,51 @@ def _accumulate_stats(totals: dict, new_stats: dict):
     totals["errors"] += new_stats["errors"]
 
 
+def _sync_wsl_windows_to_db(conn, totals: dict, patterns: list, force: bool):
+    """Sync WSL and Windows sources to database."""
+    for distro in get_wsl_distributions():
+        if distro.get("has_claude"):
+            wsl_projects = get_wsl_projects_dir(distro["name"])
+            if wsl_projects:
+                stats = _sync_source_to_db(
+                    conn,
+                    wsl_projects,
+                    f"wsl:{distro['name']}",
+                    f"WSL ({distro['name']})",
+                    patterns,
+                    force,
+                )
+                _accumulate_stats(totals, stats)
+
+    try:
+        win_projects = get_windows_projects_dir()
+        if win_projects:
+            stats = _sync_source_to_db(conn, win_projects, "windows", "Windows", patterns, force)
+            _accumulate_stats(totals, stats)
+    except (OSError, PermissionError):
+        pass
+
+
+def _sync_remote_to_db(conn, remote: str, totals: dict, patterns: list, force: bool):
+    """Sync a single remote (WSL, Windows, or SSH) to database."""
+    if remote.startswith("wsl://"):
+        distro = remote[6:]
+        wsl_projects = get_wsl_projects_dir(distro)
+        if wsl_projects:
+            stats = _sync_source_to_db(
+                conn, wsl_projects, f"wsl:{distro}", f"WSL ({distro})", patterns, force
+            )
+            _accumulate_stats(totals, stats)
+    elif remote == "windows" or remote.startswith("windows:"):
+        win_projects = get_windows_projects_dir()
+        if win_projects:
+            stats = _sync_source_to_db(conn, win_projects, "windows", "Windows", patterns, force)
+            _accumulate_stats(totals, stats)
+    else:
+        stats = _sync_ssh_remote_to_db(conn, remote, patterns, force)
+        _accumulate_stats(totals, stats)
+
+
 def cmd_stats_sync(args):
     """Sync JSONL files to metrics database."""
     force = getattr(args, "force", False)
@@ -4004,8 +4008,7 @@ def cmd_stats_sync(args):
 
     # Include saved sources when --ah is used
     if all_homes:
-        saved_sources = get_saved_sources()
-        for src in saved_sources:
+        for src in get_saved_sources():
             if src not in remotes:
                 remotes.append(src)
 
@@ -4018,50 +4021,11 @@ def cmd_stats_sync(args):
 
     # Sync WSL/Windows if --ah flag
     if all_homes:
-        for distro in get_wsl_distributions():
-            if distro.get("has_claude"):
-                wsl_projects = get_wsl_projects_dir(distro["name"])
-                if wsl_projects:
-                    stats = _sync_source_to_db(
-                        conn,
-                        wsl_projects,
-                        f"wsl:{distro['name']}",
-                        f"WSL ({distro['name']})",
-                        patterns,
-                        force,
-                    )
-                    _accumulate_stats(totals, stats)
-
-        try:
-            win_projects = get_windows_projects_dir()
-            if win_projects:
-                stats = _sync_source_to_db(
-                    conn, win_projects, "windows", "Windows", patterns, force
-                )
-                _accumulate_stats(totals, stats)
-        except (OSError, PermissionError):
-            pass
+        _sync_wsl_windows_to_db(conn, totals, patterns, force)
 
     # Sync explicit remotes
     for remote in remotes:
-        if remote.startswith("wsl://"):
-            distro = remote[6:]
-            wsl_projects = get_wsl_projects_dir(distro)
-            if wsl_projects:
-                stats = _sync_source_to_db(
-                    conn, wsl_projects, f"wsl:{distro}", f"WSL ({distro})", patterns, force
-                )
-                _accumulate_stats(totals, stats)
-        elif remote == "windows" or remote.startswith("windows:"):
-            win_projects = get_windows_projects_dir()
-            if win_projects:
-                stats = _sync_source_to_db(
-                    conn, win_projects, "windows", "Windows", patterns, force
-                )
-                _accumulate_stats(totals, stats)
-        else:
-            stats = _sync_ssh_remote_to_db(conn, remote, patterns, force)
-            _accumulate_stats(totals, stats)
+        _sync_remote_to_db(conn, remote, totals, patterns, force)
 
     conn.close()
     print(
@@ -4486,57 +4450,27 @@ def display_model_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     print()
 
 
-def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: list):
-    """Display per-workspace statistics with alias aggregation."""
-    cursor = conn.execute(
-        f"""
-        SELECT
-            s.workspace,
-            s.source,
-            COUNT(*) as sessions,
-            SUM(s.message_count) as messages,
-            SUM(m_stats.input_tokens) as input_tokens,
-            SUM(m_stats.output_tokens) as output_tokens
-        FROM sessions s
-        LEFT JOIN (
-            SELECT session_id,
-                   SUM(input_tokens) as input_tokens,
-                   SUM(output_tokens) as output_tokens
-            FROM messages
-            GROUP BY session_id
-        ) m_stats ON s.session_id = m_stats.session_id
-        WHERE {where_sql}
-        GROUP BY s.workspace, s.source
-        ORDER BY sessions DESC
-    """,
-        params,
-    )
-    all_workspaces = cursor.fetchall()
-
-    # Build workspace-to-alias mapping
-    aliases_data = load_aliases()
-    aliases = aliases_data.get("aliases", {})
-
+def _build_workspace_to_alias_map(aliases: dict) -> dict:
+    """Build mapping from (workspace_name, source) to alias_name."""
     workspace_to_alias = {}
     for alias_name, alias_config in aliases.items():
         for source_key, workspaces in alias_config.items():
             if isinstance(workspaces, list):
-                normalized_source = source_key
-                if source_key.startswith("windows:"):
-                    normalized_source = "windows"
+                normalized_source = "windows" if source_key.startswith("windows:") else source_key
                 for ws in workspaces:
                     ws_name = get_workspace_name_from_path(ws)
                     workspace_to_alias[(ws_name, normalized_source)] = alias_name
+    return workspace_to_alias
 
-    # Aggregate by alias
+
+def _aggregate_workspace_stats(all_workspaces: list, workspace_to_alias: dict) -> tuple:
+    """Aggregate workspace stats by alias. Returns (alias_stats, unaliased)."""
     alias_stats = {}
     unaliased = []
 
     for row in all_workspaces:
-        ws_name = row["workspace"]
-        source = row["source"]
-        sessions = row["sessions"]
-        messages = row["messages"] or 0
+        ws_name, source = row["workspace"], row["source"]
+        sessions, messages = row["sessions"], row["messages"] or 0
 
         alias_name = workspace_to_alias.get((ws_name, source))
         if alias_name:
@@ -4550,24 +4484,45 @@ def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: li
                 {"name": ws_name, "source": source, "sessions": sessions, "messages": messages}
             )
 
+    return alias_stats, unaliased
+
+
+def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display per-workspace statistics with alias aggregation."""
+    cursor = conn.execute(
+        f"""
+        SELECT s.workspace, s.source, COUNT(*) as sessions, SUM(s.message_count) as messages,
+               SUM(m_stats.input_tokens) as input_tokens, SUM(m_stats.output_tokens) as output_tokens
+        FROM sessions s
+        LEFT JOIN (SELECT session_id, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens
+                   FROM messages GROUP BY session_id) m_stats ON s.session_id = m_stats.session_id
+        WHERE {where_sql}
+        GROUP BY s.workspace, s.source ORDER BY sessions DESC
+    """,
+        params,
+    )
+    all_workspaces = cursor.fetchall()
+
+    aliases_data = load_aliases()
+    workspace_to_alias = _build_workspace_to_alias_map(aliases_data.get("aliases", {}))
+    alias_stats, unaliased = _aggregate_workspace_stats(all_workspaces, workspace_to_alias)
+
     print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("WORKSPACE STATISTICS")
     print("=" * DISPLAY_SEPARATOR_WIDTH)
 
-    # Show aliases first
     if alias_stats:
         print("\nAliases")
         print(f"{'Alias':<30} {'Sources':<15} {'Sessions':>8} {'Messages':>10}")
         print("-" * 65)
-
-        sorted_aliases = sorted(alias_stats.items(), key=lambda x: x[1]["sessions"], reverse=True)
-        for alias_name, stats in sorted_aliases:
+        for alias_name, stats in sorted(
+            alias_stats.items(), key=lambda x: x[1]["sessions"], reverse=True
+        ):
             sources_str = ",".join(sorted(stats["sources"]))[:13]
             print(
                 f"@{alias_name:<29} {sources_str:<15} {stats['sessions']:>8,} {stats['messages']:>10,}"
             )
 
-    # Show unaliased workspaces
     print(f"\nIndividual Workspaces (Top {MAX_TOP_WORKSPACES})")
     print(f"{'Workspace':<30} {'Source':<10} {'Sessions':>8} {'Messages':>10}")
     print("-" * DISPLAY_SEPARATOR_WIDTH)
@@ -4741,37 +4696,47 @@ def calculate_daily_work_time(conn: sqlite3.Connection, where_sql: str, params: 
     return daily_stats
 
 
-def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
-    """Display time tracking statistics with daily breakdown."""
-
-    # Calculate daily work time from message timestamps
-    daily_stats = calculate_daily_work_time(conn, where_sql, params)
-
-    # Calculate totals
+def _calculate_time_totals(daily_stats: dict) -> tuple:
+    """Calculate total work, messages, and periods from daily stats."""
     total_work = sum(d["work_seconds"] for d in daily_stats.values())
     total_messages = sum(d["messages"] for d in daily_stats.values())
     total_periods = sum(d["work_periods"] for d in daily_stats.values())
+    return total_work, total_messages, total_periods
 
-    # Get session count
-    cursor = conn.execute(
-        f"""
-        SELECT COUNT(*) as num_files
-        FROM sessions s
-        WHERE {where_sql}
-    """,
-        params,
+
+def _print_daily_breakdown(
+    daily_stats: dict, total_work: int, total_periods: int, total_messages: int
+):
+    """Print daily breakdown table."""
+    print("\nDaily Breakdown")
+    print(f"\n{'Date':<12} {'Work Time':>12} {'Periods':>10} {'Messages':>10}")
+    print("-" * 46)
+
+    for date_str in sorted(daily_stats.keys(), reverse=True):
+        stats = daily_stats[date_str]
+        work_time = format_duration_hm(stats["work_seconds"])
+        print(f"{date_str:<12} {work_time:>12} {stats['work_periods']:>10} {stats['messages']:>10}")
+
+    print("-" * 46)
+    print(
+        f"{'TOTAL':<12} {format_duration_hm(total_work):>12} {total_periods:>10} {total_messages:>10}"
     )
+
+
+def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display time tracking statistics with daily breakdown."""
+    daily_stats = calculate_daily_work_time(conn, where_sql, params)
+    total_work, total_messages, total_periods = _calculate_time_totals(daily_stats)
+
+    cursor = conn.execute(f"SELECT COUNT(*) as num_files FROM sessions s WHERE {where_sql}", params)
     num_files = cursor.fetchone()["num_files"] or 0
 
-    # Get date range
     dates = sorted(daily_stats.keys()) if daily_stats else []
-    first_date = dates[0] if dates else None
-    last_date = dates[-1] if dates else None
+    first_date, last_date = (dates[0], dates[-1]) if dates else (None, None)
 
     print("=" * 70)
     print("TIME TRACKING")
     print("=" * 70)
-
     print("\nSummary")
     print(f"   Total work time: {format_duration_hm(total_work)}")
     print(f"   Work periods: {total_periods}")
@@ -4780,22 +4745,7 @@ def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
         print(f"   Date range: {first_date} to {last_date}")
 
     if daily_stats:
-        print("\nDaily Breakdown")
-        print(f"\n{'Date':<12} {'Work Time':>12} {'Periods':>10} {'Messages':>10}")
-        print("-" * 46)
-
-        # Sort by date descending
-        for date_str in sorted(daily_stats.keys(), reverse=True):
-            stats = daily_stats[date_str]
-            work_time = format_duration_hm(stats["work_seconds"])
-            print(
-                f"{date_str:<12} {work_time:>12} {stats['work_periods']:>10} {stats['messages']:>10}"
-            )
-
-        print("-" * 46)
-        print(
-            f"{'TOTAL':<12} {format_duration_hm(total_work):>12} {total_periods:>10} {total_messages:>10}"
-        )
+        _print_daily_breakdown(daily_stats, total_work, total_periods, total_messages)
 
     print()
 
@@ -5150,20 +5100,34 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
     return sessions
 
 
+def _fetch_remote_workspaces(
+    remote_host: str, workspaces: list, local_projects_dir: Path, hostname: str
+):
+    """Fetch multiple remote workspaces to local cache."""
+    for remote_workspace in workspaces:
+        result = fetch_workspace_files(remote_host, remote_workspace, local_projects_dir, hostname)
+        if not result["success"]:
+            sys.stderr.write(
+                f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n"
+            )
+
+
+def _deduplicate_sessions(sessions: list, patterns: list) -> list:
+    """Filter sessions by pattern and remove duplicates."""
+    result = []
+    seen_files = set()
+    for session in sessions:
+        if not matches_any_pattern(session["workspace"], patterns):
+            continue
+        file_key = str(session["file"])
+        if file_key not in seen_files:
+            seen_files.add(file_key)
+            result.append(session)
+    return result
+
+
 def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> list:
-    """Get sessions from SSH remote for batch export.
-
-    Fetches remote files to local cache first, then returns cached sessions.
-
-    Args:
-        args: Parsed arguments
-        patterns: List of workspace patterns
-        since_date: Optional start date filter
-        until_date: Optional end date filter
-
-    Returns:
-        List of session dictionaries (from local cache).
-    """
+    """Get sessions from SSH remote for batch export."""
     remote_host = getattr(args, "remote", None)
 
     if not check_ssh_connection(remote_host):
@@ -5172,44 +5136,23 @@ def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> lis
         sys.exit(1)
 
     all_remote_workspaces = list_remote_workspaces(remote_host)
-
     if not all_remote_workspaces:
         sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
         sys.exit(1)
 
     remote_workspaces = [ws for ws in all_remote_workspaces if matches_any_pattern(ws, patterns)]
-
     if not remote_workspaces:
         return []
 
-    # Fetch each workspace to local cache
     local_projects_dir = get_claude_projects_dir()
     hostname = get_remote_hostname(remote_host)
+    _fetch_remote_workspaces(remote_host, remote_workspaces, local_projects_dir, hostname)
 
-    for remote_workspace in remote_workspaces:
-        result = fetch_workspace_files(remote_host, remote_workspace, local_projects_dir, hostname)
-        if not result["success"]:
-            sys.stderr.write(
-                f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n"
-            )
-
-    # Get sessions from cached location
     cached_prefix = f"remote_{hostname}_"
     all_cached_sessions = get_workspace_sessions(
         cached_prefix, quiet=True, since_date=since_date, until_date=until_date, include_cached=True
     )
-
-    # Filter by patterns if specified
-    sessions = []
-    seen_files = set()
-    for session in all_cached_sessions:
-        if matches_any_pattern(session["workspace"], patterns):
-            file_key = str(session["file"])
-            if file_key not in seen_files:
-                seen_files.add(file_key)
-                sessions.append(session)
-
-    return sessions
+    return _deduplicate_sessions(all_cached_sessions, patterns)
 
 
 def _get_batch_local_sessions(patterns: list, since_date, until_date) -> list:
@@ -5224,6 +5167,43 @@ def _get_batch_local_sessions(patterns: list, since_date, until_date) -> list:
         List of session dictionaries.
     """
     return collect_sessions_with_dedup(patterns, since_date, until_date, include_cached=True)
+
+
+def _extract_timestamp_prefix(messages: list) -> str:
+    """Extract timestamp prefix from first message for filename."""
+    if messages and messages[0].get("timestamp"):
+        try:
+            dt = datetime.fromisoformat(messages[0]["timestamp"].replace("Z", "+00:00"))
+            return dt.strftime("%Y%m%d%H%M%S")
+        except ValueError:
+            pass
+    return None
+
+
+def _get_export_output_path(
+    session: dict, ts_prefix: str, output_dir: Path, flat: bool, remote_host: str
+) -> tuple:
+    """Get output path and name for export file.
+
+    Returns:
+        Tuple of (output_file, output_name)
+    """
+    jsonl_file = session["file"]
+
+    if flat:
+        output_name = f"{ts_prefix}_{jsonl_file.stem}.md" if ts_prefix else f"{jsonl_file.stem}.md"
+        return output_dir / output_name, output_name
+
+    source_tag = get_source_tag(remote_host)
+    output_name = (
+        f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
+        if ts_prefix
+        else f"{source_tag}{jsonl_file.stem}.md"
+    )
+    workspace_name = get_workspace_name_from_path(session["workspace"])
+    workspace_subdir = output_dir / workspace_name
+    workspace_subdir.mkdir(parents=True, exist_ok=True)
+    return workspace_subdir / output_name, output_name
 
 
 def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
@@ -5245,40 +5225,16 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
     for session in sessions:
         jsonl_file = session["file"]
 
-        # Read messages once - used for timestamp extraction and markdown generation
         try:
             messages = read_jsonl_messages(jsonl_file)
         except (OSError, json.JSONDecodeError) as e:
             sys.stderr.write(f"Error reading {jsonl_file.name}: {e}\n")
             continue
 
-        # Extract first timestamp for filename from pre-read messages
-        ts_prefix = None
-        if messages and messages[0].get("timestamp"):
-            try:
-                dt = datetime.fromisoformat(messages[0]["timestamp"].replace("Z", "+00:00"))
-                ts_prefix = dt.strftime("%Y%m%d%H%M%S")
-            except ValueError:
-                # Invalid ISO timestamp format - use filename without timestamp prefix
-                pass
-
-        # Generate filename
-        if not flat:
-            source_tag = get_source_tag(remote_host)
-            output_name = (
-                f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
-                if ts_prefix
-                else f"{source_tag}{jsonl_file.stem}.md"
-            )
-            workspace_name = get_workspace_name_from_path(session["workspace"])
-            workspace_subdir = output_dir / workspace_name
-            workspace_subdir.mkdir(parents=True, exist_ok=True)
-            output_file = workspace_subdir / output_name
-        else:
-            output_name = (
-                f"{ts_prefix}_{jsonl_file.stem}.md" if ts_prefix else f"{jsonl_file.stem}.md"
-            )
-            output_file = output_dir / output_name
+        ts_prefix = _extract_timestamp_prefix(messages)
+        output_file, output_name = _get_export_output_path(
+            session, ts_prefix, output_dir, flat, remote_host
+        )
 
         # Skip if up-to-date (incremental export)
         if not force and output_file.exists():
@@ -5286,7 +5242,7 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
                 continue
 
         try:
-            if split_lines and len(messages) > 0:
+            if split_lines and messages:
                 parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
                 if parts:
                     _write_split_parts(parts, output_name, output_file)
@@ -5332,53 +5288,52 @@ def _write_single_file(jsonl_file: Path, output_file: Path, minimal: bool, messa
     print(output_file)
 
 
+def _get_batch_sessions(args, patterns: list, since_date, until_date) -> list:
+    """Get batch sessions based on source type."""
+    remote_host = getattr(args, "remote", None)
+    if not remote_host:
+        return _get_batch_local_sessions(patterns, since_date, until_date)
+    if is_windows_remote(remote_host):
+        return _get_batch_windows_sessions(args, patterns, since_date, until_date)
+    if is_wsl_remote(remote_host):
+        return _get_batch_wsl_sessions(args, patterns, since_date, until_date)
+    return _get_batch_ssh_sessions(args, patterns, since_date, until_date)
+
+
+def _handle_empty_sessions(patterns: list, since_date, until_date, lenient: bool):
+    """Handle case when no sessions found."""
+    if lenient:
+        return
+
+    pattern_str = (
+        ", ".join(patterns) if patterns and len(patterns) > 1 else (patterns[0] if patterns else "")
+    )
+    if since_date or until_date:
+        date_range = []
+        if since_date:
+            date_range.append(f"from {since_date.strftime('%Y-%m-%d')}")
+        if until_date:
+            date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
+        sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
+    else:
+        sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
+    sys.exit(1)
+
+
 def cmd_batch(args):
     """Batch convert all sessions from a workspace."""
-    remote_host = getattr(args, "remote", None)
-
-    # Parse and validate date filters
     since_str = getattr(args, "since", None)
     until_str = getattr(args, "until", None)
     since_date, until_date = parse_and_validate_dates(since_str, until_str)
 
-    # Get patterns
     patterns = get_patterns_from_args(args)
+    sessions = _get_batch_sessions(args, patterns, since_date, until_date)
 
-    # Get sessions based on source type
-    if remote_host:
-        if is_windows_remote(remote_host):
-            sessions = _get_batch_windows_sessions(args, patterns, since_date, until_date)
-        elif is_wsl_remote(remote_host):
-            sessions = _get_batch_wsl_sessions(args, patterns, since_date, until_date)
-        else:
-            sessions = _get_batch_ssh_sessions(args, patterns, since_date, until_date)
-    else:
-        sessions = _get_batch_local_sessions(patterns, since_date, until_date)
-
-    # Handle empty sessions
     if not sessions:
-        lenient = getattr(args, "lenient", False)
-        if not lenient:
-            pattern_str = (
-                ", ".join(patterns)
-                if patterns and len(patterns) > 1
-                else (patterns[0] if patterns else "")
-            )
-            if since_date or until_date:
-                date_range = []
-                if since_date:
-                    date_range.append(f"from {since_date.strftime('%Y-%m-%d')}")
-                if until_date:
-                    date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
-                sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
-            else:
-                sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
-            sys.exit(1)
+        _handle_empty_sessions(patterns, since_date, until_date, getattr(args, "lenient", False))
         return
 
-    # Export sessions to markdown
-    output_dir = Path(args.output_dir)
-    _export_sessions_to_markdown(sessions, args, output_dir)
+    _export_sessions_to_markdown(sessions, args, Path(args.output_dir))
 
 
 def cmd_version(args):
@@ -5507,6 +5462,31 @@ def _filter_workspaces_by_patterns(workspaces, patterns):
     return filtered
 
 
+def _session_in_date_range(session: dict, since_date, until_date) -> bool:
+    """Check if session falls within date range."""
+    modified = session.get("modified")
+    if not modified:
+        return True
+    session_date = modified.date()
+    if since_date and session_date < since_date:
+        return False
+    if until_date and session_date > until_date:
+        return False
+    return True
+
+
+def _enrich_and_filter_sessions(ws_info, ws_name, since_date, until_date) -> list:
+    """Filter sessions by date and add workspace info."""
+    sessions = []
+    for session in ws_info:
+        if not _session_in_date_range(session, since_date, until_date):
+            continue
+        session["workspace"] = ws_name
+        session["workspace_readable"] = normalize_workspace_name(ws_name)
+        sessions.append(session)
+    return sessions
+
+
 def _collect_remote_sessions(remote, patterns, since_date, until_date):
     """Collect sessions from a single SSH remote."""
     if not check_ssh_connection(remote):
@@ -5523,14 +5503,9 @@ def _collect_remote_sessions(remote, patterns, since_date, until_date):
     remote_sessions = []
     for ws_name in remote_workspaces:
         ws_info = get_remote_session_info(remote, ws_name)
-        for session in ws_info:
-            if since_date and session.get("modified") and session["modified"].date() < since_date:
-                continue
-            if until_date and session.get("modified") and session["modified"].date() > until_date:
-                continue
-            session["workspace"] = ws_name
-            session["workspace_readable"] = normalize_workspace_name(ws_name)
-            remote_sessions.append(session)
+        remote_sessions.extend(
+            _enrich_and_filter_sessions(ws_info, ws_name, since_date, until_date)
+        )
 
     if remote_sessions:
         return (f"Remote ({hostname})", remote_sessions)
@@ -5673,6 +5648,20 @@ def _lsh_show_remotes():
     print()
 
 
+def _get_lsh_display_flags(args) -> tuple:
+    """Get flags for what to display in lsh command.
+
+    Returns:
+        Tuple of (show_local, show_wsl, show_windows, show_remotes)
+    """
+    no_filters = not args.wsl and not args.windows and not getattr(args, "remotes", False)
+    show_local = args.local or (no_filters and not args.local)
+    show_remotes = getattr(args, "remotes", False) or (
+        not args.local and not args.wsl and not args.windows
+    )
+    return show_local, args.wsl, args.windows, show_remotes
+
+
 def cmd_lsh(args):
     """List all home folders with Claude Code installations."""
     # Check for subcommands first
@@ -5681,33 +5670,23 @@ def cmd_lsh(args):
     if lsh_action == "add":
         cmd_lsh_add(args)
         return
-    elif lsh_action == "remove":
+    if lsh_action == "remove":
         cmd_lsh_remove(args)
         return
-    elif lsh_action == "clear":
+    if lsh_action == "clear":
         cmd_lsh_clear(args)
         return
 
     # Default: list all hosts
     in_wsl = is_running_in_wsl()
-
-    # Determine what to show based on flags
-    show_local = args.local or (not args.wsl and not args.windows and not args.remotes)
-    show_wsl = args.wsl
-    show_windows = args.windows
-    show_remotes = getattr(args, "remotes", False) or (
-        not args.local and not args.wsl and not args.windows
-    )
+    show_local, show_wsl, show_windows, show_remotes = _get_lsh_display_flags(args)
 
     if show_local:
         _lsh_show_local()
-
     if show_wsl and not in_wsl:
         _lsh_show_wsl()
-
     if show_windows and in_wsl:
         _lsh_show_windows()
-
     if show_remotes:
         _lsh_show_remotes()
 
@@ -5776,58 +5755,86 @@ def cmd_lsh_clear(args):
         sys.exit(1)
 
 
-def cmd_reset(args):
-    """Reset claude-history data (database, settings, aliases)."""
-    config_dir = get_config_dir()
-
-    what = getattr(args, "what", None)
-    yes = getattr(args, "yes", False)
-
-    # Determine what to reset
-    reset_db = what in (None, "db", "all")
-    reset_settings = what in (None, "settings", "all")
-    reset_aliases = what in (None, "aliases", "all")
-
-    # Build list of files to delete
+def _get_reset_items(what: str, config_dir: Path) -> list:
+    """Get list of (description, path) tuples for reset operation."""
     items = []
-    if reset_db:
+    reset_all = what in (None, "all")
+
+    if reset_all or what == "db":
         db_path = get_metrics_db_path()
         if db_path.exists():
             items.append(("Metrics database", db_path))
-    if reset_settings:
+    if reset_all or what == "settings":
         config_file = config_dir / "config.json"
         if config_file.exists():
             items.append(("Settings (SSH remotes)", config_file))
-    if reset_aliases:
+    if reset_all or what == "aliases":
         aliases_file = config_dir / "aliases.json"
         if aliases_file.exists():
             items.append(("Aliases", aliases_file))
+
+    return items
+
+
+def _confirm_reset(items: list, yes: bool) -> bool:
+    """Confirm reset operation. Returns True if confirmed."""
+    print("This will delete:")
+    for desc, path in items:
+        print(f"  - {desc}: {path}")
+
+    if yes:
+        return True
+
+    try:
+        response = input("\nProceed? [y/N] ").strip().lower()
+        return response in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return False
+
+
+def cmd_reset(args):
+    """Reset claude-history data (database, settings, aliases)."""
+    items = _get_reset_items(getattr(args, "what", None), get_config_dir())
 
     if not items:
         print("Nothing to reset.")
         return
 
-    # Show what will be deleted
-    print("This will delete:")
-    for desc, path in items:
-        print(f"  - {desc}: {path}")
+    if not _confirm_reset(items, getattr(args, "yes", False)):
+        print("Cancelled.")
+        return
 
-    # Confirm unless -y flag
-    if not yes:
-        try:
-            response = input("\nProceed? [y/N] ").strip().lower()
-            if response not in ("y", "yes"):
-                print("Cancelled.")
-                return
-        except (EOFError, KeyboardInterrupt):
-            print("\nCancelled.")
-            return
-
-    # Perform reset
     print()
     for desc, path in items:
         path.unlink()
         print(f"Deleted {desc.lower()}")
+
+
+def _filter_fetch_workspaces(workspaces: list, pattern: str) -> list:
+    """Filter workspaces by pattern for fetch command."""
+    if not pattern or pattern in ("", "*", "all"):
+        return workspaces
+    filtered = [ws for ws in workspaces if pattern in ws]
+    if not filtered:
+        sys.stderr.write(f"Error: No workspaces matching pattern '{pattern}'\n")
+        sys.exit(1)
+    return filtered
+
+
+def _fetch_and_report(remote_host: str, workspaces: list, local_projects_dir: Path, hostname: str):
+    """Fetch each workspace and report results."""
+    for remote_workspace in workspaces:
+        readable_name = normalize_remote_workspace_name(remote_host, remote_workspace)
+        workspace_path = remote_workspace.lstrip("-")
+        local_name = f"remote_{hostname}_{workspace_path}"
+
+        result = fetch_workspace_files(remote_host, remote_workspace, local_projects_dir, hostname)
+        if result["success"]:
+            print(normalize_workspace_name(local_name, verify_local=False))
+        else:
+            error = result.get("error", "Unknown error")
+            sys.stderr.write(f"Error fetching {readable_name}: {error}\n")
 
 
 def cmd_fetch(args):
@@ -5835,48 +5842,21 @@ def cmd_fetch(args):
     remote_host = args.remote_host
     workspace_pattern = getattr(args, "pattern", None) or ""
 
-    # Check SSH connectivity
     if not check_ssh_connection(remote_host):
         sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
         sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
         sys.exit(1)
 
-    # Get hostname for directory prefix
     hostname = get_remote_hostname(remote_host)
-
-    # List remote workspaces
     remote_workspaces = list_remote_workspaces(remote_host)
 
     if not remote_workspaces:
         sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
         sys.exit(1)
 
-    # Filter by pattern if specified
-    if workspace_pattern and workspace_pattern not in ("", "*", "all"):
-        filtered = [ws for ws in remote_workspaces if workspace_pattern in ws]
-        if not filtered:
-            sys.stderr.write(f"Error: No workspaces matching pattern '{workspace_pattern}'\n")
-            sys.exit(1)
-        remote_workspaces = filtered
-
-    # Get local projects directory
+    remote_workspaces = _filter_fetch_workspaces(remote_workspaces, workspace_pattern)
     local_projects_dir = get_claude_projects_dir()
-
-    # Fetch each workspace (silent on success)
-    for remote_workspace in remote_workspaces:
-        readable_name = normalize_remote_workspace_name(remote_host, remote_workspace)
-        # New naming: remote_hostname_path
-        workspace_path = remote_workspace.lstrip("-")
-        local_name = f"remote_{hostname}_{workspace_path}"
-
-        result = fetch_workspace_files(remote_host, remote_workspace, local_projects_dir, hostname)
-
-        if result["success"]:
-            # Print the local path where it was cached
-            print(normalize_workspace_name(local_name, verify_local=False))
-        else:
-            error = result.get("error", "Unknown error")
-            sys.stderr.write(f"Error fetching {readable_name}: {error}\n")
+    _fetch_and_report(remote_host, remote_workspaces, local_projects_dir, hostname)
 
 
 def _validate_local_access() -> list:
@@ -6166,114 +6146,122 @@ def _print_export_all_summary(
     print("=" * 80)
 
 
+def _accumulate_export_results(totals: dict, result: dict, is_multi: bool = False):
+    """Accumulate export results into totals dict."""
+    if is_multi:
+        totals["sources"].extend(result["sources"])
+    elif result.get("source"):
+        totals["sources"].append(result["source"])
+    totals["sessions"] += result["sessions"]
+    totals["errors"] += result["errors"]
+
+
+def _get_export_all_patterns(args) -> list:
+    """Get patterns list for export all command."""
+    patterns = getattr(args, "patterns", None)
+    if patterns is not None:
+        return patterns
+    ws = getattr(args, "workspace", "")
+    return [ws] if ws else []
+
+
 def cmd_export_all(args):
     """Export from all homes: local, WSL distributions (Windows), Windows (WSL), and optionally remotes."""
-    # Detect environment
     in_wsl = is_running_in_wsl()
     local_label = "Local WSL" if in_wsl else "Local Windows"
-
-    # Get patterns list (multiple patterns support)
-    patterns = getattr(args, "patterns", None)
-    if patterns is None:
-        # Backward compat: use single workspace
-        ws = getattr(args, "workspace", "")
-        patterns = [ws] if ws else []
+    patterns = _get_export_all_patterns(args)
 
     # Include saved sources in remotes
     remotes = getattr(args, "remotes", []) or []
-    saved_sources = get_saved_sources()
-    for src in saved_sources:
+    for src in get_saved_sources():
         if src not in remotes:
             remotes.append(src)
     args.remotes = remotes
 
-    # Pre-flight validation: Check all homes before starting export
+    # Pre-flight validation
     print("[Validation] Checking access to all homes...")
     valid, errors = validate_export_all_homes(args, in_wsl)
-
     if not valid:
         print("\nExport aborted: Cannot access all homes\n")
         for error in errors:
             print(error)
         print("\nPlease fix the issues above and try again.")
         sys.exit(1)
-
     print("All homes accessible\n")
 
-    # Create output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Track export statistics
-    sources_processed = []
-    total_sessions = 0
-    total_errors = 0
+    totals = {"sources": [], "sessions": 0, "errors": 0}
 
-    # 1. Export from local
-    local_result = _export_local_sessions(args, output_dir, patterns, local_label)
-    if local_result["source"]:
-        sources_processed.append(local_result["source"])
-    total_sessions += local_result["sessions"]
-    total_errors += local_result["errors"]
+    _accumulate_export_results(
+        totals, _export_local_sessions(args, output_dir, patterns, local_label)
+    )
 
-    # 2a. Export from Windows (when running in WSL)
     if in_wsl:
-        windows_result = _export_windows_from_wsl(args, output_dir, patterns)
-        sources_processed.extend(windows_result["sources"])
-        total_sessions += windows_result["sessions"]
-        total_errors += windows_result["errors"]
+        _accumulate_export_results(
+            totals, _export_windows_from_wsl(args, output_dir, patterns), is_multi=True
+        )
+    else:
+        _accumulate_export_results(
+            totals, _export_wsl_from_windows(args, output_dir, patterns), is_multi=True
+        )
 
-    # 2b. Export from all WSL distributions (when running on Windows)
-    if not in_wsl:
-        wsl_result = _export_wsl_from_windows(args, output_dir, patterns)
-        sources_processed.extend(wsl_result["sources"])
-        total_sessions += wsl_result["sessions"]
-        total_errors += wsl_result["errors"]
+    _accumulate_export_results(
+        totals, _export_all_remotes(args, output_dir, patterns), is_multi=True
+    )
 
-    # 3. Export from remote hosts
-    remote_result = _export_all_remotes(args, output_dir, patterns)
-    sources_processed.extend(remote_result["sources"])
-    total_sessions += remote_result["sessions"]
-    total_errors += remote_result["errors"]
+    _print_export_all_summary(totals["sources"], totals["sessions"], totals["errors"], output_dir)
 
-    # Print summary
-    _print_export_all_summary(sources_processed, total_sessions, total_errors, output_dir)
+    if getattr(args, "index", True):
+        generate_index_manifest(output_dir, totals["sources"])
 
-    # Generate index.md if requested
-    if getattr(args, "index", True):  # Default to true
-        generate_index_manifest(output_dir, sources_processed)
+
+def _classify_session_source(filename: str) -> str:
+    """Classify session source based on filename prefix."""
+    if filename.startswith(CACHED_WSL_PREFIX):
+        return "wsl"
+    if filename.startswith(CACHED_WINDOWS_PREFIX):
+        return "windows"
+    if filename.startswith(CACHED_REMOTE_PREFIX):
+        return "remote"
+    return "local"
+
+
+def _scan_workspace_directories(output_dir: Path) -> dict:
+    """Scan workspace directories and group sessions by source."""
+    workspaces = {}
+    for item in output_dir.iterdir():
+        if not item.is_dir():
+            continue
+
+        sessions = list(item.glob("*.md"))
+        sources = {"local": 0, "wsl": 0, "windows": 0, "remote": 0}
+        for session_file in sessions:
+            sources[_classify_session_source(session_file.name)] += 1
+
+        workspaces[item.name] = {"total": len(sessions), "sources": sources, "sessions": sessions}
+    return workspaces
+
+
+def _format_workspace_sources(sources: dict) -> list:
+    """Format workspace sources as markdown lines."""
+    lines = []
+    for source, label in [
+        ("local", "Local"),
+        ("wsl", "WSL"),
+        ("windows", "Windows"),
+        ("remote", "Remote"),
+    ]:
+        if sources[source] > 0:
+            lines.append(f"- **{label}:** {sources[source]} sessions")
+    return lines
 
 
 def generate_index_manifest(output_dir: Path, sources_info: list):
     """Generate index.md manifest file summarizing all exported sessions."""
-    index_path = output_dir / "index.md"
+    workspaces = _scan_workspace_directories(output_dir)
 
-    # Scan all workspace directories
-    workspaces = {}
-    for item in output_dir.iterdir():
-        if item.is_dir():
-            workspace_name = item.name
-            sessions = list(item.glob("*.md"))
-
-            # Group by source
-            sources = {"local": 0, "wsl": 0, "windows": 0, "remote": 0}
-            for session_file in sessions:
-                if session_file.name.startswith(CACHED_WSL_PREFIX):
-                    sources["wsl"] += 1
-                elif session_file.name.startswith(CACHED_WINDOWS_PREFIX):
-                    sources["windows"] += 1
-                elif session_file.name.startswith(CACHED_REMOTE_PREFIX):
-                    sources["remote"] += 1
-                else:
-                    sources["local"] += 1
-
-            workspaces[workspace_name] = {
-                "total": len(sessions),
-                "sources": sources,
-                "sessions": sessions,
-            }
-
-    # Generate markdown
     lines = [
         "# Claude Conversation Export Index",
         "",
@@ -6285,28 +6273,19 @@ def generate_index_manifest(output_dir: Path, sources_info: list):
         "",
     ]
 
-    # Add sources summary
     for source_info in sources_info:
         lines.append(f"- **{source_info['source']}**: {source_info['sessions']} sessions")
 
     lines.extend(["", "## Workspaces", ""])
 
-    # Add workspace details
     for workspace_name in sorted(workspaces.keys()):
         ws_info = workspaces[workspace_name]
         lines.append(f"### {workspace_name} ({ws_info['total']} sessions)")
         lines.append("")
-        if ws_info["sources"]["local"] > 0:
-            lines.append(f"- **Local:** {ws_info['sources']['local']} sessions")
-        if ws_info["sources"]["wsl"] > 0:
-            lines.append(f"- **WSL:** {ws_info['sources']['wsl']} sessions")
-        if ws_info["sources"]["windows"] > 0:
-            lines.append(f"- **Windows:** {ws_info['sources']['windows']} sessions")
-        if ws_info["sources"]["remote"] > 0:
-            lines.append(f"- **Remote:** {ws_info['sources']['remote']} sessions")
+        lines.extend(_format_workspace_sources(ws_info["sources"]))
         lines.append("")
 
-    # Write index
+    index_path = output_dir / "index.md"
     index_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"\n[Index] Generated: {index_path}")
 
@@ -6418,32 +6397,28 @@ def _resolve_remote_flag(args):
     return remote
 
 
+def _get_wsl_remote_for_export() -> str:
+    """Get WSL remote string for export. Returns None if in WSL or no Claude distros."""
+    if is_running_in_wsl():
+        return None
+    wsl_distros = get_wsl_distributions()
+    claude_distros = [d for d in wsl_distros if d.get("has_claude")]
+    if claude_distros:
+        return f"wsl://{claude_distros[0]['name']}"
+    return None
+
+
 def _resolve_remote_list(args):
-    """Convert --wsl and --windows flags to remote list for export command.
+    """Convert --wsl and --windows flags to remote list for export command."""
+    remotes = list(getattr(args, "remotes", None) or [])
 
-    Args:
-        args: Parsed arguments with wsl, windows, and remotes attributes
+    if getattr(args, "wsl", False):
+        wsl_remote = _get_wsl_remote_for_export()
+        if wsl_remote:
+            remotes.append(wsl_remote)
 
-    Returns:
-        List of remote strings or None if empty
-    """
-    remotes = getattr(args, "remotes", None) or []
-    wsl_flag = getattr(args, "wsl", False)
-    windows_flag = getattr(args, "windows", False)
-
-    if wsl_flag:
-        # If already in WSL, --wsl is a no-op (skip adding to remotes)
-        if not is_running_in_wsl():
-            wsl_distros = get_wsl_distributions()
-            if wsl_distros:
-                claude_distros = [d for d in wsl_distros if d["has_claude"]]
-                if claude_distros:
-                    remotes.append(f"wsl://{claude_distros[0]['name']}")
-
-    if windows_flag:
-        # If already on Windows, --windows is a no-op (skip adding to remotes)
-        if platform.system() != "Windows":
-            remotes.append("windows")
+    if getattr(args, "windows", False) and platform.system() != "Windows":
+        remotes.append("windows")
 
     return remotes if remotes else None
 
@@ -6920,63 +6895,33 @@ def _create_argument_parser():
 # ============================================================================
 
 
-def _dispatch_lsw_additive(args):
-    """Handle --local with -r for additive lsw (local + remotes).
+def _get_remote_workspaces_for_lsw(remote: str, patterns: list) -> tuple:
+    """Get filtered workspaces from a remote for lsw.
 
-    Args:
-        args: Arguments with patterns, remotes, and local_only flag
+    Returns:
+        Tuple of (hostname, sessions_list) or (None, []) on error
     """
-    patterns = getattr(args, "patterns", [""])
-    remotes = getattr(args, "remotes", [])
-    workspaces_only = getattr(args, "workspaces_only", False)
+    if not check_ssh_connection(remote):
+        sys.stderr.write(f"Cannot connect to remote: {remote}\n")
+        return None, []
 
-    in_wsl = is_running_in_wsl()
-    all_results = []
+    hostname = get_remote_hostname(remote)
+    remote_workspaces = list_remote_workspaces(remote)
 
-    # 1. Get local workspaces
-    local_label = "Local (WSL)" if in_wsl else "Local"
-    try:
-        local_sessions = collect_sessions_with_dedup(patterns, include_cached=False)
-        if local_sessions:
-            all_results.append((local_label, local_sessions))
-    except (OSError, PermissionError) as e:
-        sys.stderr.write(f"Error accessing local: {e}\n")
+    # Filter by patterns
+    if patterns and patterns != [""]:
+        remote_workspaces = [ws for ws in remote_workspaces if matches_any_pattern(ws, patterns)]
 
-    # 2. Get from SSH remotes
-    for remote in remotes:
-        try:
-            if not check_ssh_connection(remote):
-                sys.stderr.write(f"Cannot connect to remote: {remote}\n")
-                continue
+    # Create session-like dicts for output
+    sessions = [
+        {"workspace": ws, "workspace_readable": normalize_workspace_name(ws)}
+        for ws in remote_workspaces
+    ]
+    return hostname, sessions
 
-            hostname = get_remote_hostname(remote)
-            remote_workspaces = list_remote_workspaces(remote)
 
-            # Filter by patterns
-            if patterns and patterns != [""]:
-                matching = []
-                for ws in remote_workspaces:
-                    for pattern in patterns:
-                        if not pattern or pattern in ws:
-                            matching.append(ws)
-                            break
-                remote_workspaces = matching
-
-            if remote_workspaces:
-                # Create session-like dicts for output
-                sessions = []
-                for ws in remote_workspaces:
-                    sessions.append(
-                        {
-                            "workspace": ws,
-                            "workspace_readable": normalize_workspace_name(ws),
-                        }
-                    )
-                all_results.append((f"Remote ({hostname})", sessions))
-        except (OSError, subprocess.SubprocessError) as e:
-            sys.stderr.write(f"Error accessing remote {remote}: {e}\n")
-
-    # Print results
+def _print_lsw_results(all_results: list, workspaces_only: bool):
+    """Print lsw results in the appropriate format."""
     for source_label, sessions in all_results:
         if workspaces_only:
             print(f"# {source_label}")
@@ -6990,6 +6935,39 @@ def _dispatch_lsw_additive(args):
         else:
             for session in sessions:
                 print(format_session_line(session, source_label))
+
+
+def _dispatch_lsw_additive(args):
+    """Handle --local with -r for additive lsw (local + remotes).
+
+    Args:
+        args: Arguments with patterns, remotes, and local_only flag
+    """
+    patterns = getattr(args, "patterns", [""])
+    remotes = getattr(args, "remotes", [])
+    workspaces_only = getattr(args, "workspaces_only", False)
+
+    all_results = []
+
+    # 1. Get local workspaces
+    local_label = "Local (WSL)" if is_running_in_wsl() else "Local"
+    try:
+        local_sessions = collect_sessions_with_dedup(patterns, include_cached=False)
+        if local_sessions:
+            all_results.append((local_label, local_sessions))
+    except (OSError, PermissionError) as e:
+        sys.stderr.write(f"Error accessing local: {e}\n")
+
+    # 2. Get from SSH remotes
+    for remote in remotes:
+        try:
+            hostname, sessions = _get_remote_workspaces_for_lsw(remote, patterns)
+            if hostname and sessions:
+                all_results.append((f"Remote ({hostname})", sessions))
+        except (OSError, subprocess.SubprocessError) as e:
+            sys.stderr.write(f"Error accessing remote {remote}: {e}\n")
+
+    _print_lsw_results(all_results, workspaces_only)
 
 
 def _filter_sessions_by_date(sessions: list, since_date, until_date) -> list:
@@ -7040,42 +7018,48 @@ def _get_remote_sessions_for_additive(remote: str, patterns: list, since_date, u
     return hostname, all_sessions
 
 
-def _dispatch_lss_additive(args):
-    """Handle --local with -r for additive lss (local + remotes).
-
-    Args:
-        args: Arguments with patterns, remotes, since_date, until_date
-    """
-    patterns = getattr(args, "patterns", [""])
-    remotes = getattr(args, "remotes", [])
-    since_date = getattr(args, "since_date", None)
-    until_date = getattr(args, "until_date", None)
-
-    all_results = []
-
-    # 1. Get local sessions
+def _collect_local_sessions_for_additive(patterns: list, since_date, until_date) -> tuple:
+    """Collect local sessions for additive mode. Returns (label, sessions) or None."""
     local_label = "Local (WSL)" if is_running_in_wsl() else "Local"
     try:
-        local_sessions = collect_sessions_with_dedup(
+        sessions = collect_sessions_with_dedup(
             patterns, since_date=since_date, until_date=until_date, include_cached=False
         )
-        if local_sessions:
-            all_results.append((local_label, local_sessions))
+        if sessions:
+            return (local_label, sessions)
     except (OSError, PermissionError) as e:
         sys.stderr.write(f"Error accessing local: {e}\n")
+    return None
 
-    # 2. Get from SSH remotes
+
+def _collect_remotes_for_additive(remotes: list, patterns: list, since_date, until_date) -> list:
+    """Collect sessions from SSH remotes for additive mode."""
+    results = []
     for remote in remotes:
         try:
             hostname, sessions = _get_remote_sessions_for_additive(
                 remote, patterns, since_date, until_date
             )
             if hostname and sessions:
-                all_results.append((f"Remote ({hostname})", sessions))
+                results.append((f"Remote ({hostname})", sessions))
         except (OSError, subprocess.SubprocessError) as e:
             sys.stderr.write(f"Error accessing remote {remote}: {e}\n")
+    return results
 
-    # Print results with header
+
+def _dispatch_lss_additive(args):
+    """Handle --local with -r for additive lss (local + remotes)."""
+    patterns = getattr(args, "patterns", [""])
+    remotes = getattr(args, "remotes", [])
+    since_date = getattr(args, "since_date", None)
+    until_date = getattr(args, "until_date", None)
+
+    all_results = []
+    local_result = _collect_local_sessions_for_additive(patterns, since_date, until_date)
+    if local_result:
+        all_results.append(local_result)
+    all_results.extend(_collect_remotes_for_additive(remotes, patterns, since_date, until_date))
+
     if all_results:
         print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
         for source_label, sessions in all_results:
@@ -7287,54 +7271,46 @@ def _dispatch_export_all_homes(args, output_dir: str, patterns: list, remotes: l
     cmd_export_all(ExportAllArgs())
 
 
-def _dispatch_export(args):
-    """Dispatch export command."""
-    output_dir = _get_export_output_dir(args)
-    targets = args.target if args.target else []
+def _resolve_export_targets(args, targets: list, output_dir: Path) -> tuple:
+    """Resolve export targets, handling workspace detection and aliases.
 
-    # Check for alias
-    alias_name = detect_alias_from_args(args, targets)
-    if alias_name:
-        cmd_alias_export(alias_name, output_dir, args)
-        return
+    Returns:
+        Tuple of (resolved_targets, alias_handled) where alias_handled is True if exported via alias
+    """
+    if targets or args.all_workspaces:
+        return targets, False
 
-    # Resolve targets if not provided
     this_only = getattr(args, "this_only", False)
-    if not targets and not args.all_workspaces:
-        pattern, exists = check_current_workspace_exists()
-        if not exists:
-            if args.all_homes:
-                args.all_workspaces = True
-            else:
-                exit_with_error(
-                    "Not in a Claude Code workspace.\n\n"
-                    "To export sessions, either:\n"
-                    "  • Run from within a workspace directory\n"
-                    "  • Specify a workspace pattern: export <pattern>\n"
-                    "  • Use --aw to export all workspaces: export --aw\n"
-                    "  • Use --ah to export from all homes: export --ah"
-                )
-        else:
-            if not this_only:
-                alias_for_ws = get_alias_for_workspace(pattern, "local")
-                if alias_for_ws:
-                    sys.stderr.write(
-                        f"Using alias @{alias_for_ws} (use --this for current workspace only)\n"
-                    )
-                    cmd_alias_export(alias_for_ws, output_dir, args)
-                    return
-            targets = [pattern]
+    pattern, exists = check_current_workspace_exists()
 
-    # Single file export
-    if len(targets) == 1 and targets[0].endswith(".jsonl"):
-        _dispatch_export_single_file(args, targets[0])
-        return
+    if not exists:
+        if args.all_homes:
+            args.all_workspaces = True
+            return [], False
+        exit_with_error(
+            "Not in a Claude Code workspace.\n\n"
+            "To export sessions, either:\n"
+            "  • Run from within a workspace directory\n"
+            "  • Specify a workspace pattern: export <pattern>\n"
+            "  • Use --aw to export all workspaces: export --aw\n"
+            "  • Use --ah to export from all homes: export --ah"
+        )
 
-    final_remotes = _resolve_remote_list(args)
-    final_patterns = [] if args.all_workspaces else targets
+    if not this_only:
+        alias_for_ws = get_alias_for_workspace(pattern, "local")
+        if alias_for_ws:
+            sys.stderr.write(
+                f"Using alias @{alias_for_ws} (use --this for current workspace only)\n"
+            )
+            cmd_alias_export(alias_for_ws, output_dir, args)
+            return [], True
+
+    return [pattern], False
+
+
+def _route_export(args, output_dir: Path, final_patterns: list, final_remotes):
+    """Route export to appropriate handler based on flags."""
     local_flag = getattr(args, "local", False)
-
-    # Route to appropriate handler
     if local_flag and final_remotes:
         _dispatch_export_additive(args, output_dir, final_patterns, final_remotes)
     elif args.all_homes:
@@ -7342,6 +7318,29 @@ def _dispatch_export(args):
     else:
         final_remote = final_remotes[0] if final_remotes else None
         cmd_batch(_build_export_config(args, output_dir, final_patterns, final_remote))
+
+
+def _dispatch_export(args):
+    """Dispatch export command."""
+    output_dir = _get_export_output_dir(args)
+    targets = args.target if args.target else []
+
+    alias_name = detect_alias_from_args(args, targets)
+    if alias_name:
+        cmd_alias_export(alias_name, output_dir, args)
+        return
+
+    targets, alias_handled = _resolve_export_targets(args, targets, output_dir)
+    if alias_handled:
+        return
+
+    if len(targets) == 1 and targets[0].endswith(".jsonl"):
+        _dispatch_export_single_file(args, targets[0])
+        return
+
+    final_remotes = _resolve_remote_list(args)
+    final_patterns = [] if args.all_workspaces else targets
+    _route_export(args, output_dir, final_patterns, final_remotes)
 
 
 def _dispatch_alias(args):
@@ -7366,58 +7365,62 @@ def _dispatch_alias(args):
         cmd_alias_config_import(args)
 
 
+def _get_stats_remotes(args) -> list:
+    """Get remotes list for stats command, adding WSL/Windows if flagged."""
+    remotes = getattr(args, "remotes", None) or []
+    if args.wsl:
+        wsl_distros = get_wsl_distributions()
+        claude_distros = [d for d in wsl_distros if d.get("has_claude")]
+        if claude_distros:
+            remotes.append(f"wsl://{claude_distros[0]['name']}")
+    if args.windows:
+        remotes.append("windows")
+    return remotes
+
+
+def _build_sync_args(args, remotes: list):
+    """Build SyncArgs class for cmd_stats_sync."""
+
+    class SyncArgs:
+        force = args.force
+        all_homes = getattr(args, "all_homes", False)
+        patterns = [args.workspace] if args.workspace else [""]
+
+    SyncArgs.remotes = remotes
+    return SyncArgs()
+
+
+def _build_stats_args(args):
+    """Build StatsArgs class for cmd_stats."""
+
+    class StatsArgs:
+        workspace = args.workspace
+        source = args.source
+        since = args.since
+        until = args.until
+        tools = args.tools
+        models = args.models
+        time = getattr(args, "time", False)
+        by_workspace = getattr(args, "by_workspace", False)
+        by_day = getattr(args, "by_day", False)
+        all_workspaces = getattr(args, "all_workspaces", False)
+
+    return StatsArgs()
+
+
 def _dispatch_stats(args):
     """Dispatch stats command."""
+    remotes = _get_stats_remotes(args)
+
     if args.sync:
-        remotes = getattr(args, "remotes", None) or []
-        if args.wsl:
-            wsl_distros = get_wsl_distributions()
-            claude_distros = [d for d in wsl_distros if d.get("has_claude")]
-            if claude_distros:
-                remotes.append(f"wsl://{claude_distros[0]['name']}")
-        if args.windows:
-            remotes.append("windows")
+        cmd_stats_sync(_build_sync_args(args, remotes))
+        return
 
-        class SyncArgs:
-            force = args.force
-            all_homes = args.all_homes
-            patterns = [args.workspace] if args.workspace else [""]
+    if args.all_homes:
+        cmd_stats_sync(_build_sync_args(args, remotes))
+        print()
 
-        SyncArgs.remotes = remotes
-        cmd_stats_sync(SyncArgs())
-    else:
-        if args.all_homes:
-            remotes = getattr(args, "remotes", None) or []
-            if args.wsl:
-                wsl_distros = get_wsl_distributions()
-                claude_distros = [d for d in wsl_distros if d.get("has_claude")]
-                if claude_distros:
-                    remotes.append(f"wsl://{claude_distros[0]['name']}")
-            if args.windows:
-                remotes.append("windows")
-
-            class SyncArgs:
-                force = args.force
-                all_homes = True
-                patterns = [args.workspace] if args.workspace else [""]
-
-            SyncArgs.remotes = remotes
-            cmd_stats_sync(SyncArgs())
-            print()
-
-        class StatsArgs:
-            workspace = args.workspace
-            source = args.source
-            since = args.since
-            until = args.until
-            tools = args.tools
-            models = args.models
-            time = getattr(args, "time", False)
-            by_workspace = getattr(args, "by_workspace", False)
-            by_day = getattr(args, "by_day", False)
-            all_workspaces = getattr(args, "all_workspaces", False)
-
-        cmd_stats(StatsArgs())
+    cmd_stats(_build_stats_args(args))
 
 
 def _dispatch_command(args):
