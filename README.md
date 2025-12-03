@@ -239,3 +239,4 @@ MIT License - See [LICENSE](LICENSE) file.
 
 - Inspired by [Simon Willison's](https://simonwillison.net/) writing on Claude conversation extraction
 - Built with [Claude Code](https://claude.com/claude-code)
+- Maintained with Codex (GPT-5) tooling
