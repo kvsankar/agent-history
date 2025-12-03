@@ -31,13 +31,18 @@ jobs:
           python -m pip install pytest pytest-asyncio
 
       - name: Run unit tests (exclude integration)
+        env:
+          HOME: ${{ runner.temp }}/ch
+          USERPROFILE: ${{ runner.temp }}\ch
         run: |
+          python -c "import pathlib,os; p=pathlib.Path(os.environ.get('HOME') or os.environ.get('USERPROFILE')); (p).mkdir(parents=True, exist_ok=True)"
           python -m pytest -q -m "not integration"
 
       - name: Run integration tests
         env:
-          # Keep integration tests isolated from developer machine config
           PYTHONUTF8: "1"
+          HOME: ${{ runner.temp }}/ch
+          USERPROFILE: ${{ runner.temp }}\ch
         run: |
+          python -c "import pathlib,os; p=pathlib.Path(os.environ.get('HOME') or os.environ.get('USERPROFILE')); (p).mkdir(parents=True, exist_ok=True)"
           python -m pytest -q -m integration tests/integration
-
