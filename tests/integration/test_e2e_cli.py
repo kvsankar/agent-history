@@ -188,6 +188,22 @@ def test_e2e_export_absolute_path_target(tmp_path: Path):
     assert md_files, f"No markdown files created for absolute path target:\n{r.stdout}\n{r.stderr}"
 
 
+def test_e2e_lss_absolute_path_target(tmp_path: Path):
+    projects = tmp_path / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
+
+    target_path = "/home/test/abs/export-case" if os.name != "nt" else r"C:\abs\export\case"
+    encoded_workspace = _claude_cli._coerce_target_to_workspace_pattern(target_path)
+    make_workspace(projects, encoded_workspace, files=1)
+
+    env = os.environ.copy()
+    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+
+    r = run_cli(["lss", "--local", target_path], env=env)
+    assert r.returncode == 0, r.stderr
+    assert "session-0.jsonl" in r.stdout
+
+
 def test_e2e_all_homes_windows(tmp_path: Path):
     if sys.platform != "win32":
         return

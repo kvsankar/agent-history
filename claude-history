@@ -7349,6 +7349,7 @@ def _dispatch_lss_local(args, workspace_list: list):
 def _dispatch_lss(args):
     """Dispatch lss (list sessions) command."""
     workspace_list = args.workspace if args.workspace else []
+    workspace_list = [_coerce_target_to_workspace_pattern(w) for w in workspace_list]
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []
 
