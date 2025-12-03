@@ -1945,7 +1945,9 @@ def _get_wsl_distro_info(distro_name: str) -> dict:
             return None
 
         username = user_result.stdout.strip()
-        claude_path = _locate_wsl_projects_dir(distro_name, username)
+        # Determine actual $HOME inside the distro to avoid assuming /home/<user>
+        home_path = _get_wsl_home_path(distro_name) or f"/home/{username}"
+        claude_path = _locate_wsl_projects_dir(distro_name, username, home_path)
         has_claude = claude_path is not None
 
         return {
@@ -1977,23 +1979,49 @@ def get_wsl_distributions() -> list:
     return distributions
 
 
-def _get_wsl_candidate_paths(distro_name: str, username: str) -> list:
-    """Return candidate UNC paths for a WSL distro."""
+def _get_wsl_candidate_paths(distro_name: str, username: str, home_path: str = None) -> list:
+    """Return candidate UNC paths for a WSL distro.
+
+    If home_path is provided, use it instead of assuming /home/<username>.
+    """
+    rel_home = (home_path or f"/home/{username}").lstrip("/")
     return [
-        Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects"),
-        Path(f"//wsl$/{distro_name}/home/{username}/.claude/projects"),
+        Path(f"//wsl.localhost/{distro_name}/{rel_home}/.claude/projects"),
+        Path(f"//wsl$/{distro_name}/{rel_home}/.claude/projects"),
     ]
 
 
-def _locate_wsl_projects_dir(distro_name: str, username: str):
+def _locate_wsl_projects_dir(distro_name: str, username: str, home_path: str = None):
     """Find the first accessible UNC path for a WSL distro."""
-    for candidate in _get_wsl_candidate_paths(distro_name, username):
+    for candidate in _get_wsl_candidate_paths(distro_name, username, home_path):
         try:
             if candidate.exists():
                 return candidate
         except OSError:
             continue
     return None
+
+
+def _get_wsl_home_path(distro_name: str) -> Optional[str]:
+    """Get the $HOME path inside a specific WSL distro.
+
+    Returns the Linux path (e.g., '/home/user'). Returns None on failure.
+    """
+    try:
+        result = subprocess.run(
+            [get_command_path("wsl"), "-d", distro_name, "sh", "-lc", "printf %s \"$HOME\""] ,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        home = result.stdout.strip()
+        # basic sanity: must look like an absolute path
+        return home if home.startswith("/") else None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
 
 
 def get_wsl_projects_dir(distro_name: str):
@@ -2020,7 +2048,8 @@ def get_wsl_projects_dir(distro_name: str):
             return None
 
         username = result.stdout.strip()
-        return _locate_wsl_projects_dir(distro_name, username)
+        home_path = _get_wsl_home_path(distro_name) or f"/home/{username}"
+        return _locate_wsl_projects_dir(distro_name, username, home_path)
 
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
