@@ -551,8 +551,8 @@ def print_sessions_output(sessions: list, source_label: str, workspaces_only: bo
     if workspaces_only:
         workspaces = sorted({s["workspace_readable"] for s in sessions})
         for ws in workspaces:
-            # On Windows, skip paths that don't exist to avoid stale/invalid entries
-            if sys.platform == "win32":
+            # On Windows, only filter non-existent paths for Windows sources
+            if sys.platform == "win32" and source_label.startswith("Windows"):
                 try:
                     if not Path(ws).exists():
                         continue
@@ -1972,9 +1972,7 @@ def _get_wsl_distro_info(distro_name: str) -> dict:
             return None
 
         username = user_result.stdout.strip()
-        # Determine actual $HOME inside the distro to avoid assuming /home/<user>
-        home_path = _get_wsl_home_path(distro_name) or f"/home/{username}"
-        claude_path = _locate_wsl_projects_dir(distro_name, username, home_path)
+        claude_path = _locate_wsl_projects_dir(distro_name, username)
         has_claude = claude_path is not None
 
         return {

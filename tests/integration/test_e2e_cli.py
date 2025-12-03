@@ -56,8 +56,8 @@ def test_e2e_windows_from_windows(tmp_path: Path):
 
     r = run_cli(["lsw", "--windows"], env=env)
     assert r.returncode == 0, r.stderr
-    # Should print native Windows paths
-    assert "C:\\e2e-win-alpha" in r.stdout or "C:\\e2e-win-beta" in r.stdout
+    # Output uses POSIX-style drive paths (normalized): /C/...
+    assert "/C/e2e/win/alpha" in r.stdout or "/C/e2e/win/beta" in r.stdout
 
 
 def test_e2e_wsl_from_windows(tmp_path: Path):
