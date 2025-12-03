@@ -78,6 +78,15 @@ List all workspaces matching a pattern.
 claude-history lsw [PATTERN...] [OPTIONS]
 ```
 
+
+---
+
+## Testing
+
+For how to run unit and integration tests, see:
+
+- README.md#testing
+- TESTING.md (Integration and E2E Tests)
 **Arguments:**
 - `PATTERN`: One or more workspace name patterns (optional, lists all if omitted)
 
