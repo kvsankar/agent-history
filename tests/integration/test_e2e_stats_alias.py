@@ -101,3 +101,8 @@ def test_e2e_alias_create_add_show_export(tmp_path: Path):
     # Show should succeed (content may vary by platform setup)
     r4 = run_cli(["alias", "show", alias], env=env)
     assert r4.returncode == 0, r4.stderr
+
+    # List sessions via alias using @alias in lss
+    r5 = run_cli(["lss", f"@{alias}"], env=env)
+    assert r5.returncode == 0, r5.stderr
+    assert "HOME\tWORKSPACE\tFILE\t" in r5.stdout
