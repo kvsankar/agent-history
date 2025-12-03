@@ -34,10 +34,10 @@ claude-history alias create all-projects
 claude-history alias add all-projects --ah -r vm01 -r vm02 --pick
 
 # Daily backup (incremental - only exports new/changed files)
-claude-history export @all-projects -o ~/backups/claude-sessions/
+claude-history export @all-projects -o ~/backups/claude-history/
 
 # Force re-export everything
-claude-history export @all-projects -o ~/backups/claude-sessions/ --force
+claude-history export @all-projects -o ~/backups/claude-history/ --force
 ```
 
 ---
