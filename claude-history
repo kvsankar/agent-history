@@ -6064,6 +6064,11 @@ def _add_lsw_parser(subparsers):
     parser.add_argument("--wsl", action="store_true", help="List workspaces from WSL (auto-detects distribution)")
     parser.add_argument("--windows", action="store_true", help="List workspaces from Windows (auto-detects user)")
     parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Include local workspaces (use with -r to combine local + remote)",
+    )
+    parser.add_argument(
         "--ah",
         "--all-homes",
         dest="all_homes",
@@ -6092,6 +6097,11 @@ def _add_lss_parser(subparsers):
     )
     parser.add_argument("--wsl", action="store_true", help="List sessions from WSL (auto-detects distribution)")
     parser.add_argument("--windows", action="store_true", help="List sessions from Windows (auto-detects user)")
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Include local sessions (use with -r to combine local + remote)",
+    )
     parser.add_argument(
         "--since", metavar="DATE", help="Only include sessions modified on or after this date (YYYY-MM-DD)"
     )
@@ -6198,6 +6208,11 @@ def _add_export_parser(subparsers):
     )
     parser.add_argument("--wsl", action="store_true", help="Export from WSL (auto-detects distribution)")
     parser.add_argument("--windows", action="store_true", help="Export from Windows (auto-detects user)")
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Include local (use with -r to combine local + remote)",
+    )
     parser.add_argument("--force", action="store_true", help="Force re-export (default: incremental)")
     parser.add_argument(
         "--minimal", action="store_true", help="Minimal export: omit metadata, keep only conversation content"
@@ -6403,21 +6418,186 @@ def _create_argument_parser():
 # ============================================================================
 
 
+def _dispatch_lsw_additive(args):
+    """Handle --local with -r for additive lsw (local + remotes).
+
+    Args:
+        args: Arguments with patterns, remotes, and local_only flag
+    """
+    patterns = getattr(args, "patterns", [""])
+    remotes = getattr(args, "remotes", [])
+    workspaces_only = getattr(args, "workspaces_only", False)
+
+    in_wsl = is_running_in_wsl()
+    all_results = []
+
+    # 1. Get local workspaces
+    local_label = "Local (WSL)" if in_wsl else "Local"
+    try:
+        local_sessions = collect_sessions_with_dedup(patterns, include_cached=False)
+        if local_sessions:
+            all_results.append((local_label, local_sessions))
+    except (OSError, PermissionError) as e:
+        sys.stderr.write(f"Error accessing local: {e}\n")
+
+    # 2. Get from SSH remotes
+    for remote in remotes:
+        try:
+            if not check_ssh_connection(remote):
+                sys.stderr.write(f"Cannot connect to remote: {remote}\n")
+                continue
+
+            hostname = get_remote_hostname(remote)
+            remote_workspaces = list_remote_workspaces(remote)
+
+            # Filter by patterns
+            if patterns and patterns != [""]:
+                matching = []
+                for ws in remote_workspaces:
+                    for pattern in patterns:
+                        if not pattern or pattern in ws:
+                            matching.append(ws)
+                            break
+                remote_workspaces = matching
+
+            if remote_workspaces:
+                # Create session-like dicts for output
+                sessions = []
+                for ws in remote_workspaces:
+                    sessions.append(
+                        {
+                            "workspace": ws,
+                            "workspace_readable": normalize_workspace_name(ws),
+                        }
+                    )
+                all_results.append((f"Remote ({hostname})", sessions))
+        except (OSError, subprocess.SubprocessError) as e:
+            sys.stderr.write(f"Error accessing remote {remote}: {e}\n")
+
+    # Print results
+    for source_label, sessions in all_results:
+        if workspaces_only:
+            print(f"# {source_label}")
+            seen_workspaces = set()
+            for session in sessions:
+                ws = session["workspace_readable"]
+                if ws not in seen_workspaces:
+                    seen_workspaces.add(ws)
+                    print(f"  {ws}")
+            print()
+        else:
+            for session in sessions:
+                print(format_session_line(session, source_label))
+
+
+def _dispatch_lss_additive(args):
+    """Handle --local with -r for additive lss (local + remotes).
+
+    Args:
+        args: Arguments with patterns, remotes, since_date, until_date
+    """
+    patterns = getattr(args, "patterns", [""])
+    remotes = getattr(args, "remotes", [])
+    since_date = getattr(args, "since_date", None)
+    until_date = getattr(args, "until_date", None)
+
+    in_wsl = is_running_in_wsl()
+    all_results = []
+
+    # 1. Get local sessions
+    local_label = "Local (WSL)" if in_wsl else "Local"
+    try:
+        local_sessions = collect_sessions_with_dedup(
+            patterns, since_date=since_date, until_date=until_date, include_cached=False
+        )
+        if local_sessions:
+            all_results.append((local_label, local_sessions))
+    except (OSError, PermissionError) as e:
+        sys.stderr.write(f"Error accessing local: {e}\n")
+
+    # 2. Get from SSH remotes
+    for remote in remotes:
+        try:
+            if not check_ssh_connection(remote):
+                sys.stderr.write(f"Cannot connect to remote: {remote}\n")
+                continue
+
+            hostname = get_remote_hostname(remote)
+            remote_workspaces = list_remote_workspaces(remote)
+
+            # Filter by patterns
+            if patterns and patterns != [""]:
+                matching = []
+                for ws in remote_workspaces:
+                    for pattern in patterns:
+                        if not pattern or pattern in ws:
+                            matching.append(ws)
+                            break
+                remote_workspaces = matching
+
+            # Get sessions for each workspace
+            for ws in remote_workspaces:
+                remote_sessions = get_remote_session_info(remote, ws)
+                if remote_sessions:
+                    # Add workspace_readable to each session
+                    ws_readable = normalize_workspace_name(ws)
+                    for session in remote_sessions:
+                        session["workspace_readable"] = ws_readable
+
+                    # Filter by date if specified
+                    if since_date or until_date:
+                        filtered = []
+                        for session in remote_sessions:
+                            mtime = session.get("modified")
+                            if mtime:
+                                mdate = mtime.replace(hour=0, minute=0, second=0, microsecond=0)
+                                if since_date and mdate < since_date:
+                                    continue
+                                if until_date and mdate > until_date:
+                                    continue
+                            filtered.append(session)
+                        remote_sessions = filtered
+
+                    if remote_sessions:
+                        all_results.append((f"Remote ({hostname})", remote_sessions))
+        except (OSError, subprocess.SubprocessError) as e:
+            sys.stderr.write(f"Error accessing remote {remote}: {e}\n")
+
+    # Print results with header
+    if all_results:
+        print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+        for source_label, sessions in all_results:
+            for session in sessions:
+                print(format_session_line(session, source_label))
+
+
 def _dispatch_lsw(args):
     """Dispatch lsw (list workspaces) command."""
     patterns = args.pattern if args.pattern else [""]
+    local_flag = getattr(args, "local", False)
+    remotes = getattr(args, "remotes", None) or []
 
     if getattr(args, "all_homes", False):
-        lsw_remotes = getattr(args, "remotes", None) or []
 
         class LswAllArgs:
             workspaces_only = True
             since_date = None
             until_date = None
 
-        LswAllArgs.remotes = lsw_remotes
+        LswAllArgs.remotes = remotes
         LswAllArgs.patterns = patterns
         cmd_list_all_homes(LswAllArgs())
+    elif local_flag and remotes:
+        # --local with -r: show both local and remotes (additive)
+        class LswAdditiveArgs:
+            workspaces_only = True
+            since_date = None
+            until_date = None
+
+        LswAdditiveArgs.remotes = remotes
+        LswAdditiveArgs.patterns = patterns
+        LswAdditiveArgs.local_only = True  # Skip Windows/WSL scanning
+        _dispatch_lsw_additive(LswAdditiveArgs())
     else:
 
         class LswArgs:
@@ -6433,6 +6613,8 @@ def _dispatch_lss(args):
     """Dispatch lss (list sessions) command."""
     workspace_list = args.workspace if args.workspace else []
     alias_flag = getattr(args, "alias", None)
+    local_flag = getattr(args, "local", False)
+    remotes = getattr(args, "remotes", None) or []
 
     # Detect @ prefix in first workspace (alias syntax)
     alias_name = None
@@ -6445,6 +6627,31 @@ def _dispatch_lss(args):
         since_date = parse_date_string(args.since) if args.since else None
         until_date = parse_date_string(args.until) if args.until else None
         cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date)
+        return
+
+    # Handle --local with -r (additive mode)
+    if local_flag and remotes:
+        since_date = parse_date_string(args.since) if args.since else None
+        until_date = parse_date_string(args.until) if args.until else None
+
+        if workspace_list:
+            patterns = workspace_list
+        else:
+            pattern, exists = check_current_workspace_exists()
+            if not exists:
+                patterns = [""]
+            else:
+                patterns = [pattern]
+
+        class LssAdditiveArgs:
+            workspaces_only = False
+
+        LssAdditiveArgs.patterns = patterns
+        LssAdditiveArgs.since_date = since_date
+        LssAdditiveArgs.until_date = until_date
+        LssAdditiveArgs.remotes = remotes
+        LssAdditiveArgs.local_only = True  # Skip Windows/WSL scanning
+        _dispatch_lss_additive(LssAdditiveArgs())
         return
 
     if getattr(args, "all_homes", False):
@@ -6568,6 +6775,48 @@ def _dispatch_export(args):
         return
 
     final_remotes = _resolve_remote_list(args)
+    local_flag = getattr(args, "local", False)
+
+    # Handle --local with -r (additive mode)
+    if local_flag and final_remotes:
+        final_patterns = [] if args.all_workspaces else targets
+
+        # Export from local first
+        in_wsl = is_running_in_wsl()
+        local_label = "Local (WSL)" if in_wsl else "Local"
+        sys.stderr.write(f"# {local_label}\n")
+        local_config = ExportConfig(
+            output_dir=final_output_dir,
+            patterns=final_patterns,
+            since=args.since,
+            until=args.until,
+            force=args.force,
+            minimal=args.minimal,
+            split=args.split,
+            flat=args.flat,
+            remote=None,
+            lenient=False,
+        )
+        cmd_batch(local_config)
+
+        # Export from each remote
+        for remote in final_remotes:
+            hostname = get_remote_hostname(remote)
+            sys.stderr.write(f"\n# Remote ({hostname})\n")
+            remote_config = ExportConfig(
+                output_dir=final_output_dir,
+                patterns=final_patterns,
+                since=args.since,
+                until=args.until,
+                force=args.force,
+                minimal=args.minimal,
+                split=args.split,
+                flat=args.flat,
+                remote=remote,
+                lenient=False,
+            )
+            cmd_batch(remote_config)
+        return
 
     if args.all_homes:
         final_patterns = [] if args.all_workspaces else targets

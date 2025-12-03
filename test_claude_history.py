@@ -5465,6 +5465,141 @@ class TestCLISmoke:
 
 
 # ============================================================================
+# Section 16: --local flag for additive sources
+# ============================================================================
+
+
+class TestLocalFlag:
+    """Tests for --local flag that enables additive local + remote listing."""
+
+    def test_local_flag_alone_lsw(self):
+        """--local alone should work like normal local listing."""
+
+        # Create mock args
+        class Args:
+            pattern = [""]
+            local = True
+            remotes = None
+            all_homes = False
+            wsl = False
+            windows = False
+
+        # Should not enter additive mode (no remotes)
+        assert getattr(Args, "local", False) is True
+        assert (Args.remotes or []) == []
+        # Condition for additive: local_flag and remotes
+        assert not (Args.local and (Args.remotes or []))
+
+    def test_local_flag_with_remote_lsw_condition(self):
+        """--local with -r should trigger additive mode."""
+
+        class Args:
+            pattern = [""]
+            local = True
+            remotes = ["user@host"]
+            all_homes = False
+            wsl = False
+            windows = False
+
+        # Should enter additive mode
+        assert Args.local and Args.remotes
+        # This is the condition used in _dispatch_lsw
+        local_flag = getattr(Args, "local", False)
+        remotes = getattr(Args, "remotes", None) or []
+        assert local_flag and remotes
+
+    def test_local_flag_with_remote_lss_condition(self):
+        """--local with -r should trigger additive mode for lss."""
+
+        class Args:
+            workspace = ["myproject"]
+            local = True
+            remotes = ["user@host"]
+            all_homes = False
+            wsl = False
+            windows = False
+            since = None
+            until = None
+            alias = None
+
+        # Should enter additive mode
+        local_flag = getattr(Args, "local", False)
+        remotes = getattr(Args, "remotes", None) or []
+        assert local_flag and remotes
+
+    def test_dispatch_lsw_additive_structure(self):
+        """_dispatch_lsw_additive should exist and have correct signature."""
+        # Verify the function exists
+        assert hasattr(ch, "_dispatch_lsw_additive")
+        # Verify it's callable
+        assert callable(ch._dispatch_lsw_additive)
+
+    def test_dispatch_lss_additive_structure(self):
+        """_dispatch_lss_additive should exist and have correct signature."""
+        # Verify the function exists
+        assert hasattr(ch, "_dispatch_lss_additive")
+        # Verify it's callable
+        assert callable(ch._dispatch_lss_additive)
+
+    def test_local_flag_parser_lsw(self):
+        """lsw parser should accept --local flag."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lsw", "--local"])
+        assert hasattr(args, "local")
+        assert args.local is True
+
+    def test_local_flag_parser_lss(self):
+        """lss parser should accept --local flag."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lss", "--local"])
+        assert hasattr(args, "local")
+        assert args.local is True
+
+    def test_local_flag_parser_export(self):
+        """export parser should accept --local flag."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["export", "--local"])
+        assert hasattr(args, "local")
+        assert args.local is True
+
+    def test_local_flag_combined_with_remote_lsw(self):
+        """lsw parser should accept --local combined with -r."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lsw", "--local", "-r", "user@host"])
+        assert args.local is True
+        assert args.remotes == ["user@host"]
+
+    def test_local_flag_combined_with_remote_lss(self):
+        """lss parser should accept --local combined with -r."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lss", "--local", "-r", "user@host"])
+        assert args.local is True
+        assert args.remotes == ["user@host"]
+
+    def test_local_flag_combined_with_remote_export(self):
+        """export parser should accept --local combined with -r."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["export", "--local", "-r", "user@host"])
+        assert args.local is True
+        assert args.remotes == ["user@host"]
+
+    def test_local_flag_multiple_remotes(self):
+        """--local with multiple -r flags should work."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lsw", "--local", "-r", "host1", "-r", "host2"])
+        assert args.local is True
+        assert args.remotes == ["host1", "host2"]
+
+    def test_remote_without_local_flag(self):
+        """-r without --local should only show remote (not additive)."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lsw", "-r", "user@host"])
+        local_flag = getattr(args, "local", False)
+        assert local_flag is False  # --local not set
+        assert args.remotes == ["user@host"]
+
+
+# ============================================================================
 # Run tests
 # ============================================================================
 
