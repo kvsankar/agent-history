@@ -1,15 +1,31 @@
+import importlib.machinery
+import importlib.util
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.integration
 
+_CLI_SCRIPT = Path(__file__).resolve().parents[2] / "claude-history"
+_CLI_LOADER = importlib.machinery.SourceFileLoader("claude_history_cli_module", str(_CLI_SCRIPT))
+_CLI_SPEC = importlib.util.spec_from_loader(_CLI_LOADER.name, _CLI_LOADER)
+_claude_cli = importlib.util.module_from_spec(_CLI_SPEC)
+_CLI_LOADER.exec_module(_claude_cli)
+
 
 def run_cli(args, env=None, timeout=20):
-    cmd = [sys.executable, str(Path.cwd() / "claude-history")] + args
-    return subprocess.run(cmd, capture_output=True, text=True, env=env or os.environ.copy(), timeout=timeout)
+    cmd = [sys.executable, str(Path.cwd() / "claude-history"), *args]
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env=env or os.environ.copy(),
+        timeout=timeout,
+        check=False,
+    )
 
 
 def make_workspace(root: Path, encoded_name: str, files: int = 1):
@@ -116,8 +132,12 @@ def test_e2e_export_variants(tmp_path: Path):
     def make_ws(name):
         ws = projects / name
         ws.mkdir(parents=True, exist_ok=True)
-        (ws / "s1.jsonl").write_text("{\"type\":\"user\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"content\":[{\"type\":\"text\",\"text\":\"one\"}]}\n")
-        (ws / "s2.jsonl").write_text("{\"type\":\"user\",\"timestamp\":\"2025-01-02T00:00:00Z\",\"content\":[{\"type\":\"text\",\"text\":\"two\"}]}\n")
+        (ws / "s1.jsonl").write_text(
+            '{"type":"user","timestamp":"2025-01-01T00:00:00Z","content":[{"type":"text","text":"one"}]}\n'
+        )
+        (ws / "s2.jsonl").write_text(
+            '{"type":"user","timestamp":"2025-01-02T00:00:00Z","content":[{"type":"text","text":"two"}]}\n'
+        )
         return ws
 
     make_ws("-home-user-flags")
@@ -126,19 +146,46 @@ def test_e2e_export_variants(tmp_path: Path):
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
 
     # Minimal export
-    r1 = run_cli(["export", "--local", "--minimal", "--out", str(outdir), "user-flags"], env=env, timeout=40)
+    r1 = run_cli(
+        ["export", "--local", "--minimal", "--out", str(outdir), "user-flags"], env=env, timeout=40
+    )
     assert r1.returncode == 0, r1.stderr
 
     # Flat export
-    r2 = run_cli(["export", "--local", "--flat", "--out", str(outdir), "user-flags"], env=env, timeout=40)
+    r2 = run_cli(
+        ["export", "--local", "--flat", "--out", str(outdir), "user-flags"], env=env, timeout=40
+    )
     assert r2.returncode == 0, r2.stderr
 
     # Split export
-    r3 = run_cli(["export", "--local", "--split", "1", "--out", str(outdir), "user-flags"], env=env, timeout=60)
+    r3 = run_cli(
+        ["export", "--local", "--split", "1", "--out", str(outdir), "user-flags"],
+        env=env,
+        timeout=60,
+    )
     assert r3.returncode == 0, r3.stderr
 
     md_files = list(outdir.rglob("*.md"))
     assert md_files, f"No markdown files found in {outdir} after variant exports"
+
+
+def test_e2e_export_absolute_path_target(tmp_path: Path):
+    projects = tmp_path / "projects"
+    outdir = tmp_path / "out"
+    outdir.mkdir(parents=True, exist_ok=True)
+    projects.mkdir(parents=True, exist_ok=True)
+
+    target_path = "/abs/export-case" if os.name != "nt" else r"C:\Users\export\case"
+    encoded_workspace = _claude_cli._coerce_target_to_workspace_pattern(target_path)
+    make_workspace(projects, encoded_workspace, files=1)
+
+    env = os.environ.copy()
+    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+
+    r = run_cli(["export", "--local", "--out", str(outdir), target_path], env=env, timeout=40)
+    assert r.returncode == 0, r.stderr
+    md_files = list(outdir.rglob("*.md"))
+    assert md_files, f"No markdown files created for absolute path target:\n{r.stdout}\n{r.stderr}"
 
 
 def test_e2e_all_homes_windows(tmp_path: Path):
@@ -150,8 +197,10 @@ def test_e2e_all_homes_windows(tmp_path: Path):
     wsl.mkdir(parents=True, exist_ok=True)
 
     # Create a local and a WSL workspace with one session each
-    (local / "-home-user-loc").mkdir(); (local / "-home-user-loc" / "a.jsonl").write_text("{}\n")
-    (wsl / "-home-test-distro-ws").mkdir(); (wsl / "-home-test-distro-ws" / "b.jsonl").write_text("{}\n")
+    (local / "-home-user-loc").mkdir()
+    (local / "-home-user-loc" / "a.jsonl").write_text("{}\n")
+    (wsl / "-home-test-distro-ws").mkdir()
+    (wsl / "-home-test-distro-ws" / "b.jsonl").write_text("{}\n")
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(local)
@@ -163,4 +212,8 @@ def test_e2e_all_homes_windows(tmp_path: Path):
     assert r.returncode == 0, r.stderr
     # Should include both local and WSL-style paths somewhere
     assert "/home/user/loc" in r.stdout
-    assert ("wsl.localhost" in r.stdout) or ("/home/test/distro-ws" in r.stdout) or ("/home/test/distro/ws" in r.stdout)
+    assert (
+        ("wsl.localhost" in r.stdout)
+        or ("/home/test/distro-ws" in r.stdout)
+        or ("/home/test/distro/ws" in r.stdout)
+    )

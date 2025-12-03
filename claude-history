@@ -1372,6 +1372,31 @@ def resolve_workspace_input(workspace_input: str, source_key: str = "local", arg
     return [ws for ws in workspaces if workspace_input in ws]
 
 
+def _coerce_target_to_workspace_pattern(target: str) -> str:
+    """Convert absolute filesystem paths into Claude workspace patterns."""
+    if not target or target.startswith("-") or target.startswith("@"):
+        return target
+    lowered = target.lower()
+    if lowered.endswith(".jsonl"):
+        return target
+
+    expanded = os.path.expanduser(target).strip()
+    if not expanded:
+        return target
+
+    normalized = expanded.replace("\\", "/")
+    if normalized.startswith("//"):
+        normalized = "/" + normalized.lstrip("/")
+
+    if normalized.startswith("/"):
+        return path_to_encoded_workspace(normalized)
+
+    if len(normalized) > 2 and normalized[1] == ":":
+        return _convert_windows_path_to_encoded(expanded)
+
+    return target
+
+
 def _is_windows_encoded_path(name: str) -> bool:
     """Check if name is a Windows-style encoded path (e.g., 'C--path-to-dir')."""
     return len(name) >= 3 and name[1:3] == "--"
@@ -1558,6 +1583,7 @@ def _detect_wsl_base_path(projects_dir: Path) -> Path:
     dummy path objects.
     """
     import os as _os
+
     p = _os.fspath(projects_dir)
     if isinstance(p, bytes):
         # Compare with bytes prefixes
@@ -2048,7 +2074,7 @@ def _get_wsl_home_path(distro_name: str) -> Optional[str]:
     """
     try:
         result = subprocess.run(
-            [get_command_path("wsl"), "-d", distro_name, "sh", "-lc", "printf %s \"$HOME\""] ,
+            [get_command_path("wsl"), "-d", distro_name, "sh", "-lc", 'printf %s "$HOME"'],
             check=False,
             capture_output=True,
             text=True,
@@ -7062,7 +7088,9 @@ def _print_lsw_results(all_results: list, workspaces_only: bool):
                     try:
                         p = Path(ws)
                         # Only filter for Windows and WSL sources
-                        if (source_label.startswith("Windows") or source_label.startswith("WSL ")) and not p.exists():
+                        if (
+                            source_label.startswith("Windows") or source_label.startswith("WSL ")
+                        ) and not p.exists():
                             continue
                     except Exception:
                         pass
@@ -7475,6 +7503,7 @@ def _dispatch_export(args):
     """Dispatch export command."""
     output_dir = _get_export_output_dir(args)
     targets = args.target if args.target else []
+    targets = [_coerce_target_to_workspace_pattern(t) for t in targets]
 
     alias_name = detect_alias_from_args(args, targets)
     if alias_name:
