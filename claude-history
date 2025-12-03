@@ -1437,8 +1437,13 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
             if path_segments:
                 # Return a WSL-usable path: /mnt/<drive>/<segments>
                 return "/mnt/" + drive_letter.lower() + "/" + "/".join(path_segments)
+        # On Windows, prefer native drive paths (C:\...)
+        if sys.platform == "win32":
+            return f"{drive_letter}:\\" + rest.replace("-", "\\")
 
-    # Fallback: simple replacement (may break hyphenated names)
+    # Fallback: readable form
+    if sys.platform == "win32":
+        return f"{drive_letter}:\\" + rest.replace("-", "\\")
     return f"/{drive_letter}/" + rest.replace("-", "/")
 
 
@@ -1462,6 +1467,13 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
 
     if not path_segments:
         return "/" + encoded.replace("-", "/")
+
+    # If we have a base UNC (e.g., \\wsl.localhost\Ubuntu) on Windows, return a Windows-usable path
+    if base_path is not None and sys.platform == "win32":
+        try:
+            return str(base_path.joinpath(*path_segments))
+        except Exception:
+            pass
 
     return "/" + "/".join(path_segments)
 
