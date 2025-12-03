@@ -3,6 +3,10 @@ import sys
 import json
 import subprocess
 from pathlib import Path
+import pytest
+
+# Mark all tests in this module as integration
+pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, cwd=None, timeout=15):

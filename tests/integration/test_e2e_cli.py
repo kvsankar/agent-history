@@ -2,6 +2,9 @@ import os
 import sys
 import subprocess
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, timeout=20):

@@ -3,6 +3,9 @@ import sys
 import json
 import subprocess
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, timeout=25):
@@ -106,4 +109,3 @@ def test_all_homes_sessions_windows(tmp_path: Path):
     # Expect local and WSL paths present
     assert "/home/user/loc" in out
     assert ("wsl.localhost" in out) or ("/home/test/distro-ws" in out) or ("/home/test/distro/ws" in out)
-
