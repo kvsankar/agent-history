@@ -91,9 +91,8 @@ def test_e2e_export_local(tmp_path: Path):
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
 
-    r = run_cli(["export", "export", "--local", "--out", str(outdir), "user-export"], env=env, timeout=40)
+    r = run_cli(["export", "--local", "--out", str(outdir), "user-export"], env=env, timeout=40)
     assert r.returncode == 0, r.stderr
     # Expect at least one markdown file written
     md_files = list(outdir.glob("*.md"))
     assert md_files, f"No files in {outdir} after export:\n{r.stdout}\n{r.stderr}"
-

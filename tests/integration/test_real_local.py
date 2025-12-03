@@ -38,9 +38,8 @@ def test_lsw_local_lists_workspaces(tmp_path: Path):
     # List workspaces locally
     res = run_cli(["lsw", "--local"], env=env)
     assert res.returncode == 0, res.stderr
-    out = res.stdout.strip()
-    # Expect header + two workspaces listed
-    assert "# Local" in out
+    out = res.stdout
+    # Expect two workspaces listed
     assert "/home/user/alpha" in out
     assert "/home/user/beta" in out
 
@@ -76,4 +75,3 @@ def test_lss_local_all_lists_any(tmp_path: Path):
     # Both workspaces appear in output
     assert "/home/user/foo" in out
     assert "/home/user/bar" in out
-

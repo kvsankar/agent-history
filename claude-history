@@ -1438,44 +1438,14 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
 
     if verify_local:
         mnt_base = Path(f"/mnt/{drive_letter.lower()}")
-        parts = rest.split("-")
         if mnt_base.exists():
+            parts = rest.split("-")
             path_segments = _resolve_path_segments(parts, mnt_base)
             if path_segments:
                 # Return a WSL-usable path: /mnt/<drive>/<segments>
                 return "/mnt/" + drive_letter.lower() + "/" + "/".join(path_segments)
-        # On Windows, resolve using native filesystem to preserve hyphens
-        if sys.platform == "win32":
-            base = Path(f"{drive_letter}:\\")
-            segs = []
-            i = 0
-            while i < len(parts):
-                current = base.joinpath(*segs) if segs else base
-                best = None
-                best_len = 0
-                for j in range(len(parts), i, -1):
-                    candidate = "-".join(parts[i:j])
-                    cand_path = current / candidate
-                    try:
-                        if cand_path.exists() and cand_path.is_dir():
-                            best = candidate
-                            best_len = j - i
-                            break
-                    except OSError:
-                        continue
-                if best:
-                    segs.append(best)
-                    i += best_len
-                else:
-                    segs.append(parts[i])
-                    i += 1
-            if segs:
-                return f"{drive_letter}:\\" + "\\".join(segs)
-            return f"{drive_letter}:\\" + rest.replace("-", "\\")
 
-    # Fallback: readable form
-    if sys.platform == "win32":
-        return f"{drive_letter}:\\" + rest.replace("-", "\\")
+    # Fallback: POSIX-style drive path
     return f"/{drive_letter}/" + rest.replace("-", "/")
 
 
@@ -1499,13 +1469,6 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
 
     if not path_segments:
         return "/" + encoded.replace("-", "/")
-
-    # If we have a base UNC (e.g., \\wsl.localhost\Ubuntu) on Windows, return a Windows-usable path
-    if base_path is not None and sys.platform == "win32":
-        try:
-            return str(base_path.joinpath(*path_segments))
-        except Exception:
-            pass
 
     return "/" + "/".join(path_segments)
 
@@ -1586,14 +1549,22 @@ def check_current_workspace_exists():
 
 
 def _detect_wsl_base_path(projects_dir: Path) -> Path:
-    """Detect WSL base path from projects directory, or None if not WSL."""
-    projects_dir_str = str(projects_dir)
-    is_wsl = projects_dir_str.startswith("\\\\wsl.localhost\\") or projects_dir_str.startswith(
-        "//wsl.localhost/"
-    )
+    """Detect WSL base path from projects directory, or None if not WSL.
+
+    Handles both str and bytes forms for compatibility with tests that supply
+    dummy path objects.
+    """
+    import os as _os
+    p = _os.fspath(projects_dir)
+    if isinstance(p, bytes):
+        # Compare with bytes prefixes
+        is_wsl = p.startswith(b"\\\\wsl.localhost\\") or p.startswith(b"//wsl.localhost/")
+        parts = Path(p.decode(errors="ignore")).parts
+    else:
+        is_wsl = p.startswith("\\\\wsl.localhost\\") or p.startswith("//wsl.localhost/")
+        parts = Path(p).parts
     if not is_wsl:
         return None
-    parts = projects_dir.parts
     if len(parts) >= 1:
         return Path(parts[0].rstrip("\\").rstrip("/"))
     return None
@@ -2050,21 +2021,17 @@ def get_wsl_distributions() -> list:
     return distributions
 
 
-def _get_wsl_candidate_paths(distro_name: str, username: str, home_path: str = None) -> list:
-    """Return candidate UNC paths for a WSL distro.
-
-    If home_path is provided, use it instead of assuming /home/<username>.
-    """
-    rel_home = (home_path or f"/home/{username}").lstrip("/")
+def _get_wsl_candidate_paths(distro_name: str, username: str) -> list:
+    """Return candidate UNC paths for a WSL distro."""
     return [
-        Path(f"//wsl.localhost/{distro_name}/{rel_home}/.claude/projects"),
-        Path(f"//wsl$/{distro_name}/{rel_home}/.claude/projects"),
+        Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects"),
+        Path(f"//wsl$/{distro_name}/home/{username}/.claude/projects"),
     ]
 
 
-def _locate_wsl_projects_dir(distro_name: str, username: str, home_path: str = None):
+def _locate_wsl_projects_dir(distro_name: str, username: str):
     """Find the first accessible UNC path for a WSL distro."""
-    for candidate in _get_wsl_candidate_paths(distro_name, username, home_path):
+    for candidate in _get_wsl_candidate_paths(distro_name, username):
         try:
             if candidate.exists():
                 return candidate
@@ -2124,8 +2091,7 @@ def get_wsl_projects_dir(distro_name: str):
             return None
 
         username = result.stdout.strip()
-        home_path = _get_wsl_home_path(distro_name) or f"/home/{username}"
-        return _locate_wsl_projects_dir(distro_name, username, home_path)
+        return _locate_wsl_projects_dir(distro_name, username)
 
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
