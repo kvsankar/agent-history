@@ -2021,7 +2021,22 @@ def get_wsl_distributions() -> list:
 
     Returns:
         List of dicts with distro info: {'name': str, 'username': str, 'has_claude': bool}
+
+    Test override:
+        If environment variables are set:
+          - CLAUDE_WSL_TEST_DISTRO: name of a synthetic distro
+          - CLAUDE_WSL_PROJECTS_DIR: path to a projects dir for that distro
+        then return a single entry using those values. This enables real
+        filesystem E2E tests without mocking wsl.exe.
     """
+    # Test override
+    test_distro = os.environ.get("CLAUDE_WSL_TEST_DISTRO")
+    test_projects = os.environ.get("CLAUDE_WSL_PROJECTS_DIR")
+    if test_distro and test_projects:
+        p = Path(test_projects)
+        if p.exists():
+            return [{"name": test_distro, "username": "test", "has_claude": True, "path": str(p)}]
+
     if platform.system() != "Windows":
         return []
 
@@ -2090,6 +2105,11 @@ def get_wsl_projects_dir(distro_name: str):
         Path to .claude/projects in WSL, accessible from Windows.
         Returns None if the distribution is inaccessible or Claude is not installed.
     """
+    # Test override
+    override = os.environ.get("CLAUDE_WSL_PROJECTS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
     # Get username from WSL
     try:
         result = subprocess.run(
@@ -2121,6 +2141,11 @@ def get_windows_projects_dir(username: str = None):
         Path to .claude/projects in Windows, accessible from WSL.
         Returns None if not running in WSL, user not found, or Claude not installed.
     """
+    # Test override
+    override = os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
     if not is_running_in_wsl():
         return None
 
