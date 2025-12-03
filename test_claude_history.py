@@ -20,6 +20,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -5397,14 +5398,18 @@ class TestCLISmoke:
     """Smoke tests that run the actual CLI as a subprocess."""
 
     @pytest.fixture
-    def script_path(self):
-        """Get the path to the claude-history script."""
-        return Path(__file__).parent / "claude-history"
+    def script_cmd(self):
+        """Get the command to run the claude-history script.
 
-    def test_no_args_prints_help(self, script_path):
+        On Windows, scripts without .py extension need to be run through Python.
+        """
+        script_path = Path(__file__).parent / "claude-history"
+        return [sys.executable, str(script_path)]
+
+    def test_no_args_prints_help(self, script_cmd):
         """Running with no arguments should print help."""
         result = subprocess.run(
-            [str(script_path)],
+            script_cmd,
             capture_output=True,
             text=True,
         )
@@ -5412,20 +5417,20 @@ class TestCLISmoke:
         assert "usage:" in result.stdout
         assert "Browse and export Claude Code conversation history" in result.stdout
 
-    def test_help_flag(self, script_path):
+    def test_help_flag(self, script_cmd):
         """--help should print help."""
         result = subprocess.run(
-            [str(script_path), "--help"],
+            script_cmd + ["--help"],
             capture_output=True,
             text=True,
         )
         assert result.returncode == 0
         assert "usage:" in result.stdout
 
-    def test_version_flag(self, script_path):
+    def test_version_flag(self, script_cmd):
         """--version should print version."""
         result = subprocess.run(
-            [str(script_path), "--version"],
+            script_cmd + ["--version"],
             capture_output=True,
             text=True,
         )
@@ -5433,30 +5438,30 @@ class TestCLISmoke:
         # Version output goes to stdout
         assert result.stdout.strip() != ""
 
-    def test_invalid_command(self, script_path):
+    def test_invalid_command(self, script_cmd):
         """Invalid command should fail with non-zero exit code."""
         result = subprocess.run(
-            [str(script_path), "invalidcommand"],
+            script_cmd + ["invalidcommand"],
             capture_output=True,
             text=True,
         )
         assert result.returncode != 0
         assert "invalid choice" in result.stderr or "error" in result.stderr.lower()
 
-    def test_lsw_runs(self, script_path):
+    def test_lsw_runs(self, script_cmd):
         """lsw command should run without error."""
         result = subprocess.run(
-            [str(script_path), "lsw"],
+            script_cmd + ["lsw"],
             capture_output=True,
             text=True,
         )
         # Should succeed (may have no output if no workspaces)
         assert result.returncode == 0
 
-    def test_subcommand_help(self, script_path):
+    def test_subcommand_help(self, script_cmd):
         """Subcommand --help should work."""
         result = subprocess.run(
-            [str(script_path), "export", "--help"],
+            script_cmd + ["export", "--help"],
             capture_output=True,
             text=True,
         )
