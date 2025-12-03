@@ -551,6 +551,13 @@ def print_sessions_output(sessions: list, source_label: str, workspaces_only: bo
     if workspaces_only:
         workspaces = sorted({s["workspace_readable"] for s in sessions})
         for ws in workspaces:
+            # On Windows, skip paths that don't exist to avoid stale/invalid entries
+            if sys.platform == "win32":
+                try:
+                    if not Path(ws).exists():
+                        continue
+                except Exception:
+                    pass
             print(ws)
     else:
         print("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
@@ -1431,14 +1438,39 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
 
     if verify_local:
         mnt_base = Path(f"/mnt/{drive_letter.lower()}")
+        parts = rest.split("-")
         if mnt_base.exists():
-            parts = rest.split("-")
             path_segments = _resolve_path_segments(parts, mnt_base)
             if path_segments:
                 # Return a WSL-usable path: /mnt/<drive>/<segments>
                 return "/mnt/" + drive_letter.lower() + "/" + "/".join(path_segments)
-        # On Windows, prefer native drive paths (C:\...)
+        # On Windows, resolve using native filesystem to preserve hyphens
         if sys.platform == "win32":
+            base = Path(f"{drive_letter}:\\")
+            segs = []
+            i = 0
+            while i < len(parts):
+                current = base.joinpath(*segs) if segs else base
+                best = None
+                best_len = 0
+                for j in range(len(parts), i, -1):
+                    candidate = "-".join(parts[i:j])
+                    cand_path = current / candidate
+                    try:
+                        if cand_path.exists() and cand_path.is_dir():
+                            best = candidate
+                            best_len = j - i
+                            break
+                    except OSError:
+                        continue
+                if best:
+                    segs.append(best)
+                    i += best_len
+                else:
+                    segs.append(parts[i])
+                    i += 1
+            if segs:
+                return f"{drive_letter}:\\" + "\\".join(segs)
             return f"{drive_letter}:\\" + rest.replace("-", "\\")
 
     # Fallback: readable form
@@ -7033,6 +7065,15 @@ def _print_lsw_results(all_results: list, workspaces_only: bool):
             seen_workspaces = set()
             for session in sessions:
                 ws = session["workspace_readable"]
+                # On Windows, only show paths that actually exist to avoid stale/invalid entries
+                if sys.platform == "win32":
+                    try:
+                        p = Path(ws)
+                        # Only filter for Windows and WSL sources
+                        if (source_label.startswith("Windows") or source_label.startswith("WSL ")) and not p.exists():
+                            continue
+                    except Exception:
+                        pass
                 if ws not in seen_workspaces:
                     seen_workspaces.add(ws)
                     print(f"  {ws}")
