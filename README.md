@@ -214,6 +214,16 @@ By default, Claude Code deletes conversation history after 30 days. Add this to 
 }
 ```
 
+## Environment Overrides
+
+Set `CLAUDE_PROJECTS_DIR` to point the CLI at a different `.claude/projects` root. This is handy when running inside containers, CI pipelines, or when your Claude data lives on another drive:
+
+```bash
+CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects claude-history lsw
+```
+
+The directory must mirror Claude's standard layout (`<root>/<encoded-workspace>/*.jsonl`).
+
 ## Documentation
 
 - **[Command Reference](docs/USAGE.md)** - Detailed options for all commands

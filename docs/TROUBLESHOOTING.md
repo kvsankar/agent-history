@@ -95,6 +95,12 @@ claude-history lss myproject -r user@host  # SSH remote
 1. Install Claude Code: https://claude.com/claude-code
 2. Log in: `claude login`
 3. Create at least one conversation
+4. If your Claude data lives somewhere else (e.g., another drive or a mounted backup), set the `CLAUDE_PROJECTS_DIR` environment variable before running `claude-history`:
+
+   ```bash
+   export CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects
+   claude-history lsw
+   ```
 
 ---
 
