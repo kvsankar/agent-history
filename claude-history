@@ -1923,14 +1923,14 @@ def _get_wsl_distro_info(distro_name: str) -> dict:
             return None
 
         username = user_result.stdout.strip()
-        claude_path = Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects")
-        has_claude = claude_path.exists()
+        claude_path = _locate_wsl_projects_dir(distro_name, username)
+        has_claude = claude_path is not None
 
         return {
             "name": distro_name,
             "username": username,
             "has_claude": has_claude,
-            "path": str(claude_path) if has_claude else None,
+            "path": str(claude_path) if claude_path else None,
         }
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
@@ -1953,6 +1953,25 @@ def get_wsl_distributions() -> list:
         if info:
             distributions.append(info)
     return distributions
+
+
+def _get_wsl_candidate_paths(distro_name: str, username: str) -> list:
+    """Return candidate UNC paths for a WSL distro."""
+    return [
+        Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects"),
+        Path(f"//wsl$/{distro_name}/home/{username}/.claude/projects"),
+    ]
+
+
+def _locate_wsl_projects_dir(distro_name: str, username: str):
+    """Find the first accessible UNC path for a WSL distro."""
+    for candidate in _get_wsl_candidate_paths(distro_name, username):
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+    return None
 
 
 def get_wsl_projects_dir(distro_name: str):
@@ -1979,14 +1998,7 @@ def get_wsl_projects_dir(distro_name: str):
             return None
 
         username = result.stdout.strip()
-
-        # Construct Windows path to WSL filesystem
-        projects_dir = Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects")
-
-        if not projects_dir.exists():
-            return None
-
-        return projects_dir
+        return _locate_wsl_projects_dir(distro_name, username)
 
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None

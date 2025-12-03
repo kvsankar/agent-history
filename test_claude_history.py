@@ -6823,6 +6823,64 @@ class TestRegressionBugFixes:
                 assert ("remote:alice@vm01", "alice@vm01") in remote_sources
                 assert ("remote:bob@vm02", "bob@vm02") in remote_sources
 
+    def test_locate_wsl_projects_dir_prefers_localhost(self, monkeypatch):
+        """17.7: _locate_wsl_projects_dir prefers the wsl.localhost UNC path."""
+
+        class DummyPath:
+            def __init__(self, name, exists):
+                self._name = name
+                self._exists = exists
+
+            def exists(self):
+                return self._exists
+
+        candidates = [DummyPath("localhost", True), DummyPath("wsl$", True)]
+        monkeypatch.setattr(
+            ch,
+            "_get_wsl_candidate_paths",
+            lambda distro, user: candidates,
+        )
+        result = ch._locate_wsl_projects_dir("Ubuntu", "user")
+        assert result is candidates[0]
+
+    def test_locate_wsl_projects_dir_falls_back(self, monkeypatch):
+        """17.8: _locate_wsl_projects_dir falls back to \\\\wsl$."""
+
+        class DummyPath:
+            def __init__(self, name, exists):
+                self._name = name
+                self._exists = exists
+
+            def exists(self):
+                return self._exists
+
+        candidates = [DummyPath("localhost", False), DummyPath("wsl$", True)]
+        monkeypatch.setattr(
+            ch,
+            "_get_wsl_candidate_paths",
+            lambda distro, user: candidates,
+        )
+        result = ch._locate_wsl_projects_dir("Ubuntu", "user")
+        assert result is candidates[1]
+
+    def test_locate_wsl_projects_dir_returns_none(self, monkeypatch):
+        """17.9: _locate_wsl_projects_dir returns None when nothing exists."""
+
+        class DummyPath:
+            def __init__(self, exists):
+                self._exists = exists
+
+            def exists(self):
+                return self._exists
+
+        candidates = [DummyPath(False), DummyPath(False)]
+        monkeypatch.setattr(
+            ch,
+            "_get_wsl_candidate_paths",
+            lambda distro, user: candidates,
+        )
+        assert ch._locate_wsl_projects_dir("Ubuntu", "user") is None
+
 
 # ============================================================================
 # Run tests
