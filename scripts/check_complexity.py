@@ -117,7 +117,9 @@ def check_violation(filepath: str, parsed: dict) -> str | None:
 def check_file_complexity(filepath: str) -> list[str]:
     """Check complexity of a single file. Returns list of violations."""
     try:
-        result = subprocess.run(["radon", "cc", filepath, "-s", "-a"], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            ["radon", "cc", filepath, "-s", "-a"], capture_output=True, text=True, timeout=30
+        )
         if result.returncode != 0:
             return []
 
@@ -161,7 +163,9 @@ def check_maintainability_index(files: list[str]) -> tuple[bool, list[str]]:
     warnings = []
     for filepath in python_files:
         try:
-            result = subprocess.run(["radon", "mi", filepath, "-s"], capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                ["radon", "mi", filepath, "-s"], capture_output=True, text=True, timeout=30
+            )
             if result.returncode != 0:
                 continue
 

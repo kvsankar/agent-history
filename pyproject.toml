@@ -6,30 +6,52 @@ requires-python = ">=3.7"
 
 [tool.ruff]
 target-version = "py37"
-line-length = 120
+line-length = 100
 
 [tool.ruff.lint]
 select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # pyflakes
-    "I",      # isort
-    "B",      # flake8-bugbear
-    "C4",     # flake8-comprehensions
-    "UP",     # pyupgrade
+    "E", "W",    # pycodestyle
+    "F",         # Pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # flake8-bugbear
+    "C4",        # flake8-comprehensions
+    "C90",       # mccabe complexity
+    "PL",        # pylint
+    "RUF",       # Ruff-specific
 ]
 ignore = [
-    "E501",   # line too long (handled by formatter)
-    "B008",   # do not perform function calls in argument defaults
-    "B905",   # zip without explicit strict parameter
-    "UP007",  # use X | Y for union types (not available in 3.7)
-    "B007",   # unused loop control variable (common pattern with tuple unpacking)
-    "B023",   # function uses loop variable (intentional in closures)
-    "E402",   # module import not at top (sqlite3 imported where needed)
+    "E501",    # line too long (handled by formatter)
+    "B008",    # do not perform function calls in argument defaults
+    "B905",    # zip without explicit strict parameter
+    "UP007",   # use X | Y for union types (not available in 3.7)
+    "B007",    # unused loop control variable (common pattern with tuple unpacking)
+    "B023",    # function uses loop variable (intentional in closures)
+    "E402",    # module import not at top (sqlite3 imported where needed)
+    "RUF013",  # implicit Optional (requires 3.10+ for clean syntax)
+    "PLC0415", # import not at top (intentional lazy imports)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files commonly use magic values, many arguments, mock classes
+"test_*.py" = ["PLR2004", "PLR0913", "PLR0915", "N802", "N803", "RUF012"]
+# Main script has some complexity that's baselined
+"claude-history" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
+# Scripts use magic values and have some complexity
+"scripts/*.py" = ["PLR2004", "PLW1510", "C901", "PLR0915"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["claude_history"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 8
+max-branches = 15
+max-returns = 8
+max-statements = 60
 
 [dependency-groups]
 dev = [

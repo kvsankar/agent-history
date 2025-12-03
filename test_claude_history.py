@@ -53,7 +53,10 @@ def sample_jsonl_content():
         },
         {
             "type": "assistant",
-            "message": {"role": "assistant", "content": [{"type": "text", "text": "Hello! How can I help?"}]},
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hello! How can I help?"}],
+            },
             "timestamp": "2025-11-20T10:30:50.456Z",
             "uuid": "assistant-uuid-1",
             "parentUuid": "user-uuid-1",
@@ -352,7 +355,9 @@ class TestWorkspaceSessions:
 
     def test_get_sessions_by_pattern(self, temp_projects_dir):
         """Should find sessions matching pattern."""
-        sessions = ch.get_workspace_sessions("myproject", projects_dir=temp_projects_dir, quiet=True)
+        sessions = ch.get_workspace_sessions(
+            "myproject", projects_dir=temp_projects_dir, quiet=True
+        )
 
         assert len(sessions) == 1
         assert "myproject" in sessions[0]["workspace"]
@@ -366,13 +371,17 @@ class TestWorkspaceSessions:
 
     def test_get_sessions_no_match(self, temp_projects_dir):
         """Non-matching pattern should return empty list."""
-        sessions = ch.get_workspace_sessions("nonexistent-workspace-xyz", projects_dir=temp_projects_dir, quiet=True)
+        sessions = ch.get_workspace_sessions(
+            "nonexistent-workspace-xyz", projects_dir=temp_projects_dir, quiet=True
+        )
 
         assert sessions == []
 
     def test_sessions_include_file_info(self, temp_projects_dir):
         """Sessions should include file path and metadata."""
-        sessions = ch.get_workspace_sessions("myproject", projects_dir=temp_projects_dir, quiet=True)
+        sessions = ch.get_workspace_sessions(
+            "myproject", projects_dir=temp_projects_dir, quiet=True
+        )
 
         assert len(sessions) == 1
         session = sessions[0]
@@ -455,7 +464,9 @@ class TestExportConfig:
             remote = None
             lenient = False
 
-        config = ch.ExportConfig.from_args(MockArgs(), output_dir="/tmp/override", patterns=["override"], force=True)
+        config = ch.ExportConfig.from_args(
+            MockArgs(), output_dir="/tmp/override", patterns=["override"], force=True
+        )
 
         assert config.output_dir == "/tmp/override"
         assert config.patterns == ["override"]
@@ -530,7 +541,10 @@ class TestAliasStorage:
         with patch.object(ch, "get_aliases_dir", return_value=temp_config_dir):
             with patch.object(ch, "get_aliases_file", return_value=aliases_file):
                 # Save
-                test_data = {"version": 1, "aliases": {"myproject": {"local": ["-home-user-myproject"]}}}
+                test_data = {
+                    "version": 1,
+                    "aliases": {"myproject": {"local": ["-home-user-myproject"]}},
+                }
                 result = ch.save_aliases(test_data)
                 assert result is True
 
@@ -698,7 +712,9 @@ class TestWSLOperations:
         mock_result = type("Result", (), {"returncode": 0, "stdout": "testuser\n"})()
 
         # Create a fake WSL path structure
-        wsl_projects = tmp_path / "wsl.localhost" / "Ubuntu" / "home" / "testuser" / ".claude" / "projects"
+        wsl_projects = (
+            tmp_path / "wsl.localhost" / "Ubuntu" / "home" / "testuser" / ".claude" / "projects"
+        )
         wsl_projects.mkdir(parents=True)
 
         with patch("subprocess.run", return_value=mock_result):
@@ -782,7 +798,9 @@ class TestWindowsOperations:
                             if user_dir.is_dir() and not user_dir.is_symlink():
                                 claude_dir = user_dir / ".claude" / "projects"
                                 if claude_dir.exists():
-                                    workspace_count = len([d for d in claude_dir.iterdir() if d.is_dir()])
+                                    workspace_count = len(
+                                        [d for d in claude_dir.iterdir() if d.is_dir()]
+                                    )
                                     results.append(
                                         {
                                             "username": user_dir.name,
@@ -915,7 +933,10 @@ class TestRealJSONLPatterns:
             # User message
             {
                 "type": "user",
-                "message": {"role": "user", "content": "Help me write a Python function to sort a list"},
+                "message": {
+                    "role": "user",
+                    "content": "Help me write a Python function to sort a list",
+                },
                 "timestamp": "2025-11-20T10:30:00.000Z",
                 "uuid": "msg-user-001",
                 "sessionId": "session-abc123",
@@ -1039,7 +1060,9 @@ class TestRealJSONLPatterns:
         assert messages[1]["role"] == "assistant"
         # Content is already extracted/formatted by read_jsonl_messages
         # Check for tool use markers in formatted output
-        assert "Tool Use" in str(messages[1].get("content", "")) or "Write" in str(messages[1].get("content", ""))
+        assert "Tool Use" in str(messages[1].get("content", "")) or "Write" in str(
+            messages[1].get("content", "")
+        )
 
     def test_extract_tool_use_content(self, realistic_conversation):
         """Should extract tool use blocks correctly."""
@@ -1158,7 +1181,9 @@ class TestMetricsDatabase:
 
         conn.close()
 
-    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix permissions not applicable on Windows")
+    @pytest.mark.skipif(
+        platform.system() == "Windows", reason="Unix permissions not applicable on Windows"
+    )
     def test_init_metrics_db_sets_permissions(self, tmp_path):
         """Should set secure file permissions."""
         db_path = tmp_path / "secure.db"
@@ -1217,7 +1242,9 @@ class TestMetricsDatabase:
         assert session["message_count"] == 2
 
         # Verify messages were inserted
-        cursor = conn.execute("SELECT COUNT(*) FROM messages WHERE session_id = ?", ("session-001",))
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE session_id = ?", ("session-001",)
+        )
         msg_count = cursor.fetchone()[0]
         assert msg_count == 2
 
@@ -1258,7 +1285,12 @@ class TestMetricsDatabase:
                     "role": "assistant",
                     "content": [
                         {"type": "text", "text": "Running command"},
-                        {"type": "tool_use", "id": "tool-1", "name": "Bash", "input": {"command": "ls"}},
+                        {
+                            "type": "tool_use",
+                            "id": "tool-1",
+                            "name": "Bash",
+                            "input": {"command": "ls"},
+                        },
                     ],
                 },
                 "timestamp": "2025-11-20T10:00:00.000Z",
@@ -1415,7 +1447,9 @@ class TestCLICommands:
                 # Create alias
                 test_alias = {
                     "version": 1,
-                    "aliases": {"myalias": {"local": ["-home-user-project1", "-home-user-project2"]}},
+                    "aliases": {
+                        "myalias": {"local": ["-home-user-project1", "-home-user-project2"]}
+                    },
                 }
 
                 ch.save_aliases(test_alias)
@@ -1538,7 +1572,10 @@ class TestHomeDirMocking:
                             "local": ["-home-user-proj1", "-home-user-proj1-renamed"],
                             "remote:server1": ["-home-user-proj1"],
                         },
-                        "project2": {"local": ["-home-user-proj2"], "windows": ["C--Users-user-proj2"]},
+                        "project2": {
+                            "local": ["-home-user-proj2"],
+                            "windows": ["C--Users-user-proj2"],
+                        },
                     },
                 }
                 save_result = ch.save_aliases(test_aliases)
@@ -1582,11 +1619,15 @@ class TestHomeDirMocking:
         )
 
         # Use dependency injection to query sessions from alternate location
-        myproject_sessions = ch.get_workspace_sessions("myproject", projects_dir=projects_dir, quiet=True)
+        myproject_sessions = ch.get_workspace_sessions(
+            "myproject", projects_dir=projects_dir, quiet=True
+        )
         assert len(myproject_sessions) == 2
         assert all("myproject" in s["workspace"] for s in myproject_sessions)
 
-        another_sessions = ch.get_workspace_sessions("anotherproject", projects_dir=projects_dir, quiet=True)
+        another_sessions = ch.get_workspace_sessions(
+            "anotherproject", projects_dir=projects_dir, quiet=True
+        )
         assert len(another_sessions) == 1
         assert "anotherproject" in another_sessions[0]["workspace"]
 
@@ -1829,7 +1870,12 @@ class TestSection2LocalOperations:
             "config_dir": config_dir,
             "tmp_path": tmp_path,
             "workspaces": {"ws1": ws1, "ws2": ws2, "ws3": ws3},
-            "sessions": {"session1": session1, "session2": session2, "session3": session3, "session4": session4},
+            "sessions": {
+                "session1": session1,
+                "session2": session2,
+                "session3": session3,
+                "session4": session4,
+            },
         }
 
     # Section 2.1: lsh - List Hosts (Local)
@@ -1868,7 +1914,9 @@ class TestSection2LocalOperations:
         """2.2.3: lsw nonexistent lists no workspaces."""
         projects_dir = local_test_env["projects_dir"]
 
-        sessions = ch.get_workspace_sessions("nonexistent-xyz", projects_dir=projects_dir, quiet=True)
+        sessions = ch.get_workspace_sessions(
+            "nonexistent-xyz", projects_dir=projects_dir, quiet=True
+        )
 
         assert sessions == []
 
@@ -1886,7 +1934,9 @@ class TestSection2LocalOperations:
         projects_dir = local_test_env["projects_dir"]
 
         since_date, _ = ch.parse_and_validate_dates("2025-06-01", None)
-        sessions = ch.get_workspace_sessions("project1", projects_dir=projects_dir, since_date=since_date, quiet=True)
+        sessions = ch.get_workspace_sessions(
+            "project1", projects_dir=projects_dir, since_date=since_date, quiet=True
+        )
 
         # Only session-002 (2025-06-20) should match
         assert len(sessions) == 1
@@ -1896,7 +1946,9 @@ class TestSection2LocalOperations:
         projects_dir = local_test_env["projects_dir"]
 
         _, until_date = ch.parse_and_validate_dates(None, "2025-02-01")
-        sessions = ch.get_workspace_sessions("project1", projects_dir=projects_dir, until_date=until_date, quiet=True)
+        sessions = ch.get_workspace_sessions(
+            "project1", projects_dir=projects_dir, until_date=until_date, quiet=True
+        )
 
         # Only session-001 (2025-01-15) should match
         assert len(sessions) == 1
@@ -1964,7 +2016,9 @@ class TestSection2LocalOperations:
         projects_dir = local_test_env["projects_dir"]
 
         since_date, _ = ch.parse_and_validate_dates("2025-06-01", None)
-        sessions = ch.get_workspace_sessions("project1", projects_dir=projects_dir, since_date=since_date, quiet=True)
+        sessions = ch.get_workspace_sessions(
+            "project1", projects_dir=projects_dir, since_date=since_date, quiet=True
+        )
 
         # Should only get session-002
         assert len(sessions) == 1
@@ -1974,7 +2028,9 @@ class TestSection2LocalOperations:
         projects_dir = local_test_env["projects_dir"]
 
         _, until_date = ch.parse_and_validate_dates(None, "2025-02-01")
-        sessions = ch.get_workspace_sessions("project1", projects_dir=projects_dir, until_date=until_date, quiet=True)
+        sessions = ch.get_workspace_sessions(
+            "project1", projects_dir=projects_dir, until_date=until_date, quiet=True
+        )
 
         # Should only get session-001
         assert len(sessions) == 1
@@ -2236,7 +2292,9 @@ class TestSection6MultiSourceOperations:
         projects_dir = multi_source_env["projects_dir"]
 
         # Both patterns match the same workspace
-        sessions = ch.collect_sessions_with_dedup(["myproject", "project"], projects_dir=projects_dir)
+        sessions = ch.collect_sessions_with_dedup(
+            ["myproject", "project"], projects_dir=projects_dir
+        )
 
         # Should not have duplicates
         file_paths = [str(s["file"]) for s in sessions]
@@ -2246,7 +2304,9 @@ class TestSection6MultiSourceOperations:
         """6.7.4: No sessions found when nothing matches."""
         projects_dir = multi_source_env["projects_dir"]
 
-        sessions = ch.collect_sessions_with_dedup(["nonexistent-xyz", "also-nonexistent"], projects_dir=projects_dir)
+        sessions = ch.collect_sessions_with_dedup(
+            ["nonexistent-xyz", "also-nonexistent"], projects_dir=projects_dir
+        )
 
         assert sessions == []
 
@@ -2344,13 +2404,19 @@ class TestSection7ErrorHandling:
     def test_err_circ_wsl_dash(self):
         """7.5.3: Listing excludes --wsl-* cached directories."""
         # These are legacy cached directory formats
-        assert ch.is_native_workspace("--wsl-Ubuntu") is False or ch.is_native_workspace("--wsl-Ubuntu") is True
+        assert (
+            ch.is_native_workspace("--wsl-Ubuntu") is False
+            or ch.is_native_workspace("--wsl-Ubuntu") is True
+        )
         # The function should handle this pattern
 
     def test_err_circ_remote_dash(self):
         """7.5.4: Listing excludes -remote-* cached directories."""
         # Test the actual filtering logic
-        assert ch.is_native_workspace("-remote-hostname") is False or ch.is_native_workspace("-remote-hostname") is True
+        assert (
+            ch.is_native_workspace("-remote-hostname") is False
+            or ch.is_native_workspace("-remote-hostname") is True
+        )
 
 
 # ============================================================================
@@ -2499,7 +2565,10 @@ class TestSection9AliasOperations:
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
                 # Create alias with workspace
-                aliases = {"version": 1, "aliases": {"testproject": {"local": ["-home-user-project1"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"testproject": {"local": ["-home-user-project1"]}},
+                }
                 ch.save_aliases(aliases)
 
                 # Verify
@@ -2511,7 +2580,10 @@ class TestSection9AliasOperations:
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
                 # Create alias with workspace
-                aliases = {"version": 1, "aliases": {"testproject": {"local": ["-home-user-project1"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"testproject": {"local": ["-home-user-project1"]}},
+                }
                 ch.save_aliases(aliases)
 
                 # Show the alias - it shows the added workspace
@@ -2524,7 +2596,10 @@ class TestSection9AliasOperations:
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
                 # Create then delete
-                aliases = {"version": 1, "aliases": {"testproject": {"local": ["-home-user-project1"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"testproject": {"local": ["-home-user-project1"]}},
+                }
                 ch.save_aliases(aliases)
 
                 # Delete by removing from dict
@@ -2599,7 +2674,10 @@ class TestSection9AliasOperations:
                 ch.save_aliases({"version": 1, "aliases": {}})
 
                 # Create import file
-                to_import = {"version": 1, "aliases": {"imported_project": {"local": ["-home-user-imported"]}}}
+                to_import = {
+                    "version": 1,
+                    "aliases": {"imported_project": {"local": ["-home-user-imported"]}},
+                }
                 import_file.write_text(json.dumps(to_import, indent=2))
 
                 # Import by reading file and saving
@@ -2780,7 +2858,12 @@ class TestSection11StatsCommand:
                         "role": "assistant",
                         "content": [
                             {"type": "text", "text": "Running command"},
-                            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
+                            {
+                                "type": "tool_use",
+                                "id": "t1",
+                                "name": "Bash",
+                                "input": {"command": "ls"},
+                            },
                         ],
                         "usage": {"input_tokens": 150, "output_tokens": 75},
                     },
@@ -2794,7 +2877,12 @@ class TestSection11StatsCommand:
 
         db_path = tmp_path / "metrics.db"
 
-        return {"projects_dir": projects_dir, "db_path": db_path, "session_file": session, "tmp_path": tmp_path}
+        return {
+            "projects_dir": projects_dir,
+            "db_path": db_path,
+            "session_file": session,
+            "tmp_path": tmp_path,
+        }
 
     # Section 11.1: Stats Sync
     def test_stats_sync_local(self, stats_env):
@@ -3278,7 +3366,9 @@ class TestSection3Remaining:
     def test_wsl_lsh_list(self):
         """3.1.1: lsh --wsl lists WSL distributions with Claude."""
         # Mock Windows environment
-        mock_result = type("Result", (), {"returncode": 0, "stdout": "Ubuntu\nDebian\n".encode("utf-16-le")})()
+        mock_result = type(
+            "Result", (), {"returncode": 0, "stdout": "Ubuntu\nDebian\n".encode("utf-16-le")}
+        )()
 
         with patch("platform.system", return_value="Windows"):
             with patch("subprocess.run", return_value=mock_result):
@@ -3700,7 +3790,9 @@ class TestSection6Remaining:
         )
 
         # Both patterns match same workspace
-        sessions = ch.collect_sessions_with_dedup(["myproject", "project"], projects_dir=projects_dir)
+        sessions = ch.collect_sessions_with_dedup(
+            ["myproject", "project"], projects_dir=projects_dir
+        )
         file_paths = [str(s["file"]) for s in sessions]
         assert len(file_paths) == len(set(file_paths))  # No duplicates
 
@@ -3977,7 +4069,10 @@ class TestSection9Remaining:
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
                 # Create alias with workspace
-                aliases = {"version": 1, "aliases": {"test": {"local": ["-home-user-proj", "-home-user-other"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"local": ["-home-user-proj", "-home-user-other"]}},
+                }
                 ch.save_aliases(aliases)
 
                 # Remove one workspace
@@ -4004,7 +4099,10 @@ class TestSection9Remaining:
         """9.2.2: alias add --windows <pattern> adds Windows workspace."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"windows": ["C--Users-test-project"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"windows": ["C--Users-test-project"]}},
+                }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
@@ -4014,7 +4112,10 @@ class TestSection9Remaining:
         """9.2.3: alias add --wsl <pattern> adds WSL workspace."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"wsl:Ubuntu": ["-home-user-project"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"wsl:Ubuntu": ["-home-user-project"]}},
+                }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
@@ -4024,7 +4125,10 @@ class TestSection9Remaining:
         """9.2.4: alias add -r user@host <pattern> adds remote workspace."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"remote:user@host": ["-home-user-project"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"remote:user@host": ["-home-user-project"]}},
+                }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
@@ -4046,7 +4150,10 @@ class TestSection9Remaining:
         """9.2.7: alias show shows workspaces by source with session counts."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"local": ["-home-user-proj"], "windows": ["C--proj"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"local": ["-home-user-proj"], "windows": ["C--proj"]}},
+                }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
@@ -4114,7 +4221,10 @@ class TestSection9Remaining:
         # This tests the alias structure can hold remote workspaces
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"remote:user@host": ["-home-user-project"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"remote:user@host": ["-home-user-project"]}},
+                }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
@@ -4125,7 +4235,10 @@ class TestSection9Remaining:
         # Tests that cached remote detection works with aliases
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"remote:user@host": ["-home-user-project"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"remote:user@host": ["-home-user-project"]}},
+                }
                 ch.save_aliases(aliases)
                 # Cache detection is handled by is_cached_workspace
                 assert ch.is_cached_workspace("remote_host_-home-user-project") is True
@@ -4134,7 +4247,10 @@ class TestSection9Remaining:
         """9.4a.3: Alias with Windows workspace exports from Windows directly."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"windows": ["C--Users-test-project"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"windows": ["C--Users-test-project"]}},
+                }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
@@ -4165,7 +4281,9 @@ class TestSection9Remaining:
         """9.4a.5: Unreachable remote shows warning, continues with other sources."""
         # Test that SSH connection check handles unreachable hosts gracefully
         # Mock subprocess.run to return a failed exit code
-        mock_result = type("Result", (), {"returncode": 1, "stdout": "", "stderr": "Connection refused"})()
+        mock_result = type(
+            "Result", (), {"returncode": 1, "stdout": "", "stderr": "Connection refused"}
+        )()
         with patch("subprocess.run", return_value=mock_result):
             result = ch.check_ssh_connection("unreachable@host")
             assert result is False
@@ -4557,7 +4675,10 @@ class TestSection12Full:
             with patch.object(ch, "get_aliases_file", return_value=aliases_file):
                 aliases = {
                     "version": 1,
-                    "aliases": {"alias1": {"local": ["-home-user-proj"]}, "alias2": {"local": ["-home-user-proj"]}},
+                    "aliases": {
+                        "alias1": {"local": ["-home-user-proj"]},
+                        "alias2": {"local": ["-home-user-proj"]},
+                    },
                 }
                 ch.save_aliases(aliases)
 
@@ -4587,7 +4708,10 @@ class TestSection12Full:
 
         with patch.object(ch, "get_aliases_dir", return_value=config_dir):
             with patch.object(ch, "get_aliases_file", return_value=aliases_file):
-                aliases = {"version": 1, "aliases": {"remote-only": {"remote:user@host": ["-home-user-proj"]}}}
+                aliases = {
+                    "version": 1,
+                    "aliases": {"remote-only": {"remote:user@host": ["-home-user-proj"]}},
+                }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
@@ -4824,7 +4948,12 @@ class TestSection14Remaining:
         aliases_file = config_dir / "aliases.json"
         aliases_file.write_text('{"version": 1, "aliases": {}}')
 
-        return {"config_dir": config_dir, "db_file": db_file, "config_file": config_file, "aliases_file": aliases_file}
+        return {
+            "config_dir": config_dir,
+            "db_file": db_file,
+            "config_file": config_file,
+            "aliases_file": aliases_file,
+        }
 
     def test_reset_confirm_cancelled(self):
         """14.1.1: reset (answer n) shows files, prompts, cancelled."""
@@ -4953,7 +5082,9 @@ def has_wsl_available() -> bool:
     if not is_running_on_windows():
         return False
     try:
-        result = subprocess.run(["wsl", "-l", "-q"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            ["wsl", "-l", "-q"], capture_output=True, text=True, timeout=5, check=False
+        )
         distros = [d.strip() for d in result.stdout.strip().split("\n") if d.strip()]
         return len(distros) > 0
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
@@ -4963,10 +5094,13 @@ def has_wsl_available() -> bool:
 # Platform-specific skip markers
 requires_wsl = pytest.mark.skipif(not is_running_on_wsl(), reason="Test requires WSL environment")
 
-requires_windows = pytest.mark.skipif(not is_running_on_windows(), reason="Test requires Windows environment")
+requires_windows = pytest.mark.skipif(
+    not is_running_on_windows(), reason="Test requires Windows environment"
+)
 
 requires_windows_claude = pytest.mark.skipif(
-    not has_windows_claude_installation(), reason="Test requires Windows Claude installation accessible from WSL"
+    not has_windows_claude_installation(),
+    reason="Test requires Windows Claude installation accessible from WSL",
 )
 
 requires_wsl_from_windows = pytest.mark.skipif(
@@ -5039,7 +5173,11 @@ class TestPlatformWSLWithWindowsClaude:
 
         if projects_dir and projects_dir.exists():
             # Get workspaces from the Windows projects dir (inline listing)
-            workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and ch.is_native_workspace(d.name)]
+            workspaces = [
+                d.name
+                for d in projects_dir.iterdir()
+                if d.is_dir() and ch.is_native_workspace(d.name)
+            ]
             # May be empty if no conversations, but should not error
             assert isinstance(workspaces, list)
 
@@ -5052,11 +5190,17 @@ class TestPlatformWSLWithWindowsClaude:
         projects_dir = ch.get_windows_projects_dir(first_user)
 
         if projects_dir and projects_dir.exists():
-            workspaces = [d.name for d in projects_dir.iterdir() if d.is_dir() and ch.is_native_workspace(d.name)]
+            workspaces = [
+                d.name
+                for d in projects_dir.iterdir()
+                if d.is_dir() and ch.is_native_workspace(d.name)
+            ]
             if workspaces:
                 # Get sessions from first workspace
                 first_ws = workspaces[0]
-                sessions = ch.get_workspace_sessions(first_ws, projects_dir=projects_dir, quiet=True)
+                sessions = ch.get_workspace_sessions(
+                    first_ws, projects_dir=projects_dir, quiet=True
+                )
                 # May be empty, but should be a list
                 assert isinstance(sessions, list)
 
@@ -5208,7 +5352,10 @@ class TestSkipMessageCount:
                 json.dumps(
                     {
                         "type": "user" if i % 2 == 0 else "assistant",
-                        "message": {"role": "user" if i % 2 == 0 else "assistant", "content": f"Message {i}"},
+                        "message": {
+                            "role": "user" if i % 2 == 0 else "assistant",
+                            "content": f"Message {i}",
+                        },
                         "timestamp": f"2025-11-20T10:00:0{i}.000Z",
                     }
                 )
@@ -5412,6 +5559,7 @@ class TestCLISmoke:
             script_cmd,
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0
         assert "usage:" in result.stdout
@@ -5420,9 +5568,10 @@ class TestCLISmoke:
     def test_help_flag(self, script_cmd):
         """--help should print help."""
         result = subprocess.run(
-            script_cmd + ["--help"],
+            [*script_cmd, "--help"],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0
         assert "usage:" in result.stdout
@@ -5430,9 +5579,10 @@ class TestCLISmoke:
     def test_version_flag(self, script_cmd):
         """--version should print version."""
         result = subprocess.run(
-            script_cmd + ["--version"],
+            [*script_cmd, "--version"],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0
         # Version output goes to stdout
@@ -5441,9 +5591,10 @@ class TestCLISmoke:
     def test_invalid_command(self, script_cmd):
         """Invalid command should fail with non-zero exit code."""
         result = subprocess.run(
-            script_cmd + ["invalidcommand"],
+            [*script_cmd, "invalidcommand"],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode != 0
         assert "invalid choice" in result.stderr or "error" in result.stderr.lower()
@@ -5451,9 +5602,10 @@ class TestCLISmoke:
     def test_lsw_runs(self, script_cmd):
         """lsw command should run without error."""
         result = subprocess.run(
-            script_cmd + ["lsw"],
+            [*script_cmd, "lsw"],
             capture_output=True,
             text=True,
+            check=False,
         )
         # Should succeed (may have no output if no workspaces)
         assert result.returncode == 0
@@ -5461,9 +5613,10 @@ class TestCLISmoke:
     def test_subcommand_help(self, script_cmd):
         """Subcommand --help should work."""
         result = subprocess.run(
-            script_cmd + ["export", "--help"],
+            [*script_cmd, "export", "--help"],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0
         assert "usage:" in result.stdout
@@ -5634,12 +5787,11 @@ class TestLocalFlagBehavior:
 
         mock_remote_workspaces = ["-home-user-remoteproject"]
 
-        with (
-            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
-            patch.object(ch, "check_ssh_connection", return_value=True),
-            patch.object(ch, "list_remote_workspaces", return_value=mock_remote_workspaces),
-            patch.object(ch, "get_remote_hostname", return_value="testhost"),
-        ):
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
+            ch, "list_remote_workspaces", return_value=mock_remote_workspaces
+        ), patch.object(ch, "get_remote_hostname", return_value="testhost"):
             ch._dispatch_lsw_additive(Args)
 
         captured = capsys.readouterr()
@@ -5660,10 +5812,9 @@ class TestLocalFlagBehavior:
             remotes = ["user@badhost"]
             workspaces_only = True
 
-        with (
-            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
-            patch.object(ch, "check_ssh_connection", return_value=False),
-        ):
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "check_ssh_connection", return_value=False):
             ch._dispatch_lsw_additive(Args)
 
         captured = capsys.readouterr()
@@ -5682,12 +5833,11 @@ class TestLocalFlagBehavior:
 
         mock_remote_workspaces = ["-home-user-myproject", "-home-user-otherproject"]
 
-        with (
-            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
-            patch.object(ch, "check_ssh_connection", return_value=True),
-            patch.object(ch, "list_remote_workspaces", return_value=mock_remote_workspaces),
-            patch.object(ch, "get_remote_hostname", return_value="testhost"),
-        ):
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
+            ch, "list_remote_workspaces", return_value=mock_remote_workspaces
+        ), patch.object(ch, "get_remote_hostname", return_value="testhost"):
             ch._dispatch_lsw_additive(Args)
 
         captured = capsys.readouterr()
@@ -5737,12 +5887,12 @@ class TestLocalFlagBehavior:
             }
         ]
 
-        with (
-            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
-            patch.object(ch, "check_ssh_connection", return_value=True),
-            patch.object(ch, "list_remote_workspaces", return_value=mock_remote_workspaces),
-            patch.object(ch, "get_remote_hostname", return_value="testhost"),
-            patch.object(ch, "get_remote_session_info", return_value=mock_remote_sessions),
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
+            ch, "list_remote_workspaces", return_value=mock_remote_workspaces
+        ), patch.object(ch, "get_remote_hostname", return_value="testhost"), patch.object(
+            ch, "get_remote_session_info", return_value=mock_remote_sessions
         ):
             ch._dispatch_lss_additive(Args)
 
@@ -5788,12 +5938,12 @@ class TestLocalFlagBehavior:
             },
         ]
 
-        with (
-            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
-            patch.object(ch, "check_ssh_connection", return_value=True),
-            patch.object(ch, "list_remote_workspaces", return_value=mock_remote_workspaces),
-            patch.object(ch, "get_remote_hostname", return_value="testhost"),
-            patch.object(ch, "get_remote_session_info", return_value=mock_remote_sessions),
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
+            ch, "list_remote_workspaces", return_value=mock_remote_workspaces
+        ), patch.object(ch, "get_remote_hostname", return_value="testhost"), patch.object(
+            ch, "get_remote_session_info", return_value=mock_remote_sessions
         ):
             ch._dispatch_lss_additive(Args)
 
@@ -5813,10 +5963,9 @@ class TestLocalFlagBehavior:
             since_date = None
             until_date = None
 
-        with (
-            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
-            patch.object(ch, "check_ssh_connection", return_value=False),
-        ):
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "check_ssh_connection", return_value=False):
             ch._dispatch_lss_additive(Args)
 
         captured = capsys.readouterr()
@@ -5850,12 +5999,12 @@ class TestLocalFlagBehavior:
         def mock_hostname(remote):
             return next(hostnames)
 
-        with (
-            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
-            patch.object(ch, "check_ssh_connection", return_value=True),
-            patch.object(ch, "list_remote_workspaces", return_value=["-home-user-project"]),
-            patch.object(ch, "get_remote_hostname", side_effect=mock_hostname),
-            patch.object(ch, "get_remote_session_info", return_value=mock_sessions),
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
+            ch, "list_remote_workspaces", return_value=["-home-user-project"]
+        ), patch.object(ch, "get_remote_hostname", side_effect=mock_hostname), patch.object(
+            ch, "get_remote_session_info", return_value=mock_sessions
         ):
             ch._dispatch_lss_additive(Args)
 
@@ -5873,12 +6022,11 @@ class TestLocalFlagBehavior:
             since_date = None
             until_date = None
 
-        with (
-            patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir),
-            patch.object(ch, "check_ssh_connection", return_value=True),
-            patch.object(ch, "list_remote_workspaces", return_value=[]),  # No workspaces
-            patch.object(ch, "get_remote_hostname", return_value="testhost"),
-        ):
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
+            ch, "list_remote_workspaces", return_value=[]
+        ), patch.object(ch, "get_remote_hostname", return_value="testhost"):
             ch._dispatch_lss_additive(Args)
 
         captured = capsys.readouterr()
