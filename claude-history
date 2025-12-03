@@ -1892,7 +1892,14 @@ def get_workspace_name_from_path(workspace_dir_name: str) -> str:
 
 
 def _get_wsl_distro_names() -> list:
-    """Get list of WSL distribution names."""
+    """Get list of WSL distribution names.
+
+    Notes:
+        On Windows, `wsl --list --quiet` typically returns UTF-16 with a BOM and
+        may include stray null terminators. We decode with 'utf-16' (to consume
+        the BOM correctly), fall back to UTF-8 if needed, and strip any BOM or
+        nulls per line before returning clean distro names.
+    """
     try:
         result = subprocess.run(
             [get_command_path("wsl"), "--list", "--quiet"],
@@ -1902,9 +1909,24 @@ def _get_wsl_distro_names() -> list:
         )
         if result.returncode != 0:
             return []
-        # Parse distribution names (output is UTF-16 LE with BOM and null terminators)
-        output = result.stdout.decode("utf-16-le", errors="ignore")
-        return [line.strip().rstrip("\x00") for line in output.split("\n") if line.strip()]
+
+        raw = result.stdout
+        # Prefer utf-16 (consumes BOM). Fallback to utf-8 if decode fails.
+        try:
+            text = raw.decode("utf-16")
+        except UnicodeError:
+            text = raw.decode("utf-8", errors="ignore")
+
+        names = []
+        for line in text.splitlines():
+            # Clean BOM on first line, nulls, and any incidental markers
+            cleaned = line.lstrip("\ufeff").replace("\x00", "").strip()
+            # Newer WSL may show a leading '* ' for default in some modes; be tolerant
+            if cleaned.startswith("* "):
+                cleaned = cleaned[2:].strip()
+            if cleaned:
+                names.append(cleaned)
+        return names
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
 
