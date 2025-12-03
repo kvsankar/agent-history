@@ -394,18 +394,29 @@ def parse_and_validate_dates(since_str: str, until_str: str) -> tuple:
 def get_patterns_from_args(args) -> list:
     """Extract workspace patterns from command arguments.
 
-    Handles both new-style 'patterns' attribute and legacy 'workspace' attribute.
+    Handles both new-style 'patterns' (lsw) and legacy 'workspace' (lss) attributes.
+    Ensures we always return a flat list of strings and default to [""] (match all)
+    when no explicit patterns are provided.
 
     Args:
         args: Parsed argument object
 
     Returns:
-        List of patterns (may contain empty string for 'all')
+        List[str] of patterns ("" matches all workspaces)
     """
+    # New-style 'patterns' takes precedence if present
     patterns = getattr(args, "patterns", None)
-    if patterns is None:
-        patterns = [getattr(args, "workspace", "")]
-    return patterns
+    if patterns is not None:
+        return patterns if patterns else [""]
+
+    # lss uses 'workspace' (nargs="*") which is a list
+    work = getattr(args, "workspace", None)
+    if work is None:
+        return [""]
+    if isinstance(work, list):
+        return work if work else [""]
+    # Fallback: single string value
+    return [work]
 
 
 def detect_alias_from_args(args, workspace_list: list = None) -> str:
@@ -7252,6 +7263,18 @@ def _dispatch_lss(args):
     workspace_list = args.workspace if args.workspace else []
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []
+
+    # If a remote is selected (including --wsl/--windows via _resolve_remote_flag)
+    # and no workspace was provided, default to "all" instead of requiring the
+    # current local workspace.
+    if not workspace_list:
+        try:
+            selected_remote = _resolve_remote_flag(args)
+        except SystemExit:
+            # _resolve_remote_flag may exit on invalid WSL/Windows selection
+            selected_remote = None
+        if selected_remote:
+            workspace_list = [""]
 
     # Check for alias (explicit flag or @ prefix)
     alias_name = detect_alias_from_args(args, workspace_list)
