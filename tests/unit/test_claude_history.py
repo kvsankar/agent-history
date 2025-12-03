@@ -32,7 +32,15 @@ from unittest.mock import patch
 
 import pytest
 
-module_path = Path(__file__).parent / "claude-history"
+root_search = [Path(__file__).resolve().parent] + list(Path(__file__).resolve().parents)
+module_path = None
+for base in root_search:
+    candidate = base / "claude-history"
+    if candidate.exists():
+        module_path = candidate
+        break
+if module_path is None:
+    raise FileNotFoundError("Could not locate 'claude-history' script relative to test file")
 loader = importlib.machinery.SourceFileLoader("claude_history", str(module_path))
 spec = importlib.util.spec_from_loader("claude_history", loader)
 ch = importlib.util.module_from_spec(spec)
@@ -5559,7 +5567,7 @@ class TestCLISmoke:
 
         On Windows, scripts without .py extension need to be run through Python.
         """
-        script_path = Path(__file__).parent / "claude-history"
+        script_path = module_path
         projects_dir = tmp_path / ".claude" / "projects"
         workspace = projects_dir / "-home-user-cli"
         workspace.mkdir(parents=True)
