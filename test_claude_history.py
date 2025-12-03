@@ -25,7 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -6614,7 +6614,7 @@ class TestCommandCombinationMatrix:
                 {
                     "filename": "remote.jsonl",
                     "size_kb": 1,
-                    "modified": datetime.utcnow(),
+                    "modified": datetime.now(timezone.utc),
                     "message_count": 2,
                 }
             ],
