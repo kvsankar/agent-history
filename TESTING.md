@@ -1022,3 +1022,39 @@ These tests run without mocking, using real platform capabilities. They are auto
 - File paths should use platform-appropriate separators
 - Timestamps should be in ISO 8601 format
 - Output should be UTF-8 encoded
+
+---
+
+## Integration and E2E Tests (No Mocks)
+
+This project includes end-to-end tests that exercise the real CLI against synthetic projects.
+
+Structure
+- Unit tests: `tests/unit/` (pure functions, smoke tests)
+- Integration tests: `tests/integration/` (no mocks; use env to point CLI at synthetic roots)
+
+Markers and selection
+- All E2E modules have `pytestmark = pytest.mark.integration`.
+- Run everything (default): `pytest`
+- Unit only: `pytest -m "not integration"`
+- Integration only: `pytest -m integration tests/integration`
+
+Environment overrides for cross-boundary tests
+- Windows → simulate WSL:
+  - `CLAUDE_WSL_TEST_DISTRO=TestWSL`
+  - `CLAUDE_WSL_PROJECTS_DIR=C:\path\to\synthetic\projects`
+- WSL → simulate Windows:
+  - `CLAUDE_WINDOWS_PROJECTS_DIR=/mnt/c/path/to/synthetic/projects`
+- Isolate config/DB to a temp dir:
+  - Windows: `set USERPROFILE=C:\temp\cfg`
+  - WSL/Linux: `export HOME=/tmp/cfg`
+
+Scenarios covered (representative)
+- Local: lsh/lsw/lss, export (minimal/flat/split)
+- Stats: `--sync` then `--models`, `--tools`, `--by-day`
+- Alias: create/add/show/export and `lss @alias`
+- All-homes (Windows): combine local + WSL via env override
+
+CI
+- GitHub Actions runs unit and integration on `ubuntu-latest` and `windows-latest`.
+- Hosted Windows has no WSL; WSL flows are exercised via the environment overrides.

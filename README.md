@@ -129,6 +129,51 @@ EXAMPLES:
     claude-history export myproject --windows       # export from Windows
 ```
 
+## Testing
+
+Use pytest to run unit and integration tests. By default, `pytest` runs everything.
+
+Quick commands:
+
+```bash
+# All tests
+uv run pytest
+
+# Unit only
+uv run pytest -m "not integration"
+
+# Integration only
+uv run pytest -m integration tests/integration
+
+# Makefile shortcuts
+make test
+make test-unit
+make test-integration
+
+# Windows PowerShell helper
+scripts\run-tests.ps1              # all
+scripts\run-tests.ps1 -Unit        # unit
+scripts\run-tests.ps1 -Integration # integration
+```
+
+Cross-boundary flows (optional overrides):
+
+```powershell
+# Windows simulating WSL (for tests)
+set CLAUDE_WSL_TEST_DISTRO=TestWSL
+set CLAUDE_WSL_PROJECTS_DIR=C:\path\to\synthetic\projects
+
+# WSL simulating Windows
+export CLAUDE_WINDOWS_PROJECTS_DIR=/mnt/c/path/to/synthetic/projects
+
+# Isolate config/DB during tests
+set USERPROFILE=C:\temp\cfg       # Windows
+export HOME=/tmp/cfg               # WSL/Linux
+```
+
+CI: GitHub Actions runs unit and integration tests on `ubuntu-latest` and `windows-latest`.
+Hosted Windows runners do not include WSL; WSL flows are exercised via env overrides.
+
 ## Commands
 
 | Command | Description |
