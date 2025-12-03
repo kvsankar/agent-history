@@ -1435,7 +1435,8 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
             parts = rest.split("-")
             path_segments = _resolve_path_segments(parts, mnt_base)
             if path_segments:
-                return f"/{drive_letter}/" + "/".join(path_segments)
+                # Return a WSL-usable path: /mnt/<drive>/<segments>
+                return "/mnt/" + drive_letter.lower() + "/" + "/".join(path_segments)
 
     # Fallback: simple replacement (may break hyphenated names)
     return f"/{drive_letter}/" + rest.replace("-", "/")
