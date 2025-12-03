@@ -11,7 +11,7 @@ Create an alias to manage a project that exists on Windows, WSL, and a remote VM
 claude-history alias create myproject
 
 # Add workspaces interactively from all homes
-claude-history alias add myproject --al -r user@vm01 --pick
+claude-history alias add myproject --ah -r user@vm01 --pick
 
 # Or add by pattern (non-interactive)
 claude-history alias add myproject myproject                    # local
@@ -31,7 +31,7 @@ Export all sessions from all environments to a backup directory:
 ```bash
 # One-time: create an alias for everything
 claude-history alias create all-projects
-claude-history alias add all-projects --al -r vm01 -r vm02 --pick
+claude-history alias add all-projects --ah -r vm01 -r vm02 --pick
 
 # Daily backup (incremental - only exports new/changed files)
 claude-history export @all-projects -o ~/backups/claude-sessions/
@@ -46,10 +46,10 @@ claude-history export @all-projects -o ~/backups/claude-sessions/ --force
 
 ```bash
 # List sessions from all homes matching "myproject"
-claude-history lss myproject --al -r user@vm01
+claude-history lss myproject --ah -r user@vm01
 
 # Export from all homes
-claude-history export myproject --al -r user@vm01 -o ./exports/
+claude-history export myproject --ah -r user@vm01 -o ./exports/
 ```
 
 ---
@@ -58,13 +58,13 @@ claude-history export myproject --al -r user@vm01 -o ./exports/
 
 ```bash
 # List all workspaces from everywhere
-claude-history lsw --al -r user@vm01 -r user@vm02
+claude-history lsw --ah -r user@vm01 -r user@vm02
 
 # Find sessions mentioning a specific project
-claude-history lsw --al | grep django
+claude-history lsw --ah | grep django
 
 # List sessions from matching workspaces
-claude-history lss django --al
+claude-history lss django --ah
 ```
 
 ---
@@ -114,7 +114,7 @@ claude-history alias import aliases.json
 
 ```bash
 # Sessions from last week across all homes
-claude-history lss --al --since 2025-11-24
+claude-history lss --ah --since 2025-11-24
 
 # Export recent sessions only
 claude-history export @myproject --since 2025-11-01 -o ./recent/
@@ -134,9 +134,9 @@ claude-history lsh add user@vm02
 # Verify saved sources
 claude-history lsh
 
-# Now --al includes saved remotes automatically
-claude-history lsw --al              # includes vm01 and vm02
-claude-history stats --time --al     # syncs from vm01 and vm02
+# Now --ah includes saved remotes automatically
+claude-history lsw --ah              # includes vm01 and vm02
+claude-history stats --time --ah     # syncs from vm01 and vm02
 ```
 
 ---
@@ -145,7 +145,7 @@ claude-history stats --time --al     # syncs from vm01 and vm02
 
 ```bash
 # Initial sync from all homes (uses saved remotes)
-claude-history stats --sync --al
+claude-history stats --sync --ah
 
 # View overall statistics (current workspace)
 claude-history stats
@@ -169,7 +169,7 @@ claude-history stats myproject
 
 ```bash
 # Sync latest data
-claude-history stats --sync --al
+claude-history stats --sync --ah
 
 # Get stats for November 2025
 claude-history stats --since 2025-11-01 --until 2025-11-30
@@ -202,10 +202,10 @@ Track how much time you've spent with Claude Code:
 
 ```bash
 # Current workspace, sync all homes first
-claude-history stats --time --al
+claude-history stats --time --ah
 
 # All workspaces, sync all homes first
-claude-history stats --time --al --aw
+claude-history stats --time --ah --aw
 
 # Filter by date range
 claude-history stats --time --since 2025-11-01 --until 2025-11-30
@@ -220,7 +220,7 @@ Aliases are automatically aggregated in stats output:
 ```bash
 # Create alias for a project across environments
 claude-history alias create myproject
-claude-history alias add myproject --al myproject
+claude-history alias add myproject --ah myproject
 
 # View aggregated stats (shows @myproject with combined metrics)
 claude-history stats
@@ -301,8 +301,8 @@ Consolidate conversations from multiple environments:
 
 ```bash
 # Export all homes: local + WSL + Windows + SSH remotes
-claude-history export myproject --al -o ./backups -r user@vm01
+claude-history export myproject --ah -o ./backups -r user@vm01
 
 # Or all workspaces from all homes
-claude-history export --al --aw -o ./backups -r user@vm01
+claude-history export --ah --aw -o ./backups -r user@vm01
 ```

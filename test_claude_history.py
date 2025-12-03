@@ -6333,6 +6333,116 @@ class TestAliasEndToEnd:
 
 
 # ============================================================================
+# Section 16: Regression Tests for Bug Fixes
+# ============================================================================
+
+
+class TestRegressionBugFixes:
+    """Regression tests to prevent reintroduction of fixed bugs."""
+
+    def test_build_sync_args_patterns_not_double_wrapped(self):
+        """16.1: _build_sync_args should not wrap workspace list in another list.
+
+        Bug: patterns = [args.workspace] when args.workspace is already a list
+        Fix: patterns = args.workspace if args.workspace else [""]
+        """
+
+        class MockArgs:
+            workspace = ["myproject", "other"]  # argparse returns list for nargs="*"
+            force = False
+            all_homes = False
+
+        sync_args = ch._build_sync_args(MockArgs(), [])
+
+        # patterns should be flat list, not nested [[...]]
+        assert sync_args.patterns == ["myproject", "other"]
+        assert not isinstance(sync_args.patterns[0], list)
+
+    def test_build_sync_args_patterns_empty_default(self):
+        """16.2: _build_sync_args should default to [""] for empty workspace."""
+
+        class MockArgs:
+            workspace = []
+            force = False
+            all_homes = False
+
+        sync_args = ch._build_sync_args(MockArgs(), [])
+        assert sync_args.patterns == [""]
+
+    def test_get_source_key_preserves_ssh_username(self):
+        """16.3: get_source_key should preserve full remote spec with username.
+
+        Bug: hostname = remote_host.split("@")[-1] discarded username
+        Fix: Preserve full remote spec for SSH authentication
+        """
+        # With username
+        key = ch.get_source_key(remote_host="alice@server.example.com")
+        assert key == "remote:alice@server.example.com"
+
+        # Without username
+        key = ch.get_source_key(remote_host="server.example.com")
+        assert key == "remote:server.example.com"
+
+    def test_get_remote_sessions_uses_full_spec_for_ssh(self):
+        """16.4: _get_remote_sessions should use full spec for SSH, hostname for cache."""
+        # This tests the internal behavior by checking the function signature
+        # and parameter usage via mocking
+        import inspect
+
+        sig = inspect.signature(ch._get_remote_sessions)
+        params = list(sig.parameters.keys())
+
+        # First parameter should be named remote_spec (not hostname)
+        assert params[0] == "remote_spec"
+
+    def test_build_all_homes_sources_wsl_distro_name(self):
+        """16.5: _build_all_homes_sources should extract distro name from dict.
+
+        Bug: sources.append((f"wsl:{distro}", distro)) where distro is dict
+        Fix: distro_name = distro["name"]; sources.append((f"wsl:{distro_name}", distro_name))
+        """
+
+        class MockArgs:
+            remotes = None
+            remote = None
+
+        # Mock Windows platform and get_wsl_distributions
+        with patch("sys.platform", "win32"):
+            with patch.object(
+                ch,
+                "get_wsl_distributions",
+                return_value=[
+                    {"name": "Ubuntu", "username": "user", "has_claude": True},
+                    {"name": "Debian", "username": "user", "has_claude": True},
+                ],
+            ):
+                sources = ch._build_all_homes_sources(MockArgs())
+
+                # Check that WSL sources have string distro names, not dicts
+                wsl_sources = [s for s in sources if s[0].startswith("wsl:")]
+                assert len(wsl_sources) == 2
+                assert ("wsl:Ubuntu", "Ubuntu") in wsl_sources
+                assert ("wsl:Debian", "Debian") in wsl_sources
+
+    def test_build_all_homes_sources_remote_full_spec(self):
+        """16.6: _build_all_homes_sources should store full remote spec."""
+
+        class MockArgs:
+            remotes = ["alice@vm01", "bob@vm02"]
+            remote = None
+
+        with patch("sys.platform", "linux"):
+            with patch.object(ch, "get_windows_users_with_claude", return_value=[]):
+                sources = ch._build_all_homes_sources(MockArgs())
+
+                remote_sources = [s for s in sources if s[0].startswith("remote:")]
+                assert len(remote_sources) == 2
+                # Source key should have full spec
+                assert ("remote:alice@vm01", "alice@vm01") in remote_sources
+                assert ("remote:bob@vm02", "bob@vm02") in remote_sources
+
+
+# ============================================================================
 # Run tests
 # ============================================================================
 

@@ -63,9 +63,9 @@ $ claude-history lsh --remotes
 
 Once configured, `--ah` automatically includes saved SSH remotes:
 ```bash
-claude-history lsw --al              # includes saved remotes
-claude-history export --al           # exports from all homes
-claude-history stats --time --al     # syncs from all homes
+claude-history lsw --ah              # includes saved remotes
+claude-history export --ah           # exports from all homes
+claude-history stats --time --ah     # syncs from all homes
 ```
 
 ---
@@ -99,7 +99,7 @@ claude-history lsw myproject
 claude-history lsw proj1 proj2
 
 # List from all homes
-claude-history lsw --al -r user@vm01
+claude-history lsw --ah -r user@vm01
 ```
 
 ---
@@ -192,7 +192,7 @@ claude-history export [WORKSPACE...] [OPTIONS]
 | `export` | Current | Local only |
 | `export --ah` | Current | All homes |
 | `export --aw` | All | Local only |
-| `export --al --aw` | All | All homes |
+| `export --ah --aw` | All | All homes |
 
 **Examples:**
 ```bash
@@ -200,16 +200,16 @@ claude-history export [WORKSPACE...] [OPTIONS]
 claude-history export
 
 # Current workspace, all homes
-claude-history export --al
+claude-history export --ah
 
 # All workspaces, local home
 claude-history export --aw
 
 # All workspaces, all homes
-claude-history export --al --aw
+claude-history export --ah --aw
 
 # Specific workspace, all homes, custom output
-claude-history export myproject --al -o /tmp/backup
+claude-history export myproject --ah -o /tmp/backup
 
 # Multiple workspaces (deduplicated)
 claude-history export proj1 proj2 -o ./exports
@@ -280,7 +280,7 @@ claude-history alias add myproject --windows myproject
 claude-history alias add myproject -r user@vm01 myproject
 
 # Or add from all homes at once
-claude-history alias add myproject --al -r user@vm myproject
+claude-history alias add myproject --ah -r user@vm myproject
 
 # Use aliases with @ prefix
 claude-history lss @myproject
@@ -343,7 +343,7 @@ claude-history stats
 claude-history stats --aw
 
 # Time tracking with auto-sync from all homes
-claude-history stats --time --al
+claude-history stats --time --ah
 
 # Tool usage statistics
 claude-history stats --tools

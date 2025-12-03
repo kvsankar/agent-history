@@ -126,7 +126,7 @@ grep -r -i -B3 -A10 "cache.*implementation\|implement.*cache" /tmp/history/
 mkdir -p ~/backups/claude-$(date +%Y%m%d)
 
 # Export all workspaces from all homes
-claude-history export --al --aw -o ~/backups/claude-$(date +%Y%m%d)
+claude-history export --ah --aw -o ~/backups/claude-$(date +%Y%m%d)
 
 # Verify
 ls -la ~/backups/claude-$(date +%Y%m%d)/
@@ -158,7 +158,7 @@ claude-history stats myproject
 
 ```bash
 # Export from all homes (local + WSL + Windows + remotes)
-claude-history export --al --aw -o /tmp/all-history --minimal
+claude-history export --ah --aw -o /tmp/all-history --minimal
 
 # Search across everything
 grep -r -i -l "docker\|container\|dockerfile" /tmp/all-history/

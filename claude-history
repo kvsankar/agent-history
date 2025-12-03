@@ -2617,8 +2617,8 @@ def get_source_key(remote_host=None, wsl_distro=None, windows_user=None) -> str:
         elif remote_host == "windows":
             return "windows"
         else:
-            hostname = remote_host.split("@")[-1] if "@" in remote_host else remote_host
-            return f"remote:{hostname}"
+            # Preserve full remote spec (user@host) for SSH authentication
+            return f"remote:{remote_host}"
     elif wsl_distro:
         return f"wsl:{wsl_distro}"
     elif windows_user is not None:
@@ -2704,7 +2704,7 @@ def get_alias_for_workspace(workspace: str, source_key: str = "local") -> str:
 
 
 def _get_remote_sessions(
-    hostname: str, workspace: str, since_date, until_date, fetch_remote: bool
+    remote_spec: str, workspace: str, since_date, until_date, fetch_remote: bool
 ) -> list:
     """Get sessions from a remote source."""
     try:
@@ -2712,6 +2712,8 @@ def _get_remote_sessions(
     except (OSError, SystemExit):
         return []
 
+    # Use hostname only for cache path (no @ symbol in directory names)
+    hostname = get_remote_hostname(remote_spec)
     cached_workspace = f"remote_{hostname}_{workspace.lstrip('-')}"
     cached_path = local_projects / cached_workspace
 
@@ -2727,12 +2729,13 @@ def _get_remote_sessions(
     if not fetch_remote:
         return []
 
-    if not check_ssh_connection(hostname):
-        sys.stderr.write(f"Cannot connect to remote '{hostname}' - skipping\n")
+    # Use full remote_spec for SSH operations (includes username)
+    if not check_ssh_connection(remote_spec):
+        sys.stderr.write(f"Cannot connect to remote '{remote_spec}' - skipping\n")
         return []
 
-    sys.stderr.write(f"Fetching from {hostname}:{workspace}...\n")
-    result = fetch_workspace_files(hostname, workspace, local_projects, hostname)
+    sys.stderr.write(f"Fetching from {remote_spec}:{workspace}...\n")
+    result = fetch_workspace_files(remote_spec, workspace, local_projects, hostname)
 
     if result.get("success"):
         return get_workspace_sessions(
@@ -2779,8 +2782,10 @@ def get_sessions_for_source(
             )
 
         if source_key.startswith("remote:"):
-            hostname = source_key.split(":", 1)[1]
-            return _get_remote_sessions(hostname, workspace, since_date, until_date, fetch_remote)
+            remote_spec = source_key.split(":", 1)[1]
+            return _get_remote_sessions(
+                remote_spec, workspace, since_date, until_date, fetch_remote
+            )
 
         return []
 
@@ -2903,7 +2908,9 @@ def _build_all_homes_sources(args) -> list:
         try:
             wsl_distros = get_wsl_distributions()
             for distro in wsl_distros:
-                sources.append((f"wsl:{distro}", distro))
+                # distro is a dict with 'name', 'username', 'has_claude' keys
+                distro_name = distro["name"]
+                sources.append((f"wsl:{distro_name}", distro_name))
         except (OSError, subprocess.SubprocessError):
             pass
     else:
@@ -2915,13 +2922,12 @@ def _build_all_homes_sources(args) -> list:
         except (OSError, subprocess.SubprocessError):
             pass
 
-    # SSH remotes
+    # SSH remotes - store full spec (user@host) for authentication
     remotes = getattr(args, "remotes", None) or []
     if getattr(args, "remote", None):
         remotes.append(args.remote)
     for remote in remotes:
-        hostname = get_remote_hostname(remote)
-        sources.append((f"remote:{hostname}", remote))
+        sources.append((f"remote:{remote}", remote))
 
     return sources
 
@@ -7391,7 +7397,7 @@ def _build_sync_args(args, remotes: list):
     class SyncArgs:
         force = args.force
         all_homes = getattr(args, "all_homes", False)
-        patterns = [args.workspace] if args.workspace else [""]
+        patterns = args.workspace if args.workspace else [""]
 
     SyncArgs.remotes = remotes
     return SyncArgs()
