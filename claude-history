@@ -4857,8 +4857,22 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         skip_message_count=True,  # Slow over WSL mount
     )
 
+    # If no native sessions, fall back to include cached (e.g., wsl_*) so users still see content
     if not sessions:
-        sys.stderr.write("Error: No native sessions found in Windows\n")
+        sessions = collect_sessions_with_dedup(
+            patterns,
+            since_date,
+            until_date,
+            projects_dir=windows_projects_dir,
+            skip_message_count=True,
+            include_cached=True,
+        )
+
+    if not sessions:
+        sys.stderr.write("Error: No sessions found in Windows\n")
+        sys.stderr.write("\nTips:\n")
+        sys.stderr.write("  \a Check that Windows has native workspaces (not just cached WSL)\n")
+        sys.stderr.write("  \a Try: claude-history lsh --windows\n")
         sys.exit(1)
 
     source_label = f"Windows ({username})" if username else "Windows"
