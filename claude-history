@@ -1666,6 +1666,9 @@ def _is_wsl_unc_path(path: Path | None) -> bool:
     if not path:
         return False
     base_str = str(path)
+    # Normalize extended UNC (\\?\UNC\wsl.localhost\...) to standard UNC
+    if base_str.startswith("\\\\?\\UNC\\"):
+        base_str = "\\\\" + base_str[8:]
     return (
         base_str.startswith("\\\\wsl.localhost\\")
         or base_str.startswith("\\\\wsl$\\")
@@ -1687,18 +1690,17 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
     """
     parts = encoded.split("-")
 
-    if base_path and _is_wsl_unc_path(base_path):
+    if base_path and (_is_wsl_unc_path(base_path) or sys.platform == "win32"):
         resolved_segments, found_full = _resolve_existing_wsl_path(parts, Path(base_path))
         segments = list(resolved_segments) if resolved_segments else list(parts)
         if not found_full and len(segments) < len(parts):
             segments.append("-".join(parts[len(segments) :]))
         readable_path = "/" + "/".join(segments)
         marker = "" if found_full else " [missing]"
-        unc = _format_unc_path(base_path, readable_path)
-        # If base_path already looks like a POSIX path (e.g., /home/user), keep POSIX form
-        if str(base_path).startswith("/") and not str(base_path).startswith("//"):
+        base_str = str(base_path)
+        if base_str.startswith("/") and not base_str.startswith("//"):
             return readable_path + marker
-        return unc + marker
+        return _format_unc_path(base_path, readable_path) + marker
 
     if not verify_local:
         return "/" + encoded.replace("-", "/")
