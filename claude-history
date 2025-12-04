@@ -24,7 +24,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Optional
 
 __version__ = "1.5.1"
@@ -549,12 +549,20 @@ def print_sessions_output(sessions: list, source_label: str, workspaces_only: bo
         workspaces_only: If True, print only unique workspace names
     """
     if workspaces_only:
-        workspaces = sorted({s["workspace_readable"] for s in sessions})
-        for ws in workspaces:
+        seen = set()
+        ordered = []
+        for s in sessions:
+            key = s.get("workspace") or s.get("workspace_readable")
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(s["workspace_readable"])
+        for ws in sorted(ordered):
             # On Windows, only filter non-existent paths for Windows sources
             if sys.platform == "win32" and source_label.startswith("Windows"):
+                path_str = ws.replace(" [missing]", "")
                 try:
-                    if not Path(ws).exists():
+                    if not Path(path_str).exists():
                         continue
                 except Exception:
                     pass
@@ -1300,7 +1308,7 @@ def _convert_windows_path_to_encoded(path: str) -> str:
     """Convert Windows absolute path (C:\\... or C:/...) to encoded format."""
     drive = path[0].upper()
     rest = path[2:].lstrip("/\\").replace("\\", "/").replace("/", "-")
-    return f"{drive}-{rest}"
+    return f"{drive}--{rest}"
 
 
 def _get_workspaces_from_dir(projects_dir: Path) -> list:
@@ -1385,8 +1393,55 @@ def _coerce_target_to_workspace_pattern(target: str) -> str:
         return target
 
     normalized = expanded.replace("\\", "/")
+    parts = [p for p in normalized.split("/") if p]
+    # Absolute path directly pointing at a workspace directory (e.g., C:\...\-home-user-foo)
+    try:
+        if Path(expanded).is_absolute() and parts and parts[-1].startswith("-"):
+            return parts[-1]
+    except OSError:
+        pass
+
+    # Detect WSL UNC paths (Windows) and strip to Linux path portion
+    lowered = normalized.lower()
+    if lowered.startswith("//wsl.localhost/") or lowered.startswith("//wsl$/"):
+        unc_parts = [p for p in normalized.split("/") if p]
+        if len(unc_parts) >= 3:
+            # If path points inside .claude/projects/<workspace>, take the workspace name directly
+            try:
+                idx = unc_parts.index(".claude")
+                if idx + 2 < len(unc_parts) and unc_parts[idx + 1] == "projects":
+                    return unc_parts[idx + 2]
+            except ValueError:
+                pass
+            normalized = "/" + "/".join(unc_parts[2:])
+    was_absolute = normalized.startswith("/")
+    # Collapse duplicate slashes for easier prefix handling
+    # If path includes .claude/projects/<workspace>, use the workspace segment directly
+    if ".claude" in parts:
+        try:
+            idx = parts.index(".claude")
+            if idx + 1 < len(parts) and parts[idx + 1] == "projects" and idx + 2 < len(parts):
+                workspace_dir = parts[idx + 2]
+                if workspace_dir.startswith("-"):
+                    return workspace_dir
+                normalized = "/" + "/".join(parts[idx + 2 :])
+                was_absolute = normalized.startswith("/")
+                parts = [p for p in normalized.split("/") if p]
+        except ValueError:
+            pass
+    if was_absolute:
+        normalized = "/" + "/".join(parts)
+    else:
+        normalized = "/".join(parts)
     if normalized.startswith("//"):
         normalized = "/" + normalized.lstrip("/")
+
+    # Handle WSL UNC paths (\\wsl.localhost\Distro\home\user\...) by stripping the UNC prefix
+    if normalized.startswith("/wsl.localhost/") or normalized.startswith("/wsl$/"):
+        parts = normalized.split("/")
+        # parts: ["", "wsl.localhost", "<distro>", ...]
+        if len(parts) >= 4:
+            normalized = "/" + "/".join(parts[3:])
 
     if normalized.startswith("/"):
         return path_to_encoded_workspace(normalized)
@@ -1448,6 +1503,71 @@ def _resolve_path_segments(parts: list, base_path: Path) -> list:
     return path_segments
 
 
+def _resolve_existing_wsl_path(parts: list, base_path: Path) -> tuple:
+    """Try all segment merges to find the deepest existing path under base_path.
+
+    This is used for UNC WSL paths on Windows where directory names may contain
+    dashes that were split into separate parts. Returns the best-matching
+    segment list (trimmed to the deepest existing prefix). If nothing exists,
+    returns the original parts and a False flag.
+    """
+    if not base_path:
+        return parts, False
+
+    best_segments = None
+    best_depth = -1
+    best_full_segments = None
+
+    # Enumerate all possible merge combinations between parts (2^(n-1) masks)
+    n = len(parts)
+    if n == 0:
+        return parts, False
+
+    for mask in range(1 << (n - 1)):
+        segments = []
+        current = parts[0]
+        for i in range(1, n):
+            if mask & (1 << (i - 1)):
+                current += "-" + parts[i]
+            else:
+                segments.append(current)
+                current = parts[i]
+        segments.append(current)
+
+        # Track deepest existing prefix for this combination
+        deepest_existing_index = -1
+        probe = base_path
+        for idx, seg in enumerate(segments):
+            probe = probe.joinpath(seg)
+            try:
+                if probe.exists():
+                    deepest_existing_index = idx
+                else:
+                    break
+            except OSError:
+                break
+
+        should_update = deepest_existing_index > best_depth
+        if best_segments is not None and deepest_existing_index == best_depth:
+            # Prefer fewer segments (more merged parts) when depth is equal
+            should_update = len(segments) < len(best_segments)
+
+        if should_update:
+            best_depth = deepest_existing_index
+            best_segments = segments[: deepest_existing_index + 1] if deepest_existing_index >= 0 else None
+            if deepest_existing_index == len(segments) - 1:
+                best_full_segments = segments
+
+        if deepest_existing_index == len(segments) - 1:
+            if best_full_segments is None or len(segments) < len(best_full_segments):
+                best_full_segments = segments
+
+    if best_full_segments is not None:
+        return best_full_segments, True
+
+    return (best_segments if best_segments else parts), False
+
+
 def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
     """Normalize a Windows-style encoded path (e.g., 'C--sankar-projects').
 
@@ -1456,15 +1576,22 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
         verify_local: If True, verify against /mnt/<drive>/ filesystem
 
     Returns:
-        Decoded path (e.g., '/C/sankar/projects')
+        Decoded path (e.g., 'C:\\sankar\\projects' on Windows, '/mnt/c/...' on WSL)
     """
     drive_letter = workspace_dir_name[0].upper()
     rest = workspace_dir_name[3:]  # Skip 'C--'
+    parts = rest.split("-")
 
+    # On Windows, return a native drive path (prefer verified segments)
+    if verify_local and sys.platform == "win32":
+        drive_root = Path(f"{drive_letter}:\\")
+        resolved = _resolve_path_segments(parts, drive_root)
+        return str(drive_root.joinpath(*resolved))
+
+    # On WSL, prefer /mnt/<drive> if available
     if verify_local:
         mnt_base = Path(f"/mnt/{drive_letter.lower()}")
         if mnt_base.exists():
-            parts = rest.split("-")
             path_segments = _resolve_path_segments(parts, mnt_base)
             if path_segments:
                 # Return a WSL-usable path: /mnt/<drive>/<segments>
@@ -1494,11 +1621,37 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
 
     # If resolution found no real merges (pure fallback), keep hyphens in the last segment
     if path_segments == parts:
-        if len(parts) > 2:
-            return "/" + "/".join(parts[:2] + ["-".join(parts[2:])])
-        return "/" + "/".join(parts)
+        path_segments = parts[:2] + ["-".join(parts[2:])] if len(parts) > 2 else parts
 
-    return "/" + "/".join(path_segments)
+    # For UNC WSL paths on Windows, try all merge combinations to find an existing path
+    partial_marker = ""
+    if base_path and sys.platform == "win32":
+        resolved_segments, found_full = _resolve_existing_wsl_path(parts, Path(base_path))
+
+        # If we only found a prefix (no full path), keep the missing tail merged so the name stays distinct
+        combined_segments = list(resolved_segments)
+        if not found_full and len(resolved_segments) < len(parts):
+            combined_segments.append("-".join(parts[len(resolved_segments) :]))
+
+        final_path = Path(base_path).joinpath(*combined_segments)
+        try:
+            if len(resolved_segments) == len(parts) and final_path.exists():
+                found_full = True
+        except OSError:
+            pass
+        if not found_full:
+            partial_marker = " [missing]"
+        path_segments = combined_segments
+
+    readable_path = "/" + "/".join(path_segments)
+
+    # If a WSL UNC base is provided on Windows, return an accessible UNC path
+    if base_path and sys.platform == "win32":
+        base_str = str(base_path)
+        if base_str.startswith("\\\\wsl.localhost\\") or base_str.startswith("\\\\wsl$\\"):
+            return str(Path(base_path).joinpath(*path_segments)) + partial_marker
+
+    return readable_path
 
 
 def normalize_workspace_name(
@@ -1586,17 +1739,18 @@ def _detect_wsl_base_path(projects_dir: Path) -> Path:
 
     p = _os.fspath(projects_dir)
     if isinstance(p, bytes):
-        # Compare with bytes prefixes
-        is_wsl = p.startswith(b"\\\\wsl.localhost\\") or p.startswith(b"//wsl.localhost/")
-        parts = Path(p.decode(errors="ignore")).parts
-    else:
-        is_wsl = p.startswith("\\\\wsl.localhost\\") or p.startswith("//wsl.localhost/")
-        parts = Path(p).parts
-    if not is_wsl:
+        p = p.decode(errors="ignore")
+
+    is_wsl_unc = any(
+        p.startswith(prefix)
+        for prefix in ("\\\\wsl.localhost\\", "//wsl.localhost/", "\\\\wsl$\\", "//wsl$/")
+    )
+    if not is_wsl_unc:
         return None
-    if len(parts) >= 1:
-        return Path(parts[0].rstrip("\\").rstrip("/"))
-    return None
+
+    # Use the UNC anchor (e.g., \\wsl.localhost\\Ubuntu) as the base path
+    anchor = PureWindowsPath(p).anchor
+    return Path(anchor.rstrip("\\/")) if anchor else None
 
 
 def _should_skip_workspace(dir_name: str, include_cached: bool) -> bool:
@@ -1648,7 +1802,15 @@ def _is_session_in_date_range(session: dict, since_date, until_date) -> bool:
 
 def _workspace_matches_pattern(dir_name: str, workspace_pattern: str, match_all: bool) -> bool:
     """Check if workspace matches the pattern."""
-    return match_all or workspace_pattern in dir_name
+    if match_all:
+        return True
+    normalized = workspace_pattern.replace("\\", "-").replace("/", "-")
+    tail = workspace_pattern.replace("\\", "/").split("/")[-1]
+    return (
+        workspace_pattern in dir_name
+        or normalized in dir_name
+        or (tail and tail in dir_name)
+    )
 
 
 def get_workspace_sessions(
@@ -4259,6 +4421,16 @@ def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:
 
 def _display_selected_stats(conn, args, where_sql: str, params: list):
     """Display the appropriate stats view based on args."""
+    top_limit = getattr(args, "top_ws", None)
+    if top_limit is not None:
+        try:
+            top_limit = int(top_limit)
+            if top_limit < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            sys.stderr.write("Error: --top-ws must be a positive integer\n")
+            sys.exit(1)
+
     if getattr(args, "tools", False):
         display_tool_stats(conn, where_sql, params)
     elif getattr(args, "models", False):
@@ -4270,7 +4442,7 @@ def _display_selected_stats(conn, args, where_sql: str, params: list):
     elif getattr(args, "by_day", False):
         display_daily_stats(conn, where_sql, params)
     else:
-        display_summary_stats(conn, where_sql, params)
+        display_summary_stats(conn, where_sql, params, top_limit=top_limit)
 
 
 def cmd_stats(args):
@@ -4375,13 +4547,25 @@ def _aggregate_workspace_stats(all_workspace_stats, workspace_to_alias: dict) ->
         alias_name = workspace_to_alias.get((ws_name, source))
         if alias_name:
             if alias_name not in alias_stats:
-                alias_stats[alias_name] = {"sessions": 0, "messages": 0, "workspaces": set()}
+                alias_stats[alias_name] = {
+                    "sessions": 0,
+                    "messages": 0,
+                    "workspaces": set(),
+                    "sources": set(),
+                }
             alias_stats[alias_name]["sessions"] += sessions
             alias_stats[alias_name]["messages"] += messages
             alias_stats[alias_name]["workspaces"].add(ws_name)
+            alias_stats[alias_name]["sources"].add(source)
         else:
             unaliased_workspaces.append(
-                {"name": ws_name, "sessions": sessions, "messages": messages, "is_alias": False}
+                {
+                    "name": ws_name,
+                    "sessions": sessions,
+                    "messages": messages,
+                    "is_alias": False,
+                    "source": source,
+                }
             )
 
     top_workspaces = []
@@ -4393,11 +4577,12 @@ def _aggregate_workspace_stats(all_workspace_stats, workspace_to_alias: dict) ->
                 "messages": stats["messages"],
                 "is_alias": True,
                 "workspace_count": len(stats["workspaces"]),
+                "source": ", ".join(sorted(stats["sources"])) if stats["sources"] else "alias",
             }
         )
     top_workspaces.extend(unaliased_workspaces)
     top_workspaces.sort(key=lambda x: x["sessions"], reverse=True)
-    return top_workspaces[:5]
+    return top_workspaces
 
 
 def _print_session_section(session_stats):
@@ -4475,22 +4660,86 @@ def _print_workspaces_section(top_workspaces):
             print(f"   {ws['name']}: {ws['sessions']} sessions, {ws['messages']} msgs")
 
 
-def _print_summary_stats(session_stats, token_stats, tool_stats, sources, models, top_workspaces):
+def _print_homes_and_workspaces(sources, top_workspaces, top_limit=None):
+    """Print homes and workspaces together at the top of stats output."""
+    if not sources and not top_workspaces:
+        return
+    print("\nHomes & Workspaces")
+    source_map = {}
+    for s in sources or []:
+        source_map[s.get("source")] = s.get("count", 0)
+
+    grouped = {}
+    ws_list = top_workspaces or []
+
+    for ws in ws_list:
+        home_label = ws.get("source") or "home"
+        grouped.setdefault(home_label, []).append(ws)
+
+    # Normalize and sort workspaces per home before limiting
+    top_limit_int = None
+    if top_limit is not None:
+        try:
+            top_limit_int = int(top_limit)
+        except (TypeError, ValueError):
+            top_limit_int = None
+        if top_limit_int is not None and top_limit_int < 1:
+            top_limit_int = None
+
+    for home, ws_items in grouped.items():
+        ws_items.sort(key=lambda x: x.get("sessions", 0), reverse=True)
+
+    ordered_homes = list(source_map.keys()) + [h for h in grouped.keys() if h not in source_map]
+
+    for home in ordered_homes:
+        total = source_map.get(home, None)
+        if total is not None:
+            print(f"   Home: {home} ({total:,} sessions)")
+        else:
+            print(f"   Home: {home}")
+        ws_items = grouped.get(home, [])
+        if top_limit_int is not None:
+            ws_items = ws_items[:top_limit_int]
+        for ws in ws_items:
+            if ws.get("is_alias"):
+                ws_count = ws.get("workspace_count", 0)
+                print(
+                    f"      Workspace: {ws['name']} ({ws_count} workspaces)"
+                    f" — {ws['sessions']} sessions, {ws['messages']} msgs"
+                )
+            else:
+                print(
+                    f"      Workspace: {ws['name']}"
+                    f" — {ws['sessions']} sessions, {ws['messages']} msgs"
+                )
+
+
+def _print_summary_stats(
+    session_stats,
+    token_stats,
+    tool_stats,
+    sources,
+    models,
+    top_workspaces,
+    top_limit=None,
+    time_stats=None,
+):
     """Print the formatted summary statistics."""
     print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("CLAUDE CODE METRICS SUMMARY")
     print("=" * DISPLAY_SEPARATOR_WIDTH)
 
+    _print_homes_and_workspaces(sources, top_workspaces, top_limit=top_limit)
     _print_session_section(session_stats)
     _print_token_section(token_stats)
     _print_tool_section(tool_stats)
-    _print_sources_section(sources)
     _print_models_section(models)
-    _print_workspaces_section(top_workspaces)
+    if time_stats is not None:
+        _print_time_summary(time_stats, include_breakdown=False)
     print()
 
 
-def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list, top_limit=None):
     """Display summary statistics dashboard."""
     session_stats = _query_session_stats(conn, where_sql, params)
     token_stats = _query_token_stats(conn, where_sql, params)
@@ -4501,7 +4750,7 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
         f"SELECT source, COUNT(*) as count FROM sessions s WHERE {where_sql} GROUP BY source ORDER BY count DESC",
         params,
     )
-    sources = cursor.fetchall()
+    sources = [dict(row) for row in cursor.fetchall()]
 
     # Model breakdown (top 3)
     cursor = conn.execute(
@@ -4521,7 +4770,18 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
     workspace_to_alias = _build_workspace_to_alias_map()
     top_workspaces = _aggregate_workspace_stats(all_workspace_stats, workspace_to_alias)
 
-    _print_summary_stats(session_stats, token_stats, tool_stats, sources, models, top_workspaces)
+    time_stats = _compute_time_stats(conn, where_sql, params)
+
+    _print_summary_stats(
+        session_stats,
+        token_stats,
+        tool_stats,
+        sources,
+        models,
+        top_workspaces,
+        top_limit=top_limit,
+        time_stats=time_stats,
+    )
 
 
 def display_tool_stats(conn: sqlite3.Connection, where_sql: str, params: list):
@@ -4748,17 +5008,25 @@ def calculate_daily_work_time(conn: sqlite3.Connection, where_sql: str, params: 
         params,
     )
 
-    # Collect all timestamps
-    all_timestamps = [row["timestamp"] for row in cursor]
+    # Collect and normalize timestamps, dropping missing/invalid values
+    raw_timestamps = [row["timestamp"] for row in cursor]
 
-    if not all_timestamps:
+    parsed_timestamps = []
+    for ts_str in raw_timestamps:
+        if not ts_str:
+            continue
+        try:
+            parsed_timestamps.append(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
+        except (ValueError, TypeError):
+            continue
+
+    if not parsed_timestamps:
         return {}
+
+    parsed_timestamps.sort()
 
     daily_stats = {}  # date -> {work_seconds, messages, work_periods}
     gap_threshold = WORK_PERIOD_GAP_THRESHOLD
-
-    def parse_ts(ts):
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
     def get_date(dt):
         return dt.strftime("%Y-%m-%d")
@@ -4798,8 +5066,7 @@ def calculate_daily_work_time(conn: sqlite3.Connection, where_sql: str, params: 
     prev_ts = None
     period_start = None
 
-    for ts_str in all_timestamps:
-        ts = parse_ts(ts_str)
+    for ts in parsed_timestamps:
         date_str = get_date(ts)
 
         # Initialize date entry if needed
@@ -4858,8 +5125,8 @@ def _print_daily_breakdown(
     )
 
 
-def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
-    """Display time tracking statistics with daily breakdown."""
+def _compute_time_stats(conn: sqlite3.Connection, where_sql: str, params: list) -> dict:
+    """Compute time stats used by both summary and --time output."""
     daily_stats = calculate_daily_work_time(conn, where_sql, params)
     total_work, total_messages, total_periods = _calculate_time_totals(daily_stats)
 
@@ -4869,19 +5136,46 @@ def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     dates = sorted(daily_stats.keys()) if daily_stats else []
     first_date, last_date = (dates[0], dates[-1]) if dates else (None, None)
 
-    print("=" * 70)
-    print("TIME TRACKING")
-    print("=" * 70)
-    print("\nSummary")
+    return {
+        "daily_stats": daily_stats,
+        "total_work": total_work,
+        "total_messages": total_messages,
+        "total_periods": total_periods,
+        "num_files": num_files,
+        "first_date": first_date,
+        "last_date": last_date,
+    }
+
+
+def _print_time_summary(time_stats: dict, include_breakdown: bool = False):
+    """Print time tracking summary (optionally with daily breakdown)."""
+    daily_stats = time_stats["daily_stats"]
+    total_work = time_stats["total_work"]
+    total_messages = time_stats["total_messages"]
+    total_periods = time_stats["total_periods"]
+    num_files = time_stats["num_files"]
+    first_date = time_stats["first_date"]
+    last_date = time_stats["last_date"]
+
+    print("\nTime")
     print(f"   Total work time: {format_duration_hm(total_work)}")
     print(f"   Work periods: {total_periods}")
     print(f"   Session files: {num_files}")
     if first_date and last_date:
         print(f"   Date range: {first_date} to {last_date}")
 
-    if daily_stats:
+    if include_breakdown and daily_stats:
         _print_daily_breakdown(daily_stats, total_work, total_periods, total_messages)
 
+
+def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
+    """Display time tracking statistics with daily breakdown."""
+    time_stats = _compute_time_stats(conn, where_sql, params)
+
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
+    print("TIME TRACKING")
+    print("=" * DISPLAY_SEPARATOR_WIDTH)
+    _print_time_summary(time_stats, include_breakdown=True)
     print()
 
 
@@ -4963,20 +5257,30 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
         sys.stderr.write("  • Try: claude-history lsh --wsl\n")
         sys.exit(1)
 
-    sessions = collect_sessions_with_dedup(
-        patterns,
-        since_date,
-        until_date,
-        projects_dir=wsl_projects_dir,
-        skip_message_count=True,  # Slow over Windows/WSL boundary
-    )
+    workspaces_only = getattr(args, "workspaces_only", False)
+
+    if workspaces_only:
+        raw_workspaces = _get_workspaces_from_dir(wsl_projects_dir)
+        workspaces = _filter_workspaces_by_patterns(raw_workspaces, patterns)
+        base_path = _detect_wsl_base_path(wsl_projects_dir)
+        sessions = [
+            {"workspace": ws, "workspace_readable": normalize_workspace_name(ws, base_path=base_path)}
+            for ws in workspaces
+        ]
+    else:
+        sessions = collect_sessions_with_dedup(
+            patterns,
+            since_date,
+            until_date,
+            projects_dir=wsl_projects_dir,
+            skip_message_count=True,  # Slow over Windows/WSL boundary
+        )
 
     if not sessions:
         sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
         sys.exit(1)
 
     source_label = f"WSL ({distro_name})"
-    workspaces_only = getattr(args, "workspaces_only", False)
     print_sessions_output(sessions, source_label, workspaces_only)
 
 
@@ -5057,7 +5361,10 @@ def _list_local_sessions(args, patterns: list, since_date, until_date):
         since_date: Optional start date filter
         until_date: Optional end date filter
     """
-    sessions = collect_sessions_with_dedup(patterns, since_date, until_date, include_cached=True)
+    projects_dir = getattr(args, "projects_dir", None)
+    sessions = collect_sessions_with_dedup(
+        patterns, since_date, until_date, include_cached=True, projects_dir=projects_dir
+    )
 
     workspaces_only = getattr(args, "workspaces_only", False)
 
@@ -6500,6 +6807,10 @@ EXAMPLES:
     claude-history lsw --windows                    # list Windows workspaces
     claude-history lss myproject --windows          # list Windows sessions
     claude-history export myproject --windows       # export from Windows
+
+  Notes:
+    - Outputs may show '[missing]' when a workspace directory no longer exists; the path
+      is the closest match based on the stored workspace name.
 """
 
 
@@ -6971,6 +7282,12 @@ def _add_stats_parser(subparsers):
         help="Show stats for all workspaces (default: current workspace)",
     )
     parser.add_argument(
+        "--top-ws",
+        type=int,
+        default=None,
+        help="Limit the number of workspaces shown per home (default: all)",
+    )
+    parser.add_argument(
         "--this",
         action="store_true",
         dest="this_only",
@@ -7320,6 +7637,8 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
 
 def _dispatch_lss_local(args, workspace_list: list):
     """Handle lss for local sessions only."""
+    projects_dir_override = getattr(args, "projects_dir_override", None)
+
     this_only = getattr(args, "this_only", False)
     error_msg = (
         "Not in a Claude Code workspace.\n\n"
@@ -7341,6 +7660,7 @@ def _dispatch_lss_local(args, workspace_list: list):
         until = args.until
         remote = _resolve_remote_flag(args)
         workspaces_only = False
+        projects_dir = projects_dir_override
 
     LssArgs.patterns = patterns
     cmd_list(LssArgs())
@@ -7348,10 +7668,44 @@ def _dispatch_lss_local(args, workspace_list: list):
 
 def _dispatch_lss(args):
     """Dispatch lss (list sessions) command."""
-    workspace_list = args.workspace if args.workspace else []
-    workspace_list = [_coerce_target_to_workspace_pattern(w) for w in workspace_list]
+    workspace_inputs = args.workspace if args.workspace else []
+    projects_dir_override = None
+    wsl_unc_in_input = False
+    for w in workspace_inputs:
+        w_norm = w.replace("\\", "/")
+        lower_norm = w_norm.lower()
+        if lower_norm.startswith("//wsl.localhost/") or lower_norm.startswith("//wsl$/"):
+            parts = [p for p in w_norm.split("/") if p]
+            # parts: ['wsl.localhost', '<distro>', 'home', '<user>', ...]
+            distro = parts[1] if len(parts) > 1 else None
+            try:
+                home_idx = parts.index("home")
+                user = parts[home_idx + 1] if len(parts) > home_idx + 1 else None
+            except ValueError:
+                user = None
+            if distro and user:
+                projects_dir_override = Path(f"//wsl.localhost/{distro}/home/{user}/.claude/projects")
+            elif distro:
+                projects_dir_override = Path(f"//wsl.localhost/{distro}/home/.claude/projects")
+            else:
+                projects_dir_override = Path(w).parent
+            wsl_unc_in_input = True
+            break
+        # Absolute path to workspace dir – use its parent as projects root
+        if projects_dir_override is None:
+            try:
+                path_obj = Path(w)
+                if path_obj.is_absolute():
+                    parent = path_obj.parent
+                    if parent.exists():
+                        projects_dir_override = parent
+            except OSError:
+                pass
+
+    workspace_list = [_coerce_target_to_workspace_pattern(w) for w in workspace_inputs]
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []
+    args.projects_dir_override = projects_dir_override
 
     # If a remote is selected (including --wsl/--windows via _resolve_remote_flag)
     # and no workspace was provided, default to "all" instead of requiring the
@@ -7364,6 +7718,11 @@ def _dispatch_lss(args):
             selected_remote = None
         if selected_remote:
             workspace_list = [""]
+
+    # If a WSL UNC path was provided, force local handling (remote=None)
+    if wsl_unc_in_input and not getattr(args, "wsl", False):
+        args.wsl = False
+        args.remotes = []
 
     # Check for alias (explicit flag or @ prefix)
     alias_name = detect_alias_from_args(args, workspace_list)
@@ -7585,6 +7944,8 @@ def _build_stats_args(args):
         by_workspace = getattr(args, "by_workspace", False)
         by_day = getattr(args, "by_day", False)
         all_workspaces = getattr(args, "all_workspaces", False)
+        top_ws = getattr(args, "top_ws", None)
+        this_only = getattr(args, "this_only", False)
 
     return StatsArgs()
 

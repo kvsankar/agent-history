@@ -66,8 +66,16 @@ def test_e2e_windows_from_windows(tmp_path: Path):
     if sys.platform != "win32":
         return
     projects = tmp_path
-    make_workspace(projects, "C--e2e-win-alpha", files=1)
-    make_workspace(projects, "C--e2e-win-beta", files=1)
+    win_ws1 = projects / "real" / "alpha"
+    win_ws2 = projects / "real" / "beta"
+    win_ws1.mkdir(parents=True, exist_ok=True)
+    win_ws2.mkdir(parents=True, exist_ok=True)
+
+    ws1_encoded = _claude_cli._convert_windows_path_to_encoded(str(win_ws1))
+    ws2_encoded = _claude_cli._convert_windows_path_to_encoded(str(win_ws2))
+
+    make_workspace(projects, ws1_encoded, files=1)
+    make_workspace(projects, ws2_encoded, files=1)
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)  # local still needs a valid root
@@ -75,8 +83,10 @@ def test_e2e_windows_from_windows(tmp_path: Path):
 
     r = run_cli(["lsw", "--windows"], env=env)
     assert r.returncode == 0, r.stderr
-    # Output uses POSIX-style drive paths (normalized): /C/...
-    assert "/C/e2e/win/alpha" in r.stdout or "/C/e2e/win/beta" in r.stdout
+    lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+    assert str(win_ws1) in lines and str(win_ws2) in lines
+    for path_str in lines:
+        assert Path(path_str).exists(), f"Listed path is not accessible: {path_str}"
 
 
 def test_e2e_wsl_from_windows(tmp_path: Path):
@@ -84,6 +94,9 @@ def test_e2e_wsl_from_windows(tmp_path: Path):
         return
     projects = tmp_path
     make_workspace(projects, "-home-test-distro-svc", files=1)
+    # Empty workspace should still be listed
+    empty_ws = projects / "-home-test-distro-blogging-platform"
+    empty_ws.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
@@ -92,17 +105,34 @@ def test_e2e_wsl_from_windows(tmp_path: Path):
 
     r1 = run_cli(["lsw", "--wsl"], env=env)
     assert r1.returncode == 0, r1.stderr
-    # On Windows we may print UNC paths for WSL, or normalized POSIX fallback
     assert (
-        "wsl.localhost" in r1.stdout
-        or "wsl$" in r1.stdout
+        "\\\\wsl.localhost\\TestWSL\\home\\test\\distro\\svc" in r1.stdout
+        or "\\\\wsl$\\TestWSL\\home\\test\\distro\\svc" in r1.stdout
         or "/home/test/distro/svc" in r1.stdout
         or "/home/test/distro-svc" in r1.stdout
     )
+    assert "blogging-platform" in r1.stdout
 
     r2 = run_cli(["lss", "--wsl"], env=env)
     assert r2.returncode == 0, r2.stderr
     assert "HOME\tWORKSPACE\tFILE\t" in r2.stdout
+
+
+def test_e2e_wsl_unc_path_without_flag(tmp_path: Path):
+    if sys.platform != "win32":
+        return
+    projects = tmp_path
+    make_workspace(projects, "-home-test-distro-noflag", files=1)
+
+    env = os.environ.copy()
+    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env["CLAUDE_WSL_TEST_DISTRO"] = "TestWSL"
+    env["CLAUDE_WSL_PROJECTS_DIR"] = str(projects)
+
+    unc = str(projects / "-home-test-distro-noflag")
+    r = run_cli(["lss", unc], env=env)
+    assert r.returncode == 0, r.stderr
+    assert "HOME\tWORKSPACE\tFILE\t" in r.stdout
 
 
 def test_e2e_export_local(tmp_path: Path):
@@ -233,3 +263,46 @@ def test_e2e_all_homes_windows(tmp_path: Path):
         or ("/home/test/distro-ws" in r.stdout)
         or ("/home/test/distro/ws" in r.stdout)
     )
+
+
+def test_e2e_stats_top_ws_limit(tmp_path: Path):
+    """stats --top-ws should limit workspaces per home."""
+    home_dir = tmp_path / "home"
+    config_dir = home_dir / ".claude-history"
+    projects = tmp_path / "projects"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    projects.mkdir(parents=True, exist_ok=True)
+
+    db_path = config_dir / "metrics.db"
+    conn = _claude_cli.init_metrics_db(db_path)
+
+    def make_sessions(encoded_workspace: str, source: str, count: int):
+        ws_dir = projects / encoded_workspace
+        ws_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(count):
+            f = ws_dir / f"s{i}.jsonl"
+            f.write_text(
+                '{"type":"user","content":[{"type":"text","text":"hi"}]}\n', encoding="utf-8"
+            )
+            _claude_cli.sync_file_to_db(conn, f, source=source, force=True)
+
+    make_sessions("-home-user-proj-local-main", "local", 3)
+    make_sessions("-home-user-proj-local-secondary", "local", 1)
+    make_sessions("-home-user-proj-wsl-main", "wsl:Ubuntu", 2)
+    make_sessions("-home-user-proj-wsl-secondary", "wsl:Ubuntu", 1)
+    conn.close()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["USERPROFILE"] = str(home_dir)
+
+    result = run_cli(["stats", "--aw", "--top-ws", "1"], env=env)
+    assert result.returncode == 0, result.stderr
+
+    output = result.stdout
+    assert "Home: local" in output
+    assert "Home: wsl:Ubuntu" in output
+    assert "Workspace: local-main" in output
+    assert "Workspace: wsl-main" in output
+    assert "local-secondary" not in output
+    assert "wsl-secondary" not in output

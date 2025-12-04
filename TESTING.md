@@ -61,7 +61,7 @@ ver  # Windows command prompt/PowerShell
 | cli_help_export | `claude-history export --help` | Shows export help (includes --this) | ⬜ |
 | cli_help_alias | `claude-history alias --help` | Shows alias help | ⬜ |
 | cli_help_lshadd | `claude-history lsh add --help` | Shows lsh add help | ⬜ |
-| cli_help_stats | `claude-history stats --help` | Shows stats help (includes --this, --time) | ⬜ |
+| cli_help_stats | `claude-history stats --help` | Shows stats help (includes --this, --time, --top-ws) | ⬜ |
 | cli_help_reset | `claude-history reset --help` | Shows reset help | ⬜ |
 
 ---
@@ -86,6 +86,7 @@ ver  # Windows command prompt/PowerShell
 | local_lsw_all | `claude-history lsw` | Lists all local workspaces | ⬜ |
 | local_lsw_pattern | `claude-history lsw <workspace>` | Lists workspaces matching pattern | ⬜ |
 | local_lsw_nonexistent | `claude-history lsw nonexistent` | Lists no workspaces (empty) | ⬜ |
+| local_lsw_missing_marker | `claude-history lsw <workspace>` where dir missing | Shows closest match with `[missing]` suffix | ⬜ |
 
 ### 2.3 lss - List Sessions (Local)
 
@@ -93,6 +94,8 @@ ver  # Windows command prompt/PowerShell
 |---------|---------|----------------|--------|
 | local_lss_current | `claude-history lss` | Lists sessions from current workspace | ⬜ |
 | local_lss_workspace | `claude-history lss <workspace>` | Lists sessions from specific workspace | ⬜ |
+| local_lss_absolute_path | `claude-history lss C:\path\to\workspace` | Resolves absolute path target; lists sessions | ⬜ |
+| local_lss_unc_infers_local | `claude-history lss \\wsl.localhost\Distro\home\user\.claude\projects\-home-user-ws` | Works without `--wsl` by inferring projects root | ⬜ |
 | local_lss_since | `claude-history lss <workspace> --since 2025-01-01` | Lists sessions after date | ⬜ |
 | local_lss_until | `claude-history lss <workspace> --until 2025-12-31` | Lists sessions before date | ⬜ |
 | local_lss_range | `claude-history lss <workspace> --since 2025-01-01 --until 2025-12-31` | Lists sessions in date range | ⬜ |
@@ -136,7 +139,10 @@ ver  # Windows command prompt/PowerShell
 | Test ID | Command | Expected Result | Status |
 |---------|---------|----------------|--------|
 | wsl_lsw_list | `python claude-history lsw --wsl` | Lists workspaces from WSL (auto-detects distro) | ⬜ |
+| wsl_lsw_missing_tail | `python claude-history lsw --wsl` with a missing WSL workspace dir | Lists workspace with `[missing]` suffix | ⬜ |
+| wsl_lss_slash_pattern | `claude-history lss --wsl projects/my-work` | Matches encoded workspace with slashes | ⬜ |
 | wsl_lsw_pattern | `python claude-history lsw <workspace> --wsl` | Filters workspaces by pattern in WSL | ⬜ |
+| wsl_lss_unc_without_flag | `claude-history lss \\wsl.localhost\\Distro\\home\\user\\.claude\\projects\\-home-user-ws` | Works without `--wsl`; lists sessions | ⬜ |
 
 ### 3.3 lss with WSL
 
@@ -624,6 +630,7 @@ All: Add `claude-history lsw -r <user>@<host>` (if SSH available)
 | stats_display_current | `claude-history stats` | Shows summary for current workspace | ⬜ |
 | stats_display_aw | `claude-history stats --aw` | Shows summary for all workspaces | ⬜ |
 | stats_display_pattern | `claude-history stats <pattern>` | Filters by workspace pattern | ⬜ |
+| stats_display_top_ws | `claude-history stats --aw --top-ws 3` | Limits workspaces per home, shows Homes & Workspaces section | ⬜ |
 | stats_display_tools | `claude-history stats --tools` | Shows tool usage stats | ⬜ |
 | stats_display_models | `claude-history stats --models` | Shows model usage stats | ⬜ |
 | stats_display_by_ws | `claude-history stats --by-workspace` | Shows per-workspace breakdown | ⬜ |
@@ -640,7 +647,7 @@ All: Add `claude-history lsw -r <user>@<host>` (if SSH available)
 | stats_time_ah | `claude-history stats --time --ah` | Auto-syncs, then shows time stats | ⬜ |
 | stats_time_ah_aw | `claude-history stats --time --ah --aw` | Syncs all, shows all workspaces | ⬜ |
 | stats_time_since | `claude-history stats --time --since 2025-01-01` | Date filtering with time | ⬜ |
-| stats_time_format | Verify time output | Shows daily breakdown with work periods | ⬜ |
+| stats_time_format | Verify time output | Shows daily breakdown with work periods; summary always includes time section | ⬜ |
 | stats_time_max_24h | Verify time output | No day exceeds 24 hours | ⬜ |
 
 ### 11.4 Stats Orthogonal Flags

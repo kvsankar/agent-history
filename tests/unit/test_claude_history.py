@@ -3409,6 +3409,231 @@ class TestSection3Remaining:
         assert args.pattern == ["myproject"]
         assert args.wsl is True
 
+    def test_wsl_normalize_missing_tail_marks_partial(self, tmp_path, monkeypatch):
+        """WSL normalization marks missing tails with [missing] when only prefix exists."""
+        if sys.platform != "win32":
+            return
+
+        base = Path(r"\\wsl.localhost\\Ubuntu\\")
+        existing_prefix = base / "home" / "user" / "projects"
+
+        real_exists = Path.exists
+
+        def fake_exists(self):
+            s = str(self)
+            if s.startswith(str(base)):
+                # Pretend base and prefix exist, tail is missing
+                if "blogging" in s:
+                    return False
+                return True
+            return real_exists(self)
+
+        monkeypatch.setattr(Path, "exists", fake_exists)
+
+        ws_name = "-home-user-projects-blogging-platform"
+        result = ch.normalize_workspace_name(ws_name, base_path=base)
+
+        assert str(existing_prefix) in result
+        assert "[missing]" in result
+        assert "blogging-platform" in result
+
+    def test_wsl_normalize_full_tail_not_marked(self, tmp_path, monkeypatch):
+        """WSL normalization should not mark missing when full path exists with merges."""
+        if sys.platform != "win32":
+            return
+
+        base = Path(r"\\wsl.localhost\\Ubuntu\\")
+        full_path = base / "home" / "user" / "projects" / "my-project"
+
+        real_exists = Path.exists
+
+        def fake_exists(self):
+            s = Path(self)
+            if not str(s).startswith(str(base)):
+                return real_exists(self)
+            # Allow prefixes of the real path and the real path itself
+            try:
+                full_path.relative_to(s)
+                return True
+            except ValueError:
+                pass
+            try:
+                s.relative_to(full_path)
+                return True
+            except ValueError:
+                return False
+
+        monkeypatch.setattr(Path, "exists", fake_exists)
+
+        ws_name = "-home-user-projects-my-project"
+        result = ch.normalize_workspace_name(ws_name, base_path=base)
+
+        assert "[missing]" not in result
+        assert str(full_path) in result
+
+    def test_wsl_normalize_merged_tail_not_duplicated(self, monkeypatch):
+        """Merged segments that exist should not duplicate the tail."""
+        if sys.platform != "win32":
+            return
+
+        base = Path(r"\\wsl.localhost\\Ubuntu\\")
+        full_path = base / "home" / "user" / "projects" / "my-project"
+
+        real_exists = Path.exists
+
+        def fake_exists(self):
+            s_str = str(self)
+            if s_str == str(full_path):
+                return True
+            if s_str.startswith(str(base)):
+                # Allow base and intermediate merges to exist
+                return True
+            return real_exists(self)
+
+        monkeypatch.setattr(Path, "exists", fake_exists)
+
+        ws_name = "-home-user-projects-my-project"
+        result = ch.normalize_workspace_name(ws_name, base_path=base)
+
+        assert result.endswith("my-project")
+        assert "my-project/my-project" not in result
+
+    def test_coerce_wsl_unc_path_to_workspace_pattern(self):
+        """UNC WSL paths should coerce to encoded workspace patterns."""
+        if sys.platform != "win32":
+            return
+
+        unc = r"\\wsl.localhost\\Ubuntu\\home\\user\\my-project"
+        encoded = ch._coerce_target_to_workspace_pattern(unc)
+        assert encoded == "-home-user-my-project"
+
+    def test_coerce_wsl_unc_projects_path_returns_workspace(self):
+        """UNC WSL paths pointing into .claude/projects return the workspace dir name."""
+        if sys.platform != "win32":
+            return
+
+        unc = r"\\wsl.localhost\\Ubuntu\\home\\user\\.claude\\projects\\-home-user-my-project"
+        encoded = ch._coerce_target_to_workspace_pattern(unc)
+        assert encoded == "-home-user-my-project"
+
+    def test_workspace_pattern_matches_with_slashes(self):
+        """Workspace pattern with slashes should match encoded name."""
+        assert ch._workspace_matches_pattern(
+            "-home-user-projects-my-work", "projects/my-work", False
+        )
+
+    def test_stats_homes_workspaces_shows_all(self, tmp_path, capsys):
+        """Stats should list all homes and their workspaces with correct counts."""
+        db_path = tmp_path / "metrics.db"
+        conn = ch.init_metrics_db(db_path)
+
+        def make_session(workspace_dir_name, source, fname):
+            ws_dir = tmp_path / workspace_dir_name
+            ws_dir.mkdir(parents=True, exist_ok=True)
+            f = ws_dir / fname
+            f.write_text('{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8")
+            ch.sync_file_to_db(conn, f, source=source, force=True)
+
+        make_session("-home-user-proj-local", "local", "a.jsonl")
+        make_session("-home-user-proj-local2", "local", "b.jsonl")
+        make_session("-home-user-proj-wsl", "wsl:Ubuntu", "c.jsonl")
+        make_session("-home-user-proj-wsl2", "wsl:Ubuntu", "d.jsonl")
+
+        ch.display_summary_stats(conn, "1=1", [], top_limit=None)
+        captured = capsys.readouterr().out
+        assert "Home: local (2 sessions)" in captured
+        assert "Home: wsl:Ubuntu (2 sessions)" in captured
+        assert "Workspace: proj-local" in captured
+        assert "Workspace: proj-local2" in captured
+        assert "Workspace: proj-wsl" in captured
+        assert "Workspace: proj-wsl2" in captured
+        conn.close()
+
+    def test_stats_homes_workspaces_top_limit(self, tmp_path, capsys):
+        """Stats --top-ws should limit workspaces per home."""
+        db_path = tmp_path / "metrics.db"
+        conn = ch.init_metrics_db(db_path)
+
+        def make_session(workspace_dir_name, source, fname):
+            ws_dir = tmp_path / workspace_dir_name
+            ws_dir.mkdir(parents=True, exist_ok=True)
+            f = ws_dir / fname
+            f.write_text('{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8")
+            ch.sync_file_to_db(conn, f, source=source, force=True)
+
+        make_session("-home-user-proj-local", "local", "a.jsonl")
+        make_session("-home-user-proj-local2", "local", "b.jsonl")
+        make_session("-home-user-proj-wsl", "wsl:Ubuntu", "c.jsonl")
+        make_session("-home-user-proj-wsl2", "wsl:Ubuntu", "d.jsonl")
+
+        ch.display_summary_stats(conn, "1=1", [], top_limit=1)
+        captured = capsys.readouterr().out
+        # One workspace per home when top_limit=1
+        assert captured.count("Workspace: proj-") == 2
+        conn.close()
+
+    def test_stats_summary_includes_time(self, tmp_path, capsys):
+        """Default stats output should include time summary."""
+        db_path = tmp_path / "metrics.db"
+        conn = ch.init_metrics_db(db_path)
+
+        ws_dir = tmp_path / "-home-user-proj"
+        ws_dir.mkdir(parents=True, exist_ok=True)
+        f = ws_dir / "a.jsonl"
+        f.write_text('{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8")
+        ch.sync_file_to_db(conn, f, source="local", force=True)
+
+        ch.display_summary_stats(conn, "1=1", [], top_limit=None)
+        captured = capsys.readouterr().out
+        assert "Total work time:" in captured
+        assert "Work periods:" in captured
+        conn.close()
+
+    def test_dispatch_lss_accepts_unc_without_wsl_flag(self, monkeypatch, tmp_path):
+        """lss with UNC WSL path should work without --wsl."""
+        if sys.platform != "win32":
+            return
+
+        projects_dir = tmp_path / "wslroot" / "home" / "user" / ".claude" / "projects"
+        projects_dir.mkdir(parents=True, exist_ok=True)
+        ws_dir = projects_dir / "-home-user-my-project"
+        ws_dir.mkdir(parents=True, exist_ok=True)
+        (ws_dir / "session-0.jsonl").write_text("{}", encoding="utf-8")
+
+        unc = r"\\wsl.localhost\\TestWSL\\home\\user\\.claude\\projects\\-home-user-my-project"
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lss", unc])
+
+        captured = []
+
+        def fake_cmd_list(lss_args):
+            captured.append(
+                {
+                    "patterns": lss_args.patterns,
+                    "projects_dir": getattr(lss_args, "projects_dir", None),
+                    "remote": getattr(lss_args, "remote", None),
+                }
+            )
+
+        monkeypatch.setattr(ch, "cmd_list", fake_cmd_list)
+        ch._dispatch_lss(args)
+
+        assert captured, "cmd_list should be called"
+        entry = captured[0]
+        normalized_patterns = []
+        for p in entry["patterns"]:
+            if len(p) > 2 and p[1] == ":":
+                normalized_patterns.append(
+                    "-" + p.replace(":", "").replace("\\", "-").replace("/", "-").lstrip("-")
+                )
+            else:
+                normalized_patterns.append(p.replace("\\", "/"))
+
+        assert "-home-user-my-project" in normalized_patterns or "-home-user-my-project" in entry["patterns"]
+        assert entry["projects_dir"] is not None
+        assert "wsl.localhost" in str(entry["projects_dir"]).lower()
+        assert entry["remote"] is None
+
     def test_wsl_lss_current(self):
         """3.3.1: lss --wsl lists sessions from WSL."""
         parser = ch._create_argument_parser()
@@ -4491,6 +4716,32 @@ class TestSection11Remaining:
         parser = ch._create_argument_parser()
         args = parser.parse_args(["stats", "myproject"])
         assert args.workspace == ["myproject"]
+
+    def test_stats_parser_top_ws(self):
+        """Stats parser should accept --top-ws."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["stats", "--top-ws", "3"])
+        assert args.top_ws == 3
+
+    def test_build_stats_args_copies_top_ws_and_this(self):
+        """_build_stats_args should preserve top_ws and this_only flags."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["stats", "--top-ws", "2", "--this"])
+        stats_args = ch._build_stats_args(args)
+        assert getattr(stats_args, "top_ws", None) == 2
+        assert getattr(stats_args, "this_only", False) is True
+
+    def test_stats_top_ws_must_be_positive(self, tmp_path, capsys):
+        """--top-ws rejects non-positive integers."""
+        db = tmp_path / "metrics.db"
+        conn = ch.init_metrics_db(db)
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["stats", "--top-ws", "0"])
+        with pytest.raises(SystemExit):
+            ch._display_selected_stats(conn, args, "1=1", [])
+        err = capsys.readouterr().err
+        assert "--top-ws must be a positive integer" in err
+        conn.close()
 
     def test_stats_display_by_ws(self):
         """11.2.6: stats --by-workspace shows per-workspace breakdown."""

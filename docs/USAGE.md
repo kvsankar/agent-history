@@ -332,11 +332,12 @@ claude-history stats [WORKSPACE] [OPTIONS]
 - `--force`: Force re-sync all files
 
 **View Options:**
-- `--time`: Show time tracking with daily breakdown
+- `--time`: Show time tracking with daily breakdown (default summary already includes a time summary)
 - `--tools`: Show tool usage statistics
 - `--models`: Show model usage statistics
 - `--by-workspace`: Show per-workspace breakdown
 - `--by-day`: Show daily statistics
+- `--top-ws N`: Limit workspaces shown per home in the summary (default: all; N must be > 0)
 
 **Filters:**
 - `--source SOURCE`: Filter by source (local, wsl:distro, windows, remote:host)
@@ -348,7 +349,7 @@ claude-history stats [WORKSPACE] [OPTIONS]
 # Summary dashboard (current workspace)
 claude-history stats
 
-# All workspaces
+# All workspaces (Homes & Workspaces section plus summary with time)
 claude-history stats --aw
 
 # Time tracking with auto-sync from all homes
@@ -369,6 +370,7 @@ claude-history stats --since 2025-11-01 --until 2025-11-30
 - **Tokens**: Input, output, cache creation, cache read, hit ratio
 - **Tools**: Usage counts and error rates per tool
 - **Models**: Usage distribution across Claude models
+- **Homes & Workspaces**: Homes with per-home workspaces (alias-aware, per-home limiting via `--top-ws`)
 - **Workspaces**: Top workspaces by activity (alias-aware)
 - **Daily trends**: Session and token usage over time
 

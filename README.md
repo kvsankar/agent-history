@@ -2,17 +2,24 @@
 
 A CLI tool to browse and export Claude Code conversation history with multi-environment support.
 
-Claude Code stores your conversations locally, but accessing them for analysis, searching past solutions, or tracking usage patterns requires parsing JSONL files scattered across project directories. This tool makes that data accessible through a simple command-line interface.
+Claude Code leaves conversation data fragmented across JSONL files. This tool solves the pain points:
+- Finding past work by project, not by opaque session IDs.
+- Getting readable exports for sharing, backup, or audits.
+- Seeing where and how you code across homes (local/WSL/Windows/SSH) with session/token/tool/time metrics.
+- Surviving moves/renames with aliasing and “closest match” `[missing]` hints.
+- Staying lightweight: one stdlib-only CLI plus a small SQLite db for metrics—no extra installs.
 
 ## Features
 
-- **Markdown export** - Export conversations to readable markdown files with optional size control
-- **Workspace filtering** - Export by project, not just session IDs
-- **Multi-environment** - Access local, WSL, Windows, and SSH remotes
-- **Workspace aliases** - Group related workspaces across platforms
-- **Usage metrics** - Track time spent, tokens used, tool usage
-- **Claude Code skill** - Enable Claude to search your conversation history ([SKILL.md](SKILL.md))
-- **Zero dependencies** - Single Python file, stdlib only
+- **Markdown export (flexible)** – Export whole workspaces or single sessions; minimal/flat/split modes; size and path control.
+- **Workspace-aware filtering** – Target workspaces by name or path (slashes ok); matches encoded names automatically.
+- **Multi-environment reach** – Local, WSL (UNC or Linux paths), Windows from WSL, and SSH remotes; `[missing]` marker shows closest match for renamed workspaces.
+- **Aliases** – Group related workspaces across homes/sources; apply aliases to `lss`, `lsw`, `export`, and `stats`.
+- **Usage metrics** – Summaries, homes/workspaces breakdown, token/tool stats, time tracking (with daily breakdown via `--time`), top workspaces limit via `--top-ws`.
+- **Cross-home sync** – Sync metrics from all homes (`--ah`), all workspaces (`--aw`), or current workspace only (`--this`).
+- **WSL/Windows helpers** – Auto-detect WSL distros/Windows users; UNC path inference for `lss` without `--wsl`; converts path separators safely.
+- **Claude Code skill** – Enables Claude to search your history ([SKILL.md](SKILL.md)).
+- **Stdlib only** – Single Python file; no pip installs needed.
 
 ## Quick Start
 
@@ -127,6 +134,10 @@ EXAMPLES:
     claude-history lsw --windows                    # list Windows workspaces
     claude-history lss myproject --windows          # list Windows sessions
     claude-history export myproject --windows       # export from Windows
+
+Notes:
+  - Outputs may show '[missing]' when a workspace directory no longer exists; the path
+    is the closest match based on the stored workspace name.
 ```
 
 ## Testing
