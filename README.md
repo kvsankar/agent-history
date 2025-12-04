@@ -61,6 +61,21 @@ sudo mv claude-history /usr/local/bin/
 
 > **Note:** Examples below assume `claude-history` is in your PATH.
 
+### Install helper (recommended)
+
+Once you download the script, run the built-in installer to drop the CLI into `~/.local/bin`, copy the Claude skill files, and bump Claude Code’s retention settings:
+
+```bash
+python claude-history install
+```
+
+The installer:
+- Copies the CLI to `~/.local/bin/claude-history` (no sudo needed).
+- Installs the Claude skill into `~/.claude/skills/claude-history` (CLI + SKILL.md).
+- Ensures `~/.claude/settings.json` has `cleanupPeriodDays` set to `99999` so conversations aren’t purged.
+
+Use flags such as `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settings` for custom setups.
+
 ## Help
 
 ```
@@ -222,6 +237,7 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 | `alias` | Manage workspace aliases |
 | `stats` | Usage statistics |
 | `reset` | Reset stored data |
+| `install` | Install CLI + Claude skill and update retention settings |
 
 ## Common Examples
 

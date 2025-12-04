@@ -19,6 +19,7 @@ import re
 import shlex
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,12 @@ from pathlib import Path, PureWindowsPath
 from typing import Optional
 
 __version__ = "1.5.1"
+
+DEFAULT_CLI_NAME = "claude-history"
+DEFAULT_SKILL_NAME = "claude-history"
+DEFAULT_BIN_DIR = Path.home() / ".local/bin"
+DEFAULT_SKILL_DIR = Path.home() / ".claude/skills" / DEFAULT_SKILL_NAME
+DEFAULT_CLEANUP_DAYS = 99999
 
 
 # ============================================================================
@@ -1380,73 +1387,92 @@ def resolve_workspace_input(workspace_input: str, source_key: str = "local", arg
     return [ws for ws in workspaces if workspace_input in ws]
 
 
+def _looks_like_windows_drive(path: str) -> bool:
+    """Return True if the string resembles a Windows absolute path (C:/...)."""
+    return len(path) > 2 and path[1] == ":"
+
+
+def _collapse_slashes(path: str) -> str:
+    """Collapse duplicate slashes for consistent comparisons."""
+    return re.sub(r"/{2,}", "/", path)
+
+
+def _strip_wsl_unc_prefix(path: str) -> str:
+    """Convert //wsl.localhost/Distro/... into /Distro/... form."""
+    lowered = path.lower()
+    if lowered.startswith("//wsl.localhost/") or lowered.startswith("//wsl$/"):
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 3:
+            return "/" + "/".join(parts[2:])
+    return path
+
+
+def _extract_workspace_from_projects_path(parts: list[str]) -> tuple[str | None, list[str]]:
+    """Return workspace dir when path includes .claude/projects/<workspace>."""
+    if ".claude" not in parts:
+        return None, parts
+    try:
+        idx = parts.index(".claude")
+    except ValueError:
+        return None, parts
+    if idx + 2 < len(parts) and parts[idx + 1] == "projects":
+        workspace_dir = parts[idx + 2]
+        remainder = parts[idx + 2 :]
+        return workspace_dir, remainder
+    return None, parts
+
+
+def _projects_dir_from_wsl_unc(path: str) -> Path:
+    """Best-effort guess of ~/.claude/projects for a WSL UNC input."""
+    parts = [p for p in path.split("/") if p]
+    distro = parts[1] if len(parts) > 1 else None
+    try:
+        home_idx = parts.index("home")
+        user = parts[home_idx + 1] if len(parts) > home_idx + 1 else None
+    except ValueError:
+        user = None
+    if distro and user:
+        return Path(f"//wsl.localhost/{distro}/home/{user}/.claude/projects")
+    if distro:
+        return Path(f"//wsl.localhost/{distro}/home/.claude/projects")
+    return Path(path).parent
+
+
 def _coerce_target_to_workspace_pattern(target: str) -> str:
     """Convert absolute filesystem paths into Claude workspace patterns."""
     if not target or target.startswith("-") or target.startswith("@"):
         return target
-    lowered = target.lower()
-    if lowered.endswith(".jsonl"):
+    if target.lower().endswith(".jsonl"):
         return target
 
     expanded = os.path.expanduser(target).strip()
     if not expanded:
         return target
 
-    normalized = expanded.replace("\\", "/")
+    normalized = _collapse_slashes(_strip_wsl_unc_prefix(expanded.replace("\\", "/")))
     parts = [p for p in normalized.split("/") if p]
-    # Absolute path directly pointing at a workspace directory (e.g., C:\...\-home-user-foo)
+
+    # Direct absolute path that already points to a workspace dir
     try:
         if Path(expanded).is_absolute() and parts and parts[-1].startswith("-"):
             return parts[-1]
     except OSError:
         pass
 
-    # Detect WSL UNC paths (Windows) and strip to Linux path portion
-    lowered = normalized.lower()
-    if lowered.startswith("//wsl.localhost/") or lowered.startswith("//wsl$/"):
-        unc_parts = [p for p in normalized.split("/") if p]
-        if len(unc_parts) >= 3:
-            # If path points inside .claude/projects/<workspace>, take the workspace name directly
-            try:
-                idx = unc_parts.index(".claude")
-                if idx + 2 < len(unc_parts) and unc_parts[idx + 1] == "projects":
-                    return unc_parts[idx + 2]
-            except ValueError:
-                pass
-            normalized = "/" + "/".join(unc_parts[2:])
-    was_absolute = normalized.startswith("/")
-    # Collapse duplicate slashes for easier prefix handling
-    # If path includes .claude/projects/<workspace>, use the workspace segment directly
-    if ".claude" in parts:
-        try:
-            idx = parts.index(".claude")
-            if idx + 1 < len(parts) and parts[idx + 1] == "projects" and idx + 2 < len(parts):
-                workspace_dir = parts[idx + 2]
-                if workspace_dir.startswith("-"):
-                    return workspace_dir
-                normalized = "/" + "/".join(parts[idx + 2 :])
-                was_absolute = normalized.startswith("/")
-                parts = [p for p in normalized.split("/") if p]
-        except ValueError:
-            pass
-    if was_absolute:
-        normalized = "/" + "/".join(parts)
-    else:
-        normalized = "/".join(parts)
-    if normalized.startswith("//"):
-        normalized = "/" + normalized.lstrip("/")
-
-    # Handle WSL UNC paths (\\wsl.localhost\Distro\home\user\...) by stripping the UNC prefix
-    if normalized.startswith("/wsl.localhost/") or normalized.startswith("/wsl$/"):
-        parts = normalized.split("/")
-        # parts: ["", "wsl.localhost", "<distro>", ...]
-        if len(parts) >= 4:
-            normalized = "/" + "/".join(parts[3:])
+    workspace_dir, remainder = _extract_workspace_from_projects_path(parts)
+    if workspace_dir:
+        if workspace_dir.startswith("-"):
+            return workspace_dir
+        normalized = "/" + "/".join(remainder)
+    elif normalized.startswith("/wsl.localhost/") or normalized.startswith("/wsl$/"):
+        split_parts = normalized.split("/")
+        if len(split_parts) >= 4:
+            normalized = "/" + "/".join(split_parts[3:])
 
     if normalized.startswith("/"):
         return path_to_encoded_workspace(normalized)
 
-    if len(normalized) > 2 and normalized[1] == ":":
+    if _looks_like_windows_drive(normalized):
         return _convert_windows_path_to_encoded(expanded)
 
     return target
@@ -1554,7 +1580,9 @@ def _resolve_existing_wsl_path(parts: list, base_path: Path) -> tuple:
 
         if should_update:
             best_depth = deepest_existing_index
-            best_segments = segments[: deepest_existing_index + 1] if deepest_existing_index >= 0 else None
+            best_segments = (
+                segments[: deepest_existing_index + 1] if deepest_existing_index >= 0 else None
+            )
             if deepest_existing_index == len(segments) - 1:
                 best_full_segments = segments
 
@@ -1621,7 +1649,7 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
 
     # If resolution found no real merges (pure fallback), keep hyphens in the last segment
     if path_segments == parts:
-        path_segments = parts[:2] + ["-".join(parts[2:])] if len(parts) > 2 else parts
+        path_segments = [*parts[:2], "-".join(parts[2:])] if len(parts) > 2 else parts
 
     # For UNC WSL paths on Windows, try all merge combinations to find an existing path
     partial_marker = ""
@@ -1806,11 +1834,7 @@ def _workspace_matches_pattern(dir_name: str, workspace_pattern: str, match_all:
         return True
     normalized = workspace_pattern.replace("\\", "-").replace("/", "-")
     tail = workspace_pattern.replace("\\", "/").split("/")[-1]
-    return (
-        workspace_pattern in dir_name
-        or normalized in dir_name
-        or (tail and tail in dir_name)
-    )
+    return workspace_pattern in dir_name or normalized in dir_name or (tail and tail in dir_name)
 
 
 def get_workspace_sessions(
@@ -5264,7 +5288,10 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
         workspaces = _filter_workspaces_by_patterns(raw_workspaces, patterns)
         base_path = _detect_wsl_base_path(wsl_projects_dir)
         sessions = [
-            {"workspace": ws, "workspace_readable": normalize_workspace_name(ws, base_path=base_path)}
+            {
+                "workspace": ws,
+                "workspace_readable": normalize_workspace_name(ws, base_path=base_path),
+            }
             for ws in workspaces
         ]
     else:
@@ -7358,7 +7385,54 @@ def _create_argument_parser():
     _add_alias_parser(subparsers)
     _add_stats_parser(subparsers)
     _add_reset_parser(subparsers)
+    _add_install_parser(subparsers)
 
+    return parser
+
+
+def _add_install_parser(subparsers):
+    """Add install subparser."""
+    parser = subparsers.add_parser(
+        "install",
+        help="Install CLI and Claude skill",
+        description="Install the claude-history CLI to ~/.local/bin (default) and copy the skill files for Claude Code.",
+    )
+
+    parser.add_argument(
+        "--bin-dir",
+        default=str(DEFAULT_BIN_DIR),
+        help="Destination directory for the CLI binary (default: ~/.local/bin)",
+    )
+    parser.add_argument(
+        "--cli-name",
+        default=DEFAULT_CLI_NAME,
+        help="Binary name to use for the CLI install (default: claude-history)",
+    )
+    parser.add_argument(
+        "--skill-dir",
+        default=str(DEFAULT_SKILL_DIR),
+        help="Destination directory for the Claude skill files (default: ~/.claude/skills/claude-history)",
+    )
+    parser.add_argument(
+        "--skill-name",
+        default=DEFAULT_SKILL_NAME,
+        help="Binary name to use inside the Claude skill directory (default: claude-history)",
+    )
+    parser.add_argument(
+        "--skip-cli",
+        action="store_true",
+        help="Skip installing the CLI binary (only update skill/settings)",
+    )
+    parser.add_argument(
+        "--skip-skill",
+        action="store_true",
+        help="Skip installing the Claude skill files",
+    )
+    parser.add_argument(
+        "--skip-settings",
+        action="store_true",
+        help="Skip updating ~/.claude/settings.json",
+    )
     return parser
 
 
@@ -7666,63 +7740,60 @@ def _dispatch_lss_local(args, workspace_list: list):
     cmd_list(LssArgs())
 
 
-def _dispatch_lss(args):
-    """Dispatch lss (list sessions) command."""
-    workspace_inputs = args.workspace if args.workspace else []
+def _detect_projects_dir_override(workspace_inputs: list[str]) -> tuple[Path | None, bool]:
+    """Return (projects_dir_override, saw_wsl_unc_input)."""
     projects_dir_override = None
     wsl_unc_in_input = False
-    for w in workspace_inputs:
-        w_norm = w.replace("\\", "/")
-        lower_norm = w_norm.lower()
+    for raw in workspace_inputs:
+        normalized = raw.replace("\\", "/")
+        lower_norm = normalized.lower()
         if lower_norm.startswith("//wsl.localhost/") or lower_norm.startswith("//wsl$/"):
-            parts = [p for p in w_norm.split("/") if p]
-            # parts: ['wsl.localhost', '<distro>', 'home', '<user>', ...]
-            distro = parts[1] if len(parts) > 1 else None
-            try:
-                home_idx = parts.index("home")
-                user = parts[home_idx + 1] if len(parts) > home_idx + 1 else None
-            except ValueError:
-                user = None
-            if distro and user:
-                projects_dir_override = Path(f"//wsl.localhost/{distro}/home/{user}/.claude/projects")
-            elif distro:
-                projects_dir_override = Path(f"//wsl.localhost/{distro}/home/.claude/projects")
-            else:
-                projects_dir_override = Path(w).parent
+            projects_dir_override = _projects_dir_from_wsl_unc(normalized)
             wsl_unc_in_input = True
             break
-        # Absolute path to workspace dir – use its parent as projects root
         if projects_dir_override is None:
             try:
-                path_obj = Path(w)
+                path_obj = Path(raw)
                 if path_obj.is_absolute():
                     parent = path_obj.parent
                     if parent.exists():
                         projects_dir_override = parent
             except OSError:
-                pass
+                continue
+    return projects_dir_override, wsl_unc_in_input
 
-    workspace_list = [_coerce_target_to_workspace_pattern(w) for w in workspace_inputs]
-    local_flag = getattr(args, "local", False)
-    remotes = getattr(args, "remotes", None) or []
-    args.projects_dir_override = projects_dir_override
 
-    # If a remote is selected (including --wsl/--windows via _resolve_remote_flag)
-    # and no workspace was provided, default to "all" instead of requiring the
-    # current local workspace.
-    if not workspace_list:
-        try:
-            selected_remote = _resolve_remote_flag(args)
-        except SystemExit:
-            # _resolve_remote_flag may exit on invalid WSL/Windows selection
-            selected_remote = None
-        if selected_remote:
-            workspace_list = [""]
+def _ensure_workspace_default_for_remote(args, workspace_list: list[str]) -> list[str]:
+    """Default to all workspaces when remote flags are set without explicit patterns."""
+    if workspace_list:
+        return workspace_list
+    try:
+        selected_remote = _resolve_remote_flag(args)
+    except SystemExit:
+        return workspace_list
+    if selected_remote:
+        return [""]
+    return workspace_list
 
-    # If a WSL UNC path was provided, force local handling (remote=None)
-    if wsl_unc_in_input and not getattr(args, "wsl", False):
+
+def _apply_wsl_unc_override(args, saw_wsl_unc: bool):
+    """Force local mode when user passed a WSL UNC path."""
+    if saw_wsl_unc and not getattr(args, "wsl", False):
         args.wsl = False
         args.remotes = []
+
+
+def _dispatch_lss(args):
+    """Dispatch lss (list sessions) command."""
+    workspace_inputs = args.workspace if args.workspace else []
+    projects_dir_override, wsl_unc_in_input = _detect_projects_dir_override(workspace_inputs)
+    workspace_list = [_coerce_target_to_workspace_pattern(w) for w in workspace_inputs]
+    workspace_list = _ensure_workspace_default_for_remote(args, workspace_list)
+    _apply_wsl_unc_override(args, wsl_unc_in_input)
+    args.projects_dir_override = projects_dir_override
+
+    local_flag = getattr(args, "local", False)
+    remotes = getattr(args, "remotes", None) or []
 
     # Check for alias (explicit flag or @ prefix)
     alias_name = detect_alias_from_args(args, workspace_list)
@@ -7965,6 +8036,112 @@ def _dispatch_stats(args):
     cmd_stats(_build_stats_args(args))
 
 
+def _dir_on_path(directory: Path) -> bool:
+    """Return True if directory is on PATH."""
+    path_env = os.environ.get("PATH", "")
+    if not path_env:
+        return False
+    try:
+        directory = directory.expanduser().resolve()
+    except (OSError, RuntimeError):
+        directory = directory.expanduser()
+    for entry in path_env.split(os.pathsep):
+        if not entry:
+            continue
+        try:
+            entry_path = Path(entry).expanduser().resolve()
+        except (OSError, RuntimeError):
+            entry_path = Path(entry).expanduser()
+        if entry_path == directory:
+            return True
+    return False
+
+
+def _make_executable(path: Path):
+    """Ensure target is executable on POSIX systems."""
+    try:
+        mode = path.stat().st_mode
+        path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    except (PermissionError, OSError):
+        pass
+
+
+def _install_cli_binary(script_path: Path, bin_dir: str, binary_name: str) -> Path:
+    """Install CLI binary to the specified directory."""
+    target_dir = Path(bin_dir).expanduser()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / binary_name
+    shutil.copy2(script_path, target_path)
+    _make_executable(target_path)
+    print(f"Installed CLI to {target_path}")
+    if not _dir_on_path(target_dir):
+        print(
+            f'Note: {target_dir} is not currently on PATH. Add `export PATH="{target_dir}:$PATH"` to your shell profile.'
+        )
+    return target_path
+
+
+def _install_skill_files(script_path: Path, skill_dir: str, skill_name: str):
+    """Install skill binary and metadata."""
+    target_dir = Path(skill_dir).expanduser()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    skill_binary = target_dir / skill_name
+    shutil.copy2(script_path, skill_binary)
+    _make_executable(skill_binary)
+    skill_metadata = script_path.with_name("SKILL.md")
+    if skill_metadata.exists():
+        shutil.copy2(skill_metadata, target_dir / "SKILL.md")
+    else:
+        print(f"Warning: {skill_metadata} not found; skipping SKILL metadata copy.")
+    print(f"Installed Claude skill files to {target_dir}")
+
+
+def _ensure_cleanup_settings():
+    """Ensure cleanupPeriodDays is set to a high retention value."""
+    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if settings_path.exists():
+        try:
+            data = json.loads(settings_path.read_text())
+        except json.JSONDecodeError:
+            sys.stderr.write(f"Warning: {settings_path} is invalid JSON. Overwriting.\n")
+            data = {}
+    changed = data.get("cleanupPeriodDays") != DEFAULT_CLEANUP_DAYS
+    data["cleanupPeriodDays"] = DEFAULT_CLEANUP_DAYS
+    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    if changed:
+        print(f"Updated {settings_path} (cleanupPeriodDays={DEFAULT_CLEANUP_DAYS})")
+    else:
+        print(f"{settings_path} already had cleanupPeriodDays={DEFAULT_CLEANUP_DAYS}")
+
+
+def _dispatch_install(args):
+    """Handle install command."""
+    script_path = Path(__file__).resolve()
+    did_work = False
+
+    if not getattr(args, "skip_cli", False):
+        _install_cli_binary(script_path, args.bin_dir, args.cli_name)
+        did_work = True
+    else:
+        print("Skipped CLI installation (--skip-cli).")
+
+    if not getattr(args, "skip_skill", False):
+        _install_skill_files(script_path, args.skill_dir, args.skill_name)
+        did_work = True
+    else:
+        print("Skipped Claude skill installation (--skip-skill).")
+
+    if not getattr(args, "skip_settings", False):
+        _ensure_cleanup_settings()
+    else:
+        print("Skipped settings update (--skip-settings).")
+
+    if not did_work:
+        print("No files were installed.")
+
+
 def _dispatch_command(args):
     """Dispatch parsed arguments to appropriate command handler.
 
@@ -7985,6 +8162,8 @@ def _dispatch_command(args):
         _dispatch_stats(args)
     elif args.command == "reset":
         cmd_reset(args)
+    elif args.command == "install":
+        _dispatch_install(args)
 
 
 def main():

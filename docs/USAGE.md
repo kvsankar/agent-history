@@ -13,6 +13,7 @@ Detailed documentation for all `claude-history` commands and options.
 | `alias` | Manage workspace aliases |
 | `stats` | Show usage statistics and metrics |
 | `reset` | Reset stored data (database, settings, aliases) |
+| `install` | Install CLI + Claude skill and update retention settings |
 
 ---
 
@@ -509,3 +510,27 @@ claude-history reset db -y
 - `~/.claude-history/metrics.db` - Metrics database (stats, time tracking)
 - `~/.claude-history/config.json` - Settings (SSH remotes)
 - `~/.claude-history/aliases.json` - Workspace aliases
+
+---
+
+## `install` - Install CLI and Claude Skill
+
+Install the CLI into your local `PATH`, copy the Claude skill files, and bump Claude Code’s retention settings so conversations aren’t auto-deleted.
+
+```bash
+claude-history install [--bin-dir DIR] [--skill-dir DIR]
+                       [--cli-name NAME] [--skill-name NAME]
+                       [--skip-cli] [--skip-skill] [--skip-settings]
+```
+
+**Default behavior:**
+- CLI installed to `~/.local/bin/claude-history` (sudo-free). The command warns if that directory isn’t on `PATH`.
+- Claude skill (binary + `SKILL.md`) installed to `~/.claude/skills/claude-history/`.
+- `~/.claude/settings.json` is created or updated with `{"cleanupPeriodDays": 99999}` so Claude Code keeps session history.
+
+**Common options:**
+- `--bin-dir DIR`, `--cli-name NAME`: Customize CLI destination and binary name.
+- `--skill-dir DIR`, `--skill-name NAME`: Customize Claude skill destination.
+- `--skip-cli`, `--skip-skill`, `--skip-settings`: Skip specific parts of the install workflow.
+
+Run the installer whenever you update the script to keep the CLI and skill copy in sync.
