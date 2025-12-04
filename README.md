@@ -72,12 +72,12 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 ```
 $ claude-history --help
 usage: claude-history [-h] [--version]
-                      {lsw,lss,lsh,export,alias,stats,reset} ...
+                      {lsw,lss,lsh,export,alias,stats,reset,install} ...
 
 Browse and export Claude Code conversation history
 
 positional arguments:
-  {lsw,lss,lsh,export,alias,stats,reset}
+  {lsw,lss,lsh,export,alias,stats,reset,install}
                         Command to execute
     lsw                 List workspaces
     lss                 List sessions
@@ -86,6 +86,7 @@ positional arguments:
     alias               Manage workspace aliases
     stats               Show usage statistics and metrics
     reset               Reset stored data (database, settings, aliases)
+    install             Install CLI + Claude skill and update retention settings
 
 options:
   -h, --help            show this help message and exit
