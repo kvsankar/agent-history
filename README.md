@@ -51,30 +51,21 @@ python \path\to\claude-history export
 ```bash
 # Download
 curl -O https://raw.githubusercontent.com/kvsankar/claude-history/main/claude-history
-chmod +x claude-history
 
-# Optional: add to PATH
-sudo mv claude-history /usr/local/bin/
-```
-
-**Requirements:** Python 3.6+ (stdlib only, no pip install needed)
-
-> **Note:** Examples below assume `claude-history` is in your PATH.
-
-### Install helper (recommended)
-
-Once you download the script, run the built-in installer to drop the CLI into `~/.local/bin`, copy the Claude skill files, and bump Claude Code’s retention settings:
-
-```bash
+# Install (cli + skill + retention settings)
 python claude-history install
 ```
 
-The installer:
+By default the installer:
 - Copies the CLI to `~/.local/bin/claude-history` (no sudo needed).
 - Installs the Claude skill into `~/.claude/skills/claude-history` (CLI + SKILL.md).
 - Ensures `~/.claude/settings.json` has `cleanupPeriodDays` set to `99999` so conversations aren’t purged.
 
-Use flags such as `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settings` for custom setups.
+Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settings` for custom setups.
+
+**Requirements:** Python 3.6+ (stdlib only, no pip install needed)
+
+> **Note:** Examples below assume `claude-history` is in your PATH.
 
 ## Help
 
