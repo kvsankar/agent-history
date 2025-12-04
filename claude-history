@@ -1510,11 +1510,15 @@ def _resolve_path_segments(parts: list, base_path: Path) -> list:
         best_match = None
         best_match_len = 0
 
+        unc_mode = _is_wsl_unc_path(base_path)
+
         for j in range(len(parts), i, -1):
             candidate_segment = "-".join(parts[i:j])
             candidate_path = current_path / candidate_segment
 
-            if candidate_path.exists() and candidate_path.is_dir():
+            exists = candidate_path.exists()
+            is_directory = candidate_path.is_dir() if not unc_mode else True
+            if exists and is_directory:
                 best_match = candidate_segment
                 best_match_len = j - i
                 break
@@ -1629,6 +1633,33 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
     return f"/{drive_letter}/" + rest.replace("-", "/")
 
 
+def _format_unc_path(base_path: Path, readable_path: str) -> str:
+    """Format a UNC path string from a base and POSIX-readable path."""
+    base_str = str(base_path)
+    if base_str.startswith("//"):
+        base_str = "\\" + base_str.lstrip("/")
+    if not base_str.startswith("\\\\"):
+        base_str = "\\\\" + base_str.lstrip("\\")
+    base_str = base_str.replace("/", "\\").rstrip("\\")
+    suffix = readable_path.lstrip("/")
+    if suffix:
+        suffix = suffix.replace("/", "\\")
+        return f"{base_str}\\{suffix}"
+    return base_str
+
+
+def _is_wsl_unc_path(path: Path | None) -> bool:
+    if not path:
+        return False
+    base_str = str(path)
+    return (
+        base_str.startswith("\\\\wsl.localhost\\")
+        or base_str.startswith("\\\\wsl$\\")
+        or base_str.startswith("//wsl.localhost/")
+        or base_str.startswith("//wsl$/")
+    )
+
+
 def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = None) -> str:
     """Normalize a Unix-style encoded path (e.g., 'home-user-my-project').
 
@@ -1640,10 +1671,20 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
     Returns:
         Decoded path (e.g., '/home/user/my-project')
     """
+    parts = encoded.split("-")
+
+    if base_path and _is_wsl_unc_path(base_path):
+        resolved_segments, found_full = _resolve_existing_wsl_path(parts, Path(base_path))
+        segments = list(resolved_segments) if resolved_segments else list(parts)
+        if not found_full and len(segments) < len(parts):
+            segments.append("-".join(parts[len(segments) :]))
+        readable_path = "/" + "/".join(segments)
+        marker = "" if found_full else " [missing]"
+        return _format_unc_path(base_path, readable_path) + marker
+
     if not verify_local:
         return "/" + encoded.replace("-", "/")
 
-    parts = encoded.split("-")
     effective_base = base_path if base_path else Path("/")
     path_segments = _resolve_path_segments(parts, effective_base)
 
@@ -1651,7 +1692,7 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
     if path_segments == parts:
         path_segments = [*parts[:2], "-".join(parts[2:])] if len(parts) > 2 else parts
 
-    # For UNC WSL paths on Windows, try all merge combinations to find an existing path
+    # For other Windows paths, try all merge combinations to find an existing path
     partial_marker = ""
     if base_path and sys.platform == "win32":
         resolved_segments, found_full = _resolve_existing_wsl_path(parts, Path(base_path))
@@ -1669,21 +1710,10 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
             pass
         if not found_full:
             partial_marker = " [missing]"
-        path_segments = combined_segments
+            path_segments = combined_segments
 
     readable_path = "/" + "/".join(path_segments)
-
-    # If a WSL UNC base is provided, return an accessible UNC path so Windows users
-    # see the real location even if sys.platform reporting differs.
-    if base_path:
-        base_str = str(base_path)
-        if base_str.startswith("\\\\wsl.localhost\\") or base_str.startswith("\\\\wsl$\\"):
-            return str(Path(base_path).joinpath(*path_segments)) + partial_marker
-        # Some environments report UNC paths with forward slashes (e.g., //wsl.localhost/...)
-        if base_str.startswith("//wsl.localhost/") or base_str.startswith("//wsl$/"):
-            return str(Path(base_path).joinpath(*path_segments)) + partial_marker
-
-    return readable_path
+    return readable_path + partial_marker
 
 
 def normalize_workspace_name(
