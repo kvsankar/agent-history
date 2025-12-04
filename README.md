@@ -207,6 +207,10 @@ Thanks for considering a contribution! A few quick notes to get you productive:
 
 We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do not include WSL, so WSL flows are validated via the environment overrides described above.
 
+## Additional Resources
+
+- [Claude Collaboration Playbook](https://github.com/kvsankar/claude-history/blob/main/docs/claude-collaboration-playbook.md) – distilled lessons from hundreds of Claude Code sessions. Great to drop into your repo’s `CLAUDE.md` or share with new collaborators.
+
 ## Commands
 
 | Command | Description |
