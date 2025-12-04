@@ -1597,7 +1597,21 @@ def _resolve_existing_wsl_path(parts: list, base_path: Path) -> tuple:
     if best_full_segments is not None:
         return best_full_segments, True
 
-    return (best_segments if best_segments else parts), False
+    if best_segments is not None:
+        return best_segments, False
+
+    try:
+        existing = [
+            child.name
+            for child in base_path.iterdir()
+            if child.is_dir() and not child.name.startswith(".")
+        ]
+        if existing:
+            return [existing[0]], False
+    except OSError:
+        pass
+
+    return parts, False
 
 
 def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
@@ -1680,7 +1694,11 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
             segments.append("-".join(parts[len(segments) :]))
         readable_path = "/" + "/".join(segments)
         marker = "" if found_full else " [missing]"
-        return _format_unc_path(base_path, readable_path) + marker
+        unc = _format_unc_path(base_path, readable_path)
+        # If base_path already looks like a POSIX path (e.g., /home/user), keep POSIX form
+        if str(base_path).startswith("/") and not str(base_path).startswith("//"):
+            return readable_path + marker
+        return unc + marker
 
     if not verify_local:
         return "/" + encoded.replace("-", "/")
