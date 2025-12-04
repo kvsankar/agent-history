@@ -1673,8 +1673,9 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
 
     readable_path = "/" + "/".join(path_segments)
 
-    # If a WSL UNC base is provided on Windows, return an accessible UNC path
-    if base_path and sys.platform == "win32":
+    # If a WSL UNC base is provided, return an accessible UNC path so Windows users
+    # see the real location even if sys.platform reporting differs.
+    if base_path:
         base_str = str(base_path)
         if base_str.startswith("\\\\wsl.localhost\\") or base_str.startswith("\\\\wsl$\\"):
             return str(Path(base_path).joinpath(*path_segments)) + partial_marker
