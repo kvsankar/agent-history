@@ -1597,7 +1597,21 @@ def _resolve_existing_wsl_path(parts: list, base_path: Path) -> tuple:
     if best_full_segments is not None:
         return best_full_segments, True
 
-    return (best_segments if best_segments else parts), False
+    if best_segments is not None:
+        return best_segments, False
+
+    try:
+        existing = [
+            child.name
+            for child in base_path.iterdir()
+            if child.is_dir() and not child.name.startswith(".")
+        ]
+        if existing:
+            return [existing[0]], False
+    except OSError:
+        pass
+
+    return parts, False
 
 
 def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:

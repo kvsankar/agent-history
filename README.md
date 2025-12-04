@@ -60,6 +60,8 @@ By default the installer:
 - Copies the CLI to `~/.local/bin/claude-history` (no sudo needed).
 - Installs the Claude skill into `~/.claude/skills/claude-history` (CLI + SKILL.md).
 - Ensures `~/.claude/settings.json` has `cleanupPeriodDays` set to `99999` so conversations aren’t purged.
+  - If the existing `settings.json` contains additional preferences, they are preserved; only `cleanupPeriodDays` is adjusted.
+  - If the installer encounters malformed JSON, it first renames the original file to `settings.json.<timestamp>.bak` before writing the corrected copy.
 
 Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settings` for custom setups.
 
