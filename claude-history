@@ -1679,6 +1679,9 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
         base_str = str(base_path)
         if base_str.startswith("\\\\wsl.localhost\\") or base_str.startswith("\\\\wsl$\\"):
             return str(Path(base_path).joinpath(*path_segments)) + partial_marker
+        # Some environments report UNC paths with forward slashes (e.g., //wsl.localhost/...)
+        if base_str.startswith("//wsl.localhost/") or base_str.startswith("//wsl$/"):
+            return str(Path(base_path).joinpath(*path_segments)) + partial_marker
 
     return readable_path
 
