@@ -20,6 +20,11 @@ repos:
   # Code complexity checks with radon
   - repo: local
     hooks:
+      - id: update-readme-help
+        name: update README help snippet
+        entry: python3 scripts/update_readme_help.py
+        language: system
+        pass_filenames: false
       - id: radon-cc
         name: radon-cc (cyclomatic complexity)
         entry: uv run python scripts/check_complexity.py

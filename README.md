@@ -69,8 +69,8 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 ## Help
 
+<!-- help-snippet:start -->
 ```
-$ claude-history --help
 usage: claude-history [-h] [--version]
                       {lsw,lss,lsh,export,alias,stats,reset,install} ...
 
@@ -86,7 +86,7 @@ positional arguments:
     alias               Manage workspace aliases
     stats               Show usage statistics and metrics
     reset               Reset stored data (database, settings, aliases)
-    install             Install CLI + Claude skill and update retention settings
+    install             Install CLI and Claude skill
 
 options:
   -h, --help            show this help message and exit
@@ -142,10 +142,11 @@ EXAMPLES:
     claude-history lss myproject --windows          # list Windows sessions
     claude-history export myproject --windows       # export from Windows
 
-Notes:
-  - Outputs may show '[missing]' when a workspace directory no longer exists; the path
-    is the closest match based on the stored workspace name.
+  Notes:
+    - Outputs may show '[missing]' when a workspace directory no longer exists; the path
+      is the closest match based on the stored workspace name.
 ```
+<!-- help-snippet:end -->
 
 ## Testing
 
