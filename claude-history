@@ -8139,15 +8139,20 @@ def _ensure_cleanup_settings():
         try:
             data = json.loads(settings_path.read_text())
         except json.JSONDecodeError:
-            sys.stderr.write(f"Warning: {settings_path} is invalid JSON. Overwriting.\n")
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup_path = settings_path.with_name(f"{settings_path.name}.{timestamp}.bak")
+            settings_path.rename(backup_path)
+            print(f"Moved invalid settings file to {backup_path}")
             data = {}
-    changed = data.get("cleanupPeriodDays") != DEFAULT_CLEANUP_DAYS
+
+    previous_value = data.get("cleanupPeriodDays")
     data["cleanupPeriodDays"] = DEFAULT_CLEANUP_DAYS
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
-    if changed:
-        print(f"Updated {settings_path} (cleanupPeriodDays={DEFAULT_CLEANUP_DAYS})")
-    else:
+
+    if previous_value == DEFAULT_CLEANUP_DAYS:
         print(f"{settings_path} already had cleanupPeriodDays={DEFAULT_CLEANUP_DAYS}")
+    else:
+        print(f"Updated {settings_path} (cleanupPeriodDays={DEFAULT_CLEANUP_DAYS})")
 
 
 def _dispatch_install(args):
