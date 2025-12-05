@@ -91,6 +91,13 @@ def test_stats_models_tools_by_day(tmp_path: Path):
     assert "2025-01-01" in r_by_day.stdout or "2025-01-02" in r_by_day.stdout
     assert "█" in r_by_day.stdout
 
+    # Time tracking
+    r_time = run_cli(["stats", "--aw", "--time"], env=env)
+    assert r_time.returncode == 0, r_time.stderr
+    assert "TIME TRACKING" in r_time.stdout
+    assert "Bar (time)" in r_time.stdout
+    assert "█" in r_time.stdout
+
 
 def test_all_homes_sessions_windows(tmp_path: Path):
     if sys.platform != "win32":

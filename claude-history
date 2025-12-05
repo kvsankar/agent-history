@@ -5101,7 +5101,7 @@ def display_daily_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     print("=" * DISPLAY_SEPARATOR_WIDTH)
 
     max_sessions = max((row["sessions"] or 0) for row in days) if days else 0
-    bar_header = "Bar"
+    bar_header = "Bar (sessions)"
     print(f"\n{'Date':<12} {'Sessions':>10} {'Messages':>10} {'Input Tokens':>15}  {bar_header}")
     print("-" * 70)
 
@@ -5263,15 +5263,23 @@ def _print_daily_breakdown(
 ):
     """Print daily breakdown table."""
     print("\nDaily Breakdown")
-    print(f"\n{'Date':<12} {'Work Time':>12} {'Periods':>10} {'Messages':>10}")
-    print("-" * 46)
+    print(f"\n{'Date':<12} {'Work Time':>12} {'Periods':>10} {'Messages':>10}  Bar (time)")
+    print("-" * 70)
+
+    max_work = (
+        max((stats["work_seconds"] or 0) for stats in daily_stats.values()) if daily_stats else 0
+    )
 
     for date_str in sorted(daily_stats.keys(), reverse=True):
         stats = daily_stats[date_str]
-        work_time = format_duration_hm(stats["work_seconds"])
-        print(f"{date_str:<12} {work_time:>12} {stats['work_periods']:>10} {stats['messages']:>10}")
+        work_seconds = stats["work_seconds"]
+        work_time = format_duration_hm(work_seconds)
+        bar = _build_bar(int(work_seconds), int(max_work))
+        print(
+            f"{date_str:<12} {work_time:>12} {stats['work_periods']:>10} {stats['messages']:>10}  {bar}"
+        )
 
-    print("-" * 46)
+    print("-" * 70)
     print(
         f"{'TOTAL':<12} {format_duration_hm(total_work):>12} {total_periods:>10} {total_messages:>10}"
     )
