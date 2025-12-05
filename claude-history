@@ -1304,6 +1304,16 @@ def path_to_encoded_workspace(path: str) -> str:
     """
     # Remove trailing slash if present
     path = path.rstrip("/")
+
+    # Handle WSL-mounted Windows paths like /mnt/c/Users/me/project
+    if path.startswith("/mnt/") and len(path) > 6:
+        drive_letter = path[5]
+        sep = path[6]
+        if drive_letter.isalpha() and sep in ("/", "\\"):
+            remainder = path[7:].replace("\\", "/").strip("/")
+            normalized = remainder.replace("/", "-") if remainder else ""
+            return f"{drive_letter.upper()}--{normalized}"
+
     # Replace / with - and add leading -
     if path.startswith("/"):
         return "-" + path[1:].replace("/", "-")
@@ -1712,28 +1722,34 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
     if path_segments == parts:
         path_segments = [*parts[:2], "-".join(parts[2:])] if len(parts) > 2 else parts
 
-    # For other Windows paths, try all merge combinations to find an existing path
-    partial_marker = ""
-    if base_path and sys.platform == "win32":
-        resolved_segments, found_full = _resolve_existing_wsl_path(parts, Path(base_path))
-
-        # If we only found a prefix (no full path), keep the missing tail merged so the name stays distinct
-        combined_segments = list(resolved_segments)
-        if not found_full and len(resolved_segments) < len(parts):
-            combined_segments.append("-".join(parts[len(resolved_segments) :]))
-
-        final_path = Path(base_path).joinpath(*combined_segments)
-        try:
-            if len(resolved_segments) == len(parts) and final_path.exists():
-                found_full = True
-        except OSError:
-            pass
-        if not found_full:
-            partial_marker = " [missing]"
-            path_segments = combined_segments
+    path_segments, partial_marker = _apply_windows_base_resolution(parts, base_path, path_segments)
 
     readable_path = "/" + "/".join(path_segments)
     return readable_path + partial_marker
+
+
+def _apply_windows_base_resolution(parts: list[str], base_path: Path, current_segments: list[str]):
+    """Handle Windows base paths when normalizing Unix-style encodings."""
+    if not base_path or sys.platform != "win32":
+        return current_segments, ""
+
+    resolved_segments, found_full = _resolve_existing_wsl_path(parts, Path(base_path))
+    if not resolved_segments:
+        return current_segments, ""
+
+    combined_segments = list(resolved_segments)
+    if not found_full and len(resolved_segments) < len(parts):
+        combined_segments.append("-".join(parts[len(resolved_segments) :]))
+
+    final_path = Path(base_path).joinpath(*combined_segments)
+    try:
+        full_exists = len(resolved_segments) == len(parts) and final_path.exists()
+    except OSError:
+        full_exists = False
+
+    if full_exists:
+        return combined_segments, ""
+    return combined_segments, " [missing]"
 
 
 def normalize_workspace_name(
@@ -2946,7 +2962,7 @@ def load_aliases() -> dict:
                 data["aliases"] = {}
             if "version" not in data:
                 data["version"] = 1
-            return data
+            return _normalize_aliases(data)
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Warning: Could not load aliases file: {e}\n")
         return {"version": 1, "aliases": {}}
@@ -2986,6 +3002,48 @@ def save_aliases(data: dict) -> bool:
     except OSError as e:
         sys.stderr.write(f"Error: Could not save aliases: {e}\n")
         return False
+
+
+def _sanitize_alias_workspace_entry(workspace: str) -> str:
+    """Normalize alias workspace entries, handling legacy absolute paths."""
+    if not workspace:
+        return workspace
+
+    lowered = workspace.lower()
+
+    if lowered.startswith("/mnt/"):
+        return path_to_encoded_workspace(workspace)
+
+    if workspace.startswith("/"):
+        return path_to_encoded_workspace(workspace)
+
+    if lowered.startswith("-mnt-") and len(workspace) > 7:
+        drive_letter = workspace[5]
+        remainder = workspace[7:]
+        if drive_letter.isalpha():
+            return f"{drive_letter.upper()}--{remainder}"
+
+    return workspace
+
+
+def _normalize_aliases(data: dict) -> dict:
+    """Normalize stored alias workspace entries for cross-platform compatibility."""
+    aliases = data.get("aliases", {})
+    changed = False
+
+    for sources in aliases.values():
+        for source_key, workspaces in list(sources.items()):
+            normalized = []
+            for workspace in workspaces:
+                new_value = _sanitize_alias_workspace_entry(workspace)
+                if new_value != workspace:
+                    changed = True
+                normalized.append(new_value)
+            sources[source_key] = normalized
+
+    if changed:
+        save_aliases(data)
+    return data
 
 
 def get_source_key(remote_host=None, wsl_distro=None, windows_user=None) -> str:
@@ -3139,14 +3197,17 @@ def get_sessions_for_source(
                 workspace, quiet=True, since_date=since_date, until_date=until_date
             )
 
-        if source_key.startswith("windows:"):
-            username = source_key.split(":", 1)[1]
+        if source_key == "windows" or source_key.startswith("windows:"):
+            username = source_key.split(":", 1)[1] if ":" in source_key else None
+            projects_dir = get_windows_projects_dir(username)
+            if not projects_dir:
+                return []
             return get_workspace_sessions(
                 workspace,
                 quiet=True,
                 since_date=since_date,
                 until_date=until_date,
-                projects_dir=get_windows_projects_dir(username),
+                projects_dir=projects_dir,
             )
 
         if source_key.startswith("wsl:"):
@@ -7065,6 +7126,13 @@ def _add_lss_parser(subparsers):
         help="Use alias instead of workspace pattern (alternative to @name syntax)",
     )
     parser.add_argument(
+        "--aw",
+        "--all-workspaces",
+        dest="all_workspaces",
+        action="store_true",
+        help="Include all workspaces for the selected homes (default: current workspace only)",
+    )
+    parser.add_argument(
         "--this",
         action="store_true",
         dest="this_only",
@@ -7768,6 +7836,7 @@ def _dispatch_lss_local(args, workspace_list: list):
     projects_dir_override = getattr(args, "projects_dir_override", None)
 
     this_only = getattr(args, "this_only", False)
+    all_workspaces_flag = getattr(args, "all_workspaces", False)
     error_msg = (
         "Not in a Claude Code workspace.\n\n"
         "To list sessions, either:\n"
@@ -7775,9 +7844,13 @@ def _dispatch_lss_local(args, workspace_list: list):
         "  • Specify a workspace pattern: lss <pattern>\n"
         "  • Use --ah to list from all homes: lss --ah"
     )
-    patterns, alias_for_ws = resolve_patterns_for_command(
-        workspace_list, this_only, require_workspace=True, error_message=error_msg
-    )
+    if all_workspaces_flag and not workspace_list:
+        patterns = [""]
+        alias_for_ws = None
+    else:
+        patterns, alias_for_ws = resolve_patterns_for_command(
+            workspace_list, this_only, require_workspace=True, error_message=error_msg
+        )
     if alias_for_ws:
         sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
         _dispatch_lss_to_alias(alias_for_ws, args)
@@ -7821,12 +7894,23 @@ def _ensure_workspace_default_for_remote(args, workspace_list: list[str]) -> lis
     """Default to all workspaces when remote flags are set without explicit patterns."""
     if workspace_list:
         return workspace_list
+
+    if getattr(args, "all_workspaces", False):
+        return [""]
+
+    selected_remote = None
     try:
         selected_remote = _resolve_remote_flag(args)
     except SystemExit:
+        selected_remote = None
+
+    windows_flag = getattr(args, "windows", False)
+    wsl_flag = getattr(args, "wsl", False)
+
+    if selected_remote or windows_flag or wsl_flag:
+        # Keep list empty so downstream defaults to current workspace/alias
         return workspace_list
-    if selected_remote:
-        return [""]
+
     return workspace_list
 
 

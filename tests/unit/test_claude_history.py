@@ -32,7 +32,8 @@ from unittest.mock import patch
 
 import pytest
 
-root_search = [Path(__file__).resolve().parent] + list(Path(__file__).resolve().parents)
+root_path = Path(__file__).resolve()
+root_search = [root_path.parent, *root_path.parents]
 module_path = None
 for base in root_search:
     candidate = base / "claude-history"
@@ -207,6 +208,16 @@ class TestPathNormalization:
         assert result == "/D/work/myapp"
 
 
+class TestEncodedWorkspaceConversion:
+    """Tests for converting filesystem paths to encoded workspace names."""
+
+    def test_wsl_mnt_windows_path(self):
+        """WSL /mnt/<drive>/ paths should encode using Windows drive notation."""
+        path = "/mnt/c/sankar/projects/claude-history"
+        encoded = ch.path_to_encoded_workspace(path)
+        assert encoded == "C--sankar-projects-claude-history"
+
+
 class TestSourceTagGeneration:
     """Tests for get_source_tag."""
 
@@ -230,6 +241,74 @@ class TestSourceTagGeneration:
         result = ch.get_source_tag("user@hostname")
         assert result.startswith("remote_")
         assert "hostname" in result
+
+
+class TestEnsureWorkspaceDefaultForRemote:
+    """Tests for _ensure_workspace_default_for_remote helper."""
+
+    def _make_args(self, **overrides):
+        base = {
+            "remotes": None,
+            "wsl": False,
+            "windows": False,
+            "all_workspaces": False,
+        }
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_remote_defaults_to_current_workspace(self):
+        """Remote flag with no explicit workspace should defer to current workspace."""
+        args = self._make_args(remotes=["user@host"])
+        result = ch._ensure_workspace_default_for_remote(args, [])
+        assert result == []
+
+    def test_windows_flag_defaults_to_current_workspace(self):
+        """Windows flag should not force all workspaces."""
+        args = self._make_args(windows=True)
+        result = ch._ensure_workspace_default_for_remote(args, [])
+        assert result == []
+
+    def test_all_workspaces_flag_matches_all(self):
+        """Explicit --aw should force all workspaces."""
+        args = self._make_args(all_workspaces=True)
+        result = ch._ensure_workspace_default_for_remote(args, [])
+        assert result == [""]
+
+
+class TestAliasWorkspaceSanitize:
+    """Tests for alias workspace normalization helpers."""
+
+    def test_mnt_prefix_to_windows_encoding(self):
+        """Legacy '-mnt-c-' entries should become 'C--' encoded names."""
+        original = "-mnt-c-sankar-projects-claude-history"
+        normalized = ch._sanitize_alias_workspace_entry(original)
+        assert normalized == "C--sankar-projects-claude-history"
+
+    def test_absolute_path_normalization(self):
+        """Absolute Unix paths should be converted to encoded names."""
+        original = "/home/user/myproject"
+        normalized = ch._sanitize_alias_workspace_entry(original)
+        assert normalized == "-home-user-myproject"
+
+
+class TestGetSessionsForSource:
+    """Tests for get_sessions_for_source helper."""
+
+    def test_windows_source_without_username(self, tmp_path, sample_jsonl_content, monkeypatch):
+        """Plain 'windows' source keys should resolve via get_windows_projects_dir."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        workspace_dir = projects_dir / "C--Users-test-project"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = workspace_dir / "session.jsonl"
+        with open(session_file, "w", encoding="utf-8") as f:
+            for msg in sample_jsonl_content:
+                f.write(json.dumps(msg) + "\n")
+
+        monkeypatch.setattr(ch, "get_windows_projects_dir", lambda username=None: projects_dir)
+        sessions = ch.get_sessions_for_source("windows", "C--Users-test-project")
+        assert len(sessions) == 1
+        assert sessions[0]["workspace"] == "C--Users-test-project"
 
 
 class TestWorkspaceNameFromPath:
@@ -3531,7 +3610,9 @@ class TestSection3Remaining:
             ws_dir = tmp_path / workspace_dir_name
             ws_dir.mkdir(parents=True, exist_ok=True)
             f = ws_dir / fname
-            f.write_text('{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8")
+            f.write_text(
+                '{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8"
+            )
             ch.sync_file_to_db(conn, f, source=source, force=True)
 
         make_session("-home-user-proj-local", "local", "a.jsonl")
@@ -3558,7 +3639,9 @@ class TestSection3Remaining:
             ws_dir = tmp_path / workspace_dir_name
             ws_dir.mkdir(parents=True, exist_ok=True)
             f = ws_dir / fname
-            f.write_text('{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8")
+            f.write_text(
+                '{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8"
+            )
             ch.sync_file_to_db(conn, f, source=source, force=True)
 
         make_session("-home-user-proj-local", "local", "a.jsonl")
@@ -3580,7 +3663,9 @@ class TestSection3Remaining:
         ws_dir = tmp_path / "-home-user-proj"
         ws_dir.mkdir(parents=True, exist_ok=True)
         f = ws_dir / "a.jsonl"
-        f.write_text('{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8")
+        f.write_text(
+            '{"type": "user", "content": [{"type": "text", "text": "hi"}]}\n', encoding="utf-8"
+        )
         ch.sync_file_to_db(conn, f, source="local", force=True)
 
         ch.display_summary_stats(conn, "1=1", [], top_limit=None)
@@ -3629,7 +3714,10 @@ class TestSection3Remaining:
             else:
                 normalized_patterns.append(p.replace("\\", "/"))
 
-        assert "-home-user-my-project" in normalized_patterns or "-home-user-my-project" in entry["patterns"]
+        assert (
+            "-home-user-my-project" in normalized_patterns
+            or "-home-user-my-project" in entry["patterns"]
+        )
         assert entry["projects_dir"] is not None
         assert "wsl.localhost" in str(entry["projects_dir"]).lower()
         assert entry["remote"] is None
