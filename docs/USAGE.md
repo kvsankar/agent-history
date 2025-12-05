@@ -275,6 +275,12 @@ Options:
 ### `alias remove <name> -- <workspace>`
 Remove a workspace from an alias. Use `--` before workspace names starting with `-`.
 
+Accepted formats:
+- Encoded names (`-home-user-project`, `C--Users-me-proj`)
+- Absolute Linux paths (`/home/user/project`)
+- WSL mounts (`/mnt/c/Users/me/project`)
+- Remote-style prefixes (`user@host:/home/user/project`)
+
 ### `alias export <file>`
 Export aliases to JSON file.
 

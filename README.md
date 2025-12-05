@@ -306,6 +306,10 @@ claude-history alias add myproject -r user@vm myproject
 # Use with @ prefix
 claude-history lss @myproject
 claude-history export @myproject
+
+# Remove entries using paths from any home
+claude-history alias remove myproject -r user@vm /home/user/myproject
+claude-history alias remove myproject --windows /mnt/c/Users/me/projects/myproject
 ```
 
 ## Important: Preserve Your History
