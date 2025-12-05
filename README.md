@@ -348,3 +348,9 @@ MIT License - See [LICENSE](LICENSE) file.
 - Inspired by [Simon Willison's](https://simonwillison.net/) writing on Claude conversation extraction
 - Built with [Claude Code](https://claude.com/claude-code)
 - Maintained with Codex (GPT-5) tooling
+
+Related projects worth exploring:
+- [claude-conversation-extractor](https://github.com/ZeroSumQuant/claude-conversation-extractor) – JSON→Markdown converter with a simple UI.
+- [claude-archive](https://github.com/ar90n/claude-archive) – lightweight CLI to package `.claude/projects`.
+- [claude-navigator](https://github.com/RefalMachine/claude-navigator) – web UI for browsing conversations.
+- [claude-history-py](https://github.com/ga2mer/claude-history-py) – an earlier attempt at multi-home exports.
