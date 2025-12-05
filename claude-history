@@ -13,6 +13,7 @@ License: MIT
 import argparse
 import base64
 import json
+import math
 import os
 import platform
 import re
@@ -5099,17 +5100,29 @@ def display_daily_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     print("DAILY STATISTICS (Last 30 days)")
     print("=" * DISPLAY_SEPARATOR_WIDTH)
 
-    print(f"\n{'Date':<12} {'Sessions':>10} {'Messages':>10} {'Input Tokens':>15}")
-    print("-" * 50)
+    max_sessions = max((row["sessions"] or 0) for row in days) if days else 0
+    bar_header = "Bar"
+    print(f"\n{'Date':<12} {'Sessions':>10} {'Messages':>10} {'Input Tokens':>15}  {bar_header}")
+    print("-" * 70)
 
     for row in days:
         date_str = row["date"] or "unknown"
         sessions = row["sessions"]
         messages = row["messages"] or 0
         tokens = row["input_tokens"] or 0
-        print(f"{date_str:<12} {sessions:>10,} {messages:>10,} {tokens:>15,}")
+        bar = _build_bar(sessions, max_sessions)
+        print(f"{date_str:<12} {sessions:>10,} {messages:>10,} {tokens:>15,}  {bar}")
 
     print()
+
+
+def _build_bar(value: int, max_value: int, width: int = 20) -> str:
+    """Return an ASCII bar scaled to the maximum value."""
+    if max_value <= 0 or value <= 0:
+        return ""
+    ratio = value / max_value
+    length = max(1, min(width, math.ceil(ratio * width)))
+    return "█" * length
 
 
 def format_duration_hm(seconds: float) -> str:

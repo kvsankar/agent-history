@@ -1,21 +1,23 @@
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, timeout=25):
-    cmd = [sys.executable, str(Path.cwd() / "claude-history")] + args
+    cmd = [sys.executable, str(Path.cwd() / "claude-history"), *args]
     return subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         env=env or os.environ.copy(),
         timeout=timeout,
+        check=False,
     )
 
 
@@ -87,6 +89,7 @@ def test_stats_models_tools_by_day(tmp_path: Path):
     r_by_day = run_cli(["stats", "--aw", "--by-day"], env=env)
     assert r_by_day.returncode == 0, r_by_day.stderr
     assert "2025-01-01" in r_by_day.stdout or "2025-01-02" in r_by_day.stdout
+    assert "█" in r_by_day.stdout
 
 
 def test_all_homes_sessions_windows(tmp_path: Path):
@@ -95,8 +98,26 @@ def test_all_homes_sessions_windows(tmp_path: Path):
     # Local and WSL synthetic roots
     local = tmp_path / "local"
     wsl = tmp_path / "wsl"
-    make_jsonl(local / "-home-user-loc" / "a.jsonl", [{"type": "user", "timestamp": "2025-01-03T00:00:00Z", "content": [{"type": "text", "text": "x"}]}])
-    make_jsonl(wsl / "-home-test-distro-ws" / "b.jsonl", [{"type": "user", "timestamp": "2025-01-04T00:00:00Z", "content": [{"type": "text", "text": "y"}]}])
+    make_jsonl(
+        local / "-home-user-loc" / "a.jsonl",
+        [
+            {
+                "type": "user",
+                "timestamp": "2025-01-03T00:00:00Z",
+                "content": [{"type": "text", "text": "x"}],
+            }
+        ],
+    )
+    make_jsonl(
+        wsl / "-home-test-distro-ws" / "b.jsonl",
+        [
+            {
+                "type": "user",
+                "timestamp": "2025-01-04T00:00:00Z",
+                "content": [{"type": "text", "text": "y"}],
+            }
+        ],
+    )
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(local)
@@ -108,4 +129,8 @@ def test_all_homes_sessions_windows(tmp_path: Path):
     out = r.stdout
     # Expect local and WSL paths present
     assert "/home/user/loc" in out
-    assert ("wsl.localhost" in out) or ("/home/test/distro-ws" in out) or ("/home/test/distro/ws" in out)
+    assert (
+        ("wsl.localhost" in out)
+        or ("/home/test/distro-ws" in out)
+        or ("/home/test/distro/ws" in out)
+    )
