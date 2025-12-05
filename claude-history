@@ -5184,7 +5184,7 @@ def _build_bar(value: int, max_value: int, width: int = 20) -> str:
         return ""
     ratio = value / max_value
     length = max(1, min(width, math.ceil(ratio * width)))
-    return "█" * length
+    return "#" * length
 
 
 def format_duration_hm(seconds: float) -> str:

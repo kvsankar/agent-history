@@ -285,12 +285,12 @@ class TestBarBuilder:
     def test_positive_value_respects_width(self):
         """Non-zero values render a bar scaled to width."""
         bar = ch._build_bar(5, 10, width=10)
-        assert bar == "█" * 5
+        assert bar == "#" * 5
 
     def test_bar_has_min_length(self):
         """Tiny values still render at least one block."""
         bar = ch._build_bar(1, 100, width=10)
-        assert bar == "█"
+        assert bar == "#"
 
 
 class TestAliasWorkspaceSanitize:
