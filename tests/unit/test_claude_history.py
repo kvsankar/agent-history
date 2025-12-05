@@ -309,6 +309,25 @@ class TestAliasWorkspaceSanitize:
         assert normalized == "-home-user-myproject"
 
 
+class TestAliasWorkspaceMatching:
+    """Tests for alias workspace matching helpers."""
+
+    def test_match_absolute_path(self):
+        entries = ["-home-user-project"]
+        matched = ch._match_alias_workspace(entries, "/home/user/project")
+        assert matched == "-home-user-project"
+
+    def test_match_windows_path(self):
+        entries = ["C--Users-test-project"]
+        matched = ch._match_alias_workspace(entries, "/mnt/c/Users/test/project")
+        assert matched == "C--Users-test-project"
+
+    def test_match_remote_prefix(self):
+        entries = ["-home-user-project"]
+        matched = ch._match_alias_workspace(entries, "user@host:/home/user/project")
+        assert matched == "-home-user-project"
+
+
 class TestGetSessionsForSource:
     """Tests for get_sessions_for_source helper."""
 
@@ -4428,6 +4447,28 @@ class TestSection9Remaining:
                 final = ch.load_aliases()
                 assert "-home-user-proj" not in final["aliases"]["test"]["local"]
                 assert "-home-user-other" in final["aliases"]["test"]["local"]
+
+    def test_alias_remove_accepts_paths(self, alias_test_env):
+        """Alias remove resolves absolute paths."""
+        with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
+            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+                aliases = {
+                    "version": 1,
+                    "aliases": {"test": {"remote:sankar@host": ["-home-user-proj"]}},
+                }
+                ch.save_aliases(aliases)
+
+                args = SimpleNamespace(
+                    name="test",
+                    workspace="/home/user/proj",
+                    remote="sankar@host",
+                    wsl=False,
+                    windows=False,
+                )
+                ch.cmd_alias_remove(args)
+
+                final = ch.load_aliases()
+                assert "remote:sankar@host" not in final["aliases"].get("test", {})
 
     def test_alias_source_local(self, alias_test_env):
         """9.2.1: alias add <pattern> adds local workspace by pattern."""

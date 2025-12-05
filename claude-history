@@ -3047,6 +3047,64 @@ def _normalize_aliases(data: dict) -> dict:
     return data
 
 
+def _normalize_alias_workspace_input(workspace_input: str) -> tuple[str | None, str | None]:
+    """Return (encoded, readable) forms for flexible alias operations."""
+    if workspace_input is None:
+        return None, None
+
+    candidate = workspace_input.strip()
+    if not candidate:
+        return None, None
+
+    # Support remote-style input user@host:/path
+    if ":" in candidate and "@" in candidate.split(":", 1)[0]:
+        candidate = candidate.split(":", 1)[1].strip()
+
+    encoded = None
+    try:
+        lower = candidate.lower()
+        if candidate.startswith("-") or _is_windows_encoded_path(candidate):
+            encoded = candidate
+        elif lower.startswith("/mnt/"):
+            encoded = path_to_encoded_workspace(candidate)
+        elif candidate.startswith("/"):
+            encoded = path_to_encoded_workspace(candidate)
+        elif len(candidate) > 1 and candidate[1] == ":":
+            encoded = _convert_windows_path_to_encoded(candidate)
+    except Exception:
+        encoded = None
+
+    readable = None
+    if encoded:
+        try:
+            readable = normalize_workspace_name(encoded, verify_local=False)
+        except Exception:
+            readable = None
+    else:
+        readable = candidate
+
+    return encoded, readable
+
+
+def _match_alias_workspace(workspaces: list, workspace_input: str) -> str | None:
+    """Find matching workspace entry from alias list."""
+    encoded_input, readable_input = _normalize_alias_workspace_input(workspace_input)
+    candidates = {workspace_input}
+    if encoded_input:
+        candidates.add(encoded_input)
+
+    for entry in workspaces:
+        if entry in candidates:
+            return entry
+        try:
+            entry_readable = normalize_workspace_name(entry, verify_local=False)
+        except Exception:
+            entry_readable = None
+        if readable_input and entry_readable == readable_input:
+            return entry
+    return None
+
+
 def get_source_key(remote_host=None, wsl_distro=None, windows_user=None) -> str:
     """Get the source key for aliases based on current context."""
     if remote_host:
@@ -3575,17 +3633,21 @@ def cmd_alias_remove(args):
         sys.stderr.write(f"Error: No workspaces from '{source_key}' in alias '{alias_name}'\n")
         sys.exit(1)
 
-    if workspace not in alias_config[source_key]:
+    target = _match_alias_workspace(alias_config[source_key], workspace)
+    if not target:
         sys.stderr.write(
             f"Error: Workspace '{workspace}' not in alias '{alias_name}' [{source_key}]\n"
         )
         sys.exit(1)
 
-    alias_config[source_key].remove(workspace)
+    alias_config[source_key].remove(target)
 
     # Clean up empty source
     if not alias_config[source_key]:
         del alias_config[source_key]
+
+    if not alias_config:
+        del aliases_data["aliases"][alias_name]
 
     if save_aliases(aliases_data):
         print(f"Removed workspace from alias '{alias_name}' [{source_key}]")
