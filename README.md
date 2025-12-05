@@ -350,7 +350,6 @@ MIT License - See [LICENSE](LICENSE) file.
 - Maintained with Codex (GPT-5) tooling
 
 Related projects worth exploring:
-- [claude-conversation-extractor](https://github.com/ZeroSumQuant/claude-conversation-extractor) – JSON→Markdown converter with a simple UI.
-- [claude-archive](https://github.com/ar90n/claude-archive) – lightweight CLI to package `.claude/projects`.
-- [claude-navigator](https://github.com/RefalMachine/claude-navigator) – web UI for browsing conversations.
-- [claude-history-py](https://github.com/ga2mer/claude-history-py) – an earlier attempt at multi-home exports.
+- [ZeroSumQuant/claude-conversation-extractor](https://github.com/ZeroSumQuant/claude-conversation-extractor) – JSON→Markdown converter with a UI and filtering.
+- [thejud/claude-history](https://github.com/thejud/claude-history) – simple CLI to extract/format session files.
+- [raine/claude-history](https://github.com/raine/claude-history) – fuzzy-search across Claude history from the terminal.
