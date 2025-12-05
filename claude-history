@@ -7837,6 +7837,10 @@ def _dispatch_lss_local(args, workspace_list: list):
 
     this_only = getattr(args, "this_only", False)
     all_workspaces_flag = getattr(args, "all_workspaces", False)
+    remote_value = _resolve_remote_flag(args)
+    needs_remote_scope = bool(
+        remote_value or getattr(args, "windows", False) or getattr(args, "wsl", False)
+    )
     error_msg = (
         "Not in a Claude Code workspace.\n\n"
         "To list sessions, either:\n"
@@ -7848,8 +7852,10 @@ def _dispatch_lss_local(args, workspace_list: list):
         patterns = [""]
         alias_for_ws = None
     else:
+        require_ws = not needs_remote_scope
+        err = error_msg if require_ws else None
         patterns, alias_for_ws = resolve_patterns_for_command(
-            workspace_list, this_only, require_workspace=True, error_message=error_msg
+            workspace_list, this_only, require_workspace=require_ws, error_message=err
         )
     if alias_for_ws:
         sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
@@ -7859,7 +7865,7 @@ def _dispatch_lss_local(args, workspace_list: list):
     class LssArgs:
         since = args.since
         until = args.until
-        remote = _resolve_remote_flag(args)
+        remote = remote_value
         workspaces_only = False
         projects_dir = projects_dir_override
 
