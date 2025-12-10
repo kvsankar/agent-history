@@ -73,10 +73,10 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 <!-- help-snippet:start -->
 ```
-usage: claude-history [-h] [--version]
-                      {lsw,lss,lsh,export,alias,stats,reset,install} ...
+usage: agent-history [-h] [--version] [--agent {auto,claude,codex}]
+                     {lsw,lss,lsh,export,alias,stats,reset,install} ...
 
-Browse and export Claude Code conversation history
+Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)
 
 positional arguments:
   {lsw,lss,lsh,export,alias,stats,reset,install}
@@ -93,6 +93,9 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
+  --agent, -a {auto,claude,codex}
+                        Agent backend to use (default: auto-detect based on
+                        available data)
 
 EXAMPLES:
 

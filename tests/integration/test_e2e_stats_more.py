@@ -10,7 +10,11 @@ pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, timeout=25):
-    cmd = [sys.executable, str(Path.cwd() / "claude-history"), *args]
+    # Use agent-history (new name), fall back to claude-history for backward compat
+    script_path = Path.cwd() / "agent-history"
+    if not script_path.exists():
+        script_path = Path.cwd() / "claude-history"
+    cmd = [sys.executable, str(script_path), *args]
     return subprocess.run(
         cmd,
         capture_output=True,

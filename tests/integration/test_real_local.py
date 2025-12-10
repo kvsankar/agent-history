@@ -1,8 +1,8 @@
 import os
-import sys
-import json
 import subprocess
+import sys
 from pathlib import Path
+
 import pytest
 
 # Mark all tests in this module as integration
@@ -10,7 +10,11 @@ pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, cwd=None, timeout=15):
-    cmd = [sys.executable, str(Path.cwd() / "claude-history")] + args
+    # Use agent-history (new name), fall back to claude-history for backward compat
+    script_path = Path.cwd() / "agent-history"
+    if not script_path.exists():
+        script_path = Path.cwd() / "claude-history"
+    cmd = [sys.executable, str(script_path), *args]
     return subprocess.run(
         cmd,
         capture_output=True,
@@ -18,6 +22,7 @@ def run_cli(args, env=None, cwd=None, timeout=15):
         env=env or os.environ.copy(),
         cwd=str(cwd) if cwd else None,
         timeout=timeout,
+        check=False,
     )
 
 
@@ -59,8 +64,8 @@ def test_lss_local_lists_sessions_for_pattern(tmp_path: Path):
     res = run_cli(["lss", "--local", "mysvc"], env=env)
     assert res.returncode == 0, res.stderr
     out_lines = [ln for ln in res.stdout.splitlines() if ln.strip()]
-    # First line is header
-    assert out_lines[0].startswith("HOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+    # First line is header (includes AGENT column)
+    assert out_lines[0].startswith("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
     # At least one file from workspace appears
     assert any("/home/user/mysvc" in ln for ln in out_lines[1:])
 

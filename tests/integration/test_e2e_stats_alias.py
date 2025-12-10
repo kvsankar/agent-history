@@ -1,17 +1,23 @@
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, timeout=25):
-    cmd = [sys.executable, str(Path.cwd() / "claude-history")] + args
+    # Use agent-history (new name), fall back to claude-history for backward compat
+    script_path = Path.cwd() / "agent-history"
+    if not script_path.exists():
+        script_path = Path.cwd() / "claude-history"
+    cmd = [sys.executable, str(script_path), *args]
     return subprocess.run(
         cmd,
+        check=False,
         capture_output=True,
         text=True,
         env=env or os.environ.copy(),
@@ -43,7 +49,7 @@ def test_e2e_stats_sync_and_show_local(tmp_path: Path):
             "content": [{"type": "text", "text": "hi"}],
         }
     ]
-    ws = make_workspace(projects, "-home-user-stat", rows)
+    make_workspace(projects, "-home-user-stat", rows)
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
@@ -76,7 +82,7 @@ def test_e2e_alias_create_add_show_export(tmp_path: Path):
             "content": [{"type": "text", "text": "alias"}],
         }
     ]
-    ws = make_workspace(projects, "-home-user-alias", rows)
+    make_workspace(projects, "-home-user-alias", rows)
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)

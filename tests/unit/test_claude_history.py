@@ -35,13 +35,19 @@ import pytest
 root_path = Path(__file__).resolve()
 root_search = [root_path.parent, *root_path.parents]
 module_path = None
-for base in root_search:
-    candidate = base / "claude-history"
-    if candidate.exists():
-        module_path = candidate
+# Try agent-history first (new name), then claude-history (backward compat)
+for name in ["agent-history", "claude-history"]:
+    for base in root_search:
+        candidate = base / name
+        if candidate.exists():
+            module_path = candidate
+            break
+    if module_path:
         break
 if module_path is None:
-    raise FileNotFoundError("Could not locate 'claude-history' script relative to test file")
+    raise FileNotFoundError(
+        "Could not locate 'agent-history' or 'claude-history' script relative to test file"
+    )
 loader = importlib.machinery.SourceFileLoader("claude_history", str(module_path))
 spec = importlib.util.spec_from_loader("claude_history", loader)
 ch = importlib.util.module_from_spec(spec)
@@ -112,6 +118,895 @@ def temp_config_dir():
         config_dir = Path(tmpdir) / ".claude-history"
         config_dir.mkdir(parents=True)
         yield config_dir
+
+
+@pytest.fixture
+def sample_codex_jsonl_content():
+    """Sample Codex rollout JSONL for testing."""
+    return [
+        {
+            "timestamp": "2025-12-08T00:37:46.102Z",
+            "type": "session_meta",
+            "payload": {
+                "id": "test-session-id",
+                "cwd": "/home/user/project",
+                "cli_version": "0.65.0",
+                "source": "cli",
+            },
+        },
+        {
+            "timestamp": "2025-12-08T00:38:00.000Z",
+            "type": "turn_context",
+            "payload": {
+                "cwd": "/home/user/project",
+                "model": "gpt-5-codex",
+            },
+        },
+        {
+            "timestamp": "2025-12-08T00:39:54.852Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Hello Codex"}],
+            },
+        },
+        {
+            "timestamp": "2025-12-08T00:39:59.538Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "shell_command",
+                "arguments": '{"command": "pwd"}',
+                "call_id": "call_123",
+            },
+        },
+        {
+            "timestamp": "2025-12-08T00:40:00.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_123",
+                "output": "/home/user/project",
+            },
+        },
+        {
+            "timestamp": "2025-12-08T00:40:05.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "You are in /home/user/project"}],
+            },
+        },
+    ]
+
+
+@pytest.fixture
+def temp_codex_session_file(sample_codex_jsonl_content):
+    """Create a temporary Codex session file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        session_dir = Path(tmpdir) / ".codex" / "sessions" / "2025" / "12" / "08"
+        session_dir.mkdir(parents=True)
+        session_file = session_dir / "rollout-2025-12-08T00-37-46-test.jsonl"
+        with open(session_file, "w", encoding="utf-8") as f:
+            for entry in sample_codex_jsonl_content:
+                f.write(json.dumps(entry) + "\n")
+        yield session_file
+
+
+@pytest.fixture
+def temp_codex_sessions_dir(sample_codex_jsonl_content):
+    """Create a temporary Codex sessions directory structure with multiple sessions."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base = Path(tmpdir) / ".codex" / "sessions"
+
+        # Create session in 2025/12/08
+        day1 = base / "2025" / "12" / "08"
+        day1.mkdir(parents=True)
+        with open(day1 / "rollout-2025-12-08T00-37-46-test1.jsonl", "w") as f:
+            for entry in sample_codex_jsonl_content:
+                f.write(json.dumps(entry) + "\n")
+
+        # Create second session same day with different workspace
+        modified_content = []
+        for entry in sample_codex_jsonl_content:
+            if entry.get("type") == "session_meta":
+                modified_entry = {
+                    **entry,
+                    "payload": {**entry["payload"], "cwd": "/home/user/other-project"},
+                }
+                modified_content.append(modified_entry)
+            else:
+                modified_content.append(entry)
+        with open(day1 / "rollout-2025-12-08T10-00-00-test2.jsonl", "w") as f:
+            for entry in modified_content:
+                f.write(json.dumps(entry) + "\n")
+
+        # Create session in 2025/12/09
+        day2 = base / "2025" / "12" / "09"
+        day2.mkdir(parents=True)
+        with open(day2 / "rollout-2025-12-09T12-00-00-test3.jsonl", "w") as f:
+            for entry in sample_codex_jsonl_content:
+                f.write(json.dumps(entry) + "\n")
+
+        yield base
+
+
+# ============================================================================
+# Codex Backend Tests
+# ============================================================================
+
+
+class TestCodexConstants:
+    """Tests for Codex-related constants and detection."""
+
+    def test_agent_constants_defined(self):
+        """Agent constants should be defined."""
+        assert ch.AGENT_CLAUDE == "claude"
+        assert ch.AGENT_CODEX == "codex"
+
+    def test_codex_home_dir_default(self):
+        """Codex home dir should point to ~/.codex/sessions/."""
+        result = ch.codex_get_home_dir()
+        assert result == Path.home() / ".codex" / "sessions"
+
+    def test_detect_agent_from_claude_path(self):
+        """Claude paths should be detected as claude agent."""
+        path = Path("/home/user/.claude/projects/workspace/session.jsonl")
+        assert ch.detect_agent_from_path(path) == "claude"
+
+    def test_detect_agent_from_codex_path(self):
+        """Codex paths should be detected as codex agent."""
+        path = Path("/home/user/.codex/sessions/2025/12/08/rollout.jsonl")
+        assert ch.detect_agent_from_path(path) == "codex"
+
+    def test_detect_agent_windows_codex_path(self):
+        """Windows-style Codex paths should be detected."""
+        path = Path("C:\\Users\\test\\.codex\\sessions\\rollout.jsonl")
+        assert ch.detect_agent_from_path(path) == "codex"
+
+
+class TestCodexContentExtraction:
+    """Tests for codex_extract_content."""
+
+    def test_extract_input_text(self):
+        """Should extract input_text content."""
+        payload = {"content": [{"type": "input_text", "text": "Hello"}]}
+        assert ch.codex_extract_content(payload) == "Hello"
+
+    def test_extract_output_text(self):
+        """Should extract output_text content."""
+        payload = {"content": [{"type": "output_text", "text": "Response"}]}
+        assert ch.codex_extract_content(payload) == "Response"
+
+    def test_extract_multiple_parts(self):
+        """Should extract and join multiple text parts."""
+        payload = {
+            "content": [
+                {"type": "input_text", "text": "Part 1"},
+                {"type": "input_text", "text": "Part 2"},
+            ]
+        }
+        assert ch.codex_extract_content(payload) == "Part 1\nPart 2"
+
+    def test_extract_string_content(self):
+        """Should handle string content directly."""
+        payload = {"content": "Simple string"}
+        assert ch.codex_extract_content(payload) == "Simple string"
+
+    def test_extract_empty_content(self):
+        """Should handle empty content."""
+        payload = {"content": []}
+        assert ch.codex_extract_content(payload) == ""
+
+    def test_extract_ignores_other_types(self):
+        """Should ignore non-text content types."""
+        payload = {
+            "content": [{"type": "image", "data": "..."}, {"type": "input_text", "text": "Hello"}]
+        }
+        assert ch.codex_extract_content(payload) == "Hello"
+
+
+class TestCodexFunctionFormatting:
+    """Tests for codex_format_function_call and codex_format_function_result."""
+
+    def test_format_function_call(self):
+        """Should format function call as markdown."""
+        payload = {
+            "name": "shell_command",
+            "arguments": '{"command": "pwd"}',
+            "call_id": "call_123",
+        }
+        result = ch.codex_format_function_call(payload)
+        assert "**[Tool: shell_command]**" in result
+        assert "call_123" in result
+        assert '{"command": "pwd"}' in result
+
+    def test_format_function_result(self):
+        """Should format function result as markdown."""
+        payload = {"call_id": "call_123", "output": "/home/user/project"}
+        result = ch.codex_format_function_result(payload)
+        assert "**[Tool Result]**" in result
+        assert "call_123" in result
+        assert "/home/user/project" in result
+
+
+class TestCodexJSONLReading:
+    """Tests for codex_read_jsonl_messages."""
+
+    def test_read_session_meta(self, temp_codex_session_file):
+        """Should extract session metadata."""
+        _messages, meta = ch.codex_read_jsonl_messages(temp_codex_session_file)
+        assert meta["id"] == "test-session-id"
+        assert meta["cwd"] == "/home/user/project"
+
+    def test_read_user_messages(self, temp_codex_session_file):
+        """Should extract user messages."""
+        messages, _ = ch.codex_read_jsonl_messages(temp_codex_session_file)
+        user_msgs = [m for m in messages if m["role"] == "user"]
+        assert len(user_msgs) == 1
+        assert "Hello Codex" in user_msgs[0]["content"]
+
+    def test_read_assistant_messages(self, temp_codex_session_file):
+        """Should extract assistant messages."""
+        messages, _ = ch.codex_read_jsonl_messages(temp_codex_session_file)
+        asst_msgs = [m for m in messages if m["role"] == "assistant" and not m.get("is_tool_call")]
+        assert len(asst_msgs) == 1
+        assert "You are in" in asst_msgs[0]["content"]
+
+    def test_read_function_calls(self, temp_codex_session_file):
+        """Should extract function calls."""
+        messages, _ = ch.codex_read_jsonl_messages(temp_codex_session_file)
+        tool_calls = [m for m in messages if m.get("is_tool_call")]
+        assert len(tool_calls) == 1
+        assert "shell_command" in tool_calls[0]["content"]
+
+    def test_read_function_results(self, temp_codex_session_file):
+        """Should extract function results."""
+        messages, _ = ch.codex_read_jsonl_messages(temp_codex_session_file)
+        tool_results = [m for m in messages if m.get("is_tool_result")]
+        assert len(tool_results) == 1
+        assert "call_123" in tool_results[0]["content"]
+
+    def test_read_handles_empty_file(self, tmp_path):
+        """Should handle empty file gracefully."""
+        empty_file = tmp_path / "empty.jsonl"
+        empty_file.touch()
+        messages, meta = ch.codex_read_jsonl_messages(empty_file)
+        assert messages == []
+        assert meta is None
+
+
+class TestCodexTimestamp:
+    """Tests for codex_get_first_timestamp."""
+
+    def test_get_first_timestamp_from_session_meta(self, temp_codex_session_file):
+        """Should get timestamp from session_meta."""
+        ts = ch.codex_get_first_timestamp(temp_codex_session_file)
+        assert ts == "2025-12-08T00:37:46.102Z"
+
+    def test_get_first_timestamp_missing_file(self, tmp_path):
+        """Should return None for missing file."""
+        ts = ch.codex_get_first_timestamp(tmp_path / "nonexistent.jsonl")
+        assert ts is None
+
+    def test_get_first_timestamp_empty_file(self, tmp_path):
+        """Should return None for empty file."""
+        empty_file = tmp_path / "empty.jsonl"
+        empty_file.touch()
+        ts = ch.codex_get_first_timestamp(empty_file)
+        assert ts is None
+
+
+# ============================================================================
+# MIRROR: TestRealJSONLPatterns → TestCodexRealJSONLPatterns
+# ============================================================================
+class TestCodexRealJSONLPatterns:
+    """Mirror of TestRealJSONLPatterns for Codex format."""
+
+    def test_read_realistic_conversation(self, temp_codex_session_file):
+        """Mirror: test_read_realistic_conversation"""
+        messages, meta = ch.codex_read_jsonl_messages(temp_codex_session_file)
+        assert len(messages) >= 2  # At least user + assistant
+        assert meta is not None
+
+    def test_extract_tool_use_content(self, temp_codex_session_file):
+        """Mirror: test_extract_tool_use_content"""
+        messages, _ = ch.codex_read_jsonl_messages(temp_codex_session_file)
+        tool_calls = [m for m in messages if m.get("is_tool_call")]
+        assert len(tool_calls) >= 1
+        assert "shell_command" in tool_calls[0]["content"]
+
+    def test_extract_tool_result_content(self, temp_codex_session_file):
+        """Mirror: test_extract_tool_result_content"""
+        messages, _ = ch.codex_read_jsonl_messages(temp_codex_session_file)
+        tool_results = [m for m in messages if m.get("is_tool_result")]
+        assert len(tool_results) >= 1
+        assert "call_123" in tool_results[0]["content"]
+
+    def test_metrics_extraction_realistic(self, temp_codex_session_file):
+        """Mirror: test_metrics_extraction_realistic"""
+        metrics = ch.codex_extract_metrics_from_jsonl(temp_codex_session_file)
+        assert "session" in metrics
+        assert metrics["session"]["cwd"] == "/home/user/project"
+
+    def test_metrics_extraction_tool_uses(self, temp_codex_session_file):
+        """Mirror: test_metrics_extraction_tool_uses"""
+        metrics = ch.codex_extract_metrics_from_jsonl(temp_codex_session_file)
+        assert "tool_uses" in metrics
+        assert len(metrics["tool_uses"]) >= 1
+
+    def test_metrics_extraction_model(self, temp_codex_session_file):
+        """Should extract model from turn_context."""
+        metrics = ch.codex_extract_metrics_from_jsonl(temp_codex_session_file)
+        assert metrics["session"]["model"] == "gpt-5-codex"
+
+
+# ============================================================================
+# MIRROR: TestMarkdownGeneration → TestCodexMarkdownGeneration
+# ============================================================================
+class TestCodexMarkdownGeneration:
+    """Mirror of TestMarkdownGeneration for Codex format."""
+
+    def test_generates_markdown_header(self, temp_codex_session_file):
+        """Mirror: test_generates_markdown_header"""
+        md = ch.codex_parse_jsonl_to_markdown(temp_codex_session_file)
+        assert "# Codex Conversation" in md
+
+    def test_includes_message_content(self, temp_codex_session_file):
+        """Mirror: test_includes_message_content"""
+        md = ch.codex_parse_jsonl_to_markdown(temp_codex_session_file)
+        assert "Hello Codex" in md
+        assert "You are in" in md
+
+    def test_includes_session_metadata(self, temp_codex_session_file):
+        """Should include session metadata in non-minimal mode."""
+        md = ch.codex_parse_jsonl_to_markdown(temp_codex_session_file, minimal=False)
+        assert "test-session-id" in md
+        assert "/home/user/project" in md
+
+    def test_minimal_mode_excludes_metadata(self, temp_codex_session_file):
+        """Mirror: test_minimal_mode_excludes_metadata"""
+        md_full = ch.codex_parse_jsonl_to_markdown(temp_codex_session_file, minimal=False)
+        md_minimal = ch.codex_parse_jsonl_to_markdown(temp_codex_session_file, minimal=True)
+        # Minimal should be shorter (less metadata)
+        assert len(md_minimal) <= len(md_full)
+        # Minimal should not have session ID
+        assert "test-session-id" not in md_minimal
+
+    def test_includes_tool_calls(self, temp_codex_session_file):
+        """Mirror: test_markdown_generation_with_tools"""
+        md = ch.codex_parse_jsonl_to_markdown(temp_codex_session_file)
+        assert "shell_command" in md
+        assert "pwd" in md
+
+
+# ============================================================================
+# Codex Session Scanning Tests
+# ============================================================================
+
+
+class TestCodexWorkspaceExtraction:
+    """Tests for codex_get_workspace_from_session."""
+
+    def test_extract_workspace_from_session_meta(self, temp_codex_session_file):
+        """Should extract workspace from session_meta cwd."""
+        ws = ch.codex_get_workspace_from_session(temp_codex_session_file)
+        assert ws == "-home-user-project"
+
+    def test_workspace_returns_unknown_for_missing_cwd(self, tmp_path):
+        """Should return 'unknown' when cwd is missing."""
+        session_file = tmp_path / "test.jsonl"
+        content = {
+            "timestamp": "2025-12-08T00:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": "test"},
+        }
+        with open(session_file, "w") as f:
+            f.write(json.dumps(content) + "\n")
+        ws = ch.codex_get_workspace_from_session(session_file)
+        assert ws == "unknown"
+
+    def test_workspace_returns_unknown_for_empty_file(self, tmp_path):
+        """Should return 'unknown' for empty file."""
+        empty_file = tmp_path / "empty.jsonl"
+        empty_file.touch()
+        ws = ch.codex_get_workspace_from_session(empty_file)
+        assert ws == "unknown"
+
+
+class TestCodexMessageCounting:
+    """Tests for codex_count_messages."""
+
+    def test_count_messages(self, temp_codex_session_file):
+        """Should count user and assistant messages."""
+        count = ch.codex_count_messages(temp_codex_session_file)
+        # Fixture has 1 user message + 1 assistant message = 2
+        assert count == 2
+
+    def test_count_empty_file(self, tmp_path):
+        """Should return 0 for empty file."""
+        empty_file = tmp_path / "empty.jsonl"
+        empty_file.touch()
+        count = ch.codex_count_messages(empty_file)
+        assert count == 0
+
+
+class TestCodexSessionScanning:
+    """Tests for codex_scan_sessions."""
+
+    def test_scan_finds_sessions(self, temp_codex_sessions_dir):
+        """Should find all sessions in directory structure."""
+        sessions = ch.codex_scan_sessions(sessions_dir=temp_codex_sessions_dir)
+        assert len(sessions) == 3
+
+    def test_scan_filters_by_pattern(self, temp_codex_sessions_dir):
+        """Should filter sessions by workspace pattern."""
+        sessions = ch.codex_scan_sessions(
+            pattern="other-project", sessions_dir=temp_codex_sessions_dir
+        )
+        assert len(sessions) == 1
+        assert "other-project" in sessions[0]["workspace"]
+
+    def test_scan_returns_session_metadata(self, temp_codex_sessions_dir):
+        """Should return complete session metadata."""
+        sessions = ch.codex_scan_sessions(sessions_dir=temp_codex_sessions_dir)
+        session = sessions[0]
+        assert "agent" in session and session["agent"] == "codex"
+        assert "workspace" in session
+        assert "file" in session
+        assert "modified" in session
+        assert "filename" in session
+        assert "message_count" in session
+
+    def test_scan_empty_dir(self, tmp_path):
+        """Should return empty list for empty directory."""
+        empty_dir = tmp_path / ".codex" / "sessions"
+        empty_dir.mkdir(parents=True)
+        sessions = ch.codex_scan_sessions(sessions_dir=empty_dir)
+        assert sessions == []
+
+    def test_scan_nonexistent_dir(self, tmp_path):
+        """Should return empty list for nonexistent directory."""
+        sessions = ch.codex_scan_sessions(sessions_dir=tmp_path / "nonexistent")
+        assert sessions == []
+
+    def test_scan_sorted_by_modified(self, temp_codex_sessions_dir):
+        """Should return sessions sorted by modified time (newest first)."""
+        sessions = ch.codex_scan_sessions(sessions_dir=temp_codex_sessions_dir)
+        for i in range(len(sessions) - 1):
+            assert sessions[i]["modified"] >= sessions[i + 1]["modified"]
+
+    def test_scan_skip_message_count(self, temp_codex_sessions_dir):
+        """Should skip message counting when flag is set."""
+        sessions = ch.codex_scan_sessions(
+            sessions_dir=temp_codex_sessions_dir, skip_message_count=True
+        )
+        for session in sessions:
+            assert session["message_count"] == 0
+
+
+# ============================================================================
+# Unified Backend Dispatch Tests
+# ============================================================================
+
+
+class TestBackendDispatch:
+    """Tests for backend selection and dispatch."""
+
+    def test_get_active_backends_explicit_claude(self, temp_projects_dir):
+        """Should return only Claude backend when explicitly requested."""
+        # Create a fake .claude/projects that exists
+        with patch.object(Path, "exists", return_value=True):
+            with patch("pathlib.Path.home", return_value=temp_projects_dir.parent.parent):
+                backends = ch.get_active_backends("claude")
+                assert backends == ["claude"]
+
+    def test_get_active_backends_explicit_codex(self, temp_codex_sessions_dir):
+        """Should return only Codex backend when explicitly requested."""
+        with patch.object(ch, "codex_get_home_dir", return_value=temp_codex_sessions_dir):
+            backends = ch.get_active_backends("codex")
+            assert backends == ["codex"]
+
+    def test_get_active_backends_auto_only_codex(self, tmp_path, temp_codex_sessions_dir):
+        """Should return Codex when only Codex exists."""
+        # No Claude directory (tmp_path doesn't have .claude/projects)
+        with patch.object(ch, "codex_get_home_dir", return_value=temp_codex_sessions_dir):
+            with patch("pathlib.Path.home", return_value=tmp_path):
+                backends = ch.get_active_backends("auto")
+                assert "codex" in backends
+
+    def test_get_active_backends_nonexistent(self, tmp_path):
+        """Should return empty list when neither backend exists."""
+        with patch.object(ch, "codex_get_home_dir", return_value=tmp_path / "nonexistent"):
+            with patch("pathlib.Path.home", return_value=tmp_path):
+                backends = ch.get_active_backends("auto")
+                # Neither backend exists
+                assert backends == []
+
+    def test_get_active_backends_codex_not_found(self, tmp_path):
+        """Should return empty list when Codex requested but not found."""
+        with patch.object(ch, "codex_get_home_dir", return_value=tmp_path / "nonexistent"):
+            backends = ch.get_active_backends("codex")
+            assert backends == []
+
+
+class TestUnifiedSessions:
+    """Tests for get_unified_sessions."""
+
+    def test_get_sessions_codex_only(self, temp_codex_sessions_dir, tmp_path):
+        """Should return Codex sessions when Codex requested."""
+        with patch.object(ch, "codex_get_home_dir", return_value=temp_codex_sessions_dir):
+            with patch("pathlib.Path.home", return_value=tmp_path):
+                sessions = ch.get_unified_sessions(agent="codex")
+                assert len(sessions) == 3
+                for s in sessions:
+                    assert s["agent"] == "codex"
+
+    def test_sessions_tagged_with_agent_field(self, temp_codex_sessions_dir, tmp_path):
+        """All sessions should have an agent field."""
+        with patch.object(ch, "codex_get_home_dir", return_value=temp_codex_sessions_dir):
+            with patch("pathlib.Path.home", return_value=tmp_path):
+                sessions = ch.get_unified_sessions(agent="codex")
+                for s in sessions:
+                    assert "agent" in s
+                    assert s["agent"] in ("claude", "codex")
+
+    def test_sessions_sorted_by_modified(self, temp_codex_sessions_dir, tmp_path):
+        """Sessions should be sorted by modified time (newest first)."""
+        with patch.object(ch, "codex_get_home_dir", return_value=temp_codex_sessions_dir):
+            with patch("pathlib.Path.home", return_value=tmp_path):
+                sessions = ch.get_unified_sessions(agent="codex")
+                for i in range(len(sessions) - 1):
+                    assert sessions[i]["modified"] >= sessions[i + 1]["modified"]
+
+    def test_get_sessions_filters_by_pattern(self, temp_codex_sessions_dir, tmp_path):
+        """Should filter by workspace pattern."""
+        with patch.object(ch, "codex_get_home_dir", return_value=temp_codex_sessions_dir):
+            with patch("pathlib.Path.home", return_value=tmp_path):
+                sessions = ch.get_unified_sessions(agent="codex", pattern="other-project")
+                assert len(sessions) == 1
+                assert "other-project" in sessions[0]["workspace"]
+
+
+# ============================================================================
+# Database Schema Tests
+# ============================================================================
+
+
+class TestMetricsDBSchema:
+    """Tests for database schema and migrations."""
+
+    def test_new_db_has_agent_column(self, tmp_path):
+        """New database should have agent column."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "agent" in columns
+        conn.close()
+
+    def test_db_version_is_4(self, tmp_path):
+        """Database should be version 4."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+        cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
+        row = cursor.fetchone()
+        assert row["version"] == 4
+        conn.close()
+
+    def test_agent_index_exists(self, tmp_path):
+        """Agent index should exist."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_sessions_agent'"
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        conn.close()
+
+
+class TestSyncFileToDb:
+    """Tests for sync_file_to_db with different agent types."""
+
+    def test_sync_claude_file_sets_agent_claude(self, tmp_path, temp_projects_dir):
+        """Syncing Claude file should set agent to 'claude'."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+
+        # Get a session file from temp_projects_dir
+        session_files = list(temp_projects_dir.glob("**/*.jsonl"))
+        if session_files:
+            jsonl_file = session_files[0]
+            ch.sync_file_to_db(conn, jsonl_file)
+
+            cursor = conn.execute(
+                "SELECT agent FROM sessions WHERE file_path = ?", (str(jsonl_file),)
+            )
+            row = cursor.fetchone()
+            if row:
+                assert row["agent"] == "claude"
+        conn.close()
+
+    def test_sync_codex_file_sets_agent_codex(self, tmp_path, temp_codex_session_file):
+        """Syncing Codex file should set agent to 'codex'."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+
+        ch.sync_file_to_db(conn, temp_codex_session_file)
+
+        cursor = conn.execute(
+            "SELECT agent FROM sessions WHERE file_path = ?", (str(temp_codex_session_file),)
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row["agent"] == "codex"
+        conn.close()
+
+    def test_sync_codex_file_extracts_workspace(self, tmp_path, temp_codex_session_file):
+        """Syncing Codex file should extract workspace from cwd."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+
+        ch.sync_file_to_db(conn, temp_codex_session_file)
+
+        cursor = conn.execute(
+            "SELECT workspace FROM sessions WHERE file_path = ?", (str(temp_codex_session_file),)
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert "-home-user-project" in row["workspace"]
+        conn.close()
+
+
+# ============================================================================
+# CLI --agent Flag Tests
+# ============================================================================
+
+
+class TestCLIAgentFlag:
+    """Tests for --agent CLI flag."""
+
+    def test_agent_flag_default_is_auto(self):
+        """Default agent should be 'auto'."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lsw"])
+        assert args.agent == "auto"
+
+    def test_agent_flag_accepts_claude(self):
+        """Should accept --agent claude."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["--agent", "claude", "lsw"])
+        assert args.agent == "claude"
+
+    def test_agent_flag_accepts_codex(self):
+        """Should accept -a codex (short form)."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["-a", "codex", "lsw"])
+        assert args.agent == "codex"
+
+    def test_agent_flag_accepts_auto(self):
+        """Should accept --agent auto."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["--agent", "auto", "lss"])
+        assert args.agent == "auto"
+
+    def test_agent_flag_rejects_invalid(self):
+        """Should reject invalid agent values."""
+        parser = ch._create_argument_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--agent", "invalid", "lsw"])
+
+
+class TestAgentFiltering:
+    """Tests for --agent flag filtering behavior."""
+
+    @pytest.fixture
+    def mixed_agent_env(self, tmp_path, sample_jsonl_content, sample_codex_jsonl_content):
+        """Create environment with both Claude and Codex sessions."""
+        # Create Claude projects directory
+        claude_projects = tmp_path / ".claude" / "projects"
+        claude_ws = claude_projects / "-home-user-testproject"
+        claude_ws.mkdir(parents=True)
+        claude_file = claude_ws / "session.jsonl"
+        claude_file.write_text(
+            "\n".join(json.dumps(msg) for msg in sample_jsonl_content),
+            encoding="utf-8",
+        )
+
+        # Create Codex sessions directory
+        codex_sessions = tmp_path / ".codex" / "sessions" / "2025" / "12" / "10"
+        codex_sessions.mkdir(parents=True)
+        codex_file = codex_sessions / "rollout-2025-12-10T00-00-00-test.jsonl"
+        codex_file.write_text(
+            "\n".join(json.dumps(msg) for msg in sample_codex_jsonl_content),
+            encoding="utf-8",
+        )
+
+        return {
+            "claude_projects": claude_projects,
+            "codex_sessions": tmp_path / ".codex" / "sessions",
+            "tmp_path": tmp_path,
+        }
+
+    def test_agent_claude_returns_only_claude_sessions(self, mixed_agent_env, monkeypatch):
+        """--agent claude should return only Claude sessions."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+
+        sessions = ch.collect_sessions_with_dedup([""], agent="claude")
+
+        assert len(sessions) > 0
+        agents = {s.get("agent") for s in sessions}
+        assert agents == {"claude"}, f"Expected only claude sessions, got {agents}"
+
+    def test_agent_codex_returns_only_codex_sessions(self, mixed_agent_env, monkeypatch):
+        """--agent codex should return only Codex sessions."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+
+        sessions = ch.collect_sessions_with_dedup([""], agent="codex")
+
+        assert len(sessions) > 0
+        agents = {s.get("agent") for s in sessions}
+        assert agents == {"codex"}, f"Expected only codex sessions, got {agents}"
+
+    def test_agent_auto_returns_both_agents(self, mixed_agent_env, monkeypatch):
+        """--agent auto should return sessions from both agents."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+
+        sessions = ch.collect_sessions_with_dedup([""], agent="auto")
+
+        assert len(sessions) > 0
+        agents = {s.get("agent") for s in sessions}
+        assert "claude" in agents, "Expected claude sessions in auto mode"
+        assert "codex" in agents, "Expected codex sessions in auto mode"
+
+    def test_get_unified_sessions_respects_agent_filter(self, mixed_agent_env, monkeypatch):
+        """get_unified_sessions should filter by agent parameter."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+
+        # Test claude only
+        claude_sessions = ch.get_unified_sessions(agent="claude", pattern="")
+        claude_agents = {s.get("agent") for s in claude_sessions}
+        assert claude_agents == {"claude"} or len(claude_sessions) == 0
+
+        # Test codex only
+        codex_sessions = ch.get_unified_sessions(agent="codex", pattern="")
+        codex_agents = {s.get("agent") for s in codex_sessions}
+        assert codex_agents == {"codex"} or len(codex_sessions) == 0
+
+    def test_get_active_backends_claude_only(self, mixed_agent_env, monkeypatch):
+        """get_active_backends('claude') should return only claude backend."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+
+        backends = ch.get_active_backends("claude")
+        assert backends == ["claude"]
+
+    def test_get_active_backends_codex_only(self, mixed_agent_env, monkeypatch):
+        """get_active_backends('codex') should return only codex backend."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+
+        backends = ch.get_active_backends("codex")
+        assert backends == ["codex"]
+
+    def test_get_active_backends_auto_returns_both(self, mixed_agent_env, monkeypatch):
+        """get_active_backends('auto') should return both backends when both exist."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+
+        backends = ch.get_active_backends("auto")
+        assert "claude" in backends
+        assert "codex" in backends
+
+    def test_agent_flag_passed_to_list_local_sessions(self, mixed_agent_env, monkeypatch, capsys):
+        """_list_local_sessions should use the agent parameter from args."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+
+        # Create args with agent="codex"
+        class MockArgs:
+            projects_dir = None
+            agent = "codex"
+            workspaces_only = False
+
+        ch._list_local_sessions(MockArgs(), [""], None, None)
+        captured = capsys.readouterr()
+
+        # Output should only contain codex sessions
+        lines = [ln for ln in captured.out.strip().split("\n") if ln and not ln.startswith("AGENT")]
+        for line in lines:
+            assert line.startswith("codex\t"), f"Expected codex agent, got: {line}"
+
+    def test_lss_args_includes_agent(self, mixed_agent_env, monkeypatch):
+        """LssArgs class in _dispatch_lss_local should include agent attribute."""
+        monkeypatch.setattr(
+            ch, "get_claude_projects_dir", lambda: mixed_agent_env["claude_projects"]
+        )
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
+        monkeypatch.setattr(ch, "check_current_workspace_exists", lambda: ("test", True))
+        monkeypatch.setattr(ch, "get_current_workspace_pattern", lambda: "test")
+
+        # Parse args with --agent codex
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["--agent", "codex", "lss", "--this"])
+
+        assert args.agent == "codex"
+
+
+# ============================================================================
+# Output Format Tests
+# ============================================================================
+
+
+class TestOutputFormatting:
+    """Tests for output formatting with agent column."""
+
+    def test_session_line_includes_agent(self):
+        """Session line should start with agent field."""
+        session = {
+            "agent": "codex",
+            "workspace_readable": "/home/user/project",
+            "filename": "rollout.jsonl",
+            "message_count": 10,
+            "modified": datetime(2025, 12, 8),
+        }
+        line = ch.format_session_line(session, "Local")
+        assert line.startswith("codex\t")
+
+    def test_session_line_defaults_to_claude(self):
+        """Session without agent field should default to 'claude'."""
+        session = {
+            "workspace_readable": "/home/user/project",
+            "filename": "session.jsonl",
+            "message_count": 5,
+            "modified": datetime(2025, 12, 8),
+        }
+        line = ch.format_session_line(session, "Local")
+        assert line.startswith("claude\t")
+
+    def test_header_includes_agent_column(self, capsys):
+        """Header should include AGENT column."""
+        ch.print_sessions_output([], "Local", workspaces_only=False)
+        captured = capsys.readouterr()
+        assert "AGENT" in captured.out
+
+    def test_output_line_format(self):
+        """Output line should have correct format."""
+        session = {
+            "agent": "codex",
+            "workspace_readable": "/home/user/project",
+            "filename": "rollout.jsonl",
+            "message_count": 10,
+            "modified": datetime(2025, 12, 8),
+        }
+        line = ch.format_session_line(session, "Local")
+        parts = line.split("\t")
+        assert len(parts) == 6  # AGENT, HOME, WORKSPACE, FILE, MESSAGES, DATE
+        assert parts[0] == "codex"
+        assert parts[1] == "Local"
 
 
 # ============================================================================
@@ -4336,7 +5231,7 @@ class TestSection8Remaining:
             parts = list(result)
             if len(parts) > 1:
                 # Multi-part returns (part_num, total_parts, markdown_content, start_msg, end_msg)
-                part_num, total_parts, content, start_msg, end_msg = parts[0]
+                _part_num, total_parts, content, _start_msg, _end_msg = parts[0]
                 assert "Part" in content or total_parts > 1
 
     def test_feat_split_range_info(self, tmp_path):
@@ -4945,7 +5840,7 @@ class TestSection11Remaining:
             "2025-01-01T10:10:00Z",
         ]
         # Returns (work_period_seconds, num_work_periods, start_time, end_time)
-        total_seconds, num_periods, start_time, end_time = ch.calculate_work_periods(timestamps)
+        total_seconds, num_periods, _start_time, _end_time = ch.calculate_work_periods(timestamps)
         assert total_seconds >= 0
         assert num_periods >= 0
 
@@ -5805,6 +6700,7 @@ class TestSkipMessageCount:
             [""],
             projects_dir=workspace_with_sessions,
             skip_message_count=True,
+            agent="claude",  # Explicitly use only Claude backend to avoid system Codex sessions
         )
         assert len(sessions) == 1
         assert sessions[0]["message_count"] == 0
@@ -5985,7 +6881,11 @@ class TestCLISmoke:
         )
         assert result.returncode == 0
         assert "usage:" in result.stdout
-        assert "Browse and export Claude Code conversation history" in result.stdout
+        # Check for either old or new description (backward compat)
+        assert (
+            "Browse and export Claude Code conversation history" in result.stdout
+            or "Browse and export AI coding assistant conversation history" in result.stdout
+        )
 
     def test_help_flag(self, script_cmd):
         """--help should print help."""
@@ -6672,6 +7572,8 @@ class TestStatsAndExportEndToEnd:
         monkeypatch.setattr(ch, "get_windows_projects_dir", lambda username=None: windows_projects)
         monkeypatch.setattr(ch, "get_saved_sources", lambda: [])
         monkeypatch.setattr(ch, "validate_export_all_homes", lambda args, _: (True, []))
+        # Mock Codex home dir to avoid picking up real Codex sessions
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: tmp_path / "nonexistent_codex")
 
         args = SimpleNamespace(
             output_dir=str(output_dir),
@@ -7002,6 +7904,8 @@ class TestCommandCombinationMatrix:
         monkeypatch.setattr(ch, "check_ssh_connection", lambda host: True)
         monkeypatch.setattr(ch, "list_remote_workspaces", lambda host: ["-home-user-remoteproj"])
         monkeypatch.setattr(ch, "get_remote_hostname", lambda host: "mock")
+        # Mock Codex home dir to avoid picking up real Codex sessions
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: projects_dir / "nonexistent_codex")
 
         def fake_fetch(remote_host, remote_workspace, local_projects_dir, hostname):
             src = env["remote_template"] / remote_workspace
@@ -7053,7 +7957,7 @@ class TestCommandCombinationMatrix:
         data_lines = [
             line
             for line in captured.out.strip().splitlines()
-            if line and not line.startswith("HOME") and "\t" in line
+            if line and not line.startswith("AGENT") and "\t" in line
         ]
 
         def normalize_label(label: str) -> str:
@@ -7063,7 +7967,8 @@ class TestCommandCombinationMatrix:
                 return "Windows"
             return label
 
-        sources = {normalize_label(line.split("\t")[0]) for line in data_lines}
+        # Column index 1 is HOME (after AGENT column at index 0)
+        sources = {normalize_label(line.split("\t")[1]) for line in data_lines}
         assert sources == expect_sources, f"Scenario: {description}"
         assert len(data_lines) == expected_rows, f"Scenario: {description}"
 

@@ -9,7 +9,10 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-_CLI_SCRIPT = Path(__file__).resolve().parents[2] / "claude-history"
+# Use agent-history (new name), fall back to claude-history for backward compat
+_CLI_SCRIPT = Path(__file__).resolve().parents[2] / "agent-history"
+if not _CLI_SCRIPT.exists():
+    _CLI_SCRIPT = Path(__file__).resolve().parents[2] / "claude-history"
 _CLI_LOADER = importlib.machinery.SourceFileLoader("claude_history_cli_module", str(_CLI_SCRIPT))
 _CLI_SPEC = importlib.util.spec_from_loader(_CLI_LOADER.name, _CLI_LOADER)
 _claude_cli = importlib.util.module_from_spec(_CLI_SPEC)
@@ -17,7 +20,11 @@ _CLI_LOADER.exec_module(_claude_cli)
 
 
 def run_cli(args, env=None, timeout=20):
-    cmd = [sys.executable, str(Path.cwd() / "claude-history"), *args]
+    # Use agent-history (new name), fall back to claude-history for backward compat
+    script_path = Path.cwd() / "agent-history"
+    if not script_path.exists():
+        script_path = Path.cwd() / "claude-history"
+    cmd = [sys.executable, str(script_path), *args]
     return subprocess.run(
         cmd,
         capture_output=True,
