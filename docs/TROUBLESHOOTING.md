@@ -12,14 +12,14 @@
 
 List all workspaces:
 ```bash
-claude-history lsw
+agent-history lsw
 # or
 ls ~/.claude/projects/
 ```
 
 Or try a partial match:
 ```bash
-claude-history lss projects  # Match any workspace with "projects"
+agent-history lss projects  # Match any workspace with "projects"
 ```
 
 ---
@@ -28,9 +28,9 @@ claude-history lss projects  # Match any workspace with "projects"
 
 Yes! Use multiple patterns or the `--aw` flag:
 ```bash
-claude-history export proj1 proj2         # Multiple specific patterns
-claude-history export django              # All workspaces containing "django"
-claude-history export --aw                # All workspaces
+agent-history export proj1 proj2         # Multiple specific patterns
+agent-history export django              # All workspaces containing "django"
+agent-history export --aw                # All workspaces
 ```
 
 ---
@@ -54,8 +54,8 @@ Both are extracted and converted.
 
 Use `--since` and `--until`:
 ```bash
-claude-history lss myproject --since 2025-11-01 --until 2025-11-30
-claude-history export myproject --since 2025-11-01
+agent-history lss myproject --since 2025-11-01 --until 2025-11-30
+agent-history export myproject --since 2025-11-01
 ```
 
 ---
@@ -64,9 +64,9 @@ claude-history export myproject --since 2025-11-01
 
 Use the `--wsl` flag:
 ```powershell
-python claude-history lsh --wsl              # Find WSL distributions
-python claude-history lss myproject --wsl    # List sessions
-python claude-history export myproject --wsl # Export
+python agent-history lsh --wsl              # Find WSL distributions
+python agent-history lss myproject --wsl    # List sessions
+python agent-history export myproject --wsl # Export
 ```
 
 No SSH or rsync needed - uses direct filesystem access.
@@ -77,10 +77,10 @@ No SSH or rsync needed - uses direct filesystem access.
 
 Yes! Combine flags:
 ```bash
-claude-history lsw --ah                    # All homes
-claude-history lss myproject --wsl         # WSL
-claude-history lss myproject --windows     # Windows (from WSL)
-claude-history lss myproject -r user@host  # SSH remote
+agent-history lsw --ah                    # All homes
+agent-history lss myproject --wsl         # WSL
+agent-history lss myproject --windows     # Windows (from WSL)
+agent-history lss myproject -r user@host  # SSH remote
 ```
 
 ---
@@ -95,11 +95,11 @@ claude-history lss myproject -r user@host  # SSH remote
 1. Install Claude Code: https://claude.com/claude-code
 2. Log in: `claude login`
 3. Create at least one conversation
-4. If your Claude data lives somewhere else (e.g., another drive or a mounted backup), set the `CLAUDE_PROJECTS_DIR` environment variable before running `claude-history`:
+4. If your Claude data lives somewhere else (e.g., another drive or a mounted backup), set the `CLAUDE_PROJECTS_DIR` environment variable before running `agent-history`:
 
    ```bash
    export CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects
-   claude-history lsw
+   agent-history lsw
    ```
 
 ---
@@ -109,7 +109,7 @@ claude-history lss myproject -r user@host  # SSH remote
 **Problem:** No workspaces match your pattern
 
 **Solution:**
-1. List all workspaces: `claude-history lsw`
+1. List all workspaces: `agent-history lsw`
 2. Try a partial match
 3. Check spelling and case-sensitivity
 
@@ -136,7 +136,7 @@ chmod 700 ~/.claude/projects/  # Fix if needed
 2. Ensure the conversation wasn't interrupted mid-session
 3. Try converting individual files for better error messages:
    ```bash
-   claude-history export path/to/file.jsonl
+   agent-history export path/to/file.jsonl
    ```
 
 ---
@@ -167,7 +167,7 @@ chmod 700 ~/.claude/projects/  # Fix if needed
 
 **Solution:** Use WSL (most reliable):
 ```powershell
-wsl python claude-history export -r user@host
+wsl python agent-history export -r user@host
 ```
 
 Alternative options (Chocolatey, Git Bash) may have SSH integration issues.
@@ -180,7 +180,7 @@ Alternative options (Chocolatey, Git Bash) may have SSH integration issues.
 
 **Solution:** Use WSL:
 ```powershell
-wsl python claude-history export -r user@host
+wsl python agent-history export -r user@host
 ```
 
 ---
@@ -259,7 +259,7 @@ When syncing between machines (P1 ↔ P2), the tool automatically filters out ca
 
 ## Reset & Data Management
 
-### Where does claude-history store its data?
+### Where does agent-history store its data?
 
 All data is stored in `~/.claude-history/`:
 - `metrics.db` - SQLite database for stats and time tracking
@@ -271,21 +271,21 @@ All data is stored in `~/.claude-history/`:
 Use the reset command:
 ```bash
 # Delete everything (prompts for confirmation)
-claude-history reset
+agent-history reset
 
 # Delete only specific data
-claude-history reset db        # Metrics only
-claude-history reset aliases   # Aliases only
-claude-history reset settings  # SSH remotes only
+agent-history reset db        # Metrics only
+agent-history reset aliases   # Aliases only
+agent-history reset settings  # SSH remotes only
 
 # Skip confirmation (for scripts)
-claude-history reset -y
+agent-history reset -y
 ```
 
 ### Stats showing incorrect data?
 
 Try resetting the metrics database:
 ```bash
-claude-history reset db
-claude-history stats --sync
+agent-history reset db
+agent-history stats --sync
 ```

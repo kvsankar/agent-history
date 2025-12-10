@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`claude-history` is a single-file Python CLI tool that browses and exports Claude Code conversation history. It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
+`agent-history` is a single-file Python CLI tool that browses and exports AI coding assistant conversation history (Claude Code and Codex CLI). It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
+
+> **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
 **Design principles:**
 - Simple object-verb structure: `lsw` (list workspaces), `lss` (list sessions), `export`
@@ -18,123 +20,123 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Make script executable (if needed)
-chmod +x claude-history
+chmod +x agent-history
 
 # List homes (all Claude Code installations)
-./claude-history lsh                        # all hosts (local + WSL + Windows)
-./claude-history lsh --local                # only local
-./claude-history lsh --wsl                  # only WSL distributions
-./claude-history lsh --windows              # only Windows users
+./agent-history lsh                        # all hosts (local + WSL + Windows)
+./agent-history lsh --local                # only local
+./agent-history lsh --wsl                  # only WSL distributions
+./agent-history lsh --windows              # only Windows users
 
 # List workspaces
-./claude-history lsw                        # all local workspaces
-./claude-history lsw myproject              # filter by pattern
-./claude-history lsw proj1 proj2            # multiple patterns (match any)
-./claude-history lsw --wsl                  # WSL workspaces
-./claude-history lsw --windows              # Windows workspaces
-./claude-history lsw -r user@server         # SSH remote workspaces
-./claude-history lsw --ah                   # all homes (local + WSL/Windows + remotes)
-./claude-history lsw --ah -r vm01 -r vm02   # all homes + multiple SSH remotes
-./claude-history lsw proj1 proj2 --ah       # multiple patterns from all homes
+./agent-history lsw                        # all local workspaces
+./agent-history lsw myproject              # filter by pattern
+./agent-history lsw proj1 proj2            # multiple patterns (match any)
+./agent-history lsw --wsl                  # WSL workspaces
+./agent-history lsw --windows              # Windows workspaces
+./agent-history lsw -r user@server         # SSH remote workspaces
+./agent-history lsw --ah                   # all homes (local + WSL/Windows + remotes)
+./agent-history lsw --ah -r vm01 -r vm02   # all homes + multiple SSH remotes
+./agent-history lsw proj1 proj2 --ah       # multiple patterns from all homes
 
 # List sessions
-./claude-history lss                        # current workspace
-./claude-history lss myproject              # specific workspace
-./claude-history lss proj1 proj2            # multiple workspaces (deduplicated)
-./claude-history lss --wsl                  # from WSL
-./claude-history lss --windows              # from Windows
-./claude-history lss myproject -r user@server    # SSH remote sessions
-./claude-history lss myproject --ah         # from all homes
-./claude-history lss --ah -r vm01 -r vm02   # all homes + multiple SSH remotes
-./claude-history lss proj1 proj2 --ah       # multiple patterns from all homes
+./agent-history lss                        # current workspace
+./agent-history lss myproject              # specific workspace
+./agent-history lss proj1 proj2            # multiple workspaces (deduplicated)
+./agent-history lss --wsl                  # from WSL
+./agent-history lss --windows              # from Windows
+./agent-history lss myproject -r user@server    # SSH remote sessions
+./agent-history lss myproject --ah         # from all homes
+./agent-history lss --ah -r vm01 -r vm02   # all homes + multiple SSH remotes
+./agent-history lss proj1 proj2 --ah       # multiple patterns from all homes
 
 # Export (unified command with orthogonal scope flags)
-./claude-history export                     # current workspace, local source
-./claude-history export --ah                # current workspace, all homes
-./claude-history export --aw                # all workspaces, local source
-./claude-history export --ah --aw           # all workspaces, all homes
+./agent-history export                     # current workspace, local source
+./agent-history export --ah                # current workspace, all homes
+./agent-history export --aw                # all workspaces, local source
+./agent-history export --ah --aw           # all workspaces, all homes
 
-./claude-history export myproject           # specific workspace, local
-./claude-history export proj1 proj2         # multiple workspaces (deduplicated)
-./claude-history export myproject --ah      # specific workspace, all homes
-./claude-history export proj1 proj2 --ah    # multiple workspaces, all homes (lenient)
-./claude-history export file.jsonl         # export single file
+./agent-history export myproject           # specific workspace, local
+./agent-history export proj1 proj2         # multiple workspaces (deduplicated)
+./agent-history export myproject --ah      # specific workspace, all homes
+./agent-history export proj1 proj2 --ah    # multiple workspaces, all homes (lenient)
+./agent-history export file.jsonl         # export single file
 
-./claude-history export -o /tmp/backup      # current workspace, custom output
-./claude-history export myproject -o ./out  # specific workspace, custom output
+./agent-history export -o /tmp/backup      # current workspace, custom output
+./agent-history export myproject -o ./out  # specific workspace, custom output
 
-./claude-history export --wsl               # current workspace, WSL
-./claude-history export --windows           # current workspace, Windows
-./claude-history export -r user@server      # current workspace, SSH remote
-./claude-history export --ah -r user@vm01   # current workspace, all homes + SSH remote
-./claude-history export --ah proj1 proj2 -r host  # multiple patterns, all homes + remote
+./agent-history export --wsl               # current workspace, WSL
+./agent-history export --windows           # current workspace, Windows
+./agent-history export -r user@server      # current workspace, SSH remote
+./agent-history export --ah -r user@vm01   # current workspace, all homes + SSH remote
+./agent-history export --ah proj1 proj2 -r host  # multiple patterns, all homes + remote
 
 # Show version
-./claude-history --version
+./agent-history --version
 
 # Examples with date filtering
-./claude-history lss myproject --since 2025-11-01
-./claude-history export myproject --since 2025-11-01 --until 2025-11-30
+./agent-history lss myproject --since 2025-11-01
+./agent-history export myproject --since 2025-11-01 --until 2025-11-30
 
 # Export options
-./claude-history export myproject --minimal       # minimal mode
-./claude-history export myproject --split 500     # split long conversations
-./claude-history export myproject --flat          # flat structure (no workspace subdirs)
+./agent-history export myproject --minimal       # minimal mode
+./agent-history export myproject --split 500     # split long conversations
+./agent-history export myproject --flat          # flat structure (no workspace subdirs)
 
 # Workspace Aliases (group workspaces across environments)
-./claude-history alias list                       # list all aliases
-./claude-history alias show myproject             # show workspaces in an alias
-./claude-history alias create myproject           # create new alias
-./claude-history alias delete myproject           # delete an alias
-./claude-history alias add myproject myproject    # add by pattern (searches local)
-./claude-history alias add myproject --windows myproject  # add by pattern from Windows
-./claude-history alias add myproject --ah -r vm myproject  # add from all homes at once
-./claude-history alias remove myproject -- -home-user-myproject  # remove workspace from alias
-./claude-history alias export aliases.json        # export aliases to file
-./claude-history alias import aliases.json        # import aliases from file
+./agent-history alias list                       # list all aliases
+./agent-history alias show myproject             # show workspaces in an alias
+./agent-history alias create myproject           # create new alias
+./agent-history alias delete myproject           # delete an alias
+./agent-history alias add myproject myproject    # add by pattern (searches local)
+./agent-history alias add myproject --windows myproject  # add by pattern from Windows
+./agent-history alias add myproject --ah -r vm myproject  # add from all homes at once
+./agent-history alias remove myproject -- -home-user-myproject  # remove workspace from alias
+./agent-history alias export aliases.json        # export aliases to file
+./agent-history alias import aliases.json        # import aliases from file
 
 # Using aliases with lss and export
-./claude-history lss @myproject                   # list sessions from all alias workspaces
-./claude-history lss --alias myproject            # same as above
-./claude-history export @myproject                # export from all alias workspaces
-./claude-history export --alias myproject         # same as above
-./claude-history export @myproject --ah           # export alias from all homes
+./agent-history lss @myproject                   # list sessions from all alias workspaces
+./agent-history lss --alias myproject            # same as above
+./agent-history export @myproject                # export from all alias workspaces
+./agent-history export --alias myproject         # same as above
+./agent-history export @myproject --ah           # export alias from all homes
 
 # WSL and Windows access (flags auto-detect)
-./claude-history lsw --wsl                  # list WSL workspaces
-./claude-history lss myproject --wsl        # list WSL sessions
-./claude-history export myproject --wsl     # export from WSL
+./agent-history lsw --wsl                  # list WSL workspaces
+./agent-history lss myproject --wsl        # list WSL sessions
+./agent-history export myproject --wsl     # export from WSL
 
-./claude-history lsw --windows              # list Windows workspaces
-./claude-history lss myproject --windows    # list Windows sessions
-./claude-history export myproject --windows # export from Windows
+./agent-history lsw --windows              # list Windows workspaces
+./agent-history lss myproject --windows    # list Windows sessions
+./agent-history export myproject --windows # export from Windows
 
 # Saved Sources (for --ah flag)
-./claude-history sources                    # list saved sources
-./claude-history lsh add user@vm01     # add SSH remote (WSL/Windows auto-detected)
-./claude-history lsh add user@vm02     # add another remote
-./claude-history lsh remove user@vm01  # remove a source
-./claude-history lsh clear             # remove all saved sources
+./agent-history sources                    # list saved sources
+./agent-history lsh add user@vm01     # add SSH remote (WSL/Windows auto-detected)
+./agent-history lsh add user@vm02     # add another remote
+./agent-history lsh remove user@vm01  # remove a source
+./agent-history lsh clear             # remove all saved sources
 
 # Usage Statistics and Metrics (orthogonal --ah/--aw flags)
-./claude-history stats --sync               # sync local sessions to database
-./claude-history stats --sync --ah          # sync from all homes (includes saved remotes)
-./claude-history stats --sync --ah -r vm03  # sync all homes + additional remote
-./claude-history stats                      # summary dashboard (current workspace)
-./claude-history stats --aw                 # summary dashboard (all workspaces)
-./claude-history stats myproject            # filter by workspace pattern
-./claude-history stats --tools              # tool usage statistics
-./claude-history stats --models             # model usage breakdown
-./claude-history stats --by-workspace       # per-workspace stats
-./claude-history stats --by-day             # daily usage trends
-./claude-history stats --since 2025-11-01   # filter by date
-./claude-history stats --source local       # filter by source
+./agent-history stats --sync               # sync local sessions to database
+./agent-history stats --sync --ah          # sync from all homes (includes saved remotes)
+./agent-history stats --sync --ah -r vm03  # sync all homes + additional remote
+./agent-history stats                      # summary dashboard (current workspace)
+./agent-history stats --aw                 # summary dashboard (all workspaces)
+./agent-history stats myproject            # filter by workspace pattern
+./agent-history stats --tools              # tool usage statistics
+./agent-history stats --models             # model usage breakdown
+./agent-history stats --by-workspace       # per-workspace stats
+./agent-history stats --by-day             # daily usage trends
+./agent-history stats --since 2025-11-01   # filter by date
+./agent-history stats --source local       # filter by source
 
 # Time tracking (orthogonal --ah/--aw flags)
-./claude-history stats --time               # current workspace, local DB
-./claude-history stats --time --ah          # current workspace, sync all homes first
-./claude-history stats --time --aw          # all workspaces, local DB
-./claude-history stats --time --ah --aw     # all workspaces, sync all homes first
+./agent-history stats --time               # current workspace, local DB
+./agent-history stats --time --ah          # current workspace, sync all homes first
+./agent-history stats --time --aw          # all workspaces, local DB
+./agent-history stats --time --ah --aw     # all workspaces, sync all homes first
 ```
 
 ### Testing Workflow
@@ -143,14 +145,14 @@ Manual testing is required since this tool operates on local Claude Code data:
 
 ```bash
 # Test with your own Claude Code data
-./claude-history lsw
-./claude-history lss
-./claude-history export myproject ./test
+./agent-history lsw
+./agent-history lss
+./agent-history export myproject ./test
 
 # Test remote access
-./claude-history lsw -r user@server
-./claude-history lss myproject -r user@server
-./claude-history export myproject ./test -r user@server
+./agent-history lsw -r user@server
+./agent-history lss myproject -r user@server
+./agent-history export myproject ./test -r user@server
 
 # Test edge cases:
 # - Empty workspace patterns
@@ -169,10 +171,10 @@ The tool runs natively on Windows with the following considerations:
 Use `python` or `python3` to execute the script:
 
 ```powershell
-# Instead of ./claude-history (Unix/Linux)
-python claude-history lsw
-python claude-history lss myproject
-python claude-history export myproject ./output
+# Instead of ./agent-history (Unix/Linux)
+python agent-history lsw
+python agent-history lss myproject
+python agent-history export myproject ./output
 ```
 
 ### Local Operations
@@ -230,7 +232,7 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ### Single-File Design
 
-**Critical:** The tool is intentionally a single Python file (`claude-history`) for easy distribution. All code must remain in one file with **no external dependencies** (stdlib only).
+**Critical:** The tool is intentionally a single Python file (`agent-history`) for easy distribution. All code must remain in one file with **no external dependencies** (stdlib only).
 
 ### Code Structure
 
@@ -527,7 +529,7 @@ is_agent = any(msg.get('isSidechain') for msg in messages)
 
 **Purpose:** Create cleaner exports suitable for sharing, blog posts, or documentation.
 
-**Usage:** `claude-history export --minimal`
+**Usage:** `agent-history export --minimal`
 
 **Implementation:**
 ```python
@@ -813,16 +815,16 @@ Aliases group related workspaces across different sources for unified access.
 **Usage Patterns:**
 ```bash
 # Using @ prefix
-./claude-history lss @myproject
-./claude-history export @myproject
+./agent-history lss @myproject
+./agent-history export @myproject
 
 # Using --alias flag
-./claude-history lss --alias myproject
-./claude-history export --alias myproject
+./agent-history lss --alias myproject
+./agent-history export --alias myproject
 
 # Combine with other flags
-./claude-history export @myproject --ah     # all homes
-./claude-history export @myproject --minimal
+./agent-history export @myproject --ah     # all homes
+./agent-history export @myproject --minimal
 ```
 
 **Automatic Alias Scoping:**
@@ -831,14 +833,14 @@ When running `lss`, `export`, or `stats` without arguments, if the current works
 
 ```bash
 # If current workspace is part of @myproject alias:
-./claude-history lss        # 📎 Using alias @myproject (use --this for current workspace only)
-./claude-history export     # 📎 Using alias @myproject (use --this for current workspace only)
-./claude-history stats      # 📎 Using alias @myproject (use --this for current workspace only)
+./agent-history lss        # 📎 Using alias @myproject (use --this for current workspace only)
+./agent-history export     # 📎 Using alias @myproject (use --this for current workspace only)
+./agent-history stats      # 📎 Using alias @myproject (use --this for current workspace only)
 
 # To force current workspace only:
-./claude-history lss --this
-./claude-history export --this
-./claude-history stats --this
+./agent-history lss --this
+./agent-history export --this
+./agent-history stats --this
 ```
 
 This behavior makes it easy to work with related workspaces across environments without explicitly specifying the alias each time.
@@ -846,28 +848,28 @@ This behavior makes it easy to work with related workspaces across environments 
 **Syncing Aliases Across Machines:**
 ```bash
 # Export aliases to file
-./claude-history alias export aliases.json
+./agent-history alias export aliases.json
 
 # Copy to another machine
 scp aliases.json user@other-machine:~/
 
 # Import on other machine
-./claude-history alias import aliases.json
+./agent-history alias import aliases.json
 ```
 
 **Adding Workspaces to Aliases:**
 ```bash
 # Add by pattern (searches local workspaces)
-./claude-history alias add myproject myproject
+./agent-history alias add myproject myproject
 
 # Add from Windows (auto-detects user)
-./claude-history alias add myproject --windows myproject
+./agent-history alias add myproject --windows myproject
 
 # Add from all homes at once (local + WSL/Windows + remotes)
-./claude-history alias add myproject --ah -r vm myproject
+./agent-history alias add myproject --ah -r vm myproject
 
 # Workspace names starting with '-' need '--' separator
-./claude-history alias remove myproject -- -home-user-myproject
+./agent-history alias remove myproject -- -home-user-myproject
 ```
 
 ### Remote Operations
@@ -882,18 +884,18 @@ All commands support remote operations via the `-r/--remote` flag:
 **Usage:**
 ```bash
 # List remote workspaces
-./claude-history lsw -r user@hostname
+./agent-history lsw -r user@hostname
 
 # List remote sessions (direct access, no caching)
-./claude-history lss -r user@hostname
-./claude-history lss myproject -r user@hostname
+./agent-history lss -r user@hostname
+./agent-history lss myproject -r user@hostname
 
 # Export remote sessions (caches locally first, then exports)
-./claude-history export myproject -r user@hostname
-./claude-history export myproject ./output -r user@hostname
+./agent-history export myproject -r user@hostname
+./agent-history export myproject ./output -r user@hostname
 
 # Convert remote file (downloads temporarily, then converts)
-./claude-history export /path/to/file.jsonl -r user@hostname
+./agent-history export /path/to/file.jsonl -r user@hostname
 ```
 
 **Storage Strategy:**

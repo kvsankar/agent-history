@@ -14,10 +14,10 @@ END_MARKER = "<!-- help-snippet:end -->"
 
 
 def render_help_output() -> str:
-    """Return the current `claude-history --help` output as a fenced block."""
+    """Return the current `agent-history --help` output as a fenced block."""
     try:
         result = subprocess.run(
-            [sys.executable, "claude-history", "--help"],
+            [sys.executable, "agent-history", "--help"],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -25,7 +25,7 @@ def render_help_output() -> str:
         )
     except subprocess.CalledProcessError as exc:  # pragma: no cover
         raise SystemExit(
-            f"Failed to run `claude-history --help` (exit {exc.returncode}):\n{exc.stderr}"
+            f"Failed to run `agent-history --help` (exit {exc.returncode}):\n{exc.stderr}"
         ) from exc
 
     help_text = result.stdout.strip()

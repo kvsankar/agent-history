@@ -1,6 +1,8 @@
-# claude-history
+# agent-history
 
-A CLI tool to browse and export Claude Code conversation history with multi-environment support.
+A CLI tool to browse and export AI coding assistant conversation history (Claude Code, Codex CLI) with multi-environment support.
+
+> **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
 Claude Code leaves conversation data fragmented across JSONL files. This tool solves the pain points:
 - Finding past work by project, not by opaque session IDs.
@@ -25,16 +27,16 @@ Claude Code leaves conversation data fragmented across JSONL files. This tool so
 
 ```bash
 # Make executable
-chmod +x /path/to/claude-history
+chmod +x /path/to/agent-history
 
 # Go to your project directory
 cd /path/to/project
 
 # List sessions from current project
-/path/to/claude-history lss
+/path/to/agent-history lss
 
 # Export to markdown
-/path/to/claude-history export
+/path/to/agent-history export
 
 # Output goes to ./claude-conversations/
 ```
@@ -42,23 +44,23 @@ cd /path/to/project
 **Windows:**
 ```powershell
 cd \path\to\project
-python \path\to\claude-history lss
-python \path\to\claude-history export
+python \path\to\agent-history lss
+python \path\to\agent-history export
 ```
 
 ## Installation
 
 ```bash
 # Download
-curl -O https://raw.githubusercontent.com/kvsankar/claude-history/main/claude-history
+curl -O https://raw.githubusercontent.com/kvsankar/agent-history/main/agent-history
 
 # Install (cli + skill + retention settings)
-python claude-history install
+python agent-history install
 ```
 
 By default the installer:
-- Copies the CLI to `~/.local/bin/claude-history` (no sudo needed).
-- Installs the Claude skill into `~/.claude/skills/claude-history` (CLI + SKILL.md).
+- Copies the CLI to `~/.local/bin/agent-history` (no sudo needed).
+- Installs the Claude skill into `~/.claude/skills/agent-history` (CLI + SKILL.md).
 - Ensures `~/.claude/settings.json` has `cleanupPeriodDays` set to `99999` so conversations aren’t purged.
   - If the existing `settings.json` contains additional preferences, they are preserved; only `cleanupPeriodDays` is adjusted.
   - If the installer encounters malformed JSON, it first renames the original file to `settings.json.<timestamp>.bak` before writing the corrected copy.
@@ -67,7 +69,7 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 **Requirements:** Python 3.6+ (stdlib only, no pip install needed)
 
-> **Note:** Examples below assume `claude-history` is in your PATH.
+> **Note:** Examples below assume `agent-history` is in your PATH.
 
 ## Help
 
@@ -100,52 +102,52 @@ options:
 EXAMPLES:
 
   List workspaces:
-    claude-history lsw                        # all local workspaces
-    claude-history lsw myproject              # filter by pattern
-    claude-history lsw -r user@server         # remote workspaces
+    agent-history lsw                        # all local workspaces
+    agent-history lsw myproject              # filter by pattern
+    agent-history lsw -r user@server         # remote workspaces
 
   List sessions:
-    claude-history lss                        # current workspace
-    claude-history lss myproject              # specific workspace
-    claude-history lss myproject -r user@server    # remote sessions
+    agent-history lss                        # current workspace
+    agent-history lss myproject              # specific workspace
+    agent-history lss myproject -r user@server    # remote sessions
 
   Export (unified interface with orthogonal flags):
-    claude-history export                     # current workspace, local home
-    claude-history export --ah                # current workspace, all homes
-    claude-history export --aw                # all workspaces, local home
-    claude-history export --ah --aw           # all workspaces, all homes
+    agent-history export                     # current workspace, local home
+    agent-history export --ah                # current workspace, all homes
+    agent-history export --aw                # all workspaces, local home
+    agent-history export --ah --aw           # all workspaces, all homes
 
-    claude-history export myproject           # specific workspace, local
-    claude-history export myproject --ah      # specific workspace, all homes
-    claude-history export file.jsonl         # export single file
+    agent-history export myproject           # specific workspace, local
+    agent-history export myproject --ah      # specific workspace, all homes
+    agent-history export file.jsonl         # export single file
 
-    claude-history export -o /tmp/backup      # current workspace, custom output
-    claude-history export myproject -o ./out  # specific workspace, custom output
+    agent-history export -o /tmp/backup      # current workspace, custom output
+    agent-history export myproject -o ./out  # specific workspace, custom output
 
-    claude-history export -r user@server      # current workspace, specific remote
-    claude-history export --ah -r user@vm01   # current workspace, all homes + SSH
+    agent-history export -r user@server      # current workspace, specific remote
+    agent-history export --ah -r user@vm01   # current workspace, all homes + SSH
 
   Date filtering:
-    claude-history lss myproject --since 2025-11-01
-    claude-history export myproject --since 2025-11-01 --until 2025-11-30
+    agent-history lss myproject --since 2025-11-01
+    agent-history export myproject --since 2025-11-01 --until 2025-11-30
 
   Export options:
-    claude-history export myproject --minimal       # minimal mode
-    claude-history export myproject --split 500     # split long conversations
-    claude-history export myproject --flat          # flat structure (no subdirs)
+    agent-history export myproject --minimal       # minimal mode
+    agent-history export myproject --split 500     # split long conversations
+    agent-history export myproject --flat          # flat structure (no subdirs)
 
   WSL access (Windows):
-    claude-history lsh --wsl                        # list WSL distributions
-    claude-history lsw --wsl                        # list WSL workspaces
-    claude-history lsw --wsl Ubuntu                 # list from specific distro
-    claude-history lss myproject --wsl              # list WSL sessions
-    claude-history export myproject --wsl           # export from WSL
+    agent-history lsh --wsl                        # list WSL distributions
+    agent-history lsw --wsl                        # list WSL workspaces
+    agent-history lsw --wsl Ubuntu                 # list from specific distro
+    agent-history lss myproject --wsl              # list WSL sessions
+    agent-history export myproject --wsl           # export from WSL
 
   Windows access (from WSL):
-    claude-history lsh --windows                    # list Windows users with Claude
-    claude-history lsw --windows                    # list Windows workspaces
-    claude-history lss myproject --windows          # list Windows sessions
-    claude-history export myproject --windows       # export from Windows
+    agent-history lsh --windows                    # list Windows users with Claude
+    agent-history lsw --windows                    # list Windows workspaces
+    agent-history lss myproject --windows          # list Windows sessions
+    agent-history export myproject --windows       # export from Windows
 
   Notes:
     - Outputs may show '[missing]' when a workspace directory no longer exists; the path
@@ -233,7 +235,7 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 ## Additional Resources
 
-- [Claude Collaboration Playbook](https://github.com/kvsankar/claude-history/blob/main/docs/claude-collaboration-playbook.md) – distilled lessons from hundreds of Claude Code sessions. Great to drop into your repo’s `CLAUDE.md` or share with new collaborators.
+- [Claude Collaboration Playbook](https://github.com/kvsankar/agent-history/blob/main/docs/claude-collaboration-playbook.md) – distilled lessons from hundreds of Claude Code sessions. Great to drop into your repo's `CLAUDE.md` or share with new collaborators.
 
 ## Commands
 
@@ -252,45 +254,45 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 ```bash
 # List all workspaces
-claude-history lsw
+agent-history lsw
 
 # Export specific project
-claude-history export myproject
+agent-history export myproject
 
 # Export from all homes (local + WSL + Windows + remotes)
-claude-history export myproject --ah
+agent-history export myproject --ah
 
 # Date filtering
-claude-history lss --since 2025-11-01
+agent-history lss --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
-claude-history export myproject --minimal
+agent-history export myproject --minimal
 
 # Time tracking
-claude-history stats --time
+agent-history stats --time
 ```
 
 ## Multi-Environment Access
 
 ```bash
 # Discover all Claude installations and SSH remotes
-claude-history lsh
+agent-history lsh
 
 # Add/remove SSH remotes
-claude-history lsh add user@server
-claude-history lsh remove user@server
+agent-history lsh add user@server
+agent-history lsh remove user@server
 
 # Access WSL (from Windows)
-claude-history lss --wsl
+agent-history lss --wsl
 
 # Access Windows (from WSL)
-claude-history lss --windows
+agent-history lss --windows
 
 # Access SSH remote
-claude-history lss -r user@server
+agent-history lss -r user@server
 
 # All homes at once (includes saved SSH remotes)
-claude-history export --ah
+agent-history export --ah
 ```
 
 ## Workspace Aliases
@@ -299,20 +301,20 @@ Group related workspaces across environments:
 
 ```bash
 # Create alias
-claude-history alias create myproject
+agent-history alias create myproject
 
 # Add workspaces
-claude-history alias add myproject myproject
-claude-history alias add myproject --windows myproject
-claude-history alias add myproject -r user@vm myproject
+agent-history alias add myproject myproject
+agent-history alias add myproject --windows myproject
+agent-history alias add myproject -r user@vm myproject
 
 # Use with @ prefix
-claude-history lss @myproject
-claude-history export @myproject
+agent-history lss @myproject
+agent-history export @myproject
 
 # Remove entries using paths from any home
-claude-history alias remove myproject -r user@vm /home/user/myproject
-claude-history alias remove myproject --windows /mnt/c/Users/me/projects/myproject
+agent-history alias remove myproject -r user@vm /home/user/myproject
+agent-history alias remove myproject --windows /mnt/c/Users/me/projects/myproject
 ```
 
 ## Important: Preserve Your History
@@ -330,7 +332,7 @@ By default, Claude Code deletes conversation history after 30 days. Add this to 
 Set `CLAUDE_PROJECTS_DIR` to point the CLI at a different `.claude/projects` root. This is handy when running inside containers, CI pipelines, or when your Claude data lives on another drive:
 
 ```bash
-CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects claude-history lsw
+CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects agent-history lsw
 ```
 
 The directory must mirror Claude's standard layout (`<root>/<encoded-workspace>/*.jsonl`).

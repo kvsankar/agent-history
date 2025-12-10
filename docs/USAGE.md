@@ -1,6 +1,6 @@
 # Command Reference
 
-Detailed documentation for all `claude-history` commands and options.
+Detailed documentation for all `agent-history` commands and options.
 
 ## Commands Overview
 
@@ -22,10 +22,10 @@ Detailed documentation for all `claude-history` commands and options.
 List all Claude Code installations and manage SSH remote homes.
 
 ```bash
-claude-history lsh [--local|--wsl|--windows|--remotes]
-claude-history lsh add <user@hostname>
-claude-history lsh remove <user@hostname>
-claude-history lsh clear
+agent-history lsh [--local|--wsl|--windows|--remotes]
+agent-history lsh add <user@hostname>
+agent-history lsh remove <user@hostname>
+agent-history lsh clear
 ```
 
 **Subcommands:**
@@ -43,7 +43,7 @@ claude-history lsh clear
 **Examples:**
 ```bash
 # Show all hosts and SSH remotes
-$ claude-history lsh
+$ agent-history lsh
 Local:
   /home/alice/.claude	10 workspaces
 
@@ -51,22 +51,22 @@ SSH Remotes:
   alice@server.example.com
 
 # Add an SSH remote
-$ claude-history lsh add alice@server.example.com
+$ agent-history lsh add alice@server.example.com
 Added source: alice@server.example.com
 
 # Remove an SSH remote
-$ claude-history lsh remove alice@server.example.com
+$ agent-history lsh remove alice@server.example.com
 Removed source: alice@server.example.com
 
 # Show only SSH remotes
-$ claude-history lsh --remotes
+$ agent-history lsh --remotes
 ```
 
 Once configured, `--ah` automatically includes saved SSH remotes:
 ```bash
-claude-history lsw --ah              # includes saved remotes
-claude-history export --ah           # exports from all homes
-claude-history stats --time --ah     # syncs from all homes
+agent-history lsw --ah              # includes saved remotes
+agent-history export --ah           # exports from all homes
+agent-history stats --time --ah     # syncs from all homes
 ```
 
 ---
@@ -76,7 +76,7 @@ claude-history stats --time --ah     # syncs from all homes
 List all workspaces matching a pattern.
 
 ```bash
-claude-history lsw [PATTERN...] [OPTIONS]
+agent-history lsw [PATTERN...] [OPTIONS]
 ```
 
 
@@ -100,16 +100,16 @@ For how to run unit and integration tests, see:
 **Examples:**
 ```bash
 # List all local workspaces
-claude-history lsw
+agent-history lsw
 
 # Filter by pattern
-claude-history lsw myproject
+agent-history lsw myproject
 
 # Multiple patterns
-claude-history lsw proj1 proj2
+agent-history lsw proj1 proj2
 
 # List from all homes
-claude-history lsw --ah -r user@vm01
+agent-history lsw --ah -r user@vm01
 ```
 
 ---
@@ -119,7 +119,7 @@ claude-history lsw --ah -r user@vm01
 Show all sessions for a workspace.
 
 ```bash
-claude-history lss [PATTERN] [OPTIONS]
+agent-history lss [PATTERN] [OPTIONS]
 ```
 
 **Arguments:**
@@ -141,23 +141,23 @@ claude-history lss [PATTERN] [OPTIONS]
 **Examples:**
 ```bash
 # List sessions from current workspace (or alias if aliased)
-claude-history lss
+agent-history lss
 
 # Force current workspace only (not alias)
-claude-history lss --this
+agent-history lss --this
 
 # List sessions from WSL
-claude-history lss myproject --wsl
+agent-history lss myproject --wsl
 
 # List sessions from Windows
-claude-history lss myproject --windows
+agent-history lss myproject --windows
 
 # List sessions from SSH remote
-claude-history lss myproject -r user@hostname
+agent-history lss myproject -r user@hostname
 
 # Date filtering
-claude-history lss myproject --since 2025-11-01
-claude-history lss myproject --since 2025-11-01 --until 2025-11-30
+agent-history lss myproject --since 2025-11-01
+agent-history lss myproject --since 2025-11-01 --until 2025-11-30
 ```
 
 **Output:**
@@ -172,7 +172,7 @@ claude-history lss myproject --since 2025-11-01 --until 2025-11-30
 Export sessions from workspace(s) to markdown with flexible scope control.
 
 ```bash
-claude-history export [WORKSPACE...] [OPTIONS]
+agent-history export [WORKSPACE...] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
@@ -207,31 +207,31 @@ claude-history export [WORKSPACE...] [OPTIONS]
 **Examples:**
 ```bash
 # Current workspace, local home (default)
-claude-history export
+agent-history export
 
 # Current workspace, all homes
-claude-history export --ah
+agent-history export --ah
 
 # All workspaces, local home
-claude-history export --aw
+agent-history export --aw
 
 # All workspaces, all homes
-claude-history export --ah --aw
+agent-history export --ah --aw
 
 # Specific workspace, all homes, custom output
-claude-history export myproject --ah -o /tmp/backup
+agent-history export myproject --ah -o /tmp/backup
 
 # Multiple workspaces (deduplicated)
-claude-history export proj1 proj2 -o ./exports
+agent-history export proj1 proj2 -o ./exports
 
 # Export from WSL
-claude-history export myproject --wsl
+agent-history export myproject --wsl
 
 # Export from Windows
-claude-history export myproject --windows
+agent-history export myproject --windows
 
 # With splitting and minimal mode
-claude-history export myproject --minimal --split 500
+agent-history export myproject --minimal --split 500
 ```
 
 **Output:**
@@ -246,7 +246,7 @@ claude-history export myproject --minimal --split 500
 Group related workspaces across environments.
 
 ```bash
-claude-history alias <subcommand> [OPTIONS]
+agent-history alias <subcommand> [OPTIONS]
 ```
 
 **Subcommands:**
@@ -290,33 +290,33 @@ Import aliases from JSON file.
 **Examples:**
 ```bash
 # Create and populate an alias
-claude-history alias create myproject
-claude-history alias add myproject myproject
-claude-history alias add myproject --windows myproject
-claude-history alias add myproject -r user@vm01 myproject
+agent-history alias create myproject
+agent-history alias add myproject myproject
+agent-history alias add myproject --windows myproject
+agent-history alias add myproject -r user@vm01 myproject
 
 # Or add from all homes at once
-claude-history alias add myproject --ah -r user@vm myproject
+agent-history alias add myproject --ah -r user@vm myproject
 
 # Use aliases with @ prefix
-claude-history lss @myproject
-claude-history export @myproject -o ./backup
+agent-history lss @myproject
+agent-history export @myproject -o ./backup
 
 # Sync aliases across machines
-claude-history alias export aliases.json
-claude-history alias import aliases.json
+agent-history alias export aliases.json
+agent-history alias import aliases.json
 ```
 
 **Automatic Alias Scoping:**
 
 When running commands without arguments from an aliased workspace:
 ```bash
-claude-history lss        # Uses alias automatically
-claude-history export     # Uses alias automatically
-claude-history stats      # Uses alias automatically
+agent-history lss        # Uses alias automatically
+agent-history export     # Uses alias automatically
+agent-history stats      # Uses alias automatically
 
 # Force current workspace only
-claude-history lss --this
+agent-history lss --this
 ```
 
 ---
@@ -326,7 +326,7 @@ claude-history lss --this
 Display usage statistics and metrics from synced Claude Code sessions.
 
 ```bash
-claude-history stats [WORKSPACE] [OPTIONS]
+agent-history stats [WORKSPACE] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
@@ -354,22 +354,22 @@ claude-history stats [WORKSPACE] [OPTIONS]
 **Examples:**
 ```bash
 # Summary dashboard (current workspace)
-claude-history stats
+agent-history stats
 
 # All workspaces (Homes & Workspaces section plus summary with time)
-claude-history stats --aw
+agent-history stats --aw
 
 # Time tracking with auto-sync from all homes
-claude-history stats --time --ah
+agent-history stats --time --ah
 
 # Tool usage statistics
-claude-history stats --tools
+agent-history stats --tools
 
 # Daily trends
-claude-history stats --by-day
+agent-history stats --by-day
 
 # Filter by date range
-claude-history stats --since 2025-11-01 --until 2025-11-30
+agent-history stats --since 2025-11-01 --until 2025-11-30
 ```
 
 **Metrics Available:**
@@ -391,13 +391,13 @@ Both `lss` and `export` support date filtering:
 
 ```bash
 # Sessions modified on or after a date
-claude-history lss myproject --since 2025-11-01
+agent-history lss myproject --since 2025-11-01
 
 # Sessions within a date range
-claude-history export myproject --since 2025-11-01 --until 2025-11-30
+agent-history export myproject --since 2025-11-01 --until 2025-11-30
 
 # Export recent sessions only
-claude-history export myproject --since 2025-11-01 -o ./recent
+agent-history export myproject --since 2025-11-01 -o ./recent
 ```
 
 **Notes:**
@@ -435,7 +435,7 @@ Omits:
 Split long conversations into multiple parts:
 
 ```bash
-claude-history export myproject --split 500
+agent-history export myproject --split 500
 ```
 
 - Smart break points (before User messages, after tool results, time gaps)
@@ -450,13 +450,13 @@ claude-history export myproject --split 500
 
 ```bash
 # List remote workspaces
-claude-history lsw -r user@server
+agent-history lsw -r user@server
 
 # List sessions from remote
-claude-history lss myproject -r user@server
+agent-history lss myproject -r user@server
 
 # Export from remote
-claude-history export myproject -r user@server
+agent-history export myproject -r user@server
 ```
 
 **Requirements:**
@@ -466,17 +466,17 @@ claude-history export myproject -r user@server
 ### WSL Access (from Windows)
 
 ```bash
-python claude-history lsw --wsl
-python claude-history lss myproject --wsl
-python claude-history export myproject --wsl
+python agent-history lsw --wsl
+python agent-history lss myproject --wsl
+python agent-history export myproject --wsl
 ```
 
 ### Windows Access (from WSL)
 
 ```bash
-claude-history lsw --windows
-claude-history lss myproject --windows
-claude-history export myproject --windows
+agent-history lsw --windows
+agent-history lss myproject --windows
+agent-history export myproject --windows
 ```
 
 ---
@@ -486,7 +486,7 @@ claude-history export myproject --windows
 Delete metrics database, settings (SSH remotes), and/or aliases.
 
 ```bash
-claude-history reset [what] [--force]
+agent-history reset [what] [--force]
 ```
 
 **Arguments:**
@@ -502,14 +502,14 @@ claude-history reset [what] [--force]
 **Examples:**
 ```bash
 # Reset everything (prompts for confirmation)
-claude-history reset
+agent-history reset
 
 # Reset only metrics database
-claude-history reset db
+agent-history reset db
 
 # Reset without confirmation (for scripts)
-claude-history reset -y
-claude-history reset db -y
+agent-history reset -y
+agent-history reset db -y
 ```
 
 **Files affected:**
@@ -524,14 +524,14 @@ claude-history reset db -y
 Install the CLI into your local `PATH`, copy the Claude skill files, and bump Claude Code’s retention settings so conversations aren’t auto-deleted.
 
 ```bash
-claude-history install [--bin-dir DIR] [--skill-dir DIR]
+agent-history install [--bin-dir DIR] [--skill-dir DIR]
                        [--cli-name NAME] [--skill-name NAME]
                        [--skip-cli] [--skip-skill] [--skip-settings]
 ```
 
 **Default behavior:**
-- CLI installed to `~/.local/bin/claude-history` (sudo-free). The command warns if that directory isn’t on `PATH`.
-- Claude skill (binary + `SKILL.md`) installed to `~/.claude/skills/claude-history/`.
+- CLI installed to `~/.local/bin/agent-history` (sudo-free). The command warns if that directory isn't on `PATH`.
+- Claude skill (binary + `SKILL.md`) installed to `~/.claude/skills/agent-history/`.
 - `~/.claude/settings.json` is created or updated with `{"cleanupPeriodDays": 99999}` so Claude Code keeps session history.
 
 **Common options:**

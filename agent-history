@@ -3874,8 +3874,8 @@ def cmd_alias_list(args):
     if not aliases:
         print("No aliases defined.")
         print("\nCreate an alias with:")
-        print("  claude-history alias create <name>")
-        print("  claude-history alias add <name> <workspace>")
+        print("  agent-history alias create <name>")
+        print("  agent-history alias add <name> <workspace>")
         return
 
     for alias_name, sources in sorted(aliases.items()):
@@ -5262,8 +5262,8 @@ def cmd_stats(args):
     if not db_path.exists():
         print("No metrics database found. Run 'stats --sync' first.")
         print("\nUsage:")
-        print("  claude-history stats --sync        # Sync local sessions")
-        print("  claude-history stats --sync --ah   # Sync from all homes")
+        print("  agent-history stats --sync        # Sync local sessions")
+        print("  agent-history stats --sync --ah   # Sync from all homes")
         sys.exit(1)
 
     conn = init_metrics_db(db_path)
@@ -6022,7 +6022,7 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         sys.stderr.write("Error: Cannot access Windows projects directory\n")
         sys.stderr.write("\nTips:\n")
         sys.stderr.write("  • Make sure Claude Code is installed on Windows\n")
-        sys.stderr.write("  • Try: claude-history lsh --windows\n")
+        sys.stderr.write("  • Try: agent-history lsh --windows\n")
         sys.exit(1)
 
     sessions = collect_sessions_with_dedup(
@@ -6048,7 +6048,7 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         sys.stderr.write("Error: No sessions found in Windows\n")
         sys.stderr.write("\nTips:\n")
         sys.stderr.write("  \a Check that Windows has native workspaces (not just cached WSL)\n")
-        sys.stderr.write("  \a Try: claude-history lsh --windows\n")
+        sys.stderr.write("  \a Try: agent-history lsh --windows\n")
         sys.exit(1)
 
     source_label = f"Windows ({username})" if username else "Windows"
@@ -6073,7 +6073,7 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
         sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
         sys.stderr.write("\nTips:\n")
         sys.stderr.write("  • Make sure Claude Code is installed in WSL\n")
-        sys.stderr.write("  • Try: claude-history lsh --wsl\n")
+        sys.stderr.write("  • Try: agent-history lsh --wsl\n")
         sys.exit(1)
 
     workspaces_only = getattr(args, "workspaces_only", False)
@@ -6328,7 +6328,7 @@ def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) ->
         sys.stderr.write("Error: Cannot access Windows projects directory\n")
         sys.stderr.write("\nTips:\n")
         sys.stderr.write("  • Make sure Claude Code is installed on Windows\n")
-        sys.stderr.write("  • Try: claude-history lsh --windows\n")
+        sys.stderr.write("  • Try: agent-history lsh --windows\n")
         sys.exit(1)
 
     sessions = collect_sessions_with_dedup(
@@ -6366,7 +6366,7 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
         sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
         sys.stderr.write("\nTips:\n")
         sys.stderr.write("  • Make sure Claude Code is installed in WSL\n")
-        sys.stderr.write("  • Try: claude-history lsh --wsl\n")
+        sys.stderr.write("  • Try: agent-history lsh --wsl\n")
         sys.exit(1)
 
     sessions = collect_sessions_with_dedup(
@@ -7089,7 +7089,7 @@ def _confirm_reset(items: list, yes: bool) -> bool:
 
 
 def cmd_reset(args):
-    """Reset claude-history data (database, settings, aliases)."""
+    """Reset agent-history data (database, settings, aliases)."""
     items = _get_reset_items(getattr(args, "what", None), get_config_dir())
 
     if not items:
@@ -7590,52 +7590,52 @@ HELP_EPILOG = """
 EXAMPLES:
 
   List workspaces:
-    claude-history lsw                        # all local workspaces
-    claude-history lsw myproject              # filter by pattern
-    claude-history lsw -r user@server         # remote workspaces
+    agent-history lsw                        # all local workspaces
+    agent-history lsw myproject              # filter by pattern
+    agent-history lsw -r user@server         # remote workspaces
 
   List sessions:
-    claude-history lss                        # current workspace
-    claude-history lss myproject              # specific workspace
-    claude-history lss myproject -r user@server    # remote sessions
+    agent-history lss                        # current workspace
+    agent-history lss myproject              # specific workspace
+    agent-history lss myproject -r user@server    # remote sessions
 
   Export (unified interface with orthogonal flags):
-    claude-history export                     # current workspace, local home
-    claude-history export --ah                # current workspace, all homes
-    claude-history export --aw                # all workspaces, local home
-    claude-history export --ah --aw           # all workspaces, all homes
+    agent-history export                     # current workspace, local home
+    agent-history export --ah                # current workspace, all homes
+    agent-history export --aw                # all workspaces, local home
+    agent-history export --ah --aw           # all workspaces, all homes
 
-    claude-history export myproject           # specific workspace, local
-    claude-history export myproject --ah      # specific workspace, all homes
-    claude-history export file.jsonl         # export single file
+    agent-history export myproject           # specific workspace, local
+    agent-history export myproject --ah      # specific workspace, all homes
+    agent-history export file.jsonl         # export single file
 
-    claude-history export -o /tmp/backup      # current workspace, custom output
-    claude-history export myproject -o ./out  # specific workspace, custom output
+    agent-history export -o /tmp/backup      # current workspace, custom output
+    agent-history export myproject -o ./out  # specific workspace, custom output
 
-    claude-history export -r user@server      # current workspace, specific remote
-    claude-history export --ah -r user@vm01   # current workspace, all homes + SSH
+    agent-history export -r user@server      # current workspace, specific remote
+    agent-history export --ah -r user@vm01   # current workspace, all homes + SSH
 
   Date filtering:
-    claude-history lss myproject --since 2025-11-01
-    claude-history export myproject --since 2025-11-01 --until 2025-11-30
+    agent-history lss myproject --since 2025-11-01
+    agent-history export myproject --since 2025-11-01 --until 2025-11-30
 
   Export options:
-    claude-history export myproject --minimal       # minimal mode
-    claude-history export myproject --split 500     # split long conversations
-    claude-history export myproject --flat          # flat structure (no subdirs)
+    agent-history export myproject --minimal       # minimal mode
+    agent-history export myproject --split 500     # split long conversations
+    agent-history export myproject --flat          # flat structure (no subdirs)
 
   WSL access (Windows):
-    claude-history lsh --wsl                        # list WSL distributions
-    claude-history lsw --wsl                        # list WSL workspaces
-    claude-history lsw --wsl Ubuntu                 # list from specific distro
-    claude-history lss myproject --wsl              # list WSL sessions
-    claude-history export myproject --wsl           # export from WSL
+    agent-history lsh --wsl                        # list WSL distributions
+    agent-history lsw --wsl                        # list WSL workspaces
+    agent-history lsw --wsl Ubuntu                 # list from specific distro
+    agent-history lss myproject --wsl              # list WSL sessions
+    agent-history export myproject --wsl           # export from WSL
 
   Windows access (from WSL):
-    claude-history lsh --windows                    # list Windows users with Claude
-    claude-history lsw --windows                    # list Windows workspaces
-    claude-history lss myproject --windows          # list Windows sessions
-    claude-history export myproject --windows       # export from Windows
+    agent-history lsh --windows                    # list Windows users with Claude
+    agent-history lsw --windows                    # list Windows workspaces
+    agent-history lss myproject --windows          # list Windows sessions
+    agent-history export myproject --windows       # export from Windows
 
   Notes:
     - Outputs may show '[missing]' when a workspace directory no longer exists; the path
@@ -8213,7 +8213,7 @@ def _add_install_parser(subparsers):
     parser = subparsers.add_parser(
         "install",
         help="Install CLI and Claude skill",
-        description="Install the claude-history CLI to ~/.local/bin (default) and copy the skill files for Claude Code.",
+        description="Install the agent-history CLI to ~/.local/bin (default) and copy the skill files for Claude Code.",
     )
 
     parser.add_argument(
@@ -8224,17 +8224,17 @@ def _add_install_parser(subparsers):
     parser.add_argument(
         "--cli-name",
         default=DEFAULT_CLI_NAME,
-        help="Binary name to use for the CLI install (default: claude-history)",
+        help="Binary name to use for the CLI install (default: agent-history)",
     )
     parser.add_argument(
         "--skill-dir",
         default=str(DEFAULT_SKILL_DIR),
-        help="Destination directory for the Claude skill files (default: ~/.claude/skills/claude-history)",
+        help="Destination directory for the Claude skill files (default: ~/.claude/skills/agent-history)",
     )
     parser.add_argument(
         "--skill-name",
         default=DEFAULT_SKILL_NAME,
-        help="Binary name to use inside the Claude skill directory (default: claude-history)",
+        help="Binary name to use inside the Claude skill directory (default: agent-history)",
     )
     parser.add_argument(
         "--skip-cli",

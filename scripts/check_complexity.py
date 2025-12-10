@@ -33,7 +33,7 @@ GRADE_ORDER = ["A", "B", "C", "D", "E", "F"]
 # The baseline below allows C-grade functions (complexity 11-20).
 BASELINE = {
     # Temporary allowance while UNC normalization is refactored
-    ("claude-history", "_resolve_existing_wsl_path"): 36,
+    ("agent-history", "_resolve_existing_wsl_path"): 36,
 }
 
 
@@ -52,7 +52,7 @@ def filter_python_files(files: list[str]) -> list[str]:
     result = []
     for f in files:
         path = Path(f)
-        is_python = path.suffix == ".py" or path.name == "claude-history"
+        is_python = path.suffix == ".py" or path.name == "agent-history"
         is_test = path.name.startswith("test_") or path.name.endswith("_test.py")
         if is_python and not is_test:
             result.append(f)
@@ -171,7 +171,7 @@ def check_maintainability_index(files: list[str]) -> tuple[bool, list[str]]:
 
 def main():
     """Main entry point."""
-    files = sys.argv[1:] if len(sys.argv) > 1 else ["claude-history"]
+    files = sys.argv[1:] if len(sys.argv) > 1 else ["agent-history"]
 
     print("Checking code complexity with radon...")
 
