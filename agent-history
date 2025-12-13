@@ -82,7 +82,14 @@ DB_VERSION_AGENT_COLUMN = 4  # Version that added agent column
 
 
 def codex_get_home_dir() -> Path:
-    """Get Codex sessions directory (~/.codex/sessions/)."""
+    """Get Codex sessions directory (~/.codex/sessions/).
+
+    Supports CODEX_SESSIONS_DIR environment variable override for testing
+    and custom configurations.
+    """
+    env_override = os.environ.get("CODEX_SESSIONS_DIR")
+    if env_override:
+        return Path(env_override).expanduser()
     return CODEX_HOME_DIR
 
 

@@ -142,24 +142,31 @@ def make_claude_session(
     return session_file
 
 
-def setup_env(tmp_path: Path, cfg_path: Path = None):
-    """Set up environment variables for testing."""
-    cfg = cfg_path or tmp_path / "cfg"
-    cfg.mkdir(parents=True, exist_ok=True)
+def setup_env(tmp_path: Path):
+    """Set up environment variables for testing.
 
+    Uses CLAUDE_PROJECTS_DIR and CODEX_SESSIONS_DIR environment variables
+    to point the CLI at our test fixtures, avoiding the need to modify HOME.
+    """
     # Create both directories - CLI requires them to exist
     claude_dir = tmp_path / ".claude" / "projects"
     codex_dir = tmp_path / ".codex" / "sessions"
     claude_dir.mkdir(parents=True, exist_ok=True)
     codex_dir.mkdir(parents=True, exist_ok=True)
 
+    # Create .claude-history for metrics DB
+    history_dir = tmp_path / ".claude-history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+
     env = os.environ.copy()
+    # Use environment variable overrides for both agent types
     env["CLAUDE_PROJECTS_DIR"] = str(claude_dir)
     env["CODEX_SESSIONS_DIR"] = str(codex_dir)
+    # Set HOME for the metrics DB location (~/.claude-history/)
     if sys.platform == "win32":
-        env["USERPROFILE"] = str(cfg)
+        env["USERPROFILE"] = str(tmp_path)
     else:
-        env["HOME"] = str(cfg)
+        env["HOME"] = str(tmp_path)
 
     return env
 
@@ -181,8 +188,10 @@ class TestCodexList:
 
         # Use --aw to list all workspaces (Codex doesn't have workspace patterns)
         result = run_cli(["--agent", "codex", "lss", "--local", "--aw"], env=env)
-        # Should succeed or say no sessions (not error about directory)
-        assert result.returncode == 0 or "No sessions" in result.stderr, result.stderr
+        # Must succeed - fixtures are aligned with HOME
+        assert result.returncode == 0, f"Expected success, got: {result.stderr}"
+        # Should list our sessions (output contains session info)
+        assert result.stdout.strip(), "Should have session output"
 
     def test_lss_agent_codex_excludes_claude_sessions(self, tmp_path: Path):
         """lss --agent codex should not list Claude sessions."""
@@ -193,10 +202,12 @@ class TestCodexList:
         env = setup_env(tmp_path)
 
         result = run_cli(["--agent", "codex", "lss", "--local", "--aw"], env=env)
-        # Should not error on directory
-        assert "projects directory not found" not in result.stderr
+        # Must succeed
+        assert result.returncode == 0, f"Expected success: {result.stderr}"
         # Should not include Claude workspace in output
         assert "claude-project" not in result.stdout.lower()
+        # Should have Codex output
+        assert result.stdout.strip(), "Should list Codex sessions"
 
     def test_lss_agent_claude_excludes_codex_sessions(self, tmp_path: Path):
         """lss --agent claude should not list Codex sessions."""
@@ -206,11 +217,12 @@ class TestCodexList:
         env = setup_env(tmp_path)
 
         result = run_cli(["--agent", "claude", "lss", "--local", "--aw"], env=env)
-        # Should succeed or say no sessions
-        assert result.returncode == 0 or "No sessions" in result.stderr, result.stderr
-        # If sessions found, should include Claude workspace
-        if result.returncode == 0 and result.stdout:
-            assert "claude" in result.stdout.lower()
+        # Must succeed
+        assert result.returncode == 0, f"Expected success: {result.stderr}"
+        # Should include Claude workspace
+        assert "claude" in result.stdout.lower(), "Should list Claude sessions"
+        # Should not include Codex session identifiers
+        assert "codex-only" not in result.stdout.lower()
 
 
 # ============================================================================
@@ -230,21 +242,22 @@ class TestCodexExport:
         env = setup_env(tmp_path)
 
         result = run_cli(
-            ["--agent", "codex", "export", "--local", "-o", str(outdir), "--force"],
+            ["--agent", "codex", "export", "--local", "-o", str(outdir), "--force", "--aw"],
             env=env,
         )
-        # May fail if no sessions found, but should not error on export itself
-        if result.returncode == 0:
-            # Check for markdown output
-            md_files = list(outdir.rglob("*.md"))
-            assert len(md_files) > 0, "Should produce at least one markdown file"
+        # Must succeed - fixtures are aligned with HOME
+        assert result.returncode == 0, f"Export failed: {result.stderr}"
 
-            # Verify Codex markdown structure
-            content = md_files[0].read_text()
-            assert "Codex Conversation" in content or "codex" in content.lower()
+        # Must produce markdown output
+        md_files = list(outdir.rglob("*.md"))
+        assert len(md_files) >= 1, f"Should produce at least one markdown file, got: {md_files}"
+
+        # Verify Codex markdown structure - title must indicate Codex
+        content = md_files[0].read_text()
+        assert "# Codex Conversation" in content, f"Missing Codex title in: {content[:500]}"
 
     def test_export_codex_markdown_structure(self, tmp_path: Path):
-        """Verify Codex export has correct markdown structure."""
+        """Verify Codex export has correct markdown structure with tool calls."""
         # Create session with tool call
         messages = [
             {
@@ -283,16 +296,57 @@ class TestCodexExport:
         env = setup_env(tmp_path)
 
         result = run_cli(
-            ["--agent", "codex", "export", "--local", "-o", str(outdir), "--force"],
+            ["--agent", "codex", "export", "--local", "-o", str(outdir), "--force", "--aw"],
             env=env,
         )
 
-        if result.returncode == 0:
-            md_files = list(outdir.rglob("*.md"))
-            if md_files:
-                content = md_files[0].read_text()
-                # Verify tool call formatting
-                assert "shell" in content or "function" in content.lower()
+        # Must succeed
+        assert result.returncode == 0, f"Export failed: {result.stderr}"
+
+        # Must produce markdown
+        md_files = list(outdir.rglob("*.md"))
+        assert len(md_files) >= 1, "Should produce markdown file"
+
+        content = md_files[0].read_text()
+
+        # Verify structural elements
+        assert "# Codex Conversation" in content, "Missing Codex title"
+        # User messages use emoji format: "## 👤 User (Message N)"
+        assert "User" in content, "Missing user message"
+        assert "Message 1" in content, "Missing message numbering"
+        # Verify tool call is rendered
+        assert "shell" in content, f"Missing tool call 'shell' in: {content}"
+        # Verify tool output is rendered
+        assert "drwxr-xr-x" in content, f"Missing tool output in: {content}"
+
+    def test_export_codex_metadata_headers(self, tmp_path: Path):
+        """Verify Codex export includes session metadata headers."""
+        make_codex_session(tmp_path, "2025-01-15", "metadata-test")
+        outdir = tmp_path / "output"
+        outdir.mkdir()
+
+        env = setup_env(tmp_path)
+
+        result = run_cli(
+            ["--agent", "codex", "export", "--local", "-o", str(outdir), "--force", "--aw"],
+            env=env,
+        )
+
+        assert result.returncode == 0, f"Export failed: {result.stderr}"
+
+        md_files = list(outdir.rglob("*.md"))
+        assert len(md_files) >= 1, "Should produce markdown file"
+
+        content = md_files[0].read_text()
+
+        # Verify session metadata is present (from session_meta payload)
+        assert "## Session Metadata" in content, f"Missing metadata section: {content[:500]}"
+        assert "Session ID:" in content, f"Missing session ID: {content[:500]}"
+        assert "Working Directory:" in content, f"Missing working directory: {content[:500]}"
+        assert "CLI Version:" in content, f"Missing CLI version: {content[:500]}"
+        # Verify our fixture values
+        assert "metadata-test" in content, "Should have session ID from fixture"
+        assert "/home/user/codex-project" in content, "Should have cwd from fixture"
 
 
 # ============================================================================
@@ -304,73 +358,105 @@ class TestCodexStats:
     """E2E tests for Codex stats sync and display."""
 
     def test_stats_sync_includes_codex_sessions(self, tmp_path: Path):
-        """stats --sync should scan and include Codex sessions.
-
-        NOTE: This test documents expected behavior. Due to CODEX_HOME_DIR
-        being evaluated at module import time, the sync may not find
-        sessions created in the test's temp directory.
-        """
+        """stats --sync should scan and include Codex sessions."""
         make_codex_session(tmp_path, "2025-01-15", "stats-test-1")
         make_codex_session(tmp_path, "2025-01-16", "stats-test-2")
 
-        cfg = tmp_path / "cfg"
-        env = setup_env(tmp_path, cfg)
+        env = setup_env(tmp_path)
 
         # Use stats --sync --aw to sync all workspaces
         result = run_cli(["stats", "--sync", "--aw"], env=env)
-        assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, f"Stats sync failed: {result.stderr}"
 
-        # Verify database was created (may not contain Codex sessions due to
-        # CODEX_HOME_DIR being module-level constant)
-        db_path = cfg / ".claude-history" / "metrics.db"
-        if db_path.exists():
-            conn = sqlite3.connect(db_path)
-            cursor = conn.execute("SELECT agent, COUNT(*) FROM sessions GROUP BY agent")
-            agents = dict(cursor.fetchall())
-            conn.close()
-            # Document: Codex sessions may not appear if sync uses hardcoded path
-            if agents:
-                # If any sessions synced, verify structure is correct
-                assert isinstance(agents, dict)
+        # Database must exist after sync
+        db_path = tmp_path / ".claude-history" / "metrics.db"
+        assert db_path.exists(), f"Database should exist at {db_path}"
+
+        # Verify Codex sessions are in database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("SELECT agent, COUNT(*) FROM sessions GROUP BY agent")
+        agents = dict(cursor.fetchall())
+        conn.close()
+
+        # Must have Codex sessions
+        assert "codex" in agents, f"Should have codex sessions, got: {agents}"
+        assert (
+            agents["codex"] >= 2
+        ), f"Should have at least 2 Codex sessions, got: {agents['codex']}"
 
     def test_stats_display_codex_sessions(self, tmp_path: Path):
         """stats should display Codex session metrics."""
         make_codex_session(tmp_path, "2025-01-15", "display-test")
 
-        cfg = tmp_path / "cfg"
-        env = setup_env(tmp_path, cfg)
+        env = setup_env(tmp_path)
 
         # Sync first with --aw
-        run_cli(["stats", "--sync", "--aw"], env=env)
+        sync_result = run_cli(["stats", "--sync", "--aw"], env=env)
+        assert sync_result.returncode == 0, f"Sync failed: {sync_result.stderr}"
 
         # Display stats for all workspaces
         result = run_cli(["stats", "--aw"], env=env)
-        assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, f"Stats display failed: {result.stderr}"
+        # Should show session count
+        assert result.stdout.strip(), "Should have stats output"
 
-    def test_stats_codex_model_extraction(self, tmp_path: Path):
-        """stats should extract model from Codex turn_context.
+    def test_stats_codex_session_schema(self, tmp_path: Path):
+        """stats should have proper schema for Codex sessions."""
+        make_codex_session(tmp_path, "2025-01-15", "schema-test")
 
-        NOTE: This test documents expected behavior for model extraction.
-        Due to CODEX_HOME_DIR being a module-level constant, sessions
-        created in temp directories may not be synced.
-        """
-        make_codex_session(tmp_path, "2025-01-15", "model-test")
+        env = setup_env(tmp_path)
 
-        cfg = tmp_path / "cfg"
-        env = setup_env(tmp_path, cfg)
+        result = run_cli(["stats", "--sync", "--aw"], env=env)
+        assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
-        run_cli(["stats", "--sync", "--aw"], env=env)
+        # Database must exist
+        db_path = tmp_path / ".claude-history" / "metrics.db"
+        assert db_path.exists(), "Database should exist"
 
-        # Check sessions table structure
-        db_path = cfg / ".claude-history" / "metrics.db"
-        if db_path.exists():
-            conn = sqlite3.connect(db_path)
-            # Check if agent column exists
-            cursor = conn.execute("PRAGMA table_info(sessions)")
-            columns = [row[1] for row in cursor.fetchall()]
-            # Verify schema has expected columns
-            assert "agent" in columns, "Sessions table should have agent column"
-            conn.close()
+        conn = sqlite3.connect(db_path)
+
+        # Check schema has expected columns for agent support
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        assert "agent" in columns, "Sessions table should have agent column"
+        assert "workspace" in columns, "Sessions table should have workspace column"
+        assert "session_id" in columns, "Sessions table should have session_id column"
+
+        # Verify Codex sessions were synced with proper agent tagging
+        cursor = conn.execute(
+            "SELECT agent, session_id, workspace FROM sessions WHERE agent = 'codex'"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Should have synced Codex sessions
+        assert len(rows) >= 1, "Should have Codex sessions in DB"
+        # Verify agent is set correctly
+        assert all(row[0] == "codex" for row in rows), "All rows should have agent=codex"
+
+    def test_stats_codex_workspace_extraction(self, tmp_path: Path):
+        """stats should extract workspace from Codex session_meta cwd."""
+        make_codex_session(tmp_path, "2025-01-15", "workspace-extract-test")
+
+        env = setup_env(tmp_path)
+
+        result = run_cli(["stats", "--sync", "--aw"], env=env)
+        assert result.returncode == 0, f"Sync failed: {result.stderr}"
+
+        db_path = tmp_path / ".claude-history" / "metrics.db"
+        assert db_path.exists(), "Database should exist"
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("SELECT workspace FROM sessions WHERE agent = 'codex'")
+        workspaces = [row[0] for row in cursor.fetchall()]
+        conn.close()
+
+        # Should have workspace from session_meta.cwd
+        assert len(workspaces) >= 1, "Should have Codex sessions"
+        # Default fixture uses "/home/user/codex-project" as cwd
+        assert any(
+            "codex-project" in w for w in workspaces
+        ), f"Should have workspace, got: {workspaces}"
 
 
 # ============================================================================
@@ -390,32 +476,37 @@ class TestMixedAgents:
 
         # Use lss --local --aw to list all workspaces
         result = run_cli(["lss", "--local", "--aw"], env=env)
-        # Should succeed or say no sessions (not crash)
-        assert result.returncode == 0 or "No sessions" in result.stderr, result.stderr
+        # Must succeed
+        assert result.returncode == 0, f"Expected success: {result.stderr}"
+        # Should have output from both
+        assert result.stdout.strip(), "Should list sessions"
 
     def test_stats_sync_both_agents(self, tmp_path: Path):
         """stats --sync with auto should sync both Claude and Codex."""
         make_codex_session(tmp_path, "2025-01-15", "codex-sync")
         make_claude_session(tmp_path, "-home-user-claude-sync", "claude-uuid-sync")
 
-        cfg = tmp_path / "cfg"
-        env = setup_env(tmp_path, cfg)
+        env = setup_env(tmp_path)
 
         result = run_cli(["stats", "--sync", "--aw"], env=env)
-        assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, f"Sync failed: {result.stderr}"
+
+        # Database must exist
+        db_path = tmp_path / ".claude-history" / "metrics.db"
+        assert db_path.exists(), "Database should exist"
 
         # Check both agents in database
-        db_path = cfg / ".claude-history" / "metrics.db"
-        if db_path.exists():
-            conn = sqlite3.connect(db_path)
-            cursor = conn.execute("SELECT DISTINCT agent FROM sessions")
-            agents = [row[0] for row in cursor.fetchall()]
-            conn.close()
-            # At least one agent type should be present
-            assert len(agents) >= 1, f"No sessions synced: {agents}"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("SELECT DISTINCT agent FROM sessions")
+        agents = [row[0] for row in cursor.fetchall()]
+        conn.close()
 
-    def test_export_filters_by_agent(self, tmp_path: Path):
-        """export should filter by agent correctly."""
+        # Must have both agent types
+        assert "codex" in agents, f"Should have codex sessions, got: {agents}"
+        assert "claude" in agents, f"Should have claude sessions, got: {agents}"
+
+    def test_export_filters_by_agent_codex_only(self, tmp_path: Path):
+        """export --agent codex should only export Codex sessions."""
         make_codex_session(tmp_path, "2025-01-15", "codex-filter")
         make_claude_session(tmp_path, "-home-user-claude-filter", "claude-uuid-filter")
 
@@ -426,11 +517,49 @@ class TestMixedAgents:
 
         # Export only Codex
         result = run_cli(
-            ["--agent", "codex", "export", "--local", "-o", str(outdir), "--force"],
+            ["--agent", "codex", "export", "--local", "-o", str(outdir), "--force", "--aw"],
             env=env,
         )
-        # Should not error
-        assert result.returncode == 0 or "No sessions" in result.stderr or result.returncode != 0
+        # Must succeed
+        assert result.returncode == 0, f"Export failed: {result.stderr}"
+
+        # Should have markdown files
+        md_files = list(outdir.rglob("*.md"))
+        assert len(md_files) >= 1, "Should produce markdown"
+
+        # All files should be Codex format
+        for md_file in md_files:
+            content = md_file.read_text()
+            assert "# Codex Conversation" in content, f"Should be Codex format: {md_file}"
+            assert "# Claude Conversation" not in content, f"Should not be Claude format: {md_file}"
+
+    def test_export_filters_by_agent_claude_only(self, tmp_path: Path):
+        """export --agent claude should only export Claude sessions."""
+        make_codex_session(tmp_path, "2025-01-15", "codex-filter2")
+        make_claude_session(tmp_path, "-home-user-claude-filter2", "claude-uuid-filter2")
+
+        outdir = tmp_path / "output"
+        outdir.mkdir()
+
+        env = setup_env(tmp_path)
+
+        # Export only Claude
+        result = run_cli(
+            ["--agent", "claude", "export", "--local", "-o", str(outdir), "--force", "--aw"],
+            env=env,
+        )
+        # Must succeed
+        assert result.returncode == 0, f"Export failed: {result.stderr}"
+
+        # Should have markdown files
+        md_files = list(outdir.rglob("*.md"))
+        assert len(md_files) >= 1, "Should produce markdown"
+
+        # All files should be Claude format
+        for md_file in md_files:
+            content = md_file.read_text()
+            assert "# Claude Conversation" in content, f"Should be Claude format: {md_file}"
+            assert "# Codex Conversation" not in content, f"Should not be Codex format: {md_file}"
 
 
 # ============================================================================
@@ -445,17 +574,33 @@ class TestCodexWorkspaces:
         """Codex sessions should have meaningful workspace names."""
         make_codex_session(tmp_path, "2025-01-15", "workspace-test")
 
-        cfg = tmp_path / "cfg"
-        env = setup_env(tmp_path, cfg)
+        env = setup_env(tmp_path)
 
-        run_cli(["stats", "--sync", "--agent", "codex"], env=env)
+        # --agent must come before the subcommand (it's a global argument)
+        result = run_cli(["--agent", "codex", "stats", "--sync"], env=env)
+        assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
-        # Check workspace in database
-        db_path = cfg / ".claude-history" / "metrics.db"
-        if db_path.exists():
-            conn = sqlite3.connect(db_path)
-            cursor = conn.execute("SELECT workspace FROM sessions WHERE agent = 'codex'")
-            workspaces = [row[0] for row in cursor.fetchall()]
-            conn.close()
-            # Should have a workspace value
-            assert all(w for w in workspaces), f"Missing workspace: {workspaces}"
+        # Database must exist
+        db_path = tmp_path / ".claude-history" / "metrics.db"
+        assert db_path.exists(), "Database should exist"
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("SELECT workspace FROM sessions WHERE agent = 'codex'")
+        workspaces = [row[0] for row in cursor.fetchall()]
+        conn.close()
+
+        # Must have Codex sessions with workspaces
+        assert len(workspaces) >= 1, "Should have Codex sessions"
+        assert all(w for w in workspaces), f"All sessions should have workspace: {workspaces}"
+
+    def test_lsw_agent_codex_lists_workspaces(self, tmp_path: Path):
+        """lsw --agent codex should list Codex workspaces."""
+        make_codex_session(tmp_path, "2025-01-15", "lsw-test")
+
+        env = setup_env(tmp_path)
+
+        result = run_cli(["--agent", "codex", "lsw", "--local"], env=env)
+        # Must succeed
+        assert result.returncode == 0, f"lsw failed: {result.stderr}"
+        # Should have workspace output
+        assert result.stdout.strip(), "Should list workspaces"
