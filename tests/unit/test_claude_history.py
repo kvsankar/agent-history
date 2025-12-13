@@ -957,6 +957,283 @@ class TestAgentFiltering:
 
 
 # ============================================================================
+# Agent Propagation Tests (Dispatch Chain Coverage)
+# ============================================================================
+
+
+class TestAgentPropagation:
+    """Tests to verify --agent flag is propagated through all dispatch chains.
+
+    These tests use spies/mocks to verify that intermediate functions
+    correctly pass the agent parameter to collect_sessions_with_dedup.
+    """
+
+    def test_export_config_from_args_includes_agent(self):
+        """ExportConfig.from_args should preserve agent from args."""
+
+        class MockArgs:
+            output_dir = "."
+            patterns = []
+            since = None
+            until = None
+            force = False
+            minimal = False
+            split = None
+            flat = False
+            remote = None
+            lenient = False
+            agent = "codex"
+
+        config = ch.ExportConfig.from_args(MockArgs())
+        assert config.agent == "codex", "ExportConfig.from_args should include agent"
+
+    def test_export_config_from_args_defaults_to_auto(self):
+        """ExportConfig.from_args should default agent to 'auto' if not in args."""
+
+        class MockArgs:
+            output_dir = "."
+            patterns = []
+            since = None
+            until = None
+            force = False
+            minimal = False
+            split = None
+            flat = False
+            remote = None
+            lenient = False
+            # No agent attribute
+
+        config = ch.ExportConfig.from_args(MockArgs())
+        assert config.agent == "auto", "ExportConfig.from_args should default to auto"
+
+    def test_build_export_config_includes_agent(self):
+        """_build_export_config should include agent from args."""
+
+        class MockArgs:
+            since = None
+            until = None
+            force = False
+            minimal = False
+            split = None
+            flat = False
+            agent = "codex"
+
+        config = ch._build_export_config(MockArgs(), "/tmp", ["pattern"])
+        assert config.agent == "codex", "_build_export_config should include agent"
+
+    def test_dispatch_lsw_additive_passes_agent(self, monkeypatch):
+        """_dispatch_lsw_additive should pass agent to collect_sessions_with_dedup."""
+        captured_calls = []
+
+        def spy_collect(*args, **kwargs):
+            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            return []  # Return empty to avoid further processing
+
+        monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+        monkeypatch.setattr(ch, "is_running_in_wsl", lambda: False)
+
+        class MockArgs:
+            patterns = ["test"]
+            remotes = []
+            workspaces_only = True
+            agent = "codex"
+
+        ch._dispatch_lsw_additive(MockArgs())
+
+        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+
+    def test_dispatch_lss_additive_passes_agent(self, monkeypatch):
+        """_dispatch_lss_additive should pass agent to _collect_local_sessions_for_additive."""
+        captured_calls = []
+
+        def spy_collect(*args, **kwargs):
+            captured_calls.append(kwargs.get("agent", args[3] if len(args) > 3 else "NOT_PASSED"))
+            return []
+
+        monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+        monkeypatch.setattr(ch, "is_running_in_wsl", lambda: False)
+
+        class MockArgs:
+            patterns = ["test"]
+            remotes = []
+            since_date = None
+            until_date = None
+            agent = "codex"
+
+        ch._dispatch_lss_additive(MockArgs())
+
+        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+
+    def test_collect_local_sessions_passes_agent(self, monkeypatch):
+        """_collect_local_sessions should pass agent to collect_sessions_with_dedup."""
+        captured_calls = []
+
+        def spy_collect(*args, **kwargs):
+            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            return []
+
+        monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+
+        ch._collect_local_sessions(["test"], None, None, False, agent="codex")
+
+        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+
+    def test_collect_windows_sessions_from_wsl_passes_agent(self, monkeypatch):
+        """_collect_windows_sessions_from_wsl should pass agent to collect_sessions_with_dedup."""
+        captured_calls = []
+
+        def spy_collect(*args, **kwargs):
+            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            return []
+
+        monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+        monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: [{"username": "test"}])
+        monkeypatch.setattr(ch, "get_windows_projects_dir", lambda u: Path("/fake"))
+
+        ch._collect_windows_sessions_from_wsl(["test"], None, None, agent="codex")
+
+        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+
+    def test_collect_wsl_sessions_from_windows_passes_agent(self, monkeypatch):
+        """_collect_wsl_sessions_from_windows should pass agent to collect_sessions_with_dedup."""
+        captured_calls = []
+
+        def spy_collect(*args, **kwargs):
+            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            return []
+
+        monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+        monkeypatch.setattr(
+            ch, "get_wsl_distributions", lambda: [{"name": "Ubuntu", "has_claude": True}]
+        )
+        monkeypatch.setattr(ch, "get_wsl_projects_dir", lambda d: Path("/fake"))
+
+        ch._collect_wsl_sessions_from_windows(["test"], None, None, agent="codex")
+
+        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+
+    def test_get_batch_local_sessions_passes_agent(self, monkeypatch):
+        """_get_batch_local_sessions should pass agent to collect_sessions_with_dedup."""
+        captured_calls = []
+
+        def spy_collect(*args, **kwargs):
+            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            return []
+
+        monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+
+        ch._get_batch_local_sessions(["test"], None, None, agent="codex")
+
+        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+
+    def test_get_batch_sessions_passes_agent(self, monkeypatch):
+        """_get_batch_sessions should pass agent to _get_batch_local_sessions."""
+        captured_calls = []
+
+        def spy_collect(*args, **kwargs):
+            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            return []
+
+        monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+
+        class MockArgs:
+            remote = None
+            agent = "codex"
+
+        ch._get_batch_sessions(MockArgs(), ["test"], None, None)
+
+        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+
+    def test_cmd_list_all_homes_passes_agent(self, monkeypatch):
+        """cmd_list_all_homes should pass agent to all collection functions."""
+        captured_calls = []
+
+        def spy_collect(*args, **kwargs):
+            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            return []
+
+        monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+        monkeypatch.setattr(ch, "is_running_in_wsl", lambda: False)
+        monkeypatch.setattr(ch, "get_wsl_distributions", lambda: [])
+        monkeypatch.setattr(ch, "get_saved_sources", lambda: [])
+
+        class MockArgs:
+            workspaces_only = True
+            patterns = ["test"]
+            since_date = None
+            until_date = None
+            remotes = []
+            agent = "codex"
+
+        ch.cmd_list_all_homes(MockArgs())
+
+        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+
+    def test_lsw_all_homes_args_includes_agent(self, monkeypatch):
+        """_dispatch_lsw with --ah should create LswAllArgs with agent."""
+        captured_args = []
+
+        def spy_cmd(args):
+            captured_args.append(getattr(args, "agent", "NOT_FOUND"))
+            # Don't actually run it
+
+        monkeypatch.setattr(ch, "cmd_list_all_homes", spy_cmd)
+
+        class MockArgs:
+            pattern = ["test"]
+            local = False
+            remotes = []
+            all_homes = True
+            agent = "codex"
+
+        ch._dispatch_lsw(MockArgs())
+
+        assert "codex" in captured_args, f"agent not in LswAllArgs: {captured_args}"
+
+    def test_lss_all_homes_args_includes_agent(self, monkeypatch):
+        """_dispatch_lss_all_homes should create LssAllArgs with agent."""
+        captured_args = []
+
+        def spy_cmd(args):
+            captured_args.append(getattr(args, "agent", "NOT_FOUND"))
+
+        monkeypatch.setattr(ch, "cmd_list_all_homes", spy_cmd)
+        monkeypatch.setattr(ch, "resolve_patterns_for_command", lambda *a, **k: (["test"], None))
+
+        class MockArgs:
+            since = None
+            until = None
+            remotes = []
+            this_only = False
+            agent = "codex"
+
+        ch._dispatch_lss_all_homes(MockArgs(), ["test"])
+
+        assert "codex" in captured_args, f"agent not in LssAllArgs: {captured_args}"
+
+    def test_export_all_homes_args_includes_agent(self, monkeypatch):
+        """_dispatch_export_all_homes should create ExportAllArgs with agent."""
+        captured_args = []
+
+        def spy_cmd(args):
+            captured_args.append(getattr(args, "agent", "NOT_FOUND"))
+
+        monkeypatch.setattr(ch, "cmd_export_all", spy_cmd)
+
+        class MockArgs:
+            since = None
+            until = None
+            force = False
+            minimal = False
+            split = None
+            agent = "codex"
+
+        ch._dispatch_export_all_homes(MockArgs(), "/tmp", ["test"], [])
+
+        assert "codex" in captured_args, f"agent not in ExportAllArgs: {captured_args}"
+
+
+# ============================================================================
 # Output Format Tests
 # ============================================================================
 
