@@ -124,6 +124,7 @@ class ExportConfig:
     flat: bool = False
     remote: Optional[str] = None
     lenient: bool = False
+    agent: str = "auto"
 
     @property
     def workspace(self) -> str:
@@ -5018,6 +5019,39 @@ def _sync_workspace_files_to_db(conn, local_dir: Path, source_key: str, stats: d
             stats["errors"] += 1
 
 
+def _sync_codex_to_db(conn, patterns: list, force: bool) -> dict:
+    """Sync Codex sessions from ~/.codex/sessions/ to database.
+
+    Codex stores sessions in ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+    """
+    stats = {"synced": 0, "skipped": 0, "errors": 0}
+    sessions_dir = codex_get_home_dir()
+
+    if not sessions_dir.exists():
+        return stats
+
+    print("Scanning Codex sessions...")
+
+    # Walk through YYYY/MM/DD structure
+    for jsonl_file in sessions_dir.glob("*/*/*/rollout-*.jsonl"):
+        # Filter by workspace pattern if specified
+        if patterns and patterns[0]:
+            workspace = codex_get_workspace_from_session(jsonl_file)
+            if not _matches_pattern(workspace, patterns):
+                continue
+
+        try:
+            if sync_file_to_db(conn, jsonl_file, "codex", force):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
+            sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
+            stats["errors"] += 1
+
+    return stats
+
+
 def _filter_workspaces_by_pattern(workspaces: list, patterns: list) -> list:
     """Filter workspaces by patterns (substring match)."""
     if not patterns or not patterns[0]:
@@ -5134,8 +5168,12 @@ def cmd_stats_sync(args):
     conn = init_metrics_db()
     totals = {"synced": 0, "skipped": 0, "errors": 0}
 
-    # Sync local
+    # Sync local Claude sessions
     stats = _sync_source_to_db(conn, get_claude_projects_dir(), "local", "local", patterns, force)
+    _accumulate_stats(totals, stats)
+
+    # Sync local Codex sessions (~/.codex/sessions/)
+    stats = _sync_codex_to_db(conn, patterns, force)
     _accumulate_stats(totals, stats)
 
     # Sync WSL/Windows if --ah flag
@@ -6276,7 +6314,12 @@ def cmd_convert(args):
             filename = Path(args.jsonl_file).name
             output_file = Path(args.output) if args.output else Path(filename).with_suffix(".md")
 
-            markdown = parse_jsonl_to_markdown(jsonl_file)
+            # Detect agent type from original remote path and use appropriate parser
+            agent_type = detect_agent_from_path(Path(args.jsonl_file))
+            if agent_type == AGENT_CODEX:
+                markdown = codex_parse_jsonl_to_markdown(jsonl_file)
+            else:
+                markdown = parse_jsonl_to_markdown(jsonl_file)
             output_file.write_text(markdown, encoding="utf-8")
 
             print(output_file)
@@ -6297,7 +6340,12 @@ def cmd_convert(args):
         output_file = Path(args.output) if args.output else jsonl_file.with_suffix(".md")
 
         try:
-            markdown = parse_jsonl_to_markdown(jsonl_file)
+            # Detect agent type and use appropriate parser
+            agent_type = detect_agent_from_path(jsonl_file)
+            if agent_type == AGENT_CODEX:
+                markdown = codex_parse_jsonl_to_markdown(jsonl_file)
+            else:
+                markdown = parse_jsonl_to_markdown(jsonl_file)
             output_file.write_text(markdown, encoding="utf-8")
 
             print(output_file)
@@ -6439,18 +6487,21 @@ def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> lis
     return _deduplicate_sessions(all_cached_sessions, patterns)
 
 
-def _get_batch_local_sessions(patterns: list, since_date, until_date) -> list:
+def _get_batch_local_sessions(patterns: list, since_date, until_date, agent: str = "auto") -> list:
     """Get sessions from local filesystem for batch export.
 
     Args:
         patterns: List of workspace patterns
         since_date: Optional start date filter
         until_date: Optional end date filter
+        agent: Agent backend - 'auto', 'claude', or 'codex'
 
     Returns:
         List of session dictionaries.
     """
-    return collect_sessions_with_dedup(patterns, since_date, until_date, include_cached=True)
+    return collect_sessions_with_dedup(
+        patterns, since_date, until_date, include_cached=True, agent=agent
+    )
 
 
 def _extract_timestamp_prefix(messages: list) -> str:
@@ -6509,8 +6560,15 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
     for session in sessions:
         jsonl_file = session["file"]
 
+        # Detect agent type and use appropriate reader/parser
+        agent_type = detect_agent_from_path(jsonl_file)
+        is_codex = agent_type == AGENT_CODEX
+
         try:
-            messages = read_jsonl_messages(jsonl_file)
+            if is_codex:
+                messages, _ = codex_read_jsonl_messages(jsonl_file)
+            else:
+                messages = read_jsonl_messages(jsonl_file)
         except (OSError, json.JSONDecodeError) as e:
             sys.stderr.write(f"Error reading {jsonl_file.name}: {e}\n")
             continue
@@ -6526,7 +6584,12 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
                 continue
 
         try:
-            if split_lines and messages:
+            # Codex files don't support splitting yet; use direct export
+            if is_codex:
+                _write_single_file(
+                    jsonl_file, output_file, minimal, messages=messages, is_codex=True
+                )
+            elif split_lines and messages:
                 parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
                 if parts:
                     _write_split_parts(parts, output_name, output_file)
@@ -6558,7 +6621,13 @@ def _write_split_parts(parts: list, output_name: str, output_file: Path):
         print(part_file)
 
 
-def _write_single_file(jsonl_file: Path, output_file: Path, minimal: bool, messages: list = None):
+def _write_single_file(
+    jsonl_file: Path,
+    output_file: Path,
+    minimal: bool,
+    messages: list = None,
+    is_codex: bool = False,
+):
     """Write a single markdown file.
 
     Args:
@@ -6566,8 +6635,12 @@ def _write_single_file(jsonl_file: Path, output_file: Path, minimal: bool, messa
         output_file: Destination markdown file path
         minimal: If True, produce minimal output without metadata
         messages: Pre-read messages (optional, avoids re-reading file)
+        is_codex: If True, use Codex parser instead of Claude parser
     """
-    markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal, messages=messages)
+    if is_codex:
+        markdown = codex_parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+    else:
+        markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal, messages=messages)
     output_file.write_text(markdown, encoding="utf-8")
     print(output_file)
 
@@ -6575,8 +6648,9 @@ def _write_single_file(jsonl_file: Path, output_file: Path, minimal: bool, messa
 def _get_batch_sessions(args, patterns: list, since_date, until_date) -> list:
     """Get batch sessions based on source type."""
     remote_host = getattr(args, "remote", None)
+    agent = getattr(args, "agent", "auto")
     if not remote_host:
-        return _get_batch_local_sessions(patterns, since_date, until_date)
+        return _get_batch_local_sessions(patterns, since_date, until_date, agent=agent)
     if is_windows_remote(remote_host):
         return _get_batch_windows_sessions(args, patterns, since_date, until_date)
     if is_wsl_remote(remote_host):
@@ -6677,13 +6751,17 @@ def cmd_list_windows(args):
         print(f"{user['username']}\t{user['drive']}\t{user['workspace_count']}\t{user['path']}")
 
 
-def _collect_local_sessions(patterns, since_date, until_date, in_wsl):
+def _collect_local_sessions(patterns, since_date, until_date, in_wsl, agent: str = "auto"):
     """Collect sessions from local environment."""
     results = []
     try:
         local_label = "Local (WSL)" if in_wsl else "Local"
         native_sessions = collect_sessions_with_dedup(
-            patterns, since_date=since_date, until_date=until_date, include_cached=False
+            patterns,
+            since_date=since_date,
+            until_date=until_date,
+            include_cached=False,
+            agent=agent,
         )
         if native_sessions:
             results.append((local_label, native_sessions))
@@ -6848,6 +6926,7 @@ def cmd_list_all_homes(args):
     """List workspaces or sessions from all homes: local, WSL/Windows, and remotes."""
     in_wsl = is_running_in_wsl()
     workspaces_only = getattr(args, "workspaces_only", False)
+    agent = getattr(args, "agent", "auto")
 
     patterns = getattr(args, "patterns", None)
     if patterns is None:
@@ -6865,7 +6944,7 @@ def cmd_list_all_homes(args):
     all_results = []
 
     # Collect from all sources
-    all_results.extend(_collect_local_sessions(patterns, since_date, until_date, in_wsl))
+    all_results.extend(_collect_local_sessions(patterns, since_date, until_date, in_wsl, agent))
 
     if in_wsl:
         all_results.extend(_collect_windows_sessions_from_wsl(patterns, since_date, until_date))
@@ -8393,12 +8472,18 @@ def _get_remote_sessions_for_additive(remote: str, patterns: list, since_date, u
     return hostname, all_sessions
 
 
-def _collect_local_sessions_for_additive(patterns: list, since_date, until_date) -> tuple:
+def _collect_local_sessions_for_additive(
+    patterns: list, since_date, until_date, agent: str = "auto"
+) -> tuple:
     """Collect local sessions for additive mode. Returns (label, sessions) or None."""
     local_label = "Local (WSL)" if is_running_in_wsl() else "Local"
     try:
         sessions = collect_sessions_with_dedup(
-            patterns, since_date=since_date, until_date=until_date, include_cached=False
+            patterns,
+            since_date=since_date,
+            until_date=until_date,
+            include_cached=False,
+            agent=agent,
         )
         if sessions:
             return (local_label, sessions)
@@ -8428,9 +8513,10 @@ def _dispatch_lss_additive(args):
     remotes = getattr(args, "remotes", [])
     since_date = getattr(args, "since_date", None)
     until_date = getattr(args, "until_date", None)
+    agent = getattr(args, "agent", "auto")
 
     all_results = []
-    local_result = _collect_local_sessions_for_additive(patterns, since_date, until_date)
+    local_result = _collect_local_sessions_for_additive(patterns, since_date, until_date, agent)
     if local_result:
         all_results.append(local_result)
     all_results.extend(_collect_remotes_for_additive(remotes, patterns, since_date, until_date))
@@ -8447,6 +8533,7 @@ def _dispatch_lsw(args):
     patterns = args.pattern if args.pattern else [""]
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []
+    agent = getattr(args, "agent", "auto")
 
     if getattr(args, "all_homes", False):
 
@@ -8457,6 +8544,7 @@ def _dispatch_lsw(args):
 
         LswAllArgs.remotes = remotes
         LswAllArgs.patterns = patterns
+        LswAllArgs.agent = agent
         cmd_list_all_homes(LswAllArgs())
     elif local_flag and remotes:
         # --local with -r: show both local and remotes (additive)
@@ -8468,6 +8556,7 @@ def _dispatch_lsw(args):
         LswAdditiveArgs.remotes = remotes
         LswAdditiveArgs.patterns = patterns
         LswAdditiveArgs.local_only = True  # Skip Windows/WSL scanning
+        LswAdditiveArgs.agent = agent
         _dispatch_lsw_additive(LswAdditiveArgs())
     else:
 
@@ -8477,6 +8566,7 @@ def _dispatch_lsw(args):
 
         LswArgs.patterns = patterns
         LswArgs.workspace = patterns[0] if patterns and patterns[0] else ""
+        LswArgs.agent = agent
         cmd_list(LswArgs())
 
 
@@ -8501,6 +8591,7 @@ def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
     LssAdditiveArgs.until_date = until_date
     LssAdditiveArgs.remotes = remotes
     LssAdditiveArgs.local_only = True
+    LssAdditiveArgs.agent = getattr(args, "agent", "auto")
     _dispatch_lss_additive(LssAdditiveArgs())
 
 
@@ -8524,6 +8615,7 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
     LssAllArgs.since_date = since_date
     LssAllArgs.until_date = until_date
     LssAllArgs.remotes = lss_remotes
+    LssAllArgs.agent = getattr(args, "agent", "auto")
     cmd_list_all_homes(LssAllArgs())
 
 
@@ -8674,6 +8766,7 @@ def _build_export_config(args, output_dir: str, patterns: list, remote=None) -> 
         flat=args.flat,
         remote=remote,
         lenient=False,
+        agent=getattr(args, "agent", "auto"),
     )
 
 
@@ -8718,6 +8811,7 @@ def _dispatch_export_all_homes(args, output_dir: str, patterns: list, remotes: l
     ExportAllArgs.force = args.force
     ExportAllArgs.minimal = args.minimal
     ExportAllArgs.split = args.split
+    ExportAllArgs.agent = getattr(args, "agent", "auto")
     cmd_export_all(ExportAllArgs())
 
 
