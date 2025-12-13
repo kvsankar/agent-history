@@ -153,6 +153,7 @@ class ExportConfig:
             flat=overrides.get("flat", getattr(args, "flat", False)),
             remote=overrides.get("remote", getattr(args, "remote", None)),
             lenient=overrides.get("lenient", getattr(args, "lenient", False)),
+            agent=overrides.get("agent", getattr(args, "agent", "auto")),
         )
 
 
@@ -8400,13 +8401,14 @@ def _dispatch_lsw_additive(args):
     patterns = getattr(args, "patterns", [""])
     remotes = getattr(args, "remotes", [])
     workspaces_only = getattr(args, "workspaces_only", False)
+    agent = getattr(args, "agent", "auto")
 
     all_results = []
 
     # 1. Get local workspaces
     local_label = "Local (WSL)" if is_running_in_wsl() else "Local"
     try:
-        local_sessions = collect_sessions_with_dedup(patterns, include_cached=False)
+        local_sessions = collect_sessions_with_dedup(patterns, include_cached=False, agent=agent)
         if local_sessions:
             all_results.append((local_label, local_sessions))
     except (OSError, PermissionError) as e:
