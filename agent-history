@@ -6064,12 +6064,14 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         sys.stderr.write("  • Try: agent-history lsh --windows\n")
         sys.exit(1)
 
+    agent = getattr(args, "agent", "auto")
     sessions = collect_sessions_with_dedup(
         patterns,
         since_date,
         until_date,
         projects_dir=windows_projects_dir,
         skip_message_count=True,  # Slow over WSL mount
+        agent=agent,
     )
 
     # If no native sessions, fall back to include cached (e.g., wsl_*) so users still see content
@@ -6081,6 +6083,7 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
             projects_dir=windows_projects_dir,
             skip_message_count=True,
             include_cached=True,
+            agent=agent,
         )
 
     if not sessions:
@@ -6116,6 +6119,7 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
         sys.exit(1)
 
     workspaces_only = getattr(args, "workspaces_only", False)
+    agent = getattr(args, "agent", "auto")
 
     if workspaces_only:
         raw_workspaces = _get_workspaces_from_dir(wsl_projects_dir)
@@ -6135,6 +6139,7 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
             until_date,
             projects_dir=wsl_projects_dir,
             skip_message_count=True,  # Slow over Windows/WSL boundary
+            agent=agent,
         )
 
     if not sessions:
@@ -6380,12 +6385,14 @@ def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) ->
         sys.stderr.write("  • Try: agent-history lsh --windows\n")
         sys.exit(1)
 
+    agent = getattr(args, "agent", "auto")
     sessions = collect_sessions_with_dedup(
         patterns,
         since_date,
         until_date,
         projects_dir=windows_projects_dir,
         skip_message_count=True,  # Slow over WSL mount
+        agent=agent,
     )
 
     if not sessions:
@@ -6418,12 +6425,14 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
         sys.stderr.write("  • Try: agent-history lsh --wsl\n")
         sys.exit(1)
 
+    agent = getattr(args, "agent", "auto")
     sessions = collect_sessions_with_dedup(
         patterns,
         since_date,
         until_date,
         projects_dir=wsl_projects_dir,
         skip_message_count=True,  # Slow over Windows/WSL boundary
+        agent=agent,
     )
 
     if not sessions:
@@ -6771,7 +6780,7 @@ def _collect_local_sessions(patterns, since_date, until_date, in_wsl, agent: str
     return results
 
 
-def _collect_windows_sessions_from_wsl(patterns, since_date, until_date):
+def _collect_windows_sessions_from_wsl(patterns, since_date, until_date, agent: str = "auto"):
     """Collect sessions from Windows when running in WSL."""
     results = []
     try:
@@ -6786,6 +6795,7 @@ def _collect_windows_sessions_from_wsl(patterns, since_date, until_date):
                     projects_dir=windows_projects_dir,
                     include_cached=False,
                     skip_message_count=True,
+                    agent=agent,
                 )
                 if native_sessions:
                     results.append((f"Windows ({user['username']})", native_sessions))
@@ -6796,7 +6806,7 @@ def _collect_windows_sessions_from_wsl(patterns, since_date, until_date):
     return results
 
 
-def _collect_wsl_sessions_from_windows(patterns, since_date, until_date):
+def _collect_wsl_sessions_from_windows(patterns, since_date, until_date, agent: str = "auto"):
     """Collect sessions from WSL when running on Windows."""
     results = []
     try:
@@ -6812,6 +6822,7 @@ def _collect_wsl_sessions_from_windows(patterns, since_date, until_date):
                     projects_dir=wsl_projects_dir,
                     include_cached=False,
                     skip_message_count=True,
+                    agent=agent,
                 )
                 if native_sessions:
                     results.append((f"WSL ({distro['name']})", native_sessions))
@@ -6948,9 +6959,13 @@ def cmd_list_all_homes(args):
     all_results.extend(_collect_local_sessions(patterns, since_date, until_date, in_wsl, agent))
 
     if in_wsl:
-        all_results.extend(_collect_windows_sessions_from_wsl(patterns, since_date, until_date))
+        all_results.extend(
+            _collect_windows_sessions_from_wsl(patterns, since_date, until_date, agent)
+        )
     else:
-        all_results.extend(_collect_wsl_sessions_from_windows(patterns, since_date, until_date))
+        all_results.extend(
+            _collect_wsl_sessions_from_windows(patterns, since_date, until_date, agent)
+        )
 
     all_results.extend(_collect_all_remote_sessions(remotes, patterns, since_date, until_date))
 
@@ -7326,7 +7341,8 @@ def _export_local_sessions(args, output_dir: Path, patterns: list, local_label: 
         )
 
         # Get local sessions count before export
-        local_sessions = collect_sessions_with_dedup(patterns, include_cached=False)
+        agent = getattr(args, "agent", "auto")
+        local_sessions = collect_sessions_with_dedup(patterns, include_cached=False, agent=agent)
         if local_sessions:
             cmd_batch(config)
             result["source"] = {"source": local_label, "sessions": len(local_sessions)}
@@ -7355,8 +7371,12 @@ def _export_windows_from_wsl(args, output_dir: Path, patterns: list) -> dict:
 
                     # Count sessions first
                     windows_projects_dir = get_windows_projects_dir(username)
+                    agent = getattr(args, "agent", "auto")
                     native_sessions = collect_sessions_with_dedup(
-                        patterns, projects_dir=windows_projects_dir, include_cached=False
+                        patterns,
+                        projects_dir=windows_projects_dir,
+                        include_cached=False,
+                        agent=agent,
                     )
                     session_count = len(native_sessions)
 
@@ -7404,8 +7424,12 @@ def _export_wsl_from_windows(args, output_dir: Path, patterns: list) -> dict:
 
                     # Count sessions first
                     wsl_projects_dir = get_wsl_projects_dir(distro["name"])
+                    agent = getattr(args, "agent", "auto")
                     wsl_sessions = collect_sessions_with_dedup(
-                        patterns, projects_dir=wsl_projects_dir, include_cached=False
+                        patterns,
+                        projects_dir=wsl_projects_dir,
+                        include_cached=False,
+                        agent=agent,
                     )
                     session_count = len(wsl_sessions)
 
