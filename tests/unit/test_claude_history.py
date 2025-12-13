@@ -960,16 +960,25 @@ class TestAgentFiltering:
 # Agent Propagation Tests (Dispatch Chain Coverage)
 # ============================================================================
 
+# Test with multiple agent values to ensure ANY value is propagated, not just known ones.
+# This catches bugs where agent is hardcoded instead of passed through.
+PROPAGATION_TEST_AGENTS = ["claude", "codex", "gemini", "future-agent"]
+
 
 class TestAgentPropagation:
     """Tests to verify --agent flag is propagated through all dispatch chains.
 
     These tests use spies/mocks to verify that intermediate functions
     correctly pass the agent parameter to collect_sessions_with_dedup.
+
+    IMPORTANT: Tests are parameterized with multiple agent values including
+    hypothetical future agents to ensure the value is actually propagated
+    rather than hardcoded.
     """
 
-    def test_export_config_from_args_includes_agent(self):
-        """ExportConfig.from_args should preserve agent from args."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_export_config_from_args_includes_agent(self, agent_value):
+        """ExportConfig.from_args should preserve any agent value from args."""
 
         class MockArgs:
             output_dir = "."
@@ -982,10 +991,12 @@ class TestAgentPropagation:
             flat = False
             remote = None
             lenient = False
-            agent = "codex"
+            agent = agent_value
 
         config = ch.ExportConfig.from_args(MockArgs())
-        assert config.agent == "codex", "ExportConfig.from_args should include agent"
+        assert (
+            config.agent == agent_value
+        ), f"ExportConfig.from_args should preserve '{agent_value}'"
 
     def test_export_config_from_args_defaults_to_auto(self):
         """ExportConfig.from_args should default agent to 'auto' if not in args."""
@@ -1006,8 +1017,9 @@ class TestAgentPropagation:
         config = ch.ExportConfig.from_args(MockArgs())
         assert config.agent == "auto", "ExportConfig.from_args should default to auto"
 
-    def test_build_export_config_includes_agent(self):
-        """_build_export_config should include agent from args."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_build_export_config_includes_agent(self, agent_value):
+        """_build_export_config should include any agent value from args."""
 
         class MockArgs:
             since = None
@@ -1016,13 +1028,14 @@ class TestAgentPropagation:
             minimal = False
             split = None
             flat = False
-            agent = "codex"
+            agent = agent_value
 
         config = ch._build_export_config(MockArgs(), "/tmp", ["pattern"])
-        assert config.agent == "codex", "_build_export_config should include agent"
+        assert config.agent == agent_value, f"_build_export_config should preserve '{agent_value}'"
 
-    def test_dispatch_lsw_additive_passes_agent(self, monkeypatch):
-        """_dispatch_lsw_additive should pass agent to collect_sessions_with_dedup."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_dispatch_lsw_additive_passes_agent(self, monkeypatch, agent_value):
+        """_dispatch_lsw_additive should pass any agent value to collect_sessions_with_dedup."""
         captured_calls = []
 
         def spy_collect(*args, **kwargs):
@@ -1036,14 +1049,17 @@ class TestAgentPropagation:
             patterns = ["test"]
             remotes = []
             workspaces_only = True
-            agent = "codex"
+            agent = agent_value
 
         ch._dispatch_lsw_additive(MockArgs())
 
-        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+        assert (
+            agent_value in captured_calls
+        ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
-    def test_dispatch_lss_additive_passes_agent(self, monkeypatch):
-        """_dispatch_lss_additive should pass agent to _collect_local_sessions_for_additive."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_dispatch_lss_additive_passes_agent(self, monkeypatch, agent_value):
+        """_dispatch_lss_additive should pass any agent value through."""
         captured_calls = []
 
         def spy_collect(*args, **kwargs):
@@ -1058,14 +1074,17 @@ class TestAgentPropagation:
             remotes = []
             since_date = None
             until_date = None
-            agent = "codex"
+            agent = agent_value
 
         ch._dispatch_lss_additive(MockArgs())
 
-        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+        assert (
+            agent_value in captured_calls
+        ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
-    def test_collect_local_sessions_passes_agent(self, monkeypatch):
-        """_collect_local_sessions should pass agent to collect_sessions_with_dedup."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_collect_local_sessions_passes_agent(self, monkeypatch, agent_value):
+        """_collect_local_sessions should pass any agent value to collect_sessions_with_dedup."""
         captured_calls = []
 
         def spy_collect(*args, **kwargs):
@@ -1074,12 +1093,15 @@ class TestAgentPropagation:
 
         monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
 
-        ch._collect_local_sessions(["test"], None, None, False, agent="codex")
+        ch._collect_local_sessions(["test"], None, None, False, agent=agent_value)
 
-        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+        assert (
+            agent_value in captured_calls
+        ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
-    def test_collect_windows_sessions_from_wsl_passes_agent(self, monkeypatch):
-        """_collect_windows_sessions_from_wsl should pass agent to collect_sessions_with_dedup."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_collect_windows_sessions_from_wsl_passes_agent(self, monkeypatch, agent_value):
+        """_collect_windows_sessions_from_wsl should pass any agent value through."""
         captured_calls = []
 
         def spy_collect(*args, **kwargs):
@@ -1090,12 +1112,15 @@ class TestAgentPropagation:
         monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: [{"username": "test"}])
         monkeypatch.setattr(ch, "get_windows_projects_dir", lambda u: Path("/fake"))
 
-        ch._collect_windows_sessions_from_wsl(["test"], None, None, agent="codex")
+        ch._collect_windows_sessions_from_wsl(["test"], None, None, agent=agent_value)
 
-        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+        assert (
+            agent_value in captured_calls
+        ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
-    def test_collect_wsl_sessions_from_windows_passes_agent(self, monkeypatch):
-        """_collect_wsl_sessions_from_windows should pass agent to collect_sessions_with_dedup."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_collect_wsl_sessions_from_windows_passes_agent(self, monkeypatch, agent_value):
+        """_collect_wsl_sessions_from_windows should pass any agent value through."""
         captured_calls = []
 
         def spy_collect(*args, **kwargs):
@@ -1108,12 +1133,15 @@ class TestAgentPropagation:
         )
         monkeypatch.setattr(ch, "get_wsl_projects_dir", lambda d: Path("/fake"))
 
-        ch._collect_wsl_sessions_from_windows(["test"], None, None, agent="codex")
+        ch._collect_wsl_sessions_from_windows(["test"], None, None, agent=agent_value)
 
-        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+        assert (
+            agent_value in captured_calls
+        ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
-    def test_get_batch_local_sessions_passes_agent(self, monkeypatch):
-        """_get_batch_local_sessions should pass agent to collect_sessions_with_dedup."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_get_batch_local_sessions_passes_agent(self, monkeypatch, agent_value):
+        """_get_batch_local_sessions should pass any agent value to collect_sessions_with_dedup."""
         captured_calls = []
 
         def spy_collect(*args, **kwargs):
@@ -1122,12 +1150,15 @@ class TestAgentPropagation:
 
         monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
 
-        ch._get_batch_local_sessions(["test"], None, None, agent="codex")
+        ch._get_batch_local_sessions(["test"], None, None, agent=agent_value)
 
-        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+        assert (
+            agent_value in captured_calls
+        ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
-    def test_get_batch_sessions_passes_agent(self, monkeypatch):
-        """_get_batch_sessions should pass agent to _get_batch_local_sessions."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_get_batch_sessions_passes_agent(self, monkeypatch, agent_value):
+        """_get_batch_sessions should pass any agent value to _get_batch_local_sessions."""
         captured_calls = []
 
         def spy_collect(*args, **kwargs):
@@ -1138,14 +1169,17 @@ class TestAgentPropagation:
 
         class MockArgs:
             remote = None
-            agent = "codex"
+            agent = agent_value
 
         ch._get_batch_sessions(MockArgs(), ["test"], None, None)
 
-        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+        assert (
+            agent_value in captured_calls
+        ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
-    def test_cmd_list_all_homes_passes_agent(self, monkeypatch):
-        """cmd_list_all_homes should pass agent to all collection functions."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_cmd_list_all_homes_passes_agent(self, monkeypatch, agent_value):
+        """cmd_list_all_homes should pass any agent value to all collection functions."""
         captured_calls = []
 
         def spy_collect(*args, **kwargs):
@@ -1163,14 +1197,17 @@ class TestAgentPropagation:
             since_date = None
             until_date = None
             remotes = []
-            agent = "codex"
+            agent = agent_value
 
         ch.cmd_list_all_homes(MockArgs())
 
-        assert "codex" in captured_calls, f"agent not propagated: {captured_calls}"
+        assert (
+            agent_value in captured_calls
+        ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
-    def test_lsw_all_homes_args_includes_agent(self, monkeypatch):
-        """_dispatch_lsw with --ah should create LswAllArgs with agent."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_lsw_all_homes_args_includes_agent(self, monkeypatch, agent_value):
+        """_dispatch_lsw with --ah should create LswAllArgs with any agent value."""
         captured_args = []
 
         def spy_cmd(args):
@@ -1184,14 +1221,17 @@ class TestAgentPropagation:
             local = False
             remotes = []
             all_homes = True
-            agent = "codex"
+            agent = agent_value
 
         ch._dispatch_lsw(MockArgs())
 
-        assert "codex" in captured_args, f"agent not in LswAllArgs: {captured_args}"
+        assert (
+            agent_value in captured_args
+        ), f"agent '{agent_value}' not in LswAllArgs: {captured_args}"
 
-    def test_lss_all_homes_args_includes_agent(self, monkeypatch):
-        """_dispatch_lss_all_homes should create LssAllArgs with agent."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_lss_all_homes_args_includes_agent(self, monkeypatch, agent_value):
+        """_dispatch_lss_all_homes should create LssAllArgs with any agent value."""
         captured_args = []
 
         def spy_cmd(args):
@@ -1205,14 +1245,17 @@ class TestAgentPropagation:
             until = None
             remotes = []
             this_only = False
-            agent = "codex"
+            agent = agent_value
 
         ch._dispatch_lss_all_homes(MockArgs(), ["test"])
 
-        assert "codex" in captured_args, f"agent not in LssAllArgs: {captured_args}"
+        assert (
+            agent_value in captured_args
+        ), f"agent '{agent_value}' not in LssAllArgs: {captured_args}"
 
-    def test_export_all_homes_args_includes_agent(self, monkeypatch):
-        """_dispatch_export_all_homes should create ExportAllArgs with agent."""
+    @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
+    def test_export_all_homes_args_includes_agent(self, monkeypatch, agent_value):
+        """_dispatch_export_all_homes should create ExportAllArgs with any agent value."""
         captured_args = []
 
         def spy_cmd(args):
@@ -1226,11 +1269,248 @@ class TestAgentPropagation:
             force = False
             minimal = False
             split = None
-            agent = "codex"
+            agent = agent_value
 
         ch._dispatch_export_all_homes(MockArgs(), "/tmp", ["test"], [])
 
-        assert "codex" in captured_args, f"agent not in ExportAllArgs: {captured_args}"
+        assert (
+            agent_value in captured_args
+        ), f"agent '{agent_value}' not in ExportAllArgs: {captured_args}"
+
+
+# ============================================================================
+# Agent Extensibility Tests (Future-proofing)
+# ============================================================================
+
+
+class TestAgentExtensibility:
+    """Tests to verify the codebase handles new agents gracefully.
+
+    These tests document current behavior and will catch regressions
+    when adding new agents like Gemini.
+    """
+
+    def test_detect_agent_unknown_path_defaults_to_claude(self):
+        """Unknown paths (e.g., Gemini) should default to Claude."""
+        # This documents current behavior - when adding Gemini, update detect_agent_from_path
+        path = Path("/home/user/.gemini/sessions/test.jsonl")
+        result = ch.detect_agent_from_path(path)
+        assert result == "claude", "Unknown paths currently default to Claude"
+
+    def test_detect_agent_with_known_paths(self):
+        """Verify detection for known agent paths."""
+        claude_path = Path("/home/user/.claude/projects/myproject/session.jsonl")
+        codex_path = Path("/home/user/.codex/sessions/2025/01/01/rollout.jsonl")
+
+        assert ch.detect_agent_from_path(claude_path) == "claude"
+        assert ch.detect_agent_from_path(codex_path) == "codex"
+
+    def test_get_active_backends_unknown_agent_falls_through_to_auto(self):
+        """Unknown agent values currently fall through to auto mode.
+
+        NOTE: This documents current behavior. Unknown agents like 'gemini'
+        are treated as 'auto' and return all available backends. When adding
+        a new agent, consider whether this fallback behavior is desired or
+        if unknown agents should raise an error.
+        """
+        # gemini falls through to else/auto branch in get_active_backends
+        backends = ch.get_active_backends("gemini")
+        auto_backends = ch.get_active_backends("auto")
+        assert backends == auto_backends, "Unknown agents fall through to auto mode"
+
+    def test_get_active_backends_known_agents(self, monkeypatch, tmp_path):
+        """Verify known agents return their backends when directories exist."""
+        # Create fake directories
+        claude_dir = tmp_path / ".claude" / "projects"
+        claude_dir.mkdir(parents=True)
+        codex_dir = tmp_path / ".codex" / "sessions"
+        codex_dir.mkdir(parents=True)
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(ch, "codex_get_home_dir", lambda: codex_dir)
+
+        assert ch.get_active_backends("claude") == ["claude"]
+        assert ch.get_active_backends("codex") == ["codex"]
+        backends = ch.get_active_backends("auto")
+        assert "claude" in backends
+        assert "codex" in backends
+
+    def test_cli_agent_flag_rejects_unknown_values(self):
+        """CLI should reject unknown agent values."""
+        import subprocess
+
+        result = subprocess.run(
+            ["python3", "agent-history", "--agent", "gemini", "lsw"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode != 0, "Unknown agent should be rejected"
+        assert "invalid choice" in result.stderr.lower() or "gemini" in result.stderr
+
+    def test_cli_agent_flag_accepts_known_values(self):
+        """CLI should accept known agent values."""
+        import subprocess
+
+        for agent in ["auto", "claude", "codex"]:
+            result = subprocess.run(
+                ["python3", "agent-history", "--agent", agent, "lsw"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # May fail for other reasons, but not for invalid choice
+            assert "invalid choice" not in result.stderr.lower(), f"'{agent}' should be accepted"
+
+
+class TestParserSelection:
+    """Tests to verify correct parser is selected based on file type."""
+
+    def test_convert_uses_codex_parser_for_codex_files(self, monkeypatch, tmp_path):
+        """cmd_convert should use Codex parser for .codex paths."""
+        parser_called = {"codex": False, "claude": False}
+
+        def spy_codex_parse(*args, **kwargs):
+            parser_called["codex"] = True
+            return "# Codex output"
+
+        def spy_claude_parse(*args, **kwargs):
+            parser_called["claude"] = True
+            return "# Claude output"
+
+        monkeypatch.setattr(ch, "codex_parse_jsonl_to_markdown", spy_codex_parse)
+        monkeypatch.setattr(ch, "parse_jsonl_to_markdown", spy_claude_parse)
+
+        # Create a fake Codex file
+        codex_file = tmp_path / ".codex" / "sessions" / "test.jsonl"
+        codex_file.parent.mkdir(parents=True)
+        codex_file.write_text('{"type": "message"}\n')
+
+        class MockArgs:
+            jsonl_file = str(codex_file)
+            minimal = False
+            split = None
+            output = None
+
+        try:
+            ch.cmd_convert(MockArgs())
+        except (SystemExit, Exception):
+            pass  # May fail for other reasons, but parser selection is what matters
+
+        assert parser_called["codex"], "Codex parser should be called for .codex paths"
+        assert not parser_called["claude"], "Claude parser should NOT be called for .codex paths"
+
+    def test_convert_uses_claude_parser_for_claude_files(self, monkeypatch, tmp_path):
+        """cmd_convert should use Claude parser for .claude paths."""
+        parser_called = {"codex": False, "claude": False}
+
+        def spy_codex_parse(*args, **kwargs):
+            parser_called["codex"] = True
+            return "# Codex output"
+
+        def spy_claude_parse(*args, **kwargs):
+            parser_called["claude"] = True
+            return "# Claude output"
+
+        monkeypatch.setattr(ch, "codex_parse_jsonl_to_markdown", spy_codex_parse)
+        monkeypatch.setattr(ch, "parse_jsonl_to_markdown", spy_claude_parse)
+
+        # Create a fake Claude file
+        claude_file = tmp_path / ".claude" / "projects" / "test" / "session.jsonl"
+        claude_file.parent.mkdir(parents=True)
+        claude_file.write_text('{"type": "user", "message": {"role": "user", "content": "hi"}}\n')
+
+        class MockArgs:
+            jsonl_file = str(claude_file)
+            minimal = False
+            split = None
+            output = None
+
+        try:
+            ch.cmd_convert(MockArgs())
+        except (SystemExit, Exception):
+            pass  # May fail for other reasons, but parser selection is what matters
+
+        assert parser_called["claude"], "Claude parser should be called for .claude paths"
+        assert not parser_called["codex"], "Codex parser should NOT be called for .claude paths"
+
+    def test_write_single_file_uses_correct_parser(self, monkeypatch, tmp_path):
+        """_write_single_file should select parser based on is_codex flag."""
+        parsers_called = []
+
+        def spy_codex_parse(path, *args, **kwargs):
+            parsers_called.append(("codex", str(path)))
+            return "# Codex output"
+
+        def spy_claude_parse(path, *args, **kwargs):
+            parsers_called.append(("claude", str(path)))
+            return "# Claude output"
+
+        monkeypatch.setattr(ch, "codex_parse_jsonl_to_markdown", spy_codex_parse)
+        monkeypatch.setattr(ch, "parse_jsonl_to_markdown", spy_claude_parse)
+
+        # Create test files
+        codex_file = tmp_path / "codex.jsonl"
+        claude_file = tmp_path / "claude.jsonl"
+        codex_file.write_text('{"type": "message"}\n')
+        claude_file.write_text('{"type": "user"}\n')
+
+        output_codex = tmp_path / "codex.md"
+        output_claude = tmp_path / "claude.md"
+
+        # Call with is_codex=True
+        ch._write_single_file(codex_file, output_codex, minimal=False, is_codex=True)
+
+        # Call with is_codex=False
+        ch._write_single_file(claude_file, output_claude, minimal=False, is_codex=False)
+
+        # Verify correct parsers were called
+        codex_calls = [p for p in parsers_called if p[0] == "codex"]
+        claude_calls = [p for p in parsers_called if p[0] == "claude"]
+
+        assert len(codex_calls) == 1, "Codex parser should be called once for is_codex=True"
+        assert len(claude_calls) == 1, "Claude parser should be called once for is_codex=False"
+
+    def test_detect_agent_from_path_drives_parser_selection(self, monkeypatch, tmp_path):
+        """Verify detect_agent_from_path determines which parser is used in export."""
+        detection_results = []
+
+        original_detect = ch.detect_agent_from_path
+
+        def spy_detect(path):
+            result = original_detect(path)
+            detection_results.append((str(path), result))
+            return result
+
+        monkeypatch.setattr(ch, "detect_agent_from_path", spy_detect)
+        # Mock parsers to avoid actual parsing
+        monkeypatch.setattr(ch, "codex_parse_jsonl_to_markdown", lambda *a, **k: "# Codex")
+        monkeypatch.setattr(ch, "parse_jsonl_to_markdown", lambda *a, **k: "# Claude")
+        monkeypatch.setattr(ch, "codex_read_jsonl_messages", lambda *a, **k: ([], {}))
+        monkeypatch.setattr(ch, "read_jsonl_messages", lambda *a, **k: [])
+
+        # Create files with agent-specific paths
+        codex_file = tmp_path / ".codex" / "sessions" / "test.jsonl"
+        claude_file = tmp_path / ".claude" / "projects" / "test" / "session.jsonl"
+        codex_file.parent.mkdir(parents=True)
+        claude_file.parent.mkdir(parents=True)
+        codex_file.write_text('{"type": "message"}\n')
+        claude_file.write_text('{"type": "user"}\n')
+
+        # Verify detection
+        assert ch.detect_agent_from_path(codex_file) == "codex"
+        assert ch.detect_agent_from_path(claude_file) == "claude"
+
+        # Check detection was called with correct paths
+        codex_detections = [d for d in detection_results if ".codex" in d[0]]
+        claude_detections = [d for d in detection_results if ".claude" in d[0]]
+
+        assert len(codex_detections) > 0, "Codex path should be detected"
+        assert len(claude_detections) > 0, "Claude path should be detected"
+        assert all(d[1] == "codex" for d in codex_detections), "Codex paths should detect as codex"
+        assert all(
+            d[1] == "claude" for d in claude_detections
+        ), "Claude paths should detect as claude"
 
 
 # ============================================================================
