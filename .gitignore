@@ -38,3 +38,6 @@ test-*/
 docs/analysis/
 docs/learning/
 docs/reviews/
+
+# Local review files
+reviews/
