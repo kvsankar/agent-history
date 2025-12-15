@@ -536,24 +536,25 @@ class TestCodexMessageCounting:
 class TestCodexIndex:
     """Tests for Codex incremental indexing functions."""
 
-    def test_get_index_file_returns_expected_path(self, monkeypatch, tmp_path):
+    def test_get_index_file_returns_expected_path(self, tmp_path):
         """codex_get_index_file should return path in config dir."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        index_file = ch.codex_get_index_file()
-        assert index_file.name == "codex_index.json"
-        assert ".claude-history" in str(index_file)
+        config_dir = tmp_path / ".claude-history"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            index_file = ch.codex_get_index_file()
+            assert index_file.name == "codex_index.json"
+            assert ".claude-history" in str(index_file)
 
-    def test_load_index_returns_empty_for_missing_file(self, monkeypatch, tmp_path):
+    def test_load_index_returns_empty_for_missing_file(self, tmp_path):
         """codex_load_index should return empty structure if file doesn't exist."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        index = ch.codex_load_index()
-        assert index["version"] == ch.CODEX_INDEX_VERSION
-        assert index["last_scan_date"] is None
-        assert index["sessions"] == {}
+        config_dir = tmp_path / ".claude-history"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            index = ch.codex_load_index()
+            assert index["version"] == ch.CODEX_INDEX_VERSION
+            assert index["last_scan_date"] is None
+            assert index["sessions"] == {}
 
-    def test_load_index_reads_existing_file(self, monkeypatch, tmp_path):
+    def test_load_index_reads_existing_file(self, tmp_path):
         """codex_load_index should load existing index file."""
-        monkeypatch.setenv("HOME", str(tmp_path))
         config_dir = tmp_path / ".claude-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "codex_index.json"
@@ -565,13 +566,13 @@ class TestCodexIndex:
         with open(index_file, "w") as f:
             json.dump(test_data, f)
 
-        loaded = ch.codex_load_index()
-        assert loaded["last_scan_date"] == "2025-12-10"
-        assert loaded["sessions"] == {"/path/to/session.jsonl": "-home-user-project"}
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            loaded = ch.codex_load_index()
+            assert loaded["last_scan_date"] == "2025-12-10"
+            assert loaded["sessions"] == {"/path/to/session.jsonl": "-home-user-project"}
 
-    def test_load_index_ignores_old_version(self, monkeypatch, tmp_path):
+    def test_load_index_ignores_old_version(self, tmp_path):
         """codex_load_index should return empty for old version files."""
-        monkeypatch.setenv("HOME", str(tmp_path))
         config_dir = tmp_path / ".claude-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "codex_index.json"
@@ -579,21 +580,24 @@ class TestCodexIndex:
         with open(index_file, "w") as f:
             json.dump(old_data, f)
 
-        loaded = ch.codex_load_index()
-        assert loaded["version"] == ch.CODEX_INDEX_VERSION
-        assert loaded["sessions"] == {}
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            loaded = ch.codex_load_index()
+            assert loaded["version"] == ch.CODEX_INDEX_VERSION
+            assert loaded["sessions"] == {}
 
-    def test_save_index_creates_file(self, monkeypatch, tmp_path):
+    def test_save_index_creates_file(self, tmp_path):
         """codex_save_index should create index file."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
         test_index = {
             "version": ch.CODEX_INDEX_VERSION,
             "last_scan_date": "2025-12-15",
             "sessions": {"/a/b.jsonl": "-workspace"},
         }
-        ch.codex_save_index(test_index)
 
-        index_file = tmp_path / ".claude-history" / "codex_index.json"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            ch.codex_save_index(test_index)
+
+        index_file = config_dir / "codex_index.json"
         assert index_file.exists()
         with open(index_file) as f:
             saved = json.load(f)
@@ -633,10 +637,10 @@ class TestCodexIndex:
         assert folders[0].name == "09"
 
     def test_ensure_index_updated_builds_initial_index(
-        self, monkeypatch, tmp_path, sample_codex_jsonl_content
+        self, tmp_path, sample_codex_jsonl_content
     ):
         """codex_ensure_index_updated should build full index on first run."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
         sessions_dir = tmp_path / "codex_sessions"
         day_dir = sessions_dir / "2025" / "12" / "08"
         day_dir.mkdir(parents=True)
@@ -645,16 +649,17 @@ class TestCodexIndex:
             for entry in sample_codex_jsonl_content:
                 f.write(json.dumps(entry) + "\n")
 
-        mapping = ch.codex_ensure_index_updated(sessions_dir)
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            mapping = ch.codex_ensure_index_updated(sessions_dir)
 
-        assert str(session_file) in mapping
-        assert mapping[str(session_file)] == "-home-user-project"
+            assert str(session_file) in mapping
+            assert mapping[str(session_file)] == "-home-user-project"
 
     def test_ensure_index_updated_incremental(
-        self, monkeypatch, tmp_path, sample_codex_jsonl_content
+        self, tmp_path, sample_codex_jsonl_content
     ):
         """codex_ensure_index_updated should only scan new date folders."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
         sessions_dir = tmp_path / "codex_sessions"
 
         # Create initial session
@@ -665,31 +670,32 @@ class TestCodexIndex:
             for entry in sample_codex_jsonl_content:
                 f.write(json.dumps(entry) + "\n")
 
-        # First scan builds index
-        ch.codex_ensure_index_updated(sessions_dir)
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            # First scan builds index
+            ch.codex_ensure_index_updated(sessions_dir)
 
-        # Now manually set last_scan_date to yesterday to simulate incremental
-        index = ch.codex_load_index()
-        index["last_scan_date"] = "2025-12-14"  # Yesterday
-        ch.codex_save_index(index)
+            # Now manually set last_scan_date to yesterday to simulate incremental
+            index = ch.codex_load_index()
+            index["last_scan_date"] = "2025-12-14"  # Yesterday
+            ch.codex_save_index(index)
 
-        # Add a new session in today's folder
-        day2_dir = sessions_dir / "2025" / "12" / "15"
-        day2_dir.mkdir(parents=True)
-        session2 = day2_dir / "rollout-test2.jsonl"
-        with open(session2, "w") as f:
-            for entry in sample_codex_jsonl_content:
-                f.write(json.dumps(entry) + "\n")
+            # Add a new session in today's folder
+            day2_dir = sessions_dir / "2025" / "12" / "15"
+            day2_dir.mkdir(parents=True)
+            session2 = day2_dir / "rollout-test2.jsonl"
+            with open(session2, "w") as f:
+                for entry in sample_codex_jsonl_content:
+                    f.write(json.dumps(entry) + "\n")
 
-        # Incremental scan should find the new session
-        mapping = ch.codex_ensure_index_updated(sessions_dir)
-        assert str(session2) in mapping
+            # Incremental scan should find the new session
+            mapping = ch.codex_ensure_index_updated(sessions_dir)
+            assert str(session2) in mapping
 
     def test_ensure_index_updated_cleans_stale_entries(
-        self, monkeypatch, tmp_path, sample_codex_jsonl_content
+        self, tmp_path, sample_codex_jsonl_content
     ):
         """codex_ensure_index_updated should remove entries for deleted files."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
         sessions_dir = tmp_path / "codex_sessions"
         day_dir = sessions_dir / "2025" / "12" / "08"
         day_dir.mkdir(parents=True)
@@ -698,15 +704,16 @@ class TestCodexIndex:
             for entry in sample_codex_jsonl_content:
                 f.write(json.dumps(entry) + "\n")
 
-        # Build index with the session
-        ch.codex_ensure_index_updated(sessions_dir)
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            # Build index with the session
+            ch.codex_ensure_index_updated(sessions_dir)
 
-        # Delete the session file
-        session_file.unlink()
+            # Delete the session file
+            session_file.unlink()
 
-        # Re-scan should clean up stale entry
-        mapping = ch.codex_ensure_index_updated(sessions_dir)
-        assert str(session_file) not in mapping
+            # Re-scan should clean up stale entry
+            mapping = ch.codex_ensure_index_updated(sessions_dir)
+            assert str(session_file) not in mapping
 
 
 class TestCodexSessionScanning:
@@ -1097,23 +1104,24 @@ class TestGeminiFormatThoughts:
 class TestGeminiHashIndex:
     """Tests for Gemini progressive hash-to-path index."""
 
-    def test_get_hash_index_file_returns_expected_path(self, monkeypatch, tmp_path):
+    def test_get_hash_index_file_returns_expected_path(self, tmp_path):
         """gemini_get_hash_index_file should return path in config dir."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        index_file = ch.gemini_get_hash_index_file()
-        assert index_file.name == "gemini_hash_index.json"
-        assert ".claude-history" in str(index_file)
+        config_dir = tmp_path / ".claude-history"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            index_file = ch.gemini_get_hash_index_file()
+            assert index_file.name == "gemini_hash_index.json"
+            assert ".claude-history" in str(index_file)
 
-    def test_load_hash_index_returns_empty_for_missing_file(self, monkeypatch, tmp_path):
+    def test_load_hash_index_returns_empty_for_missing_file(self, tmp_path):
         """gemini_load_hash_index should return empty structure if file doesn't exist."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        index = ch.gemini_load_hash_index()
-        assert index["version"] == ch.GEMINI_HASH_INDEX_VERSION
-        assert index["hashes"] == {}
+        config_dir = tmp_path / ".claude-history"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            index = ch.gemini_load_hash_index()
+            assert index["version"] == ch.GEMINI_HASH_INDEX_VERSION
+            assert index["hashes"] == {}
 
-    def test_load_hash_index_reads_existing_file(self, monkeypatch, tmp_path):
+    def test_load_hash_index_reads_existing_file(self, tmp_path):
         """gemini_load_hash_index should load existing index file."""
-        monkeypatch.setenv("HOME", str(tmp_path))
         config_dir = tmp_path / ".claude-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "gemini_hash_index.json"
@@ -1124,19 +1132,22 @@ class TestGeminiHashIndex:
         with open(index_file, "w") as f:
             json.dump(test_data, f)
 
-        loaded = ch.gemini_load_hash_index()
-        assert loaded["hashes"] == {"abc123def456": "/home/user/project"}
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            loaded = ch.gemini_load_hash_index()
+            assert loaded["hashes"] == {"abc123def456": "/home/user/project"}
 
-    def test_save_hash_index_creates_file(self, monkeypatch, tmp_path):
+    def test_save_hash_index_creates_file(self, tmp_path):
         """gemini_save_hash_index should create index file."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
         test_index = {
             "version": ch.GEMINI_HASH_INDEX_VERSION,
             "hashes": {"hash123": "/path/to/project"},
         }
-        ch.gemini_save_hash_index(test_index)
 
-        index_file = tmp_path / ".claude-history" / "gemini_hash_index.json"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            ch.gemini_save_hash_index(test_index)
+
+        index_file = config_dir / "gemini_hash_index.json"
         assert index_file.exists()
         with open(index_file) as f:
             saved = json.load(f)
@@ -1168,15 +1179,15 @@ class TestGeminiHashIndex:
 
         assert hash1 != hash2
 
-    def test_get_path_for_hash_returns_none_when_unknown(self, monkeypatch, tmp_path):
+    def test_get_path_for_hash_returns_none_when_unknown(self, tmp_path):
         """gemini_get_path_for_hash should return None for unknown hashes."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        result = ch.gemini_get_path_for_hash("unknown_hash_123")
-        assert result is None
+        config_dir = tmp_path / ".claude-history"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_get_path_for_hash("unknown_hash_123")
+            assert result is None
 
-    def test_get_path_for_hash_returns_path_when_known(self, monkeypatch, tmp_path):
+    def test_get_path_for_hash_returns_path_when_known(self, tmp_path):
         """gemini_get_path_for_hash should return path for known hashes."""
-        monkeypatch.setenv("HOME", str(tmp_path))
         config_dir = tmp_path / ".claude-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "gemini_hash_index.json"
@@ -1187,12 +1198,12 @@ class TestGeminiHashIndex:
         with open(index_file, "w") as f:
             json.dump(test_data, f)
 
-        result = ch.gemini_get_path_for_hash("known_hash")
-        assert result == "/home/user/myproject"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_get_path_for_hash("known_hash")
+            assert result == "/home/user/myproject"
 
-    def test_get_workspace_readable_uses_hash_index(self, monkeypatch, tmp_path):
+    def test_get_workspace_readable_uses_hash_index(self, tmp_path):
         """gemini_get_workspace_readable should use index for known hashes."""
-        monkeypatch.setenv("HOME", str(tmp_path))
         config_dir = tmp_path / ".claude-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "gemini_hash_index.json"
@@ -1203,17 +1214,19 @@ class TestGeminiHashIndex:
         with open(index_file, "w") as f:
             json.dump(test_data, f)
 
-        result = ch.gemini_get_workspace_readable("abc123def456xyz")
-        # Should show the path, not the hash
-        assert "myproject" in result
-        assert "[hash:" not in result
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_get_workspace_readable("abc123def456xyz")
+            # Should show the path, not the hash
+            assert "myproject" in result
+            assert "[hash:" not in result
 
-    def test_get_workspace_readable_falls_back_to_hash(self, monkeypatch, tmp_path):
+    def test_get_workspace_readable_falls_back_to_hash(self, tmp_path):
         """gemini_get_workspace_readable should fall back to hash display."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        result = ch.gemini_get_workspace_readable("unknown_hash_very_long_string")
-        assert "[hash:" in result
-        assert "unknown_" in result
+        config_dir = tmp_path / ".claude-history"
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_get_workspace_readable("unknown_hash_very_long_string")
+            assert "[hash:" in result
+            assert "unknown_" in result
 
     def test_update_hash_index_from_cwd_learns_mapping(
         self, monkeypatch, tmp_path, sample_gemini_session
@@ -1254,7 +1267,7 @@ class TestGeminiIndexCommand:
         self, monkeypatch, tmp_path, sample_gemini_session
     ):
         """gemini_add_paths_to_index should add new hash→path mappings."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
 
         # Create a project directory
         project_dir = tmp_path / "my_project"
@@ -1272,7 +1285,8 @@ class TestGeminiIndexCommand:
 
         monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / ".gemini" / "tmp"))
 
-        result = ch.gemini_add_paths_to_index([project_dir])
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_add_paths_to_index([project_dir])
 
         assert result["added"] == 1
         assert result["existing"] == 0
@@ -1283,7 +1297,7 @@ class TestGeminiIndexCommand:
 
     def test_add_paths_to_index_multiple_paths(self, monkeypatch, tmp_path, sample_gemini_session):
         """gemini_add_paths_to_index should handle multiple paths."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
 
         # Create two project directories
         project1 = tmp_path / "project1"
@@ -1303,7 +1317,8 @@ class TestGeminiIndexCommand:
 
         monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / ".gemini" / "tmp"))
 
-        result = ch.gemini_add_paths_to_index([project1, project2])
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_add_paths_to_index([project1, project2])
 
         assert result["added"] == 1
         assert result["no_sessions"] == 1
@@ -1311,7 +1326,7 @@ class TestGeminiIndexCommand:
 
     def test_add_paths_to_index_skips_existing(self, monkeypatch, tmp_path, sample_gemini_session):
         """gemini_add_paths_to_index should skip already indexed paths."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
 
         # Create a project
         project_dir = tmp_path / "existing_project"
@@ -1329,7 +1344,6 @@ class TestGeminiIndexCommand:
         monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / ".gemini" / "tmp"))
 
         # Pre-populate index
-        config_dir = tmp_path / ".claude-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "gemini_hash_index.json"
         existing_index = {
@@ -1339,7 +1353,8 @@ class TestGeminiIndexCommand:
         with open(index_file, "w") as f:
             json.dump(existing_index, f)
 
-        result = ch.gemini_add_paths_to_index([project_dir])
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_add_paths_to_index([project_dir])
 
         assert result["added"] == 0
         assert result["existing"] == 1
@@ -1347,7 +1362,7 @@ class TestGeminiIndexCommand:
 
     def test_add_paths_to_index_skips_no_sessions(self, monkeypatch, tmp_path):
         """gemini_add_paths_to_index should skip projects without Gemini sessions."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
 
         # Create project without any sessions
         project_dir = tmp_path / "no_sessions_project"
@@ -1355,17 +1370,19 @@ class TestGeminiIndexCommand:
 
         monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / ".gemini" / "tmp"))
 
-        result = ch.gemini_add_paths_to_index([project_dir])
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_add_paths_to_index([project_dir])
 
         assert result["added"] == 0
         assert result["no_sessions"] == 1
         assert result["mappings"][0]["status"] == "no_sessions"
 
-    def test_add_paths_to_index_empty_list(self, monkeypatch, tmp_path):
+    def test_add_paths_to_index_empty_list(self, tmp_path):
         """gemini_add_paths_to_index should handle empty list."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
 
-        result = ch.gemini_add_paths_to_index([])
+        with patch.object(ch, "get_config_dir", return_value=config_dir):
+            result = ch.gemini_add_paths_to_index([])
 
         assert result["added"] == 0
         assert result["existing"] == 0
@@ -2309,7 +2326,7 @@ class TestAgentExtensibility:
         import subprocess
 
         result = subprocess.run(
-            ["python3", "agent-history", "--agent", "future-agent", "lsw"],
+            [sys.executable, "agent-history", "--agent", "future-agent", "lsw"],
             capture_output=True,
             text=True,
             check=False,
@@ -2323,7 +2340,7 @@ class TestAgentExtensibility:
 
         for agent in ["auto", "claude", "codex", "gemini"]:
             result = subprocess.run(
-                ["python3", "agent-history", "--agent", agent, "lsw"],
+                [sys.executable, "agent-history", "--agent", agent, "lsw"],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -2634,12 +2651,20 @@ class TestPathNormalization:
     def test_windows_path_simple(self):
         """Simple Windows path normalization without verification."""
         result = ch.normalize_workspace_name("C--Users-test-project", verify_local=False)
-        assert result == "/C/Users/test/project"
+        # On Windows, returns native path; on Unix, returns POSIX-style
+        if sys.platform == "win32":
+            assert result == r"C:\Users\test\project"
+        else:
+            assert result == "/C/Users/test/project"
 
     def test_windows_path_different_drive(self):
         """Windows path with different drive letter."""
         result = ch.normalize_workspace_name("D--work-myapp", verify_local=False)
-        assert result == "/D/work/myapp"
+        # On Windows, returns native path; on Unix, returns POSIX-style
+        if sys.platform == "win32":
+            assert result == r"D:\work\myapp"
+        else:
+            assert result == "/D/work/myapp"
 
 
 class TestEncodedWorkspaceConversion:
@@ -10175,6 +10200,7 @@ class TestMultiAgentRemotePathFunctions:
             result = ch.codex_get_wsl_sessions_dir("Ubuntu")
         assert result is None
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="WSL not available on Windows")
     def test_gemini_get_windows_sessions_dir_in_wsl(self):
         """Test Gemini Windows path function returns correct path in WSL."""
         with patch.object(ch, "is_running_in_wsl", return_value=True):
@@ -10184,6 +10210,7 @@ class TestMultiAgentRemotePathFunctions:
                     if result:
                         assert ".gemini" in str(result) or result is not None
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="WSL not available on Windows")
     def test_codex_get_windows_sessions_dir_in_wsl(self):
         """Test Codex Windows path function returns correct path in WSL."""
         with patch.object(ch, "is_running_in_wsl", return_value=True):
@@ -10991,7 +11018,9 @@ class TestEdgeCasesMultiAgent:
         unicode_ws = tmp_path / ".claude" / "projects" / "-home-user-проект"
         unicode_ws.mkdir(parents=True)
         session = unicode_ws / "session.jsonl"
-        session.write_text('{"type":"user","message":{"role":"user","content":"тест"}}\n')
+        session.write_text(
+            '{"type":"user","message":{"role":"user","content":"тест"}}\n', encoding="utf-8"
+        )
 
         # Should handle without error
         result = ch.normalize_workspace_name("-home-user-проект")

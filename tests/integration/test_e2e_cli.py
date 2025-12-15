@@ -88,7 +88,8 @@ def test_e2e_windows_from_windows(tmp_path: Path):
     env["CLAUDE_PROJECTS_DIR"] = str(projects)  # local still needs a valid root
     env["CLAUDE_WINDOWS_PROJECTS_DIR"] = str(projects)
 
-    r = run_cli(["lsw", "--windows"], env=env)
+    # Use --agent claude to avoid Codex/Gemini backends which don't respect CLAUDE_PROJECTS_DIR
+    r = run_cli(["lsw", "--windows", "--agent", "claude"], env=env)
     assert r.returncode == 0, r.stderr
     lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
     assert str(win_ws1) in lines and str(win_ws2) in lines

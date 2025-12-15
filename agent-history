@@ -1758,7 +1758,7 @@ def codex_count_messages(jsonl_file: Path) -> int:
 # Codex Session Index - Incremental workspace mapping
 # ============================================================================
 
-CODEX_INDEX_VERSION = 1
+CODEX_INDEX_VERSION = 2  # Bumped to rebuild index with fixed Windows path encoding
 
 
 def codex_get_index_file() -> Path:
@@ -2825,13 +2825,18 @@ def path_to_encoded_workspace(path: str) -> str:
     """Convert an absolute path to Claude's encoded workspace directory name.
 
     Args:
-        path: Absolute path (e.g., '/home/user/my-project')
+        path: Absolute path (e.g., '/home/user/my-project' or 'C:\\sankar\\projects')
 
     Returns:
-        Encoded workspace name (e.g., '-home-user-my-project')
+        Encoded workspace name (e.g., '-home-user-my-project' or 'C--sankar-projects')
     """
-    # Remove trailing slash if present
-    path = path.rstrip("/")
+    # Remove trailing slash/backslash if present
+    path = path.rstrip("/").rstrip("\\")
+
+    # Handle native Windows paths (C:\... or C:/...)
+    # Check for drive letter followed by colon (e.g., C:, D:)
+    if len(path) >= 2 and path[1] == ":":
+        return _convert_windows_path_to_encoded(path)
 
     # Handle WSL-mounted Windows paths like /mnt/c/Users/me/project
     if path.startswith("/mnt/") and len(path) > MIN_WSL_MNT_PATH_LEN:
@@ -3191,11 +3196,15 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
     rest = workspace_dir_name[3:]  # Skip 'C--'
     parts = rest.split("-")
 
-    # On Windows, return a native drive path (prefer verified segments)
-    if verify_local and sys.platform == "win32":
+    # On Windows, return a native drive path
+    if sys.platform == "win32":
         drive_root = Path(f"{drive_letter}:\\")
-        resolved = _resolve_path_segments(parts, drive_root)
-        return str(drive_root.joinpath(*resolved))
+        if verify_local:
+            resolved = _resolve_path_segments(parts, drive_root)
+            return str(drive_root.joinpath(*resolved))
+        else:
+            # Without verification, just join with backslashes
+            return f"{drive_letter}:\\" + "\\".join(parts)
 
     # On WSL, prefer /mnt/<drive> if available
     if verify_local:
