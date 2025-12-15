@@ -5692,10 +5692,11 @@ def get_sessions_for_source(
 # ============================================================================
 
 
-def cmd_alias_list(args):
-    """List all aliases with their workspaces and session counts."""
+def cmd_alias_list(args):  # noqa: C901
+    """List all aliases with their workspaces."""
     aliases_data = load_aliases()
     aliases = aliases_data.get("aliases", {})
+    show_counts = getattr(args, "counts", False)
 
     if not aliases:
         print("No aliases defined.")
@@ -5705,14 +5706,15 @@ def cmd_alias_list(args):
         return
 
     # Check if any aliases have Windows/WSL sources (may be slow)
-    has_slow_sources = any(
-        source_key in ("windows", "wsl") or source_key.startswith(("windows:", "wsl:"))
-        for sources in aliases.values()
-        for source_key in sources.keys()
-    )
-    if has_slow_sources:
-        sys.stderr.write("Accessing Windows/WSL sources...\n")
-        sys.stderr.flush()
+    if show_counts:
+        has_slow_sources = any(
+            source_key in ("windows", "wsl") or source_key.startswith(("windows:", "wsl:"))
+            for sources in aliases.values()
+            for source_key in sources.keys()
+        )
+        if has_slow_sources:
+            sys.stderr.write("Accessing Windows/WSL sources...\n")
+            sys.stderr.flush()
 
     for alias_name, sources in sorted(aliases.items()):
         total_sessions = 0
@@ -5722,17 +5724,22 @@ def cmd_alias_list(args):
             if workspaces:
                 print(f"  {source_key}:")
                 for workspace in workspaces:
-                    # Try to get session count using source-aware function
-                    sessions = get_sessions_for_source(source_key, workspace)
-                    count = len(sessions)
-                    total_sessions += count
                     ws_readable = normalize_workspace_name(workspace)
-                    if count > 0 or source_key == "local":
-                        print(f"    {ws_readable}\t{count} sessions")
+                    if show_counts:
+                        # Get session count (slow for Windows/remote)
+                        sessions = get_sessions_for_source(source_key, workspace)
+                        count = len(sessions)
+                        total_sessions += count
+                        if count > 0 or source_key == "local":
+                            print(f"    {ws_readable}\t{count} sessions")
+                        else:
+                            print(f"    {ws_readable}\t(not cached)")
                     else:
-                        print(f"    {ws_readable}\t{count} sessions (not cached)")
+                        # Fast listing without counts
+                        print(f"    {ws_readable}")
 
-        print(f"  Total: {total_sessions} sessions")
+        if show_counts:
+            print(f"  Total: {total_sessions} sessions")
 
 
 def cmd_alias_show(args):
@@ -10807,10 +10814,16 @@ def _add_alias_parser(subparsers):
     alias_subparsers = parser.add_subparsers(dest="alias_command", help="Alias subcommand")
 
     # alias list
-    alias_subparsers.add_parser(
+    parser_list = alias_subparsers.add_parser(
         "list",
         help="List all aliases",
-        description="List all aliases with their workspaces and session counts",
+        description="List all aliases with their workspaces",
+    )
+    parser_list.add_argument(
+        "-c",
+        "--counts",
+        action="store_true",
+        help="Show session counts (slower, accesses all sources)",
     )
 
     # alias show
