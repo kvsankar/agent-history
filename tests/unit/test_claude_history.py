@@ -1682,9 +1682,9 @@ class TestCLIAgentFlag:
         assert args.agent == "claude"
 
     def test_agent_flag_accepts_codex(self):
-        """Should accept -a codex (short form)."""
+        """Should accept --agent codex."""
         parser = ch._create_argument_parser()
-        args = parser.parse_args(["-a", "codex", "lsw"])
+        args = parser.parse_args(["--agent", "codex", "lsw"])
         assert args.agent == "codex"
 
     def test_agent_flag_accepts_auto(self):

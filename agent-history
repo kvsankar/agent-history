@@ -186,7 +186,7 @@ class ExportConfig:
             flat=overrides.get("flat", getattr(args, "flat", False)),
             remote=overrides.get("remote", getattr(args, "remote", None)),
             lenient=overrides.get("lenient", getattr(args, "lenient", False)),
-            agent=overrides.get("agent", getattr(args, "agent", "auto")),
+            agent=overrides.get("agent", getattr(args, "agent", None) or "auto"),
         )
 
 
@@ -667,7 +667,8 @@ def print_sessions_output(sessions: list, source_label: str, workspaces_only: bo
         seen = set()
         ordered = []
         for s in sessions:
-            key = s.get("workspace") or s.get("workspace_readable")
+            # Use workspace_readable for dedup - it's consistent across agents
+            key = s.get("workspace_readable") or s.get("workspace")
             if key in seen:
                 continue
             seen.add(key)
@@ -5232,7 +5233,7 @@ def _get_alias_export_options(args) -> dict:
         "minimal": getattr(args, "minimal", False),
         "split_lines": getattr(args, "split", None),
         "flat": getattr(args, "flat", False),
-        "agent": getattr(args, "agent", "auto"),
+        "agent": getattr(args, "agent", None) or "auto",
     }
 
 
@@ -7077,7 +7078,7 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         sys.stderr.write("  • Try: agent-history lsh --windows\n")
         sys.exit(1)
 
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
     sessions = collect_sessions_with_dedup(
         patterns,
         since_date,
@@ -7132,7 +7133,7 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
         sys.exit(1)
 
     workspaces_only = getattr(args, "workspaces_only", False)
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
 
     if workspaces_only:
         raw_workspaces = _get_workspaces_from_dir(wsl_projects_dir)
@@ -7241,7 +7242,7 @@ def _list_local_sessions(args, patterns: list, since_date, until_date):
         until_date: Optional end date filter
     """
     projects_dir = getattr(args, "projects_dir", None)
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
     sessions = collect_sessions_with_dedup(
         patterns,
         since_date,
@@ -7402,7 +7403,7 @@ def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) ->
         sys.stderr.write("  • Try: agent-history lsh --windows\n")
         sys.exit(1)
 
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
     sessions = collect_sessions_with_dedup(
         patterns,
         since_date,
@@ -7442,7 +7443,7 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
         sys.stderr.write("  • Try: agent-history lsh --wsl\n")
         sys.exit(1)
 
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
     sessions = collect_sessions_with_dedup(
         patterns,
         since_date,
@@ -7678,7 +7679,7 @@ def _write_single_file(
 def _get_batch_sessions(args, patterns: list, since_date, until_date) -> list:
     """Get batch sessions based on source type."""
     remote_host = getattr(args, "remote", None)
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
     if not remote_host:
         return _get_batch_local_sessions(patterns, since_date, until_date, agent=agent)
     if is_windows_remote(remote_host):
@@ -7958,7 +7959,7 @@ def cmd_list_all_homes(args):
     """List workspaces or sessions from all homes: local, WSL/Windows, and remotes."""
     in_wsl = is_running_in_wsl()
     workspaces_only = getattr(args, "workspaces_only", False)
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
 
     patterns = getattr(args, "patterns", None)
     if patterns is None:
@@ -8435,7 +8436,7 @@ def _export_local_sessions(args, output_dir: Path, patterns: list, local_label: 
         )
 
         # Get local sessions count before export
-        agent = getattr(args, "agent", "auto")
+        agent = getattr(args, "agent", None) or "auto"
         local_sessions = collect_sessions_with_dedup(patterns, include_cached=False, agent=agent)
         if local_sessions:
             cmd_batch(config)
@@ -8465,7 +8466,7 @@ def _export_windows_from_wsl(args, output_dir: Path, patterns: list) -> dict:
 
                     # Count sessions first
                     windows_projects_dir = get_windows_projects_dir(username)
-                    agent = getattr(args, "agent", "auto")
+                    agent = getattr(args, "agent", None) or "auto"
                     native_sessions = collect_sessions_with_dedup(
                         patterns,
                         projects_dir=windows_projects_dir,
@@ -8518,7 +8519,7 @@ def _export_wsl_from_windows(args, output_dir: Path, patterns: list) -> dict:
 
                     # Count sessions first
                     wsl_projects_dir = get_wsl_projects_dir(distro["name"])
-                    agent = getattr(args, "agent", "auto")
+                    agent = getattr(args, "agent", None) or "auto"
                     wsl_sessions = collect_sessions_with_dedup(
                         patterns,
                         projects_dir=wsl_projects_dir,
@@ -8953,6 +8954,12 @@ def _add_lsw_parser(subparsers):
         action="store_true",
         help="List workspaces from all homes (local + WSL/Windows + remotes)",
     )
+    parser.add_argument(
+        "--agent",
+        choices=["auto", "claude", "codex", "gemini"],
+        default=argparse.SUPPRESS,
+        help="Agent backend to use (default: auto-detect)",
+    )
     return parser
 
 
@@ -9022,6 +9029,12 @@ def _add_lss_parser(subparsers):
         action="store_true",
         dest="this_only",
         help="Use current workspace only, not its alias (if aliased)",
+    )
+    parser.add_argument(
+        "--agent",
+        choices=["auto", "claude", "codex", "gemini"],
+        default=argparse.SUPPRESS,
+        help="Agent backend to use (default: auto-detect)",
     )
     return parser
 
@@ -9160,6 +9173,12 @@ def _add_export_parser(subparsers):
         action="store_true",
         dest="this_only",
         help="Use current workspace only, not its alias (if aliased)",
+    )
+    parser.add_argument(
+        "--agent",
+        choices=["auto", "claude", "codex", "gemini"],
+        default=argparse.SUPPRESS,
+        help="Agent backend to use (default: auto-detect)",
     )
     return parser
 
@@ -9344,6 +9363,12 @@ def _add_stats_parser(subparsers):
         metavar="HOST",
         help="Include remote source (can be repeated)",
     )
+    parser.add_argument(
+        "--agent",
+        choices=["auto", "claude", "codex", "gemini"],
+        default=argparse.SUPPRESS,
+        help="Agent backend to use (default: auto-detect)",
+    )
     return parser
 
 
@@ -9381,10 +9406,9 @@ def _create_argument_parser():
 
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
-    # Global agent selection flag
+    # Global agent selection flag (before subcommand)
     parser.add_argument(
         "--agent",
-        "-a",
         choices=["auto", "claude", "codex", "gemini"],
         default="auto",
         help="Agent backend to use (default: auto-detect based on available data)",
@@ -9554,7 +9578,7 @@ def _dispatch_lsw_additive(args):
     patterns = getattr(args, "patterns", [""])
     remotes = getattr(args, "remotes", [])
     workspaces_only = getattr(args, "workspaces_only", False)
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
 
     all_results = []
 
@@ -9668,7 +9692,7 @@ def _dispatch_lss_additive(args):
     remotes = getattr(args, "remotes", [])
     since_date = getattr(args, "since_date", None)
     until_date = getattr(args, "until_date", None)
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
 
     all_results = []
     local_result = _collect_local_sessions_for_additive(patterns, since_date, until_date, agent)
@@ -9688,7 +9712,7 @@ def _dispatch_lsw(args):
     patterns = args.pattern if args.pattern else [""]
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
 
     if getattr(args, "all_homes", False):
 
@@ -9729,7 +9753,7 @@ def _dispatch_lss_to_alias(alias_name: str, args):
     """Handle lss dispatch to alias command."""
     since_date = parse_date_string(args.since) if args.since else None
     until_date = parse_date_string(args.until) if args.until else None
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
     cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date, agent=agent)
 
 
@@ -9747,7 +9771,7 @@ def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
     LssAdditiveArgs.until_date = until_date
     LssAdditiveArgs.remotes = remotes
     LssAdditiveArgs.local_only = True
-    LssAdditiveArgs.agent = getattr(args, "agent", "auto")
+    LssAdditiveArgs.agent = getattr(args, "agent", None) or "auto"
     _dispatch_lss_additive(LssAdditiveArgs())
 
 
@@ -9757,7 +9781,7 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
     since_date = parse_date_string(args.since) if args.since else None
     until_date = parse_date_string(args.until) if args.until else None
     lss_remotes = getattr(args, "remotes", None) or []
-    agent = getattr(args, "agent", "auto")
+    agent = getattr(args, "agent", None) or "auto"
 
     patterns, alias_for_ws = resolve_patterns_for_command(workspace_list, this_only)
     if alias_for_ws:
@@ -9772,7 +9796,7 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
     LssAllArgs.since_date = since_date
     LssAllArgs.until_date = until_date
     LssAllArgs.remotes = lss_remotes
-    LssAllArgs.agent = getattr(args, "agent", "auto")
+    LssAllArgs.agent = getattr(args, "agent", None) or "auto"
     cmd_list_all_homes(LssAllArgs())
 
 
@@ -9813,7 +9837,7 @@ def _dispatch_lss_local(args, workspace_list: list):
         remote = remote_value
         workspaces_only = False
         projects_dir = projects_dir_override
-        agent = getattr(args, "agent", "auto")
+        agent = getattr(args, "agent", None) or "auto"
 
     LssArgs.patterns = patterns
     cmd_list(LssArgs())
@@ -9923,7 +9947,7 @@ def _build_export_config(args, output_dir: str, patterns: list, remote=None) -> 
         flat=args.flat,
         remote=remote,
         lenient=False,
-        agent=getattr(args, "agent", "auto"),
+        agent=getattr(args, "agent", None) or "auto",
     )
 
 
@@ -9968,7 +9992,7 @@ def _dispatch_export_all_homes(args, output_dir: str, patterns: list, remotes: l
     ExportAllArgs.force = args.force
     ExportAllArgs.minimal = args.minimal
     ExportAllArgs.split = args.split
-    ExportAllArgs.agent = getattr(args, "agent", "auto")
+    ExportAllArgs.agent = getattr(args, "agent", None) or "auto"
     cmd_export_all(ExportAllArgs())
 
 

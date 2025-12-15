@@ -110,7 +110,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
-  --agent, -a {auto,claude,codex,gemini}
+  --agent {auto,claude,codex,gemini}
                         Agent backend to use (default: auto-detect based on
                         available data)
 
