@@ -14,9 +14,11 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query.
 
+See [docs/AGENTS.md](docs/AGENTS.md) for a detailed comparison of storage locations, features, and behaviors.
+
 ## Why This Tool?
 
-Claude Code and Codex CLI leave conversation data fragmented across JSONL files. This tool solves the pain points:
+Claude Code, Codex CLI, and Gemini CLI leave conversation data fragmented across session files. This tool solves the pain points:
 - Finding past work by project, not by opaque session IDs.
 - Getting readable exports for sharing, backup, or audits.
 - Seeing where and how you code across homes (local/WSL/Windows/SSH) with session/token/tool/time metrics.

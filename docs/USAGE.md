@@ -14,6 +14,7 @@ Detailed documentation for all `agent-history` commands and options.
 | `stats` | Show usage statistics and metrics |
 | `reset` | Reset stored data (database, settings, aliases) |
 | `install` | Install CLI + Claude skill and update retention settings |
+| `gemini-index` | Build Gemini hash→path index by scanning directories |
 
 ---
 
@@ -516,6 +517,64 @@ agent-history reset db -y
 - `~/.claude-history/metrics.db` - Metrics database (stats, time tracking)
 - `~/.claude-history/config.json` - Settings (SSH remotes)
 - `~/.claude-history/aliases.json` - Workspace aliases
+
+---
+
+## `gemini-index` - Build Gemini Hash Index
+
+Build the Gemini hash→path index by recursively scanning directories for `.gemini/` folders. This allows `agent-history` to display readable workspace paths instead of SHA-256 hashes when listing or exporting Gemini sessions.
+
+```bash
+agent-history gemini-index [path]
+```
+
+**Arguments:**
+- `path`: Directory to scan recursively (default: current directory)
+
+**How it works:**
+
+Gemini CLI stores sessions in directories named by SHA-256 hashes of project paths:
+```
+~/.gemini/tmp/<sha256-hash>/chats/session-*.json
+```
+
+Without the hash index, workspace names appear as `[hash:abc123de]`. The `gemini-index` command:
+1. Recursively finds directories containing `.gemini/` folders
+2. Computes the SHA-256 hash for each discovered project
+3. Checks if that hash has any Gemini sessions
+4. Adds hash→path mappings to the index
+
+**Examples:**
+```bash
+# Scan current directory
+agent-history gemini-index
+
+# Scan a specific directory
+agent-history gemini-index ~/projects
+
+# Output:
+Scanning /home/user/projects for Gemini projects...
+
+Found 5 directories with .gemini/ folders
+  - 2 have no Gemini sessions (skipped)
+  - 1 already in index
+  - 2 newly added to index:
+    /home/user/projects/webapp → [hash:abc123de]
+    /home/user/projects/api → [hash:def456gh]
+
+Total mappings in index: 8
+```
+
+**Automatic learning:**
+
+The hash index also learns progressively when you run any `agent-history` command from a Gemini project directory. The explicit `gemini-index` command is useful for bulk-populating the index.
+
+**Index location:**
+- `~/.claude-history/gemini_hash_index.json`
+
+**Directories skipped during scan:**
+- Hidden directories (starting with `.`)
+- `node_modules`, `__pycache__`, `venv`, `target`, `build`, `dist`
 
 ---
 
