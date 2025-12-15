@@ -2436,71 +2436,31 @@ def gemini_get_workspace_readable(workspace: str) -> str:
     return workspace
 
 
-def gemini_scan_for_projects(base_path: Path) -> list:
-    """Recursively scan a directory for Gemini project folders (.gemini/).
+def gemini_add_paths_to_index(paths: list) -> dict:
+    """Add explicit paths to the Gemini hash→path index.
 
-    Finds all directories containing a .gemini/ subfolder, which indicates
-    the directory is (or was) a Gemini CLI project.
-
-    Args:
-        base_path: Root directory to scan recursively
-
-    Returns:
-        List of Path objects for directories containing .gemini/
-    """
-    projects = []
-    base_path = base_path.resolve()
-
-    if not base_path.exists() or not base_path.is_dir():
-        return projects
-
-    # Walk the directory tree
-    for root, dirs, _files in os.walk(base_path):
-        root_path = Path(root)
-
-        # Check if this directory has a .gemini subfolder
-        gemini_dir = root_path / ".gemini"
-        if gemini_dir.exists() and gemini_dir.is_dir():
-            projects.append(root_path)
-
-        # Skip hidden directories and common non-project directories
-        dirs[:] = [
-            d
-            for d in dirs
-            if not d.startswith(".")
-            and d not in ("node_modules", "__pycache__", "venv", "target", "build", "dist")
-        ]
-
-    return projects
-
-
-def gemini_build_index_from_scan(base_path: Path) -> dict:
-    """Scan a directory tree and build hash→path index for Gemini projects.
-
-    Finds all .gemini/ folders, computes the hash for each project directory,
-    verifies sessions exist, and updates the index.
+    For each path, computes its SHA-256 hash and checks if Gemini has
+    sessions for that hash. If sessions exist, adds the mapping to the index.
 
     Args:
-        base_path: Root directory to scan recursively
+        paths: List of Path objects to add to the index
 
     Returns:
         Dict with 'added', 'existing', 'no_sessions' counts and 'mappings' list
     """
     result = {"added": 0, "existing": 0, "no_sessions": 0, "mappings": []}
 
-    # Find all directories with .gemini/ folders
-    projects = gemini_scan_for_projects(base_path)
-
-    if not projects:
+    if not paths:
         return result
 
     # Load existing index
     index = gemini_load_hash_index()
     gemini_dir = gemini_get_home_dir()
 
-    for project_path in projects:
-        project_hash = gemini_compute_project_hash(project_path)
-        project_str = str(project_path)
+    for path in paths:
+        resolved_path = path.resolve()
+        project_hash = gemini_compute_project_hash(resolved_path)
+        project_str = str(resolved_path)
 
         # Check if sessions exist for this hash
         hash_dir = gemini_dir / project_hash / "chats"
@@ -2508,18 +2468,30 @@ def gemini_build_index_from_scan(base_path: Path) -> dict:
 
         if not has_sessions:
             result["no_sessions"] += 1
+            result["mappings"].append(
+                {
+                    "path": project_str,
+                    "hash": project_hash[:HASH_DISPLAY_LEN],
+                    "status": "no_sessions",
+                }
+            )
             continue
 
         # Check if already in index
         existing = index["hashes"].get(project_hash)
         if existing == project_str:
             result["existing"] += 1
+            result["mappings"].append(
+                {"path": project_str, "hash": project_hash[:HASH_DISPLAY_LEN], "status": "existing"}
+            )
             continue
 
         # Add to index
         index["hashes"][project_hash] = project_str
         result["added"] += 1
-        result["mappings"].append({"path": project_str, "hash": project_hash[:HASH_DISPLAY_LEN]})
+        result["mappings"].append(
+            {"path": project_str, "hash": project_hash[:HASH_DISPLAY_LEN], "status": "added"}
+        )
 
     # Save updated index
     if result["added"] > 0:
@@ -8237,41 +8209,53 @@ def cmd_reset(args):
 
 
 def cmd_gemini_index(args):
-    """Build Gemini hash→path index by scanning for .gemini/ folders."""
-    scan_path = Path(getattr(args, "path", ".")).expanduser().resolve()
+    """Add project paths to Gemini hash→path index."""
+    paths = getattr(args, "paths", None) or ["."]
 
-    if not scan_path.exists():
-        sys.stderr.write(f"Error: Path does not exist: {scan_path}\n")
+    # Convert to Path objects and validate
+    path_objects = []
+    for p in paths:
+        path = Path(p).expanduser().resolve()
+        if not path.exists():
+            sys.stderr.write(f"Warning: Path does not exist: {path}\n")
+            continue
+        if not path.is_dir():
+            sys.stderr.write(f"Warning: Path is not a directory: {path}\n")
+            continue
+        path_objects.append(path)
+
+    if not path_objects:
+        sys.stderr.write("Error: No valid paths provided\n")
         sys.exit(1)
 
-    if not scan_path.is_dir():
-        sys.stderr.write(f"Error: Path is not a directory: {scan_path}\n")
-        sys.exit(1)
+    print(f"Adding {len(path_objects)} path(s) to Gemini index...\n")
 
-    print(f"Scanning {scan_path} for Gemini projects...")
+    result = gemini_add_paths_to_index(path_objects)
 
-    result = gemini_build_index_from_scan(scan_path)
+    # Report results for each path
+    for mapping in result["mappings"]:
+        status = mapping["status"]
+        path = mapping["path"]
+        hash_short = mapping["hash"]
 
-    # Report results
-    total_found = result["added"] + result["existing"] + result["no_sessions"]
-    print(f"\nFound {total_found} directories with .gemini/ folders")
+        if status == "added":
+            print(f"  ✅ {path}")
+            print(f"     → [hash:{hash_short}] (added)")
+        elif status == "existing":
+            print(f"  ⏭️  {path}")
+            print(f"     → [hash:{hash_short}] (already in index)")
+        elif status == "no_sessions":
+            print(f"  ❌ {path}")
+            print(f"     → [hash:{hash_short}] (no Gemini sessions found)")
 
-    if result["no_sessions"] > 0:
-        print(f"  - {result['no_sessions']} have no Gemini sessions (skipped)")
-
-    if result["existing"] > 0:
-        print(f"  - {result['existing']} already in index")
-
-    if result["added"] > 0:
-        print(f"  - {result['added']} newly added to index:")
-        for mapping in result["mappings"]:
-            print(f"    {mapping['path']} → [hash:{mapping['hash']}]")
-    elif total_found > 0 and result["no_sessions"] == 0:
-        print("\nIndex is up to date.")
+    # Summary
+    print(
+        f"\nSummary: {result['added']} added, {result['existing']} existing, {result['no_sessions']} skipped"
+    )
 
     # Show current index stats
     index = gemini_load_hash_index()
-    print(f"\nTotal mappings in index: {len(index['hashes'])}")
+    print(f"Total mappings in index: {len(index['hashes'])}")
 
 
 def _filter_fetch_workspaces(workspaces: list, pattern: str) -> list:
@@ -9436,19 +9420,20 @@ def _add_gemini_index_parser(subparsers):
     """Add gemini-index subparser."""
     parser = subparsers.add_parser(
         "gemini-index",
-        help="Build Gemini hash→path index by scanning for .gemini/ folders",
+        help="Add project paths to Gemini hash→path index",
         description=(
-            "Recursively scan directories for .gemini/ folders and build a "
-            "hash-to-path index. This allows agent-history to display readable "
-            "workspace paths instead of SHA-256 hashes for Gemini sessions."
+            "Add project directory paths to the Gemini hash-to-path index. "
+            "For each path, computes its SHA-256 hash and checks if Gemini "
+            "has sessions for that project. If sessions exist, adds the mapping "
+            "so agent-history can display readable workspace paths instead of hashes."
         ),
     )
 
     parser.add_argument(
-        "path",
-        nargs="?",
-        default=".",
-        help="Directory to scan recursively (default: current directory)",
+        "paths",
+        nargs="*",
+        default=["."],
+        help="Project directories to add (default: current directory)",
     )
     return parser
 
