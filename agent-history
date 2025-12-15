@@ -2305,6 +2305,129 @@ def gemini_extract_metrics_from_json(json_file: Path) -> dict:
 
 
 # ============================================================================
+# Gemini Hash Index - Progressive hash-to-path mapping
+# ============================================================================
+
+GEMINI_HASH_INDEX_VERSION = 1
+
+
+def gemini_get_hash_index_file() -> Path:
+    """Get path to Gemini hash index file (~/.claude-history/gemini_hash_index.json)."""
+    return get_config_dir() / "gemini_hash_index.json"
+
+
+def gemini_load_hash_index() -> dict:
+    """Load Gemini hash-to-path index from file.
+
+    Returns:
+        Index dict with keys: version, hashes
+        hashes maps project hash (str) to absolute path (str)
+    """
+    index_file = gemini_get_hash_index_file()
+    if index_file.exists():
+        try:
+            with open(index_file, encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("version") == GEMINI_HASH_INDEX_VERSION:
+                    return data
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {"version": GEMINI_HASH_INDEX_VERSION, "hashes": {}}
+
+
+def gemini_save_hash_index(index: dict) -> None:
+    """Save Gemini hash-to-path index to file."""
+    index_file = gemini_get_hash_index_file()
+    index_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(index_file, "w", encoding="utf-8") as f:
+        json.dump(index, f, indent=2)
+
+
+def gemini_compute_project_hash(path: Path) -> str:
+    """Compute SHA-256 hash of a path, matching Gemini CLI's approach.
+
+    Gemini CLI uses SHA-256 of the absolute path string as the project identifier.
+
+    Args:
+        path: Path to hash (will be resolved to absolute)
+
+    Returns:
+        SHA-256 hex digest of the absolute path string
+    """
+    import hashlib
+
+    abs_path = str(path.resolve())
+    return hashlib.sha256(abs_path.encode("utf-8")).hexdigest()
+
+
+def gemini_update_hash_index_from_cwd() -> dict:
+    """Update Gemini hash index based on current working directory.
+
+    Called on each agent-history run to progressively build hash→path mapping.
+    Checks if the current directory's hash exists in Gemini's session storage,
+    and if so, records the mapping.
+
+    Returns:
+        Updated hash index dict
+    """
+    index = gemini_load_hash_index()
+    cwd = Path.cwd()
+    cwd_hash = gemini_compute_project_hash(cwd)
+
+    # Check if this hash exists in Gemini's session storage
+    gemini_dir = gemini_get_home_dir()
+    hash_dir = gemini_dir / cwd_hash / "chats"
+
+    if hash_dir.exists() and any(hash_dir.glob("session-*.json")):
+        # Found Gemini sessions for this directory - record the mapping
+        current_path = str(cwd.resolve())
+        existing_path = index["hashes"].get(cwd_hash)
+
+        if existing_path != current_path:
+            index["hashes"][cwd_hash] = current_path
+            gemini_save_hash_index(index)
+
+    return index
+
+
+def gemini_get_path_for_hash(project_hash: str) -> str | None:
+    """Look up the real path for a Gemini project hash.
+
+    Args:
+        project_hash: SHA-256 hash of the project path
+
+    Returns:
+        Absolute path string if known, None otherwise
+    """
+    index = gemini_load_hash_index()
+    return index["hashes"].get(project_hash)
+
+
+def gemini_get_workspace_readable(workspace_hash: str) -> str:
+    """Get human-readable workspace name for a Gemini project hash.
+
+    First checks the hash index for a known path, then falls back to
+    displaying the truncated hash.
+
+    Args:
+        workspace_hash: SHA-256 hash of the project path
+
+    Returns:
+        Readable workspace name (path if known, otherwise [hash:xxxxxxxx])
+    """
+    # Try to look up the real path
+    real_path = gemini_get_path_for_hash(workspace_hash)
+    if real_path:
+        # Return a normalized/shortened version of the path
+        return normalize_workspace_name(path_to_encoded_workspace(real_path), verify_local=False)
+
+    # Fall back to truncated hash display
+    if len(workspace_hash) > HASH_DISPLAY_LEN:
+        return f"[hash:{workspace_hash[:HASH_DISPLAY_LEN]}]"
+    return workspace_hash
+
+
+# ============================================================================
 # Gemini Backend - Session Scanning
 # ============================================================================
 
@@ -2357,10 +2480,8 @@ def _gemini_build_session_dict(
     json_file: Path, workspace: str, modified: datetime, skip_message_count: bool
 ) -> dict:
     """Build a session dictionary for a Gemini session file."""
-    # For Gemini, workspace is the project hash - show first 8 chars for readability
-    workspace_readable = (
-        f"[hash:{workspace[:HASH_DISPLAY_LEN]}]" if len(workspace) > HASH_DISPLAY_LEN else workspace
-    )
+    # Use hash index to get readable workspace name if known
+    workspace_readable = gemini_get_workspace_readable(workspace)
     return {
         "agent": AGENT_GEMINI,
         "workspace": workspace,
@@ -9930,6 +10051,14 @@ def main():
     if not hasattr(args, "command") or args.command is None:
         parser.print_help()
         sys.exit(0)
+
+    # Progressively build Gemini hash→path index from current directory
+    # This learns the mapping as the user runs agent-history from different directories
+    try:
+        gemini_update_hash_index_from_cwd()
+    except Exception:
+        pass  # Non-critical, don't fail if index update fails
+
     _dispatch_command(args)
 
 

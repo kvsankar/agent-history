@@ -1094,6 +1094,159 @@ class TestGeminiFormatThoughts:
         assert "123" not in result
 
 
+class TestGeminiHashIndex:
+    """Tests for Gemini progressive hash-to-path index."""
+
+    def test_get_hash_index_file_returns_expected_path(self, monkeypatch, tmp_path):
+        """gemini_get_hash_index_file should return path in config dir."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        index_file = ch.gemini_get_hash_index_file()
+        assert index_file.name == "gemini_hash_index.json"
+        assert ".claude-history" in str(index_file)
+
+    def test_load_hash_index_returns_empty_for_missing_file(self, monkeypatch, tmp_path):
+        """gemini_load_hash_index should return empty structure if file doesn't exist."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        index = ch.gemini_load_hash_index()
+        assert index["version"] == ch.GEMINI_HASH_INDEX_VERSION
+        assert index["hashes"] == {}
+
+    def test_load_hash_index_reads_existing_file(self, monkeypatch, tmp_path):
+        """gemini_load_hash_index should load existing index file."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True)
+        index_file = config_dir / "gemini_hash_index.json"
+        test_data = {
+            "version": ch.GEMINI_HASH_INDEX_VERSION,
+            "hashes": {"abc123def456": "/home/user/project"},
+        }
+        with open(index_file, "w") as f:
+            json.dump(test_data, f)
+
+        loaded = ch.gemini_load_hash_index()
+        assert loaded["hashes"] == {"abc123def456": "/home/user/project"}
+
+    def test_save_hash_index_creates_file(self, monkeypatch, tmp_path):
+        """gemini_save_hash_index should create index file."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        test_index = {
+            "version": ch.GEMINI_HASH_INDEX_VERSION,
+            "hashes": {"hash123": "/path/to/project"},
+        }
+        ch.gemini_save_hash_index(test_index)
+
+        index_file = tmp_path / ".claude-history" / "gemini_hash_index.json"
+        assert index_file.exists()
+        with open(index_file) as f:
+            saved = json.load(f)
+        assert saved == test_index
+
+    def test_compute_project_hash_returns_sha256(self, tmp_path):
+        """gemini_compute_project_hash should return consistent SHA-256 hash."""
+        test_dir = tmp_path / "myproject"
+        test_dir.mkdir()
+
+        hash1 = ch.gemini_compute_project_hash(test_dir)
+        hash2 = ch.gemini_compute_project_hash(test_dir)
+
+        # Should be consistent
+        assert hash1 == hash2
+        # Should be 64 hex characters (SHA-256)
+        assert len(hash1) == 64
+        assert all(c in "0123456789abcdef" for c in hash1)
+
+    def test_compute_project_hash_different_for_different_paths(self, tmp_path):
+        """Different paths should produce different hashes."""
+        dir1 = tmp_path / "project1"
+        dir2 = tmp_path / "project2"
+        dir1.mkdir()
+        dir2.mkdir()
+
+        hash1 = ch.gemini_compute_project_hash(dir1)
+        hash2 = ch.gemini_compute_project_hash(dir2)
+
+        assert hash1 != hash2
+
+    def test_get_path_for_hash_returns_none_when_unknown(self, monkeypatch, tmp_path):
+        """gemini_get_path_for_hash should return None for unknown hashes."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        result = ch.gemini_get_path_for_hash("unknown_hash_123")
+        assert result is None
+
+    def test_get_path_for_hash_returns_path_when_known(self, monkeypatch, tmp_path):
+        """gemini_get_path_for_hash should return path for known hashes."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True)
+        index_file = config_dir / "gemini_hash_index.json"
+        test_data = {
+            "version": ch.GEMINI_HASH_INDEX_VERSION,
+            "hashes": {"known_hash": "/home/user/myproject"},
+        }
+        with open(index_file, "w") as f:
+            json.dump(test_data, f)
+
+        result = ch.gemini_get_path_for_hash("known_hash")
+        assert result == "/home/user/myproject"
+
+    def test_get_workspace_readable_uses_hash_index(self, monkeypatch, tmp_path):
+        """gemini_get_workspace_readable should use index for known hashes."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True)
+        index_file = config_dir / "gemini_hash_index.json"
+        test_data = {
+            "version": ch.GEMINI_HASH_INDEX_VERSION,
+            "hashes": {"abc123def456xyz": "/home/user/myproject"},
+        }
+        with open(index_file, "w") as f:
+            json.dump(test_data, f)
+
+        result = ch.gemini_get_workspace_readable("abc123def456xyz")
+        # Should show the path, not the hash
+        assert "myproject" in result
+        assert "[hash:" not in result
+
+    def test_get_workspace_readable_falls_back_to_hash(self, monkeypatch, tmp_path):
+        """gemini_get_workspace_readable should fall back to hash display."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        result = ch.gemini_get_workspace_readable("unknown_hash_very_long_string")
+        assert "[hash:" in result
+        assert "unknown_" in result
+
+    def test_update_hash_index_from_cwd_learns_mapping(
+        self, monkeypatch, tmp_path, sample_gemini_session
+    ):
+        """gemini_update_hash_index_from_cwd should learn hash→path mapping."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Create a test directory
+        project_dir = tmp_path / "test_project"
+        project_dir.mkdir()
+
+        # Compute its hash
+        project_hash = ch.gemini_compute_project_hash(project_dir)
+
+        # Create Gemini session storage for this hash
+        gemini_dir = tmp_path / ".gemini" / "tmp" / project_hash / "chats"
+        gemini_dir.mkdir(parents=True)
+        session_file = gemini_dir / "session-test.json"
+        with open(session_file, "w") as f:
+            json.dump(sample_gemini_session, f)
+
+        # Point GEMINI_SESSIONS_DIR to our test directory
+        monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / ".gemini" / "tmp"))
+
+        # Change to the project directory and update index
+        monkeypatch.chdir(project_dir)
+        index = ch.gemini_update_hash_index_from_cwd()
+
+        # Should have learned the mapping
+        assert project_hash in index["hashes"]
+        assert index["hashes"][project_hash] == str(project_dir.resolve())
+
+
 class TestGeminiSessionScanning:
     """Tests for gemini_scan_sessions."""
 
