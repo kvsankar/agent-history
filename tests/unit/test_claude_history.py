@@ -1371,18 +1371,24 @@ class TestGeminiIndexCommand:
         assert result["existing"] == 0
         assert result["no_sessions"] == 0
 
-    def test_cmd_gemini_index_validates_paths(self, capsys):
-        """cmd_gemini_index should warn on nonexistent paths."""
+    def test_cmd_gemini_index_handles_nonexistent_paths(self, capsys):
+        """cmd_gemini_index should process nonexistent paths (hash may still have sessions)."""
         from types import SimpleNamespace
 
-        args = SimpleNamespace(paths=["/nonexistent/path/that/does/not/exist"])
+        args = SimpleNamespace(
+            paths=["/nonexistent/path/that/does/not/exist"],
+            list_index=False,
+            full_hash=False,
+        )
 
-        with pytest.raises(SystemExit) as exc_info:
-            ch.cmd_gemini_index(args)
+        # Should not raise - nonexistent paths are allowed
+        ch.cmd_gemini_index(args)
 
-        assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "does not exist" in captured.err or "No valid paths" in captured.err
+        # Should note that path doesn't exist
+        assert "path doesn't exist" in captured.out
+        # Should still compute hash and check for sessions
+        assert "no Gemini sessions found" in captured.out
 
 
 class TestGeminiSessionScanning:

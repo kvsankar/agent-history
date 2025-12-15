@@ -2461,6 +2461,7 @@ def gemini_add_paths_to_index(paths: list) -> dict:
         resolved_path = path.resolve()
         project_hash = gemini_compute_project_hash(resolved_path)
         project_str = str(resolved_path)
+        path_missing = not resolved_path.exists()
 
         # Check if sessions exist for this hash
         hash_dir = gemini_dir / project_hash / "chats"
@@ -2473,6 +2474,7 @@ def gemini_add_paths_to_index(paths: list) -> dict:
                     "path": project_str,
                     "hash": project_hash[:HASH_DISPLAY_LEN],
                     "status": "no_sessions",
+                    "path_missing": path_missing,
                 }
             )
             continue
@@ -2482,7 +2484,12 @@ def gemini_add_paths_to_index(paths: list) -> dict:
         if existing == project_str:
             result["existing"] += 1
             result["mappings"].append(
-                {"path": project_str, "hash": project_hash[:HASH_DISPLAY_LEN], "status": "existing"}
+                {
+                    "path": project_str,
+                    "hash": project_hash[:HASH_DISPLAY_LEN],
+                    "status": "existing",
+                    "path_missing": path_missing,
+                }
             )
             continue
 
@@ -2490,7 +2497,12 @@ def gemini_add_paths_to_index(paths: list) -> dict:
         index["hashes"][project_hash] = project_str
         result["added"] += 1
         result["mappings"].append(
-            {"path": project_str, "hash": project_hash[:HASH_DISPLAY_LEN], "status": "added"}
+            {
+                "path": project_str,
+                "hash": project_hash[:HASH_DISPLAY_LEN],
+                "status": "added",
+                "path_missing": path_missing,
+            }
         )
 
     # Save updated index
@@ -8229,20 +8241,14 @@ def _gemini_index_list(full_hash: bool):
 
 def _gemini_index_add(paths: list):
     """Add paths to the Gemini hash index."""
-    # Convert to Path objects and validate
+    # Convert to Path objects (allow non-existent paths - hash may still have sessions)
     path_objects = []
     for p in paths:
         path = Path(p).expanduser().resolve()
-        if not path.exists():
-            sys.stderr.write(f"Warning: Path does not exist: {path}\n")
-            continue
-        if not path.is_dir():
-            sys.stderr.write(f"Warning: Path is not a directory: {path}\n")
-            continue
         path_objects.append(path)
 
     if not path_objects:
-        sys.stderr.write("Error: No valid paths provided\n")
+        sys.stderr.write("Error: No paths provided\n")
         sys.exit(1)
 
     print(f"Adding {len(path_objects)} path(s) to Gemini index...\n")
@@ -8254,15 +8260,17 @@ def _gemini_index_add(paths: list):
         status = mapping["status"]
         path = mapping["path"]
         hash_short = mapping["hash"]
+        path_missing = mapping.get("path_missing", False)
+        missing_note = " [path doesn't exist]" if path_missing else ""
 
         if status == "added":
-            print(f"  ✅ {path}")
+            print(f"  ✅ {path}{missing_note}")
             print(f"     → [hash:{hash_short}] (added)")
         elif status == "existing":
-            print(f"  ⏭️  {path}")
+            print(f"  ⏭️  {path}{missing_note}")
             print(f"     → [hash:{hash_short}] (already in index)")
         elif status == "no_sessions":
-            print(f"  ❌ {path}")
+            print(f"  ❌ {path}{missing_note}")
             print(f"     → [hash:{hash_short}] (no Gemini sessions found)")
 
     # Summary
