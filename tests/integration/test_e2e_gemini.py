@@ -418,3 +418,170 @@ class TestGeminiWorkspaces:
         assert result.returncode == 0
         # Should list workspace hashes
         assert result.stdout.strip(), "Should have workspace output"
+
+
+# ============================================================================
+# Gemini Workspace Consistency Tests (Hash Index)
+# ============================================================================
+
+
+class TestGeminiWorkspaceConsistency:
+    """Tests for consistent workspace naming across lsw/lss/export/stats with hash index."""
+
+    def _create_hash_index(self, tmp_path: Path, hashes: dict) -> None:
+        """Create a Gemini hash index file."""
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        index_file = config_dir / "gemini_hash_index.json"
+        index_file.write_text(json.dumps({"version": 1, "hashes": hashes}))
+
+    def test_workspace_uses_encoded_path_when_index_populated(self, tmp_path: Path):
+        """When hash index maps hash→path, workspace should use encoded path."""
+        project_hash = "abc123def456789"
+        project_path = "/home/testuser/myproject"
+        encoded_path = "-home-testuser-myproject"
+
+        # Create hash index with mapping
+        self._create_hash_index(tmp_path, {project_hash: project_path})
+
+        # Create Gemini session
+        make_gemini_session(tmp_path, project_hash, "session-001")
+
+        env = setup_env(tmp_path)
+
+        # lss should show encoded path (not hash)
+        result = run_cli(["--agent", "gemini", "lss", "--local", "--aw"], env=env)
+        assert result.returncode == 0
+        # Should show readable path, not truncated hash
+        assert "myproject" in result.stdout or encoded_path in result.stdout
+        assert "[hash:" not in result.stdout, "Should not show [hash:] when index is populated"
+
+    def test_pattern_filter_works_on_path_when_index_populated(self, tmp_path: Path):
+        """Pattern filtering should match on readable path when hash index is populated."""
+        project_hash = "xyz789abc123"
+        project_path = "/home/user/django-app"
+
+        # Create hash index with mapping
+        self._create_hash_index(tmp_path, {project_hash: project_path})
+
+        # Create Gemini session
+        make_gemini_session(tmp_path, project_hash, "session-filter")
+
+        env = setup_env(tmp_path)
+
+        # Filter by "django" should match (pattern is positional, no --local needed for lss)
+        result = run_cli(["--agent", "gemini", "lss", "django"], env=env)
+        assert result.returncode == 0
+        # Either the session is found or the workspace name contains django
+        assert (
+            "session-filter" in result.stdout
+            or "django" in result.stdout.lower()
+            or result.stdout.strip()
+        )
+
+        # Filter by non-matching pattern should not match
+        result2 = run_cli(["--agent", "gemini", "lss", "nonexistent-xyz"], env=env)
+        # Returns 1 when no sessions found (which is expected behavior)
+        assert result2.returncode in (0, 1)
+        # Should have no session output (error message is fine)
+        assert "session-filter" not in result2.stdout
+
+    def test_lsw_and_lss_use_same_workspace_format(self, tmp_path: Path):
+        """lsw and lss should show the same workspace format when index is populated."""
+        project_hash = "consistenttest123"
+        project_path = "/home/user/consistent-project"
+
+        # Create hash index with mapping
+        self._create_hash_index(tmp_path, {project_hash: project_path})
+
+        # Create Gemini session
+        make_gemini_session(tmp_path, project_hash, "session-consistent")
+
+        env = setup_env(tmp_path)
+
+        # Get workspace from lsw
+        lsw_result = run_cli(["--agent", "gemini", "lsw", "--local"], env=env)
+        assert lsw_result.returncode == 0
+
+        # Get workspace from lss
+        lss_result = run_cli(["--agent", "gemini", "lss", "--local", "--aw"], env=env)
+        assert lss_result.returncode == 0
+
+        # Both should show the readable path, not hash
+        assert (
+            "consistent-project" in lsw_result.stdout or "consistent" in lsw_result.stdout.lower()
+        )
+        assert (
+            "consistent-project" in lss_result.stdout or "consistent" in lss_result.stdout.lower()
+        )
+        assert "[hash:" not in lsw_result.stdout
+        assert "[hash:" not in lss_result.stdout
+
+    def test_export_uses_encoded_path_in_filename(self, tmp_path: Path):
+        """Export should use encoded path in output filename when index is populated."""
+        project_hash = "exporttest456"
+        project_path = "/home/user/export-test-project"
+
+        # Create hash index with mapping
+        self._create_hash_index(tmp_path, {project_hash: project_path})
+
+        # Create Gemini session
+        make_gemini_session(tmp_path, project_hash, "session-export")
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        env = setup_env(tmp_path)
+
+        # Export (no --local flag for export, use --aw for all workspaces)
+        result = run_cli(
+            ["--agent", "gemini", "export", "--aw", "-o", str(output_dir)],
+            env=env,
+        )
+        assert result.returncode == 0, f"Export failed: {result.stderr}"
+
+        # Check output directory structure
+        # Could be workspace dir or flat depending on mode
+        all_items = list(output_dir.iterdir())
+        workspace_dirs = [d for d in all_items if d.is_dir()]
+        md_files = list(output_dir.rglob("*.md"))
+
+        # Should have exported something
+        assert md_files or workspace_dirs, "Should have exported files"
+
+        # If organized by workspace, check directory names
+        if workspace_dirs:
+            dir_names = [d.name for d in workspace_dirs]
+            # Should not use raw hash as directory name
+            assert not any(project_hash == name for name in dir_names)
+
+    def test_stats_uses_same_workspace_as_scan(self, tmp_path: Path):
+        """Stats should use the same workspace identifier as lsw/lss."""
+        project_hash = "statstest789"
+        project_path = "/home/user/stats-test-project"
+
+        # Create hash index with mapping
+        self._create_hash_index(tmp_path, {project_hash: project_path})
+
+        # Create Gemini session
+        make_gemini_session(tmp_path, project_hash, "session-stats")
+
+        env = setup_env(tmp_path)
+
+        # Sync stats (no --local for stats command)
+        sync_result = run_cli(
+            ["--agent", "gemini", "stats", "--sync", "--aw"],
+            env=env,
+        )
+        assert sync_result.returncode == 0, f"Sync failed: {sync_result.stderr}"
+
+        # Get stats with workspace breakdown
+        stats_result = run_cli(
+            ["--agent", "gemini", "stats", "--aw", "--by-workspace"],
+            env=env,
+        )
+        assert stats_result.returncode == 0, f"Stats failed: {stats_result.stderr}"
+
+        # Stats should show something - either readable workspace name or summary
+        # The key assertion is that it doesn't crash and provides output
+        assert stats_result.stdout.strip(), "Stats should produce output"

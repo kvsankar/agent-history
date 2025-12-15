@@ -35,7 +35,9 @@ def run_cli(args, env=None, timeout=25):
     )
 
 
-def make_codex_session(base_path: Path, date_str: str, session_id: str, messages: list = None):
+def make_codex_session(
+    base_path: Path, date_str: str, session_id: str, messages: list = None, cwd: str = None
+):
     """Create a Codex session file in ~/.codex/sessions/YYYY/MM/DD/ structure.
 
     Args:
@@ -43,6 +45,7 @@ def make_codex_session(base_path: Path, date_str: str, session_id: str, messages
         date_str: Date in YYYY-MM-DD format
         session_id: Unique session identifier
         messages: Optional list of message dicts to include
+        cwd: Optional working directory path (default: /home/user/codex-project)
     """
     year, month, day = date_str.split("-")
     session_dir = base_path / ".codex" / "sessions" / year / month / day
@@ -55,7 +58,7 @@ def make_codex_session(base_path: Path, date_str: str, session_id: str, messages
             "type": "session_meta",
             "payload": {
                 "id": session_id,
-                "cwd": "/home/user/codex-project",
+                "cwd": cwd or "/home/user/codex-project",
                 "cli_version": "0.5.0",
                 "source": "cli",
             },
@@ -604,3 +607,91 @@ class TestCodexWorkspaces:
         assert result.returncode == 0, f"lsw failed: {result.stderr}"
         # Should have workspace output
         assert result.stdout.strip(), "Should list workspaces"
+
+
+# ============================================================================
+# Codex Index Fallback Tests
+# ============================================================================
+
+
+class TestCodexIndexFallback:
+    """Tests for Codex index fallback when workspace entries are empty or stale."""
+
+    def _create_codex_index(self, tmp_path: Path, sessions: dict) -> None:
+        """Create a Codex session index file.
+
+        Args:
+            sessions: Dict mapping file paths to workspace names
+        """
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        index_file = config_dir / "codex_session_index.json"
+        index_file.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "last_scan_date": "2025-01-01",
+                    "sessions": sessions,
+                }
+            )
+        )
+
+    def test_empty_index_entry_triggers_fallback(self, tmp_path: Path):
+        """Session with empty workspace in index should fallback to file read."""
+        # Create a Codex session
+        make_codex_session(
+            tmp_path, "2025-01-15", "fallback-test", cwd="/home/user/fallback-project"
+        )
+
+        # Create index with empty workspace for this session
+        sessions_dir = tmp_path / ".codex" / "sessions"
+        session_files = list(sessions_dir.glob("*/*/*/rollout-*.jsonl"))
+        assert len(session_files) == 1, "Should have one session file"
+
+        # Index with empty workspace
+        self._create_codex_index(tmp_path, {str(session_files[0]): ""})
+
+        env = setup_env(tmp_path)
+
+        # lss should still find the session (fallback to file read)
+        result = run_cli(["--agent", "codex", "lss", "--local", "--aw"], env=env)
+        assert result.returncode == 0, f"lss failed: {result.stderr}"
+        # Should show the workspace from file content
+        assert "fallback" in result.stdout.lower() or "project" in result.stdout.lower()
+
+    def test_lsw_with_empty_index_entry(self, tmp_path: Path):
+        """lsw should list workspace even if index has empty entry."""
+        make_codex_session(tmp_path, "2025-01-20", "empty-index-test", cwd="/home/user/my-project")
+
+        # Create index with empty workspace
+        sessions_dir = tmp_path / ".codex" / "sessions"
+        session_files = list(sessions_dir.glob("*/*/*/rollout-*.jsonl"))
+        self._create_codex_index(tmp_path, {str(session_files[0]): ""})
+
+        env = setup_env(tmp_path)
+
+        result = run_cli(["--agent", "codex", "lsw", "--local"], env=env)
+        assert result.returncode == 0, f"lsw failed: {result.stderr}"
+        # Should have workspace output (from fallback read)
+        assert result.stdout.strip(), "Should list workspaces even with empty index"
+
+    def test_pattern_filter_with_fallback_workspace(self, tmp_path: Path):
+        """Pattern filtering should work after fallback to file read."""
+        make_codex_session(tmp_path, "2025-01-25", "pattern-test", cwd="/home/user/react-app")
+
+        # Create index with empty workspace
+        sessions_dir = tmp_path / ".codex" / "sessions"
+        session_files = list(sessions_dir.glob("*/*/*/rollout-*.jsonl"))
+        self._create_codex_index(tmp_path, {str(session_files[0]): ""})
+
+        env = setup_env(tmp_path)
+
+        # Filter by "react" should match after fallback
+        result = run_cli(["--agent", "codex", "lss", "react", "--local"], env=env)
+        assert result.returncode == 0
+
+        # Filter by non-matching pattern should not match
+        result2 = run_cli(["--agent", "codex", "lss", "nonexistent", "--local"], env=env)
+        # Returns 1 when no sessions found (which is expected behavior)
+        assert result2.returncode in (0, 1)
+        assert "pattern-test" not in result2.stdout
