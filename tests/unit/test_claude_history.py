@@ -1247,6 +1247,144 @@ class TestGeminiHashIndex:
         assert index["hashes"][project_hash] == str(project_dir.resolve())
 
 
+class TestGeminiIndexCommand:
+    """Tests for gemini-index command (recursive .gemini/ folder scanning)."""
+
+    def test_scan_for_projects_finds_gemini_folders(self, tmp_path):
+        """gemini_scan_for_projects should find directories with .gemini/ folders."""
+        # Create project with .gemini/ folder
+        project1 = tmp_path / "project1"
+        project1.mkdir()
+        (project1 / ".gemini").mkdir()
+
+        project2 = tmp_path / "subdir" / "project2"
+        project2.mkdir(parents=True)
+        (project2 / ".gemini").mkdir()
+
+        # Create directory without .gemini/
+        (tmp_path / "no_gemini").mkdir()
+
+        projects = ch.gemini_scan_for_projects(tmp_path)
+
+        assert len(projects) == 2
+        project_paths = [str(p) for p in projects]
+        assert str(project1) in project_paths
+        assert str(project2) in project_paths
+
+    def test_scan_for_projects_empty_dir(self, tmp_path):
+        """gemini_scan_for_projects should return empty list for empty directory."""
+        projects = ch.gemini_scan_for_projects(tmp_path)
+        assert projects == []
+
+    def test_scan_for_projects_skips_hidden_dirs(self, tmp_path):
+        """gemini_scan_for_projects should skip hidden directories."""
+        # Create hidden directory with .gemini/
+        hidden_project = tmp_path / ".hidden_project"
+        hidden_project.mkdir()
+        (hidden_project / ".gemini").mkdir()
+
+        projects = ch.gemini_scan_for_projects(tmp_path)
+        assert len(projects) == 0
+
+    def test_build_index_from_scan_adds_new_mappings(
+        self, monkeypatch, tmp_path, sample_gemini_session
+    ):
+        """gemini_build_index_from_scan should add new hash→path mappings."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Create a project directory with .gemini/ folder
+        project_dir = tmp_path / "my_project"
+        project_dir.mkdir()
+        (project_dir / ".gemini").mkdir()
+
+        # Compute its hash
+        project_hash = ch.gemini_compute_project_hash(project_dir)
+
+        # Create Gemini sessions directory with a session for this hash
+        gemini_sessions = tmp_path / ".gemini" / "tmp" / project_hash / "chats"
+        gemini_sessions.mkdir(parents=True)
+        session_file = gemini_sessions / "session-test.json"
+        with open(session_file, "w") as f:
+            json.dump(sample_gemini_session, f)
+
+        monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / ".gemini" / "tmp"))
+
+        result = ch.gemini_build_index_from_scan(tmp_path)
+
+        assert result["added"] == 1
+        assert result["existing"] == 0
+        assert len(result["mappings"]) == 1
+        assert result["mappings"][0]["path"] == str(project_dir.resolve())
+        assert result["mappings"][0]["hash"] == project_hash[:8]
+
+    def test_build_index_from_scan_skips_existing(
+        self, monkeypatch, tmp_path, sample_gemini_session
+    ):
+        """gemini_build_index_from_scan should skip already indexed paths."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Create a project with .gemini/
+        project_dir = tmp_path / "existing_project"
+        project_dir.mkdir()
+        (project_dir / ".gemini").mkdir()
+
+        project_hash = ch.gemini_compute_project_hash(project_dir)
+
+        # Create Gemini sessions
+        gemini_sessions = tmp_path / ".gemini" / "tmp" / project_hash / "chats"
+        gemini_sessions.mkdir(parents=True)
+        session_file = gemini_sessions / "session-test.json"
+        with open(session_file, "w") as f:
+            json.dump(sample_gemini_session, f)
+
+        monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / ".gemini" / "tmp"))
+
+        # Pre-populate index
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True)
+        index_file = config_dir / "gemini_hash_index.json"
+        existing_index = {
+            "version": ch.GEMINI_HASH_INDEX_VERSION,
+            "hashes": {project_hash: str(project_dir.resolve())},
+        }
+        with open(index_file, "w") as f:
+            json.dump(existing_index, f)
+
+        result = ch.gemini_build_index_from_scan(tmp_path)
+
+        assert result["added"] == 0
+        assert result["existing"] == 1
+
+    def test_build_index_from_scan_skips_no_sessions(self, monkeypatch, tmp_path):
+        """gemini_build_index_from_scan should skip projects without Gemini sessions."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Create project with .gemini/ but no sessions
+        project_dir = tmp_path / "no_sessions_project"
+        project_dir.mkdir()
+        (project_dir / ".gemini").mkdir()
+
+        monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / ".gemini" / "tmp"))
+
+        result = ch.gemini_build_index_from_scan(tmp_path)
+
+        assert result["added"] == 0
+        assert result["no_sessions"] == 1
+
+    def test_cmd_gemini_index_validates_path(self, capsys):
+        """cmd_gemini_index should error on nonexistent path."""
+        from types import SimpleNamespace
+
+        args = SimpleNamespace(path="/nonexistent/path/that/does/not/exist")
+
+        with pytest.raises(SystemExit) as exc_info:
+            ch.cmd_gemini_index(args)
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "does not exist" in captured.err
+
+
 class TestGeminiSessionScanning:
     """Tests for gemini_scan_sessions."""
 

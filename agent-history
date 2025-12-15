@@ -2427,6 +2427,98 @@ def gemini_get_workspace_readable(workspace_hash: str) -> str:
     return workspace_hash
 
 
+def gemini_scan_for_projects(base_path: Path) -> list:
+    """Recursively scan a directory for Gemini project folders (.gemini/).
+
+    Finds all directories containing a .gemini/ subfolder, which indicates
+    the directory is (or was) a Gemini CLI project.
+
+    Args:
+        base_path: Root directory to scan recursively
+
+    Returns:
+        List of Path objects for directories containing .gemini/
+    """
+    projects = []
+    base_path = base_path.resolve()
+
+    if not base_path.exists() or not base_path.is_dir():
+        return projects
+
+    # Walk the directory tree
+    for root, dirs, _files in os.walk(base_path):
+        root_path = Path(root)
+
+        # Check if this directory has a .gemini subfolder
+        gemini_dir = root_path / ".gemini"
+        if gemini_dir.exists() and gemini_dir.is_dir():
+            projects.append(root_path)
+
+        # Skip hidden directories and common non-project directories
+        dirs[:] = [
+            d
+            for d in dirs
+            if not d.startswith(".")
+            and d not in ("node_modules", "__pycache__", "venv", ".venv", "target", "build", "dist")
+        ]
+
+    return projects
+
+
+def gemini_build_index_from_scan(base_path: Path) -> dict:
+    """Scan a directory tree and build hash→path index for Gemini projects.
+
+    Finds all .gemini/ folders, computes the hash for each project directory,
+    verifies sessions exist, and updates the index.
+
+    Args:
+        base_path: Root directory to scan recursively
+
+    Returns:
+        Dict with 'added', 'existing', 'no_sessions' counts and 'mappings' list
+    """
+    result = {"added": 0, "existing": 0, "no_sessions": 0, "mappings": []}
+
+    # Find all directories with .gemini/ folders
+    projects = gemini_scan_for_projects(base_path)
+
+    if not projects:
+        return result
+
+    # Load existing index
+    index = gemini_load_hash_index()
+    gemini_dir = gemini_get_home_dir()
+
+    for project_path in projects:
+        project_hash = gemini_compute_project_hash(project_path)
+        project_str = str(project_path)
+
+        # Check if sessions exist for this hash
+        hash_dir = gemini_dir / project_hash / "chats"
+        has_sessions = hash_dir.exists() and any(hash_dir.glob("session-*.json"))
+
+        if not has_sessions:
+            result["no_sessions"] += 1
+            continue
+
+        # Check if already in index
+        existing = index["hashes"].get(project_hash)
+        if existing == project_str:
+            result["existing"] += 1
+            continue
+
+        # Add to index
+        index["hashes"][project_hash] = project_str
+        result["added"] += 1
+        result["mappings"].append({"path": project_str, "hash": project_hash[:HASH_DISPLAY_LEN]})
+
+    # Save updated index
+    if result["added"] > 0:
+        gemini_save_hash_index(index)
+
+    return result
+
+
 # ============================================================================
 # Gemini Backend - Session Scanning
 # ============================================================================
@@ -8110,6 +8202,44 @@ def cmd_reset(args):
         print(f"Deleted {desc.lower()}")
 
 
+def cmd_gemini_index(args):
+    """Build Gemini hash→path index by scanning for .gemini/ folders."""
+    scan_path = Path(getattr(args, "path", ".")).expanduser().resolve()
+
+    if not scan_path.exists():
+        sys.stderr.write(f"Error: Path does not exist: {scan_path}\n")
+        sys.exit(1)
+
+    if not scan_path.is_dir():
+        sys.stderr.write(f"Error: Path is not a directory: {scan_path}\n")
+        sys.exit(1)
+
+    print(f"Scanning {scan_path} for Gemini projects...")
+
+    result = gemini_build_index_from_scan(scan_path)
+
+    # Report results
+    total_found = result["added"] + result["existing"] + result["no_sessions"]
+    print(f"\nFound {total_found} directories with .gemini/ folders")
+
+    if result["no_sessions"] > 0:
+        print(f"  - {result['no_sessions']} have no Gemini sessions (skipped)")
+
+    if result["existing"] > 0:
+        print(f"  - {result['existing']} already in index")
+
+    if result["added"] > 0:
+        print(f"  - {result['added']} newly added to index:")
+        for mapping in result["mappings"]:
+            print(f"    {mapping['path']} → [hash:{mapping['hash']}]")
+    elif total_found > 0 and result["no_sessions"] == 0:
+        print("\nIndex is up to date.")
+
+    # Show current index stats
+    index = gemini_load_hash_index()
+    print(f"\nTotal mappings in index: {len(index['hashes'])}")
+
+
 def _filter_fetch_workspaces(workspaces: list, pattern: str) -> list:
     """Filter workspaces by pattern for fetch command."""
     if not pattern or pattern in ("", "*", "all"):
@@ -9217,6 +9347,7 @@ def _create_argument_parser():
     _add_stats_parser(subparsers)
     _add_reset_parser(subparsers)
     _add_install_parser(subparsers)
+    _add_gemini_index_parser(subparsers)
 
     return parser
 
@@ -9263,6 +9394,27 @@ def _add_install_parser(subparsers):
         "--skip-settings",
         action="store_true",
         help="Skip updating ~/.claude/settings.json",
+    )
+    return parser
+
+
+def _add_gemini_index_parser(subparsers):
+    """Add gemini-index subparser."""
+    parser = subparsers.add_parser(
+        "gemini-index",
+        help="Build Gemini hash→path index by scanning for .gemini/ folders",
+        description=(
+            "Recursively scan directories for .gemini/ folders and build a "
+            "hash-to-path index. This allows agent-history to display readable "
+            "workspace paths instead of SHA-256 hashes for Gemini sessions."
+        ),
+    )
+
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Directory to scan recursively (default: current directory)",
     )
     return parser
 
@@ -10041,6 +10193,8 @@ def _dispatch_command(args):
         cmd_reset(args)
     elif args.command == "install":
         _dispatch_install(args)
+    elif args.command == "gemini-index":
+        cmd_gemini_index(args)
 
 
 def main():

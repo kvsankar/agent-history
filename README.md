@@ -88,12 +88,12 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 <!-- help-snippet:start -->
 ```
 usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini}]
-                     {lsw,lss,lsh,export,alias,stats,reset,install} ...
+                     {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index} ...
 
 Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)
 
 positional arguments:
-  {lsw,lss,lsh,export,alias,stats,reset,install}
+  {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index}
                         Command to execute
     lsw                 List workspaces
     lss                 List sessions
@@ -103,6 +103,8 @@ positional arguments:
     stats               Show usage statistics and metrics
     reset               Reset stored data (database, settings, aliases)
     install             Install CLI and Claude skill
+    gemini-index        Build Gemini hash→path index by scanning for .gemini/
+                        folders
 
 options:
   -h, --help            show this help message and exit
