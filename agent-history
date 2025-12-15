@@ -1923,10 +1923,13 @@ def codex_scan_sessions(
     # Walk through YYYY/MM/DD structure using glob
     for jsonl_file in sessions_dir.glob("*/*/*/rollout-*.jsonl"):
         file_key = str(jsonl_file)
-        # Look up workspace from index (fallback to file read if not in index)
+        # Look up workspace from index (fallback to file read if not in index or empty)
         workspace = sessions_map.get(file_key)
-        if workspace is None:
+        if not workspace:  # None or empty string
             workspace = codex_get_workspace_from_session(jsonl_file)
+            # Update index with recomputed workspace if we had to fall back
+            if workspace and file_key in sessions_map:
+                sessions_map[file_key] = workspace
 
         modified = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
 
@@ -2403,28 +2406,34 @@ def gemini_get_path_for_hash(project_hash: str) -> str | None:
     return index["hashes"].get(project_hash)
 
 
-def gemini_get_workspace_readable(workspace_hash: str) -> str:
-    """Get human-readable workspace name for a Gemini project hash.
+def gemini_get_workspace_readable(workspace: str) -> str:
+    """Get human-readable workspace name for a Gemini workspace identifier.
 
-    First checks the hash index for a known path, then falls back to
-    displaying the truncated hash.
+    Handles both cases:
+    - Encoded path (like -home-user-project): normalizes to readable path
+    - SHA-256 hash: looks up in hash index, falls back to truncated hash
 
     Args:
-        workspace_hash: SHA-256 hash of the project path
+        workspace: Encoded workspace path or SHA-256 hash
 
     Returns:
-        Readable workspace name (path if known, otherwise [hash:xxxxxxxx])
+        Readable workspace name (path or [hash:xxxxxxxx])
     """
-    # Try to look up the real path
-    real_path = gemini_get_path_for_hash(workspace_hash)
+    # If it looks like an encoded path (starts with - and contains multiple -),
+    # normalize it directly
+    if workspace.startswith("-") and workspace.count("-") > 1:
+        return normalize_workspace_name(workspace, verify_local=False)
+
+    # Try to look up as a hash in the index
+    real_path = gemini_get_path_for_hash(workspace)
     if real_path:
         # Return a normalized/shortened version of the path
         return normalize_workspace_name(path_to_encoded_workspace(real_path), verify_local=False)
 
     # Fall back to truncated hash display
-    if len(workspace_hash) > HASH_DISPLAY_LEN:
-        return f"[hash:{workspace_hash[:HASH_DISPLAY_LEN]}]"
-    return workspace_hash
+    if len(workspace) > HASH_DISPLAY_LEN:
+        return f"[hash:{workspace[:HASH_DISPLAY_LEN]}]"
+    return workspace
 
 
 def gemini_scan_for_projects(base_path: Path) -> list:
@@ -2527,21 +2536,27 @@ def gemini_build_index_from_scan(base_path: Path) -> dict:
 def gemini_get_workspace_from_session(json_file: Path) -> str:
     """Extract workspace identifier from Gemini session.
 
-    Since Gemini uses SHA-256 hashes for project paths, we return the hash
-    as the workspace identifier. The parent directory name IS the hash.
+    Uses the hash index to get the real path if known, otherwise returns
+    the hash. This ensures consistent workspace naming across scan/export/stats.
 
     Args:
         json_file: Path to the Gemini session .json file
 
     Returns:
-        Project hash as workspace identifier, or 'unknown'
+        Encoded path (if hash→path known) or project hash, or 'unknown'
     """
     # The file is in ~/.gemini/tmp/<project_hash>/chats/<session>.json
     # So we need to go up two levels to get the project hash
     try:
         chats_dir = json_file.parent  # chats/
         project_dir = chats_dir.parent  # <project_hash>/
-        return project_dir.name
+        project_hash = project_dir.name
+
+        # Try to get the real path from hash index
+        real_path = gemini_get_path_for_hash(project_hash)
+        if real_path:
+            return path_to_encoded_workspace(real_path)
+        return project_hash
     except (AttributeError, IndexError):
         pass
     return "unknown"
@@ -2589,9 +2604,21 @@ def _gemini_build_session_dict(
 def _gemini_session_matches_filters(
     workspace: str, modified: datetime, pattern: str, since_date, until_date
 ) -> bool:
-    """Check if a Gemini session matches the given filters."""
-    if pattern and pattern not in workspace:
-        return False
+    """Check if a Gemini session matches the given filters.
+
+    Pattern matching checks:
+    1. The workspace identifier (encoded path or hash)
+    2. The readable workspace name (for hash→path lookups)
+    """
+    if pattern:
+        # Check workspace directly (encoded path or hash)
+        if pattern in workspace:
+            pass  # Match found
+        else:
+            # Also check readable name (handles hash→path from index)
+            readable = gemini_get_workspace_readable(workspace)
+            if pattern not in readable:
+                return False
     if since_date and modified.date() < since_date.date():
         return False
     if until_date and modified.date() > until_date.date():
@@ -5767,7 +5794,7 @@ def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
     return {"session": session_info, "messages": messages, "tool_uses": tool_uses}
 
 
-def sync_file_to_db(  # noqa: C901, PLR0915
+def sync_file_to_db(  # noqa: C901, PLR0912, PLR0915
     conn: sqlite3.Connection, jsonl_file: Path, source: str = "local", force: bool = False
 ) -> bool:
     """Sync a single JSONL file to the database.
@@ -5791,9 +5818,16 @@ def sync_file_to_db(  # noqa: C901, PLR0915
     if agent == AGENT_GEMINI:
         metrics = gemini_extract_metrics_from_json(jsonl_file)
         session = metrics["session"]
-        # Gemini uses projectHash, convert to workspace format
-        if session.get("projectHash"):
-            session["workspace"] = f"gemini-{session['projectHash'][:HASH_DISPLAY_LEN]}"
+        # Gemini uses projectHash - try to get readable path from hash index
+        project_hash = session.get("projectHash", "")
+        if project_hash:
+            real_path = gemini_get_path_for_hash(project_hash)
+            if real_path:
+                # Use encoded path as workspace (consistent with Claude/Codex)
+                session["workspace"] = path_to_encoded_workspace(real_path)
+            else:
+                # Fallback to hash-based workspace
+                session["workspace"] = project_hash
         else:
             session["workspace"] = "gemini-unknown"
         session["source"] = source
