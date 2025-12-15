@@ -235,6 +235,9 @@ def validate_split_lines(value):
 # Unicode range \u0080-\uFFFF supports international paths
 WORKSPACE_NAME_PATTERN = re.compile(r"^[-a-zA-Z0-9_.\u0080-\uFFFF]+$")
 
+# Cache for Windows home path lookups (avoids repeated slow filesystem operations)
+_windows_home_cache: dict = {}
+
 # Pattern for valid SSH remote host specifications
 # Allow: user@hostname, hostname, user@hostname:port, IPv4/IPv6
 REMOTE_HOST_PATTERN = re.compile(
@@ -2835,7 +2838,7 @@ def path_to_encoded_workspace(path: str) -> str:
 
     # Handle native Windows paths (C:\... or C:/...)
     # Check for drive letter followed by colon (e.g., C:, D:)
-    if len(path) >= 2 and path[1] == ":":
+    if len(path) >= 2 and path[1] == ":":  # noqa: PLR2004
         return _convert_windows_path_to_encoded(path)
 
     # Handle WSL-mounted Windows paths like /mnt/c/Users/me/project
@@ -3631,16 +3634,27 @@ def get_windows_home_from_wsl(username: str = None):
     Returns:
         Path to Windows home directory, or None if not found.
     """
+    cache_key = username or "_default_"
+
+    # Check cache first to avoid slow filesystem operations
+    if cache_key in _windows_home_cache:
+        return _windows_home_cache[cache_key]
+
     if username:
-        return _find_user_home_on_drives(username)
+        result = _find_user_home_on_drives(username)
+        _windows_home_cache[cache_key] = result
+        return result
 
     # Primary approach: use Windows USERPROFILE
     home = _get_userprofile_via_cmd()
     if home:
+        _windows_home_cache[cache_key] = home
         return home
 
     # Fallback: scan all drives
-    return _scan_drives_for_claude_user()
+    result = _scan_drives_for_claude_user()
+    _windows_home_cache[cache_key] = result
+    return result
 
 
 def _is_valid_windows_drive(drive: Path) -> bool:
@@ -5689,6 +5703,16 @@ def cmd_alias_list(args):
         print("  agent-history alias create <name>")
         print("  agent-history alias add <name> <workspace>")
         return
+
+    # Check if any aliases have Windows/WSL sources (may be slow)
+    has_slow_sources = any(
+        source_key in ("windows", "wsl") or source_key.startswith(("windows:", "wsl:"))
+        for sources in aliases.values()
+        for source_key in sources.keys()
+    )
+    if has_slow_sources:
+        sys.stderr.write("Accessing Windows/WSL sources...\n")
+        sys.stderr.flush()
 
     for alias_name, sources in sorted(aliases.items()):
         total_sessions = 0
