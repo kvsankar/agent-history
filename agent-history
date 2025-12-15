@@ -5573,8 +5573,10 @@ def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN agent TEXT DEFAULT 'claude'")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent)")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            except sqlite3.OperationalError as e:
+                # Only ignore "duplicate column" error, re-raise others
+                if "duplicate column" not in str(e).lower():
+                    sys.stderr.write(f"Warning: Migration to v4 failed: {e}\n")
 
         # Update version
         if row is None:
