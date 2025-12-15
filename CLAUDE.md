@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`agent-history` is a single-file Python CLI tool that browses and exports AI coding assistant conversation history (Claude Code and Codex CLI). It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
+`agent-history` is a single-file Python CLI tool that browses and exports AI coding assistant conversation history (Claude Code, Codex CLI, and Gemini CLI). It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
 
 > **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
@@ -137,6 +137,16 @@ chmod +x agent-history
 ./agent-history stats --time --ah          # current workspace, sync all homes first
 ./agent-history stats --time --aw          # all workspaces, local DB
 ./agent-history stats --time --ah --aw     # all workspaces, sync all homes first
+
+# Agent selection (Claude Code, Codex CLI, Gemini CLI)
+./agent-history --agent auto lss           # auto-detect (default)
+./agent-history --agent claude lss         # Claude Code only
+./agent-history --agent codex lss          # Codex CLI only
+./agent-history --agent gemini lss         # Gemini CLI only
+
+# Gemini CLI hash index management
+./agent-history gemini-index               # scan current dir for .gemini/ folders
+./agent-history gemini-index ~/projects    # scan specific directory recursively
 ```
 
 ### Testing Workflow

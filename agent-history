@@ -2459,7 +2459,7 @@ def gemini_scan_for_projects(base_path: Path) -> list:
             d
             for d in dirs
             if not d.startswith(".")
-            and d not in ("node_modules", "__pycache__", "venv", ".venv", "target", "build", "dist")
+            and d not in ("node_modules", "__pycache__", "venv", "target", "build", "dist")
         ]
 
     return projects
