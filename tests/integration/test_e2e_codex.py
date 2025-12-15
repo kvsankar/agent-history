@@ -314,7 +314,7 @@ class TestCodexExport:
 
         # Verify structural elements
         assert "# Codex Conversation" in content, "Missing Codex title"
-        # User messages use emoji format: "## 👤 User (Message N)"
+        # User messages use format: "## User (Message N)"
         assert "User" in content, "Missing user message"
         assert "Message 1" in content, "Missing message numbering"
         # Verify tool call is rendered

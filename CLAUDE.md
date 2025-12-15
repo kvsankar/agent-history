@@ -526,7 +526,6 @@ is_agent = any(msg.get('isSidechain') for msg in messages)
 3. **First message labeling:**
    ```python
    if is_agent and i == 1 and msg['role'] == 'user':
-       role_emoji = "🔧"
        role_label = "Task Prompt (from Parent Claude)"
    ```
 
@@ -573,7 +572,7 @@ def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
 **Before adding new functionality:**
 1. Maintain single-file design - do not split into modules
 2. Use only Python stdlib (no external dependencies like `click`, `rich`, etc.)
-3. Follow existing emoji conventions (✅ ❌ ⚠ 🔍 📊 📁)
+3. Use minimal UNIX-style output (no emojis, brief messages)
 4. Provide helpful error messages with actionable suggestions
 5. Test with real Claude Code data of varying sizes
 
@@ -970,11 +969,29 @@ The `--ah` and `--aw` flags are designed to be orthogonal (independent):
 - Only SSH remotes need to be saved via `lsh add`
 - Saved sources are stored in `~/.claude-history/config.json`
 
+### Mutually Exclusive Flags
+
+Some flags cannot be used together:
+
+| Flags | Behavior |
+|-------|----------|
+| `--wsl` + `--windows` | Error: mutually exclusive (use one or the other) |
+| `--this` + `@alias` | `--this` overrides alias auto-detection |
+| Multiple `-r` flags | Only first remote is used for single-target operations |
+
+### Flag Precedence
+
+When multiple related flags are specified:
+1. Explicit patterns override auto-detection
+2. `--this` forces current workspace only
+3. Remote flags (`-r`, `--wsl`, `--windows`) determine data source
+4. `--ah` expands to include all available sources
+
 ## Contributing Notes
 
 From CONTRIBUTING.md, key points:
 - Test with small (< 10 sessions), medium (10-100), and large (100+) workspaces
 - Verify edge cases: empty names, non-existent workspaces, corrupted files, invalid dates
 - Update documentation if behavior changes
-- Use existing emoji conventions consistently
+- Use minimal UNIX-style output (no emojis, brief error messages)
 - When adding date-related features, test boundary conditions (today, past, future dates)

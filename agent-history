@@ -88,7 +88,7 @@ SECONDS_PER_MINUTE = 60
 
 # Database migration versions
 DB_VERSION_TIME_TRACKING = 3  # Version that added time tracking
-DB_VERSION_AGENT_COLUMN = 4  # Version that added agent column
+DB_VERSION_AGENT_COLUMN = 4  # Version that added agent column with path-based detection
 
 
 def codex_get_home_dir() -> Path:
@@ -230,9 +230,10 @@ def validate_split_lines(value):
 # ============================================================================
 
 # Pattern for valid workspace directory names (Claude Code encoded paths)
-# Allow: alphanumeric, dashes, underscores, dots
+# Allow: alphanumeric, dashes, underscores, dots, and Unicode characters
 # Workspace names always start with dash (Unix) or letter (Windows drive)
-WORKSPACE_NAME_PATTERN = re.compile(r"^[-a-zA-Z0-9_.]+$")
+# Unicode range \u0080-\uFFFF supports international paths
+WORKSPACE_NAME_PATTERN = re.compile(r"^[-a-zA-Z0-9_.\u0080-\uFFFF]+$")
 
 # Pattern for valid SSH remote host specifications
 # Allow: user@hostname, hostname, user@hostname:port, IPv4/IPv6
@@ -409,6 +410,24 @@ def exit_with_date_error(flag_name: str, invalid_value: str):
     )
 
 
+def parse_date_with_validation(date_str: str, flag_name: str):
+    """Parse date string with validation, exit on error.
+
+    Args:
+        date_str: Date string to parse (YYYY-MM-DD format)
+        flag_name: Flag name for error message (e.g., "--since")
+
+    Returns:
+        datetime object or None if date_str is None/empty
+    """
+    if not date_str:
+        return None
+    result = parse_date_string(date_str)
+    if result is None:
+        exit_with_date_error(flag_name, date_str)
+    return result
+
+
 # ============================================================================
 # Utility Functions
 # ============================================================================
@@ -494,7 +513,41 @@ def parse_and_validate_dates(since_str: str, until_str: str) -> tuple:
     if since_date and until_date and since_date > until_date:
         exit_with_error("--since date must be before --until date")
 
+    # Warn about future dates (they're valid but likely unintentional)
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if since_date and since_date > today:
+        sys.stderr.write(
+            f"Warning: --since date '{since_str}' is in the future; no results expected\n"
+        )
+    if until_date and until_date > today:
+        sys.stderr.write(f"Warning: --until date '{until_str}' is in the future\n")
+
     return since_date, until_date
+
+
+def is_date_in_range(dt, since_date, until_date) -> bool:
+    """Check if datetime is within date range (inclusive).
+
+    Args:
+        dt: datetime object to check
+        since_date: Start date filter (datetime or None)
+        until_date: End date filter (datetime or None)
+
+    Returns:
+        True if dt is within range, False otherwise.
+    """
+    if dt is None:
+        return True
+    check_date = dt.date() if hasattr(dt, "date") else dt
+    if since_date:
+        since = since_date.date() if hasattr(since_date, "date") else since_date
+        if check_date < since:
+            return False
+    if until_date:
+        until = until_date.date() if hasattr(until_date, "date") else until_date
+        if check_date > until:
+            return False
+    return True
 
 
 def get_patterns_from_args(args) -> list:
@@ -548,6 +601,7 @@ def resolve_patterns_for_command(
     this_only: bool = False,
     require_workspace: bool = False,
     error_message: str = None,
+    agent: str = "auto",
 ) -> tuple:
     """Resolve workspace patterns, optionally checking for alias membership.
 
@@ -556,6 +610,7 @@ def resolve_patterns_for_command(
         this_only: If True, skip alias checking
         require_workspace: If True, exit with error if not in workspace
         error_message: Custom error message for require_workspace
+        agent: Agent type (auto, claude, codex, gemini). Aliases only apply to Claude.
 
     Returns:
         Tuple of (patterns, alias_name) where alias_name is set if
@@ -564,6 +619,12 @@ def resolve_patterns_for_command(
     if workspace_list:
         return workspace_list, None
 
+    # For non-Claude agents, use CWD path as pattern (matches against workspace_readable)
+    if agent in ("gemini", "codex"):
+        cwd = Path.cwd()
+        # Use the last path component as a simple pattern
+        return [cwd.name], None
+
     pattern, exists = check_current_workspace_exists()
     if not exists:
         if require_workspace:
@@ -571,7 +632,8 @@ def resolve_patterns_for_command(
             exit_with_error(msg)
         return [""], None
 
-    if not this_only:
+    # Aliases are Claude-specific; skip for other agents
+    if not this_only and agent in ("auto", "claude"):
         alias_for_ws = get_alias_for_workspace(pattern, "local")
         if alias_for_ws:
             return [pattern], alias_for_ws
@@ -1555,14 +1617,14 @@ def codex_parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> st
         timestamp = msg.get("timestamp", "")
 
         if role == "user":
-            md_lines.append(f"## 👤 User (Message {i})")
+            md_lines.append(f"## User (Message {i})")
         elif role == "assistant":
             if msg.get("is_tool_call"):
-                md_lines.append(f"## 🔧 Tool Call (Message {i})")
+                md_lines.append(f"## Tool Call (Message {i})")
             else:
-                md_lines.append(f"## 🤖 Assistant (Message {i})")
+                md_lines.append(f"## Assistant (Message {i})")
         elif role == "tool":
-            md_lines.append(f"## 📤 Tool Result (Message {i})")
+            md_lines.append(f"## Tool Result (Message {i})")
         else:
             md_lines.append(f"## {role.title()} (Message {i})")
 
@@ -1793,10 +1855,13 @@ def _codex_date_folders_since(sessions_dir: Path, since_date: str) -> list:  # n
                     continue
                 day = int(day_dir.name)
 
-                # Check if this date is >= since_date
+                # Check if this date is >= since_date (skip old folders)
                 if since_dt:
-                    folder_date = datetime(year, month, day)
-                    if folder_date.date() < since_dt.date():
+                    from datetime import date as date_type
+
+                    folder_date = date_type(year, month, day)
+                    since = since_dt.date() if hasattr(since_dt, "date") else since_dt
+                    if folder_date < since:
                         continue
 
                 folders_to_scan.append(day_dir)
@@ -1882,11 +1947,7 @@ def _codex_session_matches_filters(
     """Check if a Codex session matches the given filters."""
     if pattern and pattern not in workspace:
         return False
-    if since_date and modified.date() < since_date.date():
-        return False
-    if until_date and modified.date() > until_date.date():
-        return False
-    return True
+    return is_date_in_range(modified, since_date, until_date)
 
 
 def codex_scan_sessions(
@@ -2186,15 +2247,15 @@ def gemini_parse_json_to_markdown(json_file: Path, minimal: bool = False) -> str
         model = msg.get("model")
 
         if role == "user":
-            md_lines.append(f"## 👤 User (Message {i})")
+            md_lines.append(f"## User (Message {i})")
         elif role == "assistant":
-            md_lines.append(f"## 🤖 Gemini (Message {i})")
+            md_lines.append(f"## Model (Message {i})")
         elif role == "info":
             md_lines.append(f"## Info (Message {i})")
         elif role == "error":
-            md_lines.append(f"## ❌ Error (Message {i})")
+            md_lines.append(f"## Error (Message {i})")
         elif role == "warning":
-            md_lines.append(f"## ⚠️ Warning (Message {i})")
+            md_lines.append(f"## Warning (Message {i})")
         else:
             md_lines.append(f"## {role.title()} (Message {i})")
 
@@ -2594,22 +2655,18 @@ def _gemini_session_matches_filters(
 
     Pattern matching checks:
     1. The workspace identifier (encoded path or hash)
-    2. The readable workspace name (for hash→path lookups)
+    2. The readable workspace name (for hash->path lookups)
     """
     if pattern:
         # Check workspace directly (encoded path or hash)
         if pattern in workspace:
             pass  # Match found
         else:
-            # Also check readable name (handles hash→path from index)
+            # Also check readable name (handles hash->path from index)
             readable = gemini_get_workspace_readable(workspace)
             if pattern not in readable:
                 return False
-    if since_date and modified.date() < since_date.date():
-        return False
-    if until_date and modified.date() > until_date.date():
-        return False
-    return True
+    return is_date_in_range(modified, since_date, until_date)
 
 
 def gemini_scan_sessions(
@@ -3360,14 +3417,31 @@ def _should_skip_workspace(dir_name: str, include_cached: bool) -> bool:
 
 
 def _count_file_messages(jsonl_file: Path, skip_count: bool) -> int:
-    """Count messages in a JSONL file."""
+    """Count valid messages in a JSONL file.
+
+    Only counts lines that are valid JSON with type 'user' or 'assistant'
+    (or have 'role' field for older formats).
+    """
     if skip_count:
         return 0
+    count = 0
     try:
         with open(jsonl_file, encoding="utf-8") as f:
-            return sum(1 for _ in f)
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    data = json.loads(stripped)
+                    # Count only user/assistant messages
+                    msg_type = data.get("type") or data.get("role")
+                    if msg_type in ("user", "assistant", "model"):
+                        count += 1
+                except json.JSONDecodeError:
+                    continue
     except OSError:
-        return 0
+        pass
+    return count
 
 
 def _get_session_from_file(
@@ -3388,12 +3462,7 @@ def _get_session_from_file(
 
 def _is_session_in_date_range(session: dict, since_date, until_date) -> bool:
     """Check if session modification date is within the specified range."""
-    modified_date = session["modified"].replace(hour=0, minute=0, second=0, microsecond=0)
-    if since_date and modified_date < since_date:
-        return False
-    if until_date and modified_date > until_date:
-        return False
-    return True
+    return is_date_in_range(session.get("modified"), since_date, until_date)
 
 
 def _workspace_matches_pattern(dir_name: str, workspace_pattern: str, match_all: bool) -> bool:
@@ -3810,11 +3879,28 @@ def _get_wsl_candidate_paths(distro_name: str, username: str) -> list:
     ]
 
 
+def _path_exists_with_timeout(path: Path, timeout: float = 5.0) -> bool:
+    """Check if a path exists with a timeout (for UNC paths that may block)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeoutError
+
+    def check_exists():
+        return path.exists()
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(check_exists)
+            return future.result(timeout=timeout)
+    except (FuturesTimeoutError, OSError):
+        return False
+
+
 def _locate_wsl_projects_dir(distro_name: str, username: str):
     """Find the first accessible UNC path for a WSL distro."""
     for candidate in _get_wsl_candidate_paths(distro_name, username):
         try:
-            if candidate.exists():
+            # Use timeout to prevent blocking on unreachable UNC paths
+            if _path_exists_with_timeout(candidate, timeout=5.0):
                 return candidate
         except OSError:
             continue
@@ -3907,6 +3993,215 @@ def get_windows_projects_dir(username: str = None):
         return None
 
     return projects_dir
+
+
+# ============================================================================
+# Multi-Agent WSL/Windows Path Accessors
+# ============================================================================
+
+
+def _get_wsl_gemini_candidate_paths(distro_name: str, username: str) -> list:
+    """Return candidate UNC paths for Gemini sessions in a WSL distro."""
+    return [
+        Path(f"//wsl.localhost/{distro_name}/home/{username}/.gemini/tmp"),
+        Path(f"//wsl$/{distro_name}/home/{username}/.gemini/tmp"),
+    ]
+
+
+def _get_wsl_codex_candidate_paths(distro_name: str, username: str) -> list:
+    """Return candidate UNC paths for Codex sessions in a WSL distro."""
+    return [
+        Path(f"//wsl.localhost/{distro_name}/home/{username}/.codex/sessions"),
+        Path(f"//wsl$/{distro_name}/home/{username}/.codex/sessions"),
+    ]
+
+
+def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str):
+    """Find the first accessible UNC path for an agent in a WSL distro."""
+    if agent == AGENT_CLAUDE:
+        candidates = _get_wsl_candidate_paths(distro_name, username)
+    elif agent == AGENT_GEMINI:
+        candidates = _get_wsl_gemini_candidate_paths(distro_name, username)
+    elif agent == AGENT_CODEX:
+        candidates = _get_wsl_codex_candidate_paths(distro_name, username)
+    else:
+        return None
+
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def gemini_get_wsl_sessions_dir(distro_name: str):
+    """Get Gemini sessions directory for a WSL distribution.
+
+    Args:
+        distro_name: WSL distribution name (e.g., 'Ubuntu', 'Debian')
+
+    Returns:
+        Path to .gemini/tmp in WSL, accessible from Windows.
+        Returns None if the distribution is inaccessible or Gemini is not installed.
+    """
+    # Test override
+    override = os.environ.get("GEMINI_WSL_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    # Get username from WSL
+    try:
+        result = subprocess.run(
+            [get_command_path("wsl"), "-d", distro_name, "whoami"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        if result.returncode != 0:
+            return None
+
+        username = result.stdout.strip()
+        return _locate_wsl_agent_dir(distro_name, username, AGENT_GEMINI)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
+def codex_get_wsl_sessions_dir(distro_name: str):
+    """Get Codex sessions directory for a WSL distribution.
+
+    Args:
+        distro_name: WSL distribution name (e.g., 'Ubuntu', 'Debian')
+
+    Returns:
+        Path to .codex/sessions in WSL, accessible from Windows.
+        Returns None if the distribution is inaccessible or Codex is not installed.
+    """
+    # Test override
+    override = os.environ.get("CODEX_WSL_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    # Get username from WSL
+    try:
+        result = subprocess.run(
+            [get_command_path("wsl"), "-d", distro_name, "whoami"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        if result.returncode != 0:
+            return None
+
+        username = result.stdout.strip()
+        return _locate_wsl_agent_dir(distro_name, username, AGENT_CODEX)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
+def gemini_get_windows_sessions_dir(username: str = None):
+    """Get Gemini sessions directory for Windows from WSL.
+
+    Args:
+        username: Optional Windows username. If None, auto-detects from USERPROFILE.
+
+    Returns:
+        Path to .gemini/tmp in Windows, accessible from WSL.
+        Returns None if not running in WSL, user not found, or Gemini not installed.
+    """
+    # Test override
+    override = os.environ.get("GEMINI_WINDOWS_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    if not is_running_in_wsl():
+        return None
+
+    windows_home = get_windows_home_from_wsl(username)
+
+    if not windows_home:
+        return None
+
+    sessions_dir = windows_home / ".gemini" / "tmp"
+
+    if not sessions_dir.exists():
+        return None
+
+    return sessions_dir
+
+
+def codex_get_windows_sessions_dir(username: str = None):
+    """Get Codex sessions directory for Windows from WSL.
+
+    Args:
+        username: Optional Windows username. If None, auto-detects from USERPROFILE.
+
+    Returns:
+        Path to .codex/sessions in Windows, accessible from WSL.
+        Returns None if not running in WSL, user not found, or Codex not installed.
+    """
+    # Test override
+    override = os.environ.get("CODEX_WINDOWS_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    if not is_running_in_wsl():
+        return None
+
+    windows_home = get_windows_home_from_wsl(username)
+
+    if not windows_home:
+        return None
+
+    sessions_dir = windows_home / ".codex" / "sessions"
+
+    if not sessions_dir.exists():
+        return None
+
+    return sessions_dir
+
+
+def get_agent_wsl_dir(distro_name: str, agent: str):
+    """Get session directory for any agent from WSL distribution.
+
+    Args:
+        distro_name: WSL distribution name
+        agent: Agent type (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI)
+
+    Returns:
+        Path to agent's sessions directory, or None if not found.
+    """
+    if agent == AGENT_CLAUDE:
+        return get_wsl_projects_dir(distro_name)
+    elif agent == AGENT_CODEX:
+        return codex_get_wsl_sessions_dir(distro_name)
+    elif agent == AGENT_GEMINI:
+        return gemini_get_wsl_sessions_dir(distro_name)
+    return None
+
+
+def get_agent_windows_dir(username: str, agent: str):
+    """Get session directory for any agent from Windows.
+
+    Args:
+        username: Windows username (or None for auto-detect)
+        agent: Agent type (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI)
+
+    Returns:
+        Path to agent's sessions directory, or None if not found.
+    """
+    if agent == AGENT_CLAUDE:
+        return get_windows_projects_dir(username)
+    elif agent == AGENT_CODEX:
+        return codex_get_windows_sessions_dir(username)
+    elif agent == AGENT_GEMINI:
+        return gemini_get_windows_sessions_dir(username)
+    return None
 
 
 # ============================================================================
@@ -4290,6 +4585,25 @@ def _validate_fetch_inputs(remote_host: str, remote_workspace: str) -> dict:
     return None
 
 
+def _escape_rsync_remote_path(path: str) -> str:
+    """Escape special characters in rsync remote paths.
+
+    Rsync interprets spaces and some special characters in remote paths.
+    This escapes them with backslashes for proper handling.
+    """
+    # Escape spaces and other special characters that rsync interprets
+    # Note: for local paths in subprocess list args, this isn't needed
+    # But for remote paths (host:path), these chars need escaping
+    special_chars = " '\"!#$&()*;<>?[]\\^`{|}~"
+    result = []
+    for char in path:
+        if char in special_chars:
+            result.append(f"\\{char}")
+        else:
+            result.append(char)
+    return "".join(result)
+
+
 def _convert_to_rsync_path(local_dir: Path) -> str:
     """Convert local path to rsync-compatible format."""
     import re
@@ -4303,6 +4617,36 @@ def _convert_to_rsync_path(local_dir: Path) -> str:
             path_part = drive_match.group(2)
             return f"/cygdrive/{drive_letter}{path_part}/"
     return local_path_posix + "/"
+
+
+def _interpret_rsync_exit_code(code: int) -> tuple:
+    """Interpret rsync exit code.
+
+    Returns:
+        Tuple of (is_partial_success, error_message)
+    """
+    rsync_errors = {
+        0: (True, "Success"),
+        1: (False, "Syntax or usage error"),
+        2: (False, "Protocol incompatibility"),
+        3: (False, "Errors selecting input/output files"),
+        5: (False, "Error starting client-server protocol"),
+        6: (False, "Daemon unable to append to log file"),
+        10: (False, "Error in socket I/O"),
+        11: (False, "Error in file I/O"),
+        12: (False, "Error in rsync protocol data stream"),
+        13: (False, "Errors with program diagnostics"),
+        14: (False, "Error in IPC code"),
+        20: (False, "Received SIGUSR1 or SIGINT"),
+        21: (False, "Error returned by waitpid()"),
+        22: (False, "Error allocating memory"),
+        23: (True, "Partial transfer due to error"),  # Some files transferred
+        24: (True, "Partial transfer - source files vanished"),  # Some files transferred
+        25: (False, "Max delete limit reached"),
+        30: (False, "Timeout in data send/receive"),
+        35: (False, "Timeout waiting for daemon"),
+    }
+    return rsync_errors.get(code, (False, f"Unknown error (code {code})"))
 
 
 def _count_rsync_files(output: str) -> int:
@@ -4331,13 +4675,16 @@ def fetch_workspace_files(
         return {"success": False, "files_copied": 0, "bytes": 0, "error": "Path traversal detected"}
 
     local_dir.mkdir(parents=True, exist_ok=True)
-    remote_path = f"{remote_host}:~/.claude/projects/{remote_workspace}/"
+    # Escape special characters in remote path for rsync
+    escaped_workspace = _escape_rsync_remote_path(remote_workspace)
+    remote_path = f"{remote_host}:~/.claude/projects/{escaped_workspace}/"
 
     try:
         local_path_str = _convert_to_rsync_path(local_dir)
         rsync_cmd = [
             get_command_path("rsync"),
             "-avh",
+            "--partial",  # Keep partial files on interrupted transfer
             "--include=*.jsonl",
             "--exclude=*",
             remote_path,
@@ -4349,7 +4696,22 @@ def fetch_workspace_files(
         )
 
         if result.returncode != 0:
-            return {"success": False, "files_copied": 0, "bytes": 0, "error": result.stderr}
+            is_partial, error_msg = _interpret_rsync_exit_code(result.returncode)
+            if is_partial:
+                # Partial success - some files may have transferred
+                return {
+                    "success": True,
+                    "files_copied": _count_rsync_files(result.stdout),
+                    "local_dir": local_workspace,
+                    "output": result.stdout,
+                    "warning": error_msg,
+                }
+            return {
+                "success": False,
+                "files_copied": 0,
+                "bytes": 0,
+                "error": f"{error_msg}: {result.stderr}",
+            }
 
         return {
             "success": True,
@@ -4362,6 +4724,450 @@ def fetch_workspace_files(
         return {"success": False, "files_copied": 0, "bytes": 0, "error": "Timeout"}
     except FileNotFoundError:
         return {"success": False, "files_copied": 0, "bytes": 0, "error": "rsync not found"}
+
+
+# ============================================================================
+# Gemini Remote Operations (SSH)
+# ============================================================================
+
+
+def gemini_list_remote_workspaces(remote_host: str) -> list:
+    """List Gemini workspace directories (project hashes) on remote host.
+
+    Args:
+        remote_host: Remote host specification
+
+    Returns:
+        List of project hash directory names that contain sessions
+    """
+    if not validate_remote_host(remote_host):
+        sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
+        return []
+
+    try:
+        # List hash directories in ~/.gemini/tmp/ that have chats/ with sessions
+        # Output format: hash directories that contain session files
+        cmd = 'for d in ~/.gemini/tmp/*/chats; do [ -d "$d" ] && ls "$d"/*.json >/dev/null 2>&1 && basename "$(dirname "$d")"; done 2>/dev/null'
+
+        result = subprocess.run(
+            [get_command_path("ssh"), remote_host, cmd],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            return []
+
+        # Parse output - one hash directory per line
+        workspaces = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+
+        return workspaces
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def gemini_get_remote_session_info(remote_host: str, project_hash: str = None) -> list:
+    """Get Gemini session file information from remote without downloading.
+
+    Args:
+        remote_host: Remote host specification
+        project_hash: Optional specific project hash to query (all if None)
+
+    Returns:
+        List of session info dicts with filename, size_kb, modified, message_count, workspace
+    """
+    if not validate_remote_host(remote_host):
+        sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
+        return []
+
+    try:
+        # Get file stats and extract cwd from session files
+        # For Gemini, we need to extract the project hash from path and optionally cwd from JSON
+        if project_hash:
+            safe_hash = sanitize_for_shell(project_hash)
+            glob_pattern = f"~/.gemini/tmp/{safe_hash}/chats/session-*.json"
+        else:
+            glob_pattern = "~/.gemini/tmp/*/chats/session-*.json"
+
+        # Output: filepath|size|mtime|msg_count
+        cmd = f"""for f in {glob_pattern}; do
+            [ -f "$f" ] || continue
+            size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+            mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+            # Count messages array length (simple grep for "type" entries)
+            msgs=$(grep -c '"type":' "$f" 2>/dev/null || echo 0)
+            echo "$f|$size|$mtime|$msgs"
+        done"""
+
+        result = subprocess.run(
+            [get_command_path("ssh"), remote_host, cmd],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            return []
+
+        sessions = []
+        for line in result.stdout.strip().split("\n"):
+            if not line or "|" not in line:
+                continue
+
+            parts = line.split("|")
+            if len(parts) != 4:  # noqa: PLR2004
+                continue
+
+            filepath, size_bytes, mtime_epoch, msg_count = parts
+
+            try:
+                # Extract project hash from path: ~/.gemini/tmp/<hash>/chats/session-*.json
+                path_parts = filepath.split("/")
+                hash_idx = path_parts.index("tmp") + 1 if "tmp" in path_parts else -1
+                workspace_hash = (
+                    path_parts[hash_idx]
+                    if hash_idx > 0 and hash_idx < len(path_parts)
+                    else "unknown"
+                )
+
+                size_kb = int(size_bytes) / 1024
+                modified = datetime.fromtimestamp(int(mtime_epoch))
+                message_count = int(msg_count)
+                filename = path_parts[-1] if path_parts else filepath
+
+                sessions.append(
+                    {
+                        "filename": filename,
+                        "filepath": filepath,
+                        "size_kb": size_kb,
+                        "modified": modified,
+                        "message_count": message_count,
+                        "workspace": workspace_hash,
+                        "agent": AGENT_GEMINI,
+                    }
+                )
+            except (ValueError, OSError, IndexError):
+                continue
+
+        return sessions
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def gemini_fetch_remote_sessions(
+    remote_host: str, local_cache_dir: Path, hostname: str, project_hash: str = None
+) -> dict:
+    """Fetch Gemini sessions from remote using rsync.
+
+    Args:
+        remote_host: Remote host specification
+        local_cache_dir: Local directory to cache sessions
+        hostname: Hostname for cache prefix
+        project_hash: Optional specific project hash (all if None)
+
+    Returns:
+        Dict with success, files_copied, local_dir, error
+    """
+    if not validate_remote_host(remote_host):
+        return {"success": False, "files_copied": 0, "error": f"Invalid remote host: {remote_host}"}
+
+    # Create local cache directory for remote Gemini sessions
+    local_dir = local_cache_dir / f"remote_{hostname}_gemini"
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    if project_hash:
+        # Fetch specific project hash (escape special chars for rsync)
+        escaped_hash = _escape_rsync_remote_path(project_hash)
+        remote_path = f"{remote_host}:~/.gemini/tmp/{escaped_hash}/chats/"
+        local_subdir = local_dir / project_hash / "chats"
+        local_subdir.mkdir(parents=True, exist_ok=True)
+    else:
+        # Fetch all Gemini sessions
+        remote_path = f"{remote_host}:~/.gemini/tmp/"
+        local_subdir = local_dir
+
+    try:
+        local_path_str = _convert_to_rsync_path(local_subdir)
+        rsync_cmd = [
+            get_command_path("rsync"),
+            "-avh",
+            "--partial",  # Keep partial files on interrupted transfer
+            "--include=*/",
+            "--include=*/chats/",
+            "--include=*/chats/session-*.json",
+            "--exclude=*",
+            remote_path,
+            local_path_str,
+        ]
+
+        result = subprocess.run(
+            rsync_cmd, check=False, capture_output=True, text=True, timeout=SSH_TIMEOUT
+        )
+
+        if result.returncode != 0:
+            is_partial, error_msg = _interpret_rsync_exit_code(result.returncode)
+            if is_partial:
+                # Partial success - some files may have transferred
+                return {
+                    "success": True,
+                    "files_copied": _count_rsync_files(result.stdout),
+                    "local_dir": str(local_dir),
+                    "output": result.stdout,
+                    "warning": error_msg,
+                }
+            return {
+                "success": False,
+                "files_copied": 0,
+                "error": f"{error_msg}: {result.stderr}",
+            }
+
+        return {
+            "success": True,
+            "files_copied": _count_rsync_files(result.stdout),
+            "local_dir": str(local_dir),
+            "output": result.stdout,
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "files_copied": 0, "error": "Timeout"}
+    except FileNotFoundError:
+        return {"success": False, "files_copied": 0, "error": "rsync not found"}
+
+
+def gemini_fetch_remote_hash_index(remote_host: str, local_cache_dir: Path) -> dict:
+    """Fetch Gemini hash index from remote host if it exists.
+
+    Args:
+        remote_host: Remote host specification
+        local_cache_dir: Local directory to store the index
+
+    Returns:
+        Dict with hash->path mappings from remote, or empty dict
+    """
+    if not validate_remote_host(remote_host):
+        return {}
+
+    try:
+        # Check if remote has a hash index file
+        check_cmd = "[ -f ~/.claude-history/gemini_hash_index.json ] && cat ~/.claude-history/gemini_hash_index.json"
+
+        result = subprocess.run(
+            [get_command_path("ssh"), remote_host, check_cmd],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            return {}
+
+        # Parse the JSON index
+        try:
+            index_data = json.loads(result.stdout)
+            return index_data.get("hashes", {})
+        except json.JSONDecodeError:
+            return {}
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return {}
+
+
+# ============================================================================
+# Codex Remote Operations (SSH)
+# ============================================================================
+
+
+def codex_list_remote_workspaces(remote_host: str) -> list:
+    """List unique Codex workspaces (cwds) from remote host.
+
+    Args:
+        remote_host: Remote host specification
+
+    Returns:
+        List of unique workspace paths extracted from session files
+    """
+    if not validate_remote_host(remote_host):
+        sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
+        return []
+
+    try:
+        # Extract unique cwds from all Codex session files
+        # Codex stores cwd in the first line of each jsonl file
+        cmd = 'grep -h \'"cwd":\' ~/.codex/sessions/*/*/*.jsonl 2>/dev/null | sed \'s/.*"cwd":"\\([^"]*\\)".*/\\1/\' | sort -u'
+
+        result = subprocess.run(
+            [get_command_path("ssh"), remote_host, cmd],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            return []
+
+        # Parse output - one cwd per line
+        workspaces = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+
+        return workspaces
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def codex_get_remote_session_info(remote_host: str, workspace_filter: str = None) -> list:
+    """Get Codex session file information from remote without downloading.
+
+    Args:
+        remote_host: Remote host specification
+        workspace_filter: Optional workspace pattern to filter by
+
+    Returns:
+        List of session info dicts with filename, size_kb, modified, message_count, workspace
+    """
+    if not validate_remote_host(remote_host):
+        sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
+        return []
+
+    try:
+        # Get file stats and extract cwd from each session file
+        # Output: filepath|size|mtime|msg_count|cwd
+        cmd = """for f in ~/.codex/sessions/*/*/*.jsonl; do
+            [ -f "$f" ] || continue
+            size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+            mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+            lines=$(wc -l < "$f")
+            cwd=$(head -1 "$f" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/' 2>/dev/null)
+            echo "$f|$size|$mtime|$lines|$cwd"
+        done"""
+
+        result = subprocess.run(
+            [get_command_path("ssh"), remote_host, cmd],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        if result.returncode != 0:
+            return []
+
+        sessions = []
+        for line in result.stdout.strip().split("\n"):
+            if not line or "|" not in line:
+                continue
+
+            parts = line.split("|")
+            if len(parts) != 5:  # noqa: PLR2004
+                continue
+
+            filepath, size_bytes, mtime_epoch, line_count, cwd = parts
+
+            try:
+                # Apply workspace filter if specified
+                if workspace_filter and workspace_filter not in cwd:
+                    continue
+
+                size_kb = int(size_bytes) / 1024
+                modified = datetime.fromtimestamp(int(mtime_epoch))
+                message_count = int(line_count)
+                filename = filepath.split("/")[-1] if "/" in filepath else filepath
+
+                # Extract short workspace name from cwd
+                workspace_name = cwd.split("/")[-1] if cwd else "unknown"
+
+                sessions.append(
+                    {
+                        "filename": filename,
+                        "filepath": filepath,
+                        "size_kb": size_kb,
+                        "modified": modified,
+                        "message_count": message_count,
+                        "workspace": workspace_name,
+                        "workspace_full": cwd,
+                        "agent": AGENT_CODEX,
+                    }
+                )
+            except (ValueError, OSError):
+                continue
+
+        return sessions
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def codex_fetch_remote_sessions(remote_host: str, local_cache_dir: Path, hostname: str) -> dict:
+    """Fetch Codex sessions from remote using rsync.
+
+    Args:
+        remote_host: Remote host specification
+        local_cache_dir: Local directory to cache sessions
+        hostname: Hostname for cache prefix
+
+    Returns:
+        Dict with success, files_copied, local_dir, error
+    """
+    if not validate_remote_host(remote_host):
+        return {"success": False, "files_copied": 0, "error": f"Invalid remote host: {remote_host}"}
+
+    # Create local cache directory for remote Codex sessions
+    local_dir = local_cache_dir / f"remote_{hostname}_codex"
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    remote_path = f"{remote_host}:~/.codex/sessions/"
+
+    try:
+        local_path_str = _convert_to_rsync_path(local_dir)
+        rsync_cmd = [
+            get_command_path("rsync"),
+            "-avh",
+            "--partial",  # Keep partial files on interrupted transfer
+            "--include=*/",
+            "--include=*/*.jsonl",
+            "--exclude=*",
+            remote_path,
+            local_path_str,
+        ]
+
+        result = subprocess.run(
+            rsync_cmd, check=False, capture_output=True, text=True, timeout=SSH_TIMEOUT
+        )
+
+        if result.returncode != 0:
+            is_partial, error_msg = _interpret_rsync_exit_code(result.returncode)
+            if is_partial:
+                # Partial success - some files may have transferred
+                return {
+                    "success": True,
+                    "files_copied": _count_rsync_files(result.stdout),
+                    "local_dir": str(local_dir),
+                    "output": result.stdout,
+                    "warning": error_msg,
+                }
+            return {
+                "success": False,
+                "files_copied": 0,
+                "error": f"{error_msg}: {result.stderr}",
+            }
+
+        return {
+            "success": True,
+            "files_copied": _count_rsync_files(result.stdout),
+            "local_dir": str(local_dir),
+            "output": result.stdout,
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "files_copied": 0, "error": "Timeout"}
+    except FileNotFoundError:
+        return {"success": False, "files_copied": 0, "error": "rsync not found"}
 
 
 # ============================================================================
@@ -4461,13 +5267,59 @@ def load_aliases() -> dict:
             if "version" not in data:
                 data["version"] = 1
             return _normalize_aliases(data)
-    except (OSError, json.JSONDecodeError) as e:
+    except json.JSONDecodeError:
+        # Corrupted JSON - create backup and warn user prominently
+        backup_path = aliases_file.with_suffix(
+            f".corrupted.{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        try:
+            import shutil
+
+            shutil.copy2(aliases_file, backup_path)
+            sys.stderr.write(f"Warning: aliases file corrupted, backed up to {backup_path}\n")
+        except OSError:
+            sys.stderr.write(f"Warning: aliases file corrupted at {aliases_file}\n")
+        return {"version": 1, "aliases": {}}
+    except OSError as e:
         sys.stderr.write(f"Warning: Could not load aliases file: {e}\n")
         return {"version": 1, "aliases": {}}
 
 
+def _lock_file(file_handle, exclusive: bool = True):
+    """Lock a file handle (cross-platform).
+
+    Args:
+        file_handle: Open file handle
+        exclusive: True for write lock, False for read lock
+    """
+    if platform.system() == "Windows":
+        import msvcrt
+
+        msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(file_handle.fileno(), lock_type | fcntl.LOCK_NB)
+
+
+def _unlock_file(file_handle):
+    """Unlock a file handle (cross-platform)."""
+    if platform.system() == "Windows":
+        import msvcrt
+
+        try:
+            msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        import fcntl
+
+        fcntl.flock(file_handle.fileno(), fcntl.LOCK_UN)
+
+
 def save_aliases(data: dict) -> bool:
-    """Save aliases to storage file.
+    """Save aliases to storage file with file locking.
 
     Args:
         data: Alias data dictionary with 'version' and 'aliases' keys
@@ -4478,6 +5330,7 @@ def save_aliases(data: dict) -> bool:
     Side Effects:
         - Creates ~/.claude-history/ directory with mode 0o700 if missing
         - Writes to ~/.claude-history/aliases.json
+        - Uses file locking to prevent race conditions
     """
     aliases_dir = get_aliases_dir()
     aliases_file = get_aliases_file()
@@ -4492,11 +5345,20 @@ def save_aliases(data: dict) -> bool:
         if "version" not in data:
             data["version"] = 1
 
+        # Write with file locking to prevent concurrent updates
         with open(aliases_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            try:
+                _lock_file(f, exclusive=True)
+                json.dump(data, f, indent=2)
+            finally:
+                _unlock_file(f)
+
         # Set secure permissions on aliases file (owner read/write only)
         os.chmod(aliases_file, 0o600)
         return True
+    except BlockingIOError:
+        sys.stderr.write("Error: Aliases file is locked by another process\n")
+        return False
     except OSError as e:
         sys.stderr.write(f"Error: Could not save aliases: {e}\n")
         return False
@@ -4742,6 +5604,8 @@ def _get_remote_sessions(
     result = fetch_workspace_files(remote_spec, workspace, local_projects, hostname)
 
     if result.get("success"):
+        if result.get("warning"):
+            sys.stderr.write(f"Warning: {result['warning']}\n")
         return get_workspace_sessions(
             cached_workspace,
             quiet=True,
@@ -5227,8 +6091,8 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str 
 def _get_alias_export_options(args) -> dict:
     """Extract export options from args."""
     return {
-        "since_date": parse_date_string(getattr(args, "since", None)),
-        "until_date": parse_date_string(getattr(args, "until", None)),
+        "since_date": parse_date_with_validation(getattr(args, "since", None), "--since"),
+        "until_date": parse_date_with_validation(getattr(args, "until", None), "--until"),
         "force": getattr(args, "force", False),
         "minimal": getattr(args, "minimal", False),
         "split_lines": getattr(args, "split", None),
@@ -5381,15 +6245,61 @@ def _load_import_data(import_file: str) -> dict:
         sys.exit(1)
 
 
-def _merge_alias_sources(existing_sources: dict, new_sources: dict):
+def _validate_alias_source_key(source_key: str) -> bool:
+    """Validate that an alias source key is valid.
+
+    Valid source keys:
+    - "local": Local workspaces
+    - "windows": Windows workspaces (when in WSL)
+    - "wsl": Dict of WSL distro names -> workspaces
+    - "remote": Dict of hostname -> workspaces
+    """
+    valid_keys = {"local", "windows", "wsl", "remote"}
+    return source_key in valid_keys
+
+
+def _merge_alias_sources(existing_sources: dict, new_sources: dict):  # noqa: C901
     """Merge new sources into existing alias sources."""
     for source_key, workspaces in new_sources.items():
+        # Validate source key
+        if not _validate_alias_source_key(source_key):
+            sys.stderr.write(f"Warning: Ignoring invalid source key '{source_key}'\n")
+            continue
+
         if source_key not in existing_sources:
             existing_sources[source_key] = workspaces
-        else:
+        # Handle nested dicts (wsl, remote) vs flat lists (local, windows)
+        elif isinstance(workspaces, dict) and isinstance(existing_sources[source_key], dict):
+            for sub_key, ws_list in workspaces.items():
+                if sub_key not in existing_sources[source_key]:
+                    existing_sources[source_key][sub_key] = ws_list
+                else:
+                    for ws in ws_list:
+                        if ws not in existing_sources[source_key][sub_key]:
+                            existing_sources[source_key][sub_key].append(ws)
+        elif isinstance(workspaces, list):
             for ws in workspaces:
                 if ws not in existing_sources[source_key]:
                     existing_sources[source_key].append(ws)
+
+
+def _backup_aliases_file() -> Path | None:
+    """Create a backup of the aliases file. Returns backup path or None if no file to backup."""
+    aliases_file = get_aliases_file()
+    if not aliases_file.exists():
+        return None
+
+    backup_path = aliases_file.with_suffix(
+        f".backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
+    try:
+        import shutil
+
+        shutil.copy2(aliases_file, backup_path)
+        return backup_path
+    except OSError as e:
+        sys.stderr.write(f"Warning: Could not create backup: {e}\n")
+        return None
 
 
 def cmd_alias_config_import(args):
@@ -5404,6 +6314,10 @@ def cmd_alias_config_import(args):
         sys.exit(1)
 
     if replace_mode:
+        # Create backup before replacing
+        backup_path = _backup_aliases_file()
+        if backup_path:
+            sys.stderr.write(f"Created backup: {backup_path}\n")
         new_data = import_data
     else:
         existing_data = load_aliases()
@@ -5461,7 +6375,10 @@ def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
     # Track if this is a new database
     is_new_db = not db_path.exists()
 
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
+
+    # Enable foreign key enforcement (disabled by default in SQLite)
+    conn.execute("PRAGMA foreign_keys = ON")
 
     # Set secure permissions on new database file
     if is_new_db:
@@ -5536,9 +6453,9 @@ def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
         );
 
         -- Create indexes for common queries
+        -- Note: idx_sessions_agent is created in migration to v4 (after agent column exists)
         CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace);
         CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
-        CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent);
         CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
         CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
         CREATE INDEX IF NOT EXISTS idx_messages_file_path ON messages(file_path);
@@ -5568,15 +6485,26 @@ def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
             except sqlite3.OperationalError:
                 pass  # Columns already exist
 
-        # Migrate from version 3 to 4: add agent column
+        # Migrate from version 3 to 4: add agent column with path-based detection
+        # Session files are stored in agent-specific directories:
+        #   Claude: ~/.claude/projects/.../*.jsonl
+        #   Codex:  ~/.codex/sessions/*.jsonl
+        #   Gemini: ~/.gemini/tmp/*/chats/session-*.json
         if current_version < DB_VERSION_AGENT_COLUMN:
+            # Add agent column (may fail if already exists for new DBs)
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN agent TEXT DEFAULT 'claude'")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent)")
             except sqlite3.OperationalError as e:
-                # Only ignore "duplicate column" error, re-raise others
                 if "duplicate column" not in str(e).lower():
-                    sys.stderr.write(f"Warning: Migration to v4 failed: {e}\n")
+                    sys.stderr.write(f"Warning: Migration to v4 failed (add column): {e}\n")
+
+            # Create index (runs for both migrated and new databases)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent)")
+
+            # Set correct agent values for existing sessions based on file paths
+            # (no-op for new databases with no sessions)
+            conn.execute("UPDATE sessions SET agent = 'gemini' WHERE file_path LIKE '%/.gemini/%'")
+            conn.execute("UPDATE sessions SET agent = 'codex' WHERE file_path LIKE '%/.codex/%'")
 
         # Update version
         if row is None:
@@ -5806,13 +6734,14 @@ def sync_file_to_db(  # noqa: C901, PLR0912, PLR0915
     if agent == AGENT_GEMINI:
         metrics = gemini_extract_metrics_from_json(jsonl_file)
         session = metrics["session"]
-        # Gemini uses projectHash - try to get readable path from hash index
-        project_hash = session.get("projectHash", "")
+        # Gemini stores projectHash in 'cwd' field from gemini_extract_metrics_from_json
+        project_hash = session.get("cwd", "")
         if project_hash:
             real_path = gemini_get_path_for_hash(project_hash)
             if real_path:
-                # Use encoded path as workspace (consistent with Claude/Codex)
-                session["workspace"] = path_to_encoded_workspace(real_path)
+                # Use short workspace name (consistent with Claude stats display)
+                encoded = path_to_encoded_workspace(real_path)
+                session["workspace"] = get_workspace_name_from_path(encoded)
             else:
                 # Fallback to hash-based workspace
                 session["workspace"] = project_hash
@@ -5835,7 +6764,9 @@ def sync_file_to_db(  # noqa: C901, PLR0912, PLR0915
         session = metrics["session"]
         # Codex uses cwd directly, need to convert to workspace
         if session.get("cwd"):
-            session["workspace"] = path_to_encoded_workspace(session["cwd"])
+            # Use short workspace name (consistent with Claude stats display)
+            encoded = path_to_encoded_workspace(session["cwd"])
+            session["workspace"] = get_workspace_name_from_path(encoded)
         else:
             session["workspace"] = "unknown"
         session["source"] = source
@@ -5862,97 +6793,104 @@ def sync_file_to_db(  # noqa: C901, PLR0912, PLR0915
     if session.get("message_count", 0) == 0 and len(metrics.get("messages", [])) == 0:
         return False  # No messages in file
 
-    # Delete existing data for this file (for re-sync)
-    conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (file_path,))
-    conn.execute("DELETE FROM messages WHERE file_path = ?", (file_path,))
-    conn.execute("DELETE FROM sessions WHERE file_path = ?", (file_path,))
+    # Wrap all database operations in a transaction with rollback on error
+    try:
+        # Delete existing data for this file (for re-sync)
+        conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (file_path,))
+        conn.execute("DELETE FROM messages WHERE file_path = ?", (file_path,))
+        conn.execute("DELETE FROM sessions WHERE file_path = ?", (file_path,))
 
-    # Insert session
-    conn.execute(
-        """
-        INSERT INTO sessions (
-            file_path, session_id, workspace, source, agent, file_mtime,
-            is_agent, parent_session_id, start_time, end_time,
-            message_count, git_branch, claude_version, cwd,
-            work_period_seconds, num_work_periods
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """,
-        (
-            file_path,
-            session.get("session_id") or session.get("id"),
-            session["workspace"],
-            session["source"],
-            agent,
-            session["file_mtime"],
-            1 if session.get("is_agent") else 0,
-            session.get("parent_session_id"),
-            session.get("start_time"),
-            session.get("end_time"),
-            session.get("message_count", len(metrics.get("messages", []))),
-            session.get("git_branch"),
-            session.get("claude_version"),
-            session.get("cwd"),
-            session.get("work_period_seconds", 0),
-            session.get("num_work_periods", 1),
-        ),
-    )
-
-    # Insert messages
-    for msg in metrics["messages"]:
+        # Insert session
         conn.execute(
             """
-            INSERT INTO messages (
-                uuid, file_path, session_id, parent_uuid, type, timestamp,
-                model, stop_reason, input_tokens, output_tokens,
-                cache_creation_tokens, cache_read_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (
+                file_path, session_id, workspace, source, agent, file_mtime,
+                is_agent, parent_session_id, start_time, end_time,
+                message_count, git_branch, claude_version, cwd,
+                work_period_seconds, num_work_periods
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
-                msg.get("uuid"),
                 file_path,
-                msg.get("session_id") or session.get("session_id") or session.get("id"),
-                msg.get("parent_uuid"),
-                msg.get("type") or msg.get("role"),
-                msg.get("timestamp"),
-                msg.get("model"),
-                msg.get("stop_reason"),
-                msg.get("input_tokens", 0),
-                msg.get("output_tokens", 0),
-                msg.get("cache_creation_tokens", 0),
-                msg.get("cache_read_tokens", 0),
+                session.get("session_id") or session.get("id"),
+                session["workspace"],
+                session["source"],
+                agent,
+                session["file_mtime"],
+                1 if session.get("is_agent") else 0,
+                session.get("parent_session_id"),
+                session.get("start_time"),
+                session.get("end_time"),
+                session.get("message_count", len(metrics.get("messages", []))),
+                session.get("git_branch"),
+                session.get("claude_version"),
+                session.get("cwd"),
+                session.get("work_period_seconds", 0),
+                session.get("num_work_periods", 1),
             ),
         )
 
-    # Insert tool uses
-    for tu in metrics["tool_uses"]:
+        # Insert messages
+        for msg in metrics["messages"]:
+            conn.execute(
+                """
+                INSERT INTO messages (
+                    uuid, file_path, session_id, parent_uuid, type, timestamp,
+                    model, stop_reason, input_tokens, output_tokens,
+                    cache_creation_tokens, cache_read_tokens
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    msg.get("uuid"),
+                    file_path,
+                    msg.get("session_id") or session.get("session_id") or session.get("id"),
+                    msg.get("parent_uuid"),
+                    msg.get("type") or msg.get("role"),
+                    msg.get("timestamp"),
+                    msg.get("model"),
+                    msg.get("stop_reason"),
+                    msg.get("input_tokens", 0),
+                    msg.get("output_tokens", 0),
+                    msg.get("cache_creation_tokens", 0),
+                    msg.get("cache_read_tokens", 0),
+                ),
+            )
+
+        # Insert tool uses
+        for tu in metrics["tool_uses"]:
+            conn.execute(
+                """
+                INSERT INTO tool_uses (
+                    tool_use_id, message_uuid, file_path, session_id, tool_name, is_error, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    tu.get("tool_use_id"),
+                    tu.get("message_uuid"),
+                    file_path,
+                    tu.get("session_id") or session.get("session_id") or session.get("id"),
+                    tu.get("tool_name") or tu.get("name"),
+                    1 if tu.get("is_error") else 0,
+                    tu.get("timestamp"),
+                ),
+            )
+
+        # Update synced files tracking
         conn.execute(
             """
-            INSERT INTO tool_uses (
-                tool_use_id, message_uuid, file_path, session_id, tool_name, is_error, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO synced_files (file_path, mtime, synced_at)
+            VALUES (?, ?, ?)
         """,
-            (
-                tu.get("tool_use_id"),
-                tu.get("message_uuid"),
-                file_path,
-                tu.get("session_id") or session.get("session_id") or session.get("id"),
-                tu.get("tool_name") or tu.get("name"),
-                1 if tu.get("is_error") else 0,
-                tu.get("timestamp"),
-            ),
+            (file_path, current_mtime, datetime.now().isoformat()),
         )
 
-    # Update synced files tracking
-    conn.execute(
-        """
-        INSERT OR REPLACE INTO synced_files (file_path, mtime, synced_at)
-        VALUES (?, ?, ?)
-    """,
-        (file_path, current_mtime, datetime.now().isoformat()),
-    )
+        conn.commit()
+        return True
 
-    conn.commit()
-    return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        sys.stderr.write(f"Warning: Database error syncing {jsonl_file}: {e}\n")
+        return False
 
 
 def _matches_pattern(name: str, patterns: list) -> bool:
@@ -6079,9 +7017,118 @@ def _sync_remote_workspace(
     fetch_result = fetch_workspace_files(remote, ws, local_projects_dir, hostname)
     if not fetch_result.get("success"):
         return
+    if fetch_result.get("warning"):
+        sys.stderr.write(f"Warning: {fetch_result['warning']}\n")
     workspace_path = ws.lstrip("-")
     local_dir = local_projects_dir / f"remote_{hostname}_{workspace_path}"
     _sync_workspace_files_to_db(conn, local_dir, f"remote:{hostname}", stats, force)
+
+
+def _sync_ssh_remote_claude_to_db(
+    conn, remote: str, hostname: str, patterns: list, stats: dict, force: bool
+):
+    """Sync Claude sessions from SSH remote to database."""
+    remote_workspaces = list_remote_workspaces(remote)
+    if not remote_workspaces:
+        return
+
+    remote_workspaces = _filter_workspaces_by_pattern(remote_workspaces, patterns)
+    if not remote_workspaces:
+        return
+
+    try:
+        local_projects_dir = get_claude_projects_dir()
+    except SystemExit:
+        # Claude projects dir doesn't exist locally, create temp cache
+        local_projects_dir = get_config_dir() / "remote_cache"
+        local_projects_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"  Syncing Claude sessions ({len(remote_workspaces)} workspaces)...")
+
+    for ws in remote_workspaces:
+        try:
+            _sync_remote_workspace(conn, remote, ws, local_projects_dir, hostname, stats, force)
+        except (OSError, subprocess.SubprocessError) as e:
+            sys.stderr.write(f"    Error fetching {ws}: {e}\n")
+            stats["errors"] += 1
+
+
+def _sync_ssh_remote_gemini_to_db(
+    conn, remote: str, hostname: str, patterns: list, stats: dict, force: bool
+):
+    """Sync Gemini sessions from SSH remote to database."""
+    local_cache_dir = get_config_dir()
+
+    # Fetch Gemini sessions from remote
+    result = gemini_fetch_remote_sessions(remote, local_cache_dir, hostname)
+    if not result.get("success"):
+        if result.get("error") and "No such file" not in result.get("error", ""):
+            sys.stderr.write(f"    Gemini fetch failed: {result.get('error')}\n")
+        return
+    if result.get("warning"):
+        sys.stderr.write(f"Warning: gemini: {result['warning']}\n")
+
+    # Scan fetched sessions
+    local_gemini_dir = local_cache_dir / f"remote_{hostname}_gemini"
+    if not local_gemini_dir.exists():
+        return
+
+    print("  Syncing Gemini sessions...")
+
+    for json_file in local_gemini_dir.glob("*/chats/session-*.json"):
+        # Filter by workspace pattern if specified
+        if patterns and patterns[0]:
+            workspace = gemini_get_workspace_from_session(json_file)
+            if not _matches_pattern(workspace, patterns):
+                continue
+
+        try:
+            if sync_file_to_db(conn, json_file, f"remote:{hostname}", force):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
+            sys.stderr.write(f"    Error syncing {json_file.name}: {e}\n")
+            stats["errors"] += 1
+
+
+def _sync_ssh_remote_codex_to_db(
+    conn, remote: str, hostname: str, patterns: list, stats: dict, force: bool
+):
+    """Sync Codex sessions from SSH remote to database."""
+    local_cache_dir = get_config_dir()
+
+    # Fetch Codex sessions from remote
+    result = codex_fetch_remote_sessions(remote, local_cache_dir, hostname)
+    if not result.get("success"):
+        if result.get("error") and "No such file" not in result.get("error", ""):
+            sys.stderr.write(f"    Codex fetch failed: {result.get('error')}\n")
+        return
+    if result.get("warning"):
+        sys.stderr.write(f"Warning: codex: {result['warning']}\n")
+
+    # Scan fetched sessions
+    local_codex_dir = local_cache_dir / f"remote_{hostname}_codex"
+    if not local_codex_dir.exists():
+        return
+
+    print("  Syncing Codex sessions...")
+
+    for jsonl_file in local_codex_dir.glob("*/*/*/*.jsonl"):
+        # Filter by workspace pattern if specified
+        if patterns and patterns[0]:
+            workspace = codex_get_workspace_from_session(jsonl_file)
+            if not _matches_pattern(workspace, patterns):
+                continue
+
+        try:
+            if sync_file_to_db(conn, jsonl_file, f"remote:{hostname}", force):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
+            sys.stderr.write(f"    Error syncing {jsonl_file.name}: {e}\n")
+            stats["errors"] += 1
 
 
 def _sync_ssh_remote_to_db(conn, remote: str, patterns: list, force: bool) -> dict:
@@ -6095,20 +7142,14 @@ def _sync_ssh_remote_to_db(conn, remote: str, patterns: list, force: bool) -> di
         stats["errors"] += 1
         return stats
 
-    remote_workspaces = list_remote_workspaces(remote)
-    if not remote_workspaces:
-        print(f"  No workspaces found on {remote}")
-        return stats
+    # Sync Claude sessions
+    _sync_ssh_remote_claude_to_db(conn, remote, hostname, patterns, stats, force)
 
-    remote_workspaces = _filter_workspaces_by_pattern(remote_workspaces, patterns)
-    local_projects_dir = get_claude_projects_dir()
+    # Sync Gemini sessions
+    _sync_ssh_remote_gemini_to_db(conn, remote, hostname, patterns, stats, force)
 
-    for ws in remote_workspaces:
-        try:
-            _sync_remote_workspace(conn, remote, ws, local_projects_dir, hostname, stats, force)
-        except (OSError, subprocess.SubprocessError) as e:
-            sys.stderr.write(f"  Error fetching {ws}: {e}\n")
-            stats["errors"] += 1
+    # Sync Codex sessions
+    _sync_ssh_remote_codex_to_db(conn, remote, hostname, patterns, stats, force)
 
     return stats
 
@@ -6212,6 +7253,7 @@ def _get_stats_workspace_patterns(args) -> list:
     workspace_patterns = getattr(args, "workspace", None) or []
     all_workspaces = getattr(args, "all_workspaces", False)
     this_only = getattr(args, "this_only", False)
+    agent = getattr(args, "agent", None) or "auto"
 
     if workspace_patterns or all_workspaces:
         return workspace_patterns
@@ -6219,7 +7261,8 @@ def _get_stats_workspace_patterns(args) -> list:
     full_pattern = get_current_workspace_pattern()
     ws_name = get_workspace_name_from_path(full_pattern)
 
-    if not this_only:
+    # Aliases are Claude-specific; skip for other agents
+    if not this_only and agent in ("auto", "claude"):
         alias_name = get_alias_for_workspace(full_pattern, "local")
         if alias_name:
             sys.stderr.write(f"Using alias @{alias_name} (use --this for current workspace only)\n")
@@ -6270,6 +7313,12 @@ def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:
         where_clauses.append("s.source = ?")
         params.append(source_filter)
 
+    # Filter by agent backend (claude, codex, gemini)
+    agent_filter = getattr(args, "agent", None) or "auto"
+    if agent_filter != "auto":
+        where_clauses.append("s.agent = ?")
+        params.append(agent_filter)
+
     since_str = getattr(args, "since", None)
     if since_str:
         where_clauses.append("s.start_time >= ?")
@@ -6296,6 +7345,8 @@ def _display_selected_stats(conn, args, where_sql: str, params: list):
             sys.stderr.write("Error: --top-ws must be a positive integer\n")
             sys.exit(1)
 
+    agent = getattr(args, "agent", None) or "auto"
+
     if getattr(args, "tools", False):
         display_tool_stats(conn, where_sql, params)
     elif getattr(args, "models", False):
@@ -6307,7 +7358,7 @@ def _display_selected_stats(conn, args, where_sql: str, params: list):
     elif getattr(args, "by_day", False):
         display_daily_stats(conn, where_sql, params)
     else:
-        display_summary_stats(conn, where_sql, params, top_limit=top_limit)
+        display_summary_stats(conn, where_sql, params, top_limit=top_limit, agent=agent)
 
 
 def cmd_stats(args):
@@ -6578,7 +7629,7 @@ def _print_homes_and_workspaces(sources, top_workspaces, top_limit=None):
             _print_workspace_item(ws)
 
 
-def _print_summary_stats(
+def _print_summary_stats(  # noqa: PLR0913
     session_stats,
     token_stats,
     tool_stats,
@@ -6587,10 +7638,18 @@ def _print_summary_stats(
     top_workspaces,
     top_limit=None,
     time_stats=None,
+    agent: str = "auto",
 ):
     """Print the formatted summary statistics."""
+    agent_names = {
+        "claude": "CLAUDE CODE",
+        "codex": "CODEX CLI",
+        "gemini": "GEMINI CLI",
+        "auto": "AI ASSISTANT",
+    }
+    agent_name = agent_names.get(agent, "AI ASSISTANT")
     print("=" * DISPLAY_SEPARATOR_WIDTH)
-    print("CLAUDE CODE METRICS SUMMARY")
+    print(f"{agent_name} METRICS SUMMARY")
     print("=" * DISPLAY_SEPARATOR_WIDTH)
 
     _print_homes_and_workspaces(sources, top_workspaces, top_limit=top_limit)
@@ -6603,7 +7662,9 @@ def _print_summary_stats(
     print()
 
 
-def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list, top_limit=None):
+def display_summary_stats(
+    conn: sqlite3.Connection, where_sql: str, params: list, top_limit=None, agent: str = "auto"
+):
     """Display summary statistics dashboard."""
     session_stats = _query_session_stats(conn, where_sql, params)
     token_stats = _query_token_stats(conn, where_sql, params)
@@ -6645,6 +7706,7 @@ def display_summary_stats(conn: sqlite3.Connection, where_sql: str, params: list
         top_workspaces,
         top_limit=top_limit,
         time_stats=time_stats,
+        agent=agent,
     )
 
 
@@ -7058,7 +8120,7 @@ def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
 # ============================================================================
 
 
-def _list_windows_sessions(args, patterns: list, since_date, until_date):
+def _list_windows_sessions(args, patterns: list, since_date, until_date):  # noqa: C901
     """List sessions from Windows (called from WSL).
 
     Args:
@@ -7067,54 +8129,80 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         since_date: Optional start date filter
         until_date: Optional end date filter
     """
+    agent = getattr(args, "agent", None) or "auto"
+    workspaces_only = getattr(args, "workspaces_only", False)
+
     remote_host = getattr(args, "remote", None)
     username = None
     if remote_host and remote_host.startswith("windows://"):
         username = remote_host[10:]
 
-    windows_projects_dir = get_windows_projects_dir(username)
-    if not windows_projects_dir:
-        sys.stderr.write("Error: Cannot access Windows projects directory\n")
-        sys.stderr.write("\nTips:\n")
-        sys.stderr.write("  • Make sure Claude Code is installed on Windows\n")
-        sys.stderr.write("  • Try: agent-history lsh --windows\n")
-        sys.exit(1)
+    all_sessions = []
 
-    agent = getattr(args, "agent", None) or "auto"
-    sessions = collect_sessions_with_dedup(
-        patterns,
-        since_date,
-        until_date,
-        projects_dir=windows_projects_dir,
-        skip_message_count=True,  # Slow over WSL mount
-        agent=agent,
-    )
+    # Determine which agents to scan
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
 
-    # If no native sessions, fall back to include cached (e.g., wsl_*) so users still see content
-    if not sessions:
-        sessions = collect_sessions_with_dedup(
-            patterns,
-            since_date,
-            until_date,
-            projects_dir=windows_projects_dir,
-            skip_message_count=True,
-            include_cached=True,
-            agent=agent,
-        )
+    for scan_agent in agents_to_scan:
+        sessions_dir = get_agent_windows_dir(username, scan_agent)
+        if not sessions_dir or not sessions_dir.exists():
+            continue
 
-    if not sessions:
-        sys.stderr.write("Error: No sessions found in Windows\n")
-        sys.stderr.write("\nTips:\n")
-        sys.stderr.write("  \a Check that Windows has native workspaces (not just cached WSL)\n")
-        sys.stderr.write("  \a Try: agent-history lsh --windows\n")
+        if scan_agent == AGENT_CLAUDE:
+            sessions = collect_sessions_with_dedup(
+                patterns,
+                since_date,
+                until_date,
+                projects_dir=sessions_dir,
+                skip_message_count=True,  # Slow over WSL mount
+                agent=AGENT_CLAUDE,
+            )
+            all_sessions.extend(sessions)
+        elif scan_agent == AGENT_CODEX:
+            pattern_str = patterns[0] if patterns else ""
+            sessions = codex_scan_sessions(
+                pattern=pattern_str,
+                since_date=since_date,
+                until_date=until_date,
+                sessions_dir=sessions_dir,
+                skip_message_count=True,
+            )
+            # Add source info
+            for s in sessions:
+                s["source"] = "windows"
+            all_sessions.extend(sessions)
+        elif scan_agent == AGENT_GEMINI:
+            pattern_str = patterns[0] if patterns else ""
+            sessions = gemini_scan_sessions(
+                pattern=pattern_str,
+                since_date=since_date,
+                until_date=until_date,
+                sessions_dir=sessions_dir,
+                skip_message_count=True,
+            )
+            # Add source info
+            for s in sessions:
+                s["source"] = "windows"
+            all_sessions.extend(sessions)
+
+    # If no sessions found with specific agent, show helpful error
+    if not all_sessions:
+        if agent == "auto":
+            sys.stderr.write("Error: No sessions found in Windows\n")
+            sys.stderr.write("\nTips:\n")
+            sys.stderr.write("  • Check that Windows has Claude/Codex/Gemini installed\n")
+            sys.stderr.write("  • Try: agent-history lsh --windows\n")
+        else:
+            sys.stderr.write(f"Error: No {agent} sessions found in Windows\n")
+            sys.stderr.write("\nTips:\n")
+            sys.stderr.write(f"  • Check that {agent} is installed on Windows\n")
+            sys.stderr.write("  • Try: agent-history --agent auto lss --windows\n")
         sys.exit(1)
 
     source_label = f"Windows ({username})" if username else "Windows"
-    workspaces_only = getattr(args, "workspaces_only", False)
-    print_sessions_output(sessions, source_label, workspaces_only)
+    print_sessions_output(all_sessions, source_label, workspaces_only)
 
 
-def _list_wsl_sessions(args, patterns: list, since_date, until_date):
+def _list_wsl_sessions(args, patterns: list, since_date, until_date):  # noqa: C901
     """List sessions from WSL (called from Windows).
 
     Args:
@@ -7123,76 +8211,119 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
         since_date: Optional start date filter
         until_date: Optional end date filter
     """
+    agent = getattr(args, "agent", None) or "auto"
+    workspaces_only = getattr(args, "workspaces_only", False)
+
     remote_host = getattr(args, "remote", None)
     distro_name = remote_host[WSL_PREFIX_LEN:]  # Remove 'wsl://' prefix
 
-    wsl_projects_dir = get_wsl_projects_dir(distro_name)
-    if not wsl_projects_dir:
-        sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
-        sys.stderr.write("\nTips:\n")
-        sys.stderr.write("  • Make sure Claude Code is installed in WSL\n")
-        sys.stderr.write("  • Try: agent-history lsh --wsl\n")
-        sys.exit(1)
+    all_sessions = []
 
-    workspaces_only = getattr(args, "workspaces_only", False)
-    agent = getattr(args, "agent", None) or "auto"
+    # Determine which agents to scan
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
 
-    if workspaces_only:
-        raw_workspaces = _get_workspaces_from_dir(wsl_projects_dir)
-        workspaces = _filter_workspaces_by_patterns(raw_workspaces, patterns)
-        base_path = _detect_wsl_base_path(wsl_projects_dir)
-        sessions = [
-            {
-                "workspace": ws,
-                "workspace_readable": normalize_workspace_name(ws, base_path=base_path),
-            }
-            for ws in workspaces
-        ]
-    else:
-        sessions = collect_sessions_with_dedup(
-            patterns,
-            since_date,
-            until_date,
-            projects_dir=wsl_projects_dir,
-            skip_message_count=True,  # Slow over Windows/WSL boundary
-            agent=agent,
-        )
+    for scan_agent in agents_to_scan:
+        sessions_dir = get_agent_wsl_dir(distro_name, scan_agent)
+        if not sessions_dir or not sessions_dir.exists():
+            continue
 
-    if not sessions:
-        sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
+        if scan_agent == AGENT_CLAUDE:
+            if workspaces_only:
+                raw_workspaces = _get_workspaces_from_dir(sessions_dir)
+                workspaces = _filter_workspaces_by_patterns(raw_workspaces, patterns)
+                base_path = _detect_wsl_base_path(sessions_dir)
+                for ws in workspaces:
+                    all_sessions.append(
+                        {
+                            "workspace": ws,
+                            "workspace_readable": normalize_workspace_name(ws, base_path=base_path),
+                            "agent": AGENT_CLAUDE,
+                        }
+                    )
+            else:
+                sessions = collect_sessions_with_dedup(
+                    patterns,
+                    since_date,
+                    until_date,
+                    projects_dir=sessions_dir,
+                    skip_message_count=True,  # Slow over Windows/WSL boundary
+                    agent=AGENT_CLAUDE,
+                )
+                all_sessions.extend(sessions)
+        elif scan_agent == AGENT_CODEX:
+            pattern_str = patterns[0] if patterns else ""
+            sessions = codex_scan_sessions(
+                pattern=pattern_str,
+                since_date=since_date,
+                until_date=until_date,
+                sessions_dir=sessions_dir,
+                skip_message_count=True,
+            )
+            # Add source info
+            for s in sessions:
+                s["source"] = f"wsl:{distro_name}"
+            all_sessions.extend(sessions)
+        elif scan_agent == AGENT_GEMINI:
+            pattern_str = patterns[0] if patterns else ""
+            sessions = gemini_scan_sessions(
+                pattern=pattern_str,
+                since_date=since_date,
+                until_date=until_date,
+                sessions_dir=sessions_dir,
+                skip_message_count=True,
+            )
+            # Add source info
+            for s in sessions:
+                s["source"] = f"wsl:{distro_name}"
+            all_sessions.extend(sessions)
+
+    # If no sessions found, show helpful error
+    if not all_sessions:
+        if agent == "auto":
+            sys.stderr.write(f"Error: No sessions found in WSL '{distro_name}'\n")
+            sys.stderr.write("\nTips:\n")
+            sys.stderr.write("  • Check that Claude/Codex/Gemini is installed in WSL\n")
+            sys.stderr.write("  • Try: agent-history lsh --wsl\n")
+        else:
+            sys.stderr.write(f"Error: No {agent} sessions found in WSL '{distro_name}'\n")
+            sys.stderr.write("\nTips:\n")
+            sys.stderr.write(f"  • Check that {agent} is installed in WSL\n")
+            sys.stderr.write("  • Try: agent-history --agent auto lss --wsl\n")
         sys.exit(1)
 
     source_label = f"WSL ({distro_name})"
-    print_sessions_output(sessions, source_label, workspaces_only)
+    print_sessions_output(all_sessions, source_label, workspaces_only)
 
 
-def _list_remote_workspaces_only(remote_host: str, patterns: list):
-    """List workspaces only for remote host."""
+# ============================================================================
+# SSH Remote Session Listing - Claude
+# ============================================================================
+
+
+def _list_remote_claude_workspaces_only(remote_host: str, patterns: list):
+    """List Claude workspaces only for remote host."""
     batch_workspaces = get_remote_workspaces_batch(remote_host)
     if not batch_workspaces:
-        exit_with_error(f"No workspaces found on {remote_host}")
+        return []
 
     batch_workspaces = [
         ws for ws in batch_workspaces if matches_any_pattern(ws["encoded"], patterns)
     ]
-    if not batch_workspaces:
-        pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
-        exit_with_error(f"No workspaces matching pattern '{pattern_str}'")
 
-    for ws_info in sorted(batch_workspaces, key=lambda x: x["decoded"]):
-        print(ws_info["decoded"])
+    return [{"decoded": ws["decoded"], "agent": AGENT_CLAUDE} for ws in batch_workspaces]
 
 
-def _collect_remote_session_details(remote_host: str, patterns: list, since_date, until_date):
-    """Collect detailed session info from remote workspaces."""
+def _collect_remote_claude_session_details(
+    remote_host: str, patterns: list, since_date, until_date
+):
+    """Collect detailed Claude session info from remote workspaces."""
     remote_workspaces = list_remote_workspaces(remote_host)
     if not remote_workspaces:
-        exit_with_error(f"No workspaces found on {remote_host}")
+        return []
 
     remote_workspaces = [ws for ws in remote_workspaces if matches_any_pattern(ws, patterns)]
     if not remote_workspaces:
-        pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
-        exit_with_error(f"No workspaces matching pattern '{pattern_str}'")
+        return []
 
     sessions = []
     for remote_workspace in remote_workspaces:
@@ -7210,14 +8341,190 @@ def _collect_remote_session_details(remote_host: str, patterns: list, since_date
                         "size_kb": session_info["size_kb"],
                         "modified": session_info["modified"],
                         "message_count": session_info["message_count"],
+                        "agent": AGENT_CLAUDE,
                     }
                 )
     return sessions
 
 
+# ============================================================================
+# SSH Remote Session Listing - Gemini
+# ============================================================================
+
+
+def _list_remote_gemini_workspaces_only(remote_host: str, patterns: list):
+    """List Gemini workspaces (project hashes) for remote host."""
+    workspaces = gemini_list_remote_workspaces(remote_host)
+    if not workspaces:
+        return []
+
+    # Try to resolve hash names using remote hash index
+    remote_index = gemini_fetch_remote_hash_index(remote_host, get_config_dir())
+
+    result = []
+    for ws_hash in workspaces:
+        # Use resolved path if available, otherwise show hash
+        resolved_path = remote_index.get(ws_hash, ws_hash)
+        if matches_any_pattern(resolved_path, patterns) or matches_any_pattern(ws_hash, patterns):
+            result.append({"decoded": resolved_path, "agent": AGENT_GEMINI})
+
+    return result
+
+
+def _collect_remote_gemini_session_details(
+    remote_host: str, patterns: list, since_date, until_date
+):
+    """Collect detailed Gemini session info from remote."""
+    sessions_info = gemini_get_remote_session_info(remote_host)
+    if not sessions_info:
+        return []
+
+    # Try to resolve hash names using remote hash index
+    remote_index = gemini_fetch_remote_hash_index(remote_host, get_config_dir())
+
+    sessions = []
+    for session_info in sessions_info:
+        ws_hash = session_info.get("workspace", "unknown")
+        resolved_path = remote_index.get(ws_hash, ws_hash)
+
+        # Apply pattern filter
+        if not (
+            matches_any_pattern(resolved_path, patterns) or matches_any_pattern(ws_hash, patterns)
+        ):
+            continue
+
+        # Apply date filter
+        filtered = _filter_sessions_by_date([session_info], since_date, until_date)
+        if filtered:
+            sessions.append(
+                {
+                    "workspace": ws_hash,
+                    "workspace_readable": resolved_path,
+                    "filename": session_info["filename"],
+                    "size_kb": session_info["size_kb"],
+                    "modified": session_info["modified"],
+                    "message_count": session_info["message_count"],
+                    "agent": AGENT_GEMINI,
+                }
+            )
+
+    return sessions
+
+
+# ============================================================================
+# SSH Remote Session Listing - Codex
+# ============================================================================
+
+
+def _list_remote_codex_workspaces_only(remote_host: str, patterns: list):
+    """List Codex workspaces (cwds) for remote host."""
+    workspaces = codex_list_remote_workspaces(remote_host)
+    if not workspaces:
+        return []
+
+    result = []
+    for ws_path in workspaces:
+        # Extract short name for display
+        short_name = ws_path.split("/")[-1] if "/" in ws_path else ws_path
+        if matches_any_pattern(ws_path, patterns) or matches_any_pattern(short_name, patterns):
+            result.append({"decoded": short_name, "agent": AGENT_CODEX})
+
+    return result
+
+
+def _collect_remote_codex_session_details(remote_host: str, patterns: list, since_date, until_date):
+    """Collect detailed Codex session info from remote."""
+    sessions_info = codex_get_remote_session_info(remote_host)
+    if not sessions_info:
+        return []
+
+    sessions = []
+    for session_info in sessions_info:
+        ws_short = session_info.get("workspace", "unknown")
+        ws_full = session_info.get("workspace_full", ws_short)
+
+        # Apply pattern filter
+        if not (matches_any_pattern(ws_full, patterns) or matches_any_pattern(ws_short, patterns)):
+            continue
+
+        # Apply date filter
+        filtered = _filter_sessions_by_date([session_info], since_date, until_date)
+        if filtered:
+            sessions.append(
+                {
+                    "workspace": ws_short,
+                    "workspace_readable": ws_short,
+                    "filename": session_info["filename"],
+                    "size_kb": session_info["size_kb"],
+                    "modified": session_info["modified"],
+                    "message_count": session_info["message_count"],
+                    "agent": AGENT_CODEX,
+                }
+            )
+
+    return sessions
+
+
+# ============================================================================
+# SSH Remote Session Listing - Unified Dispatch
+# ============================================================================
+
+
+def _list_remote_workspaces_only(remote_host: str, patterns: list, agent: str = "auto"):
+    """List workspaces for remote host, dispatching by agent type."""
+    all_workspaces = []
+
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX]
+
+    for scan_agent in agents_to_scan:
+        if scan_agent == AGENT_CLAUDE:
+            all_workspaces.extend(_list_remote_claude_workspaces_only(remote_host, patterns))
+        elif scan_agent == AGENT_GEMINI:
+            all_workspaces.extend(_list_remote_gemini_workspaces_only(remote_host, patterns))
+        elif scan_agent == AGENT_CODEX:
+            all_workspaces.extend(_list_remote_codex_workspaces_only(remote_host, patterns))
+
+    if not all_workspaces:
+        pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
+        exit_with_error(f"No workspaces matching pattern '{pattern_str}' on {remote_host}")
+
+    for ws_info in sorted(all_workspaces, key=lambda x: x["decoded"]):
+        print(ws_info["decoded"])
+
+
+def _collect_remote_session_details(
+    remote_host: str, patterns: list, since_date, until_date, agent: str = "auto"
+):
+    """Collect detailed session info from remote workspaces, dispatching by agent type."""
+    all_sessions = []
+
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX]
+
+    for scan_agent in agents_to_scan:
+        if scan_agent == AGENT_CLAUDE:
+            all_sessions.extend(
+                _collect_remote_claude_session_details(
+                    remote_host, patterns, since_date, until_date
+                )
+            )
+        elif scan_agent == AGENT_GEMINI:
+            all_sessions.extend(
+                _collect_remote_gemini_session_details(
+                    remote_host, patterns, since_date, until_date
+                )
+            )
+        elif scan_agent == AGENT_CODEX:
+            all_sessions.extend(
+                _collect_remote_codex_session_details(remote_host, patterns, since_date, until_date)
+            )
+
+    return all_sessions
+
+
 def _list_ssh_remote_sessions(args, patterns: list, since_date, until_date):
     """List sessions from SSH remote."""
     remote_host = getattr(args, "remote", None)
+    agent = getattr(args, "agent", None) or "auto"
 
     if not check_ssh_connection(remote_host):
         sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
@@ -7226,9 +8533,11 @@ def _list_ssh_remote_sessions(args, patterns: list, since_date, until_date):
     workspaces_only = getattr(args, "workspaces_only", False)
 
     if workspaces_only:
-        _list_remote_workspaces_only(remote_host, patterns)
+        _list_remote_workspaces_only(remote_host, patterns, agent)
     else:
-        sessions = _collect_remote_session_details(remote_host, patterns, since_date, until_date)
+        sessions = _collect_remote_session_details(
+            remote_host, patterns, since_date, until_date, agent
+        )
         if not sessions:
             exit_with_error("No sessions found")
         print_sessions_output(sessions, f"Remote ({remote_host})", workspaces_only=False)
@@ -7472,6 +8781,8 @@ def _fetch_remote_workspaces(
             sys.stderr.write(
                 f"Error fetching {remote_workspace}: {result.get('error', 'Unknown error')}\n"
             )
+        elif result.get("warning"):
+            sys.stderr.write(f"Warning: {remote_workspace}: {result['warning']}\n")
 
 
 def _deduplicate_sessions(sessions: list, patterns: list) -> list:
@@ -7488,26 +8799,19 @@ def _deduplicate_sessions(sessions: list, patterns: list) -> list:
     return result
 
 
-def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> list:
-    """Get sessions from SSH remote for batch export."""
-    remote_host = getattr(args, "remote", None)
-
-    if not check_ssh_connection(remote_host):
-        sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
-        sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
-        sys.exit(1)
-
+def _get_batch_ssh_claude_sessions(
+    remote_host: str, patterns: list, since_date, until_date, hostname: str
+) -> list:
+    """Get Claude sessions from SSH remote for batch export."""
     all_remote_workspaces = list_remote_workspaces(remote_host)
     if not all_remote_workspaces:
-        sys.stderr.write(f"Error: No workspaces found on {remote_host}\n")
-        sys.exit(1)
+        return []
 
     remote_workspaces = [ws for ws in all_remote_workspaces if matches_any_pattern(ws, patterns)]
     if not remote_workspaces:
         return []
 
     local_projects_dir = get_claude_projects_dir()
-    hostname = get_remote_hostname(remote_host)
     _fetch_remote_workspaces(remote_host, remote_workspaces, local_projects_dir, hostname)
 
     cached_prefix = f"remote_{hostname}_"
@@ -7515,6 +8819,178 @@ def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> lis
         cached_prefix, quiet=True, since_date=since_date, until_date=until_date, include_cached=True
     )
     return _deduplicate_sessions(all_cached_sessions, patterns)
+
+
+def _get_batch_ssh_gemini_sessions(
+    remote_host: str, patterns: list, since_date, until_date, hostname: str
+) -> list:
+    """Get Gemini sessions from SSH remote for batch export."""
+    # Fetch all Gemini sessions from remote
+    local_cache_dir = get_config_dir()
+    result = gemini_fetch_remote_sessions(remote_host, local_cache_dir, hostname)
+
+    if not result["success"]:
+        sys.stderr.write(
+            f"Warning: Failed to fetch Gemini sessions: {result.get('error', 'Unknown')}\n"
+        )
+        return []
+    if result.get("warning"):
+        sys.stderr.write(f"Warning: gemini: {result['warning']}\n")
+
+    # Scan the local cache for Gemini sessions
+    local_gemini_dir = local_cache_dir / f"remote_{hostname}_gemini"
+    if not local_gemini_dir.exists():
+        return []
+
+    # Try to get remote hash index for workspace name resolution
+    remote_index = gemini_fetch_remote_hash_index(remote_host, local_cache_dir)
+
+    sessions = []
+    for json_file in local_gemini_dir.glob("*/chats/session-*.json"):
+        # Extract project hash from path
+        path_parts = json_file.parts
+        try:
+            # Find the hash directory (parent of 'chats')
+            chats_idx = path_parts.index("chats")
+            ws_hash = path_parts[chats_idx - 1]
+        except (ValueError, IndexError):
+            ws_hash = "unknown"
+
+        # Resolve workspace name
+        workspace = remote_index.get(ws_hash, ws_hash)
+
+        # Apply pattern filter
+        if not (matches_any_pattern(workspace, patterns) or matches_any_pattern(ws_hash, patterns)):
+            continue
+
+        modified = datetime.fromtimestamp(json_file.stat().st_mtime)
+
+        # Apply date filter
+        if not is_date_in_range(modified, since_date, until_date):
+            continue
+
+        # Count messages
+        message_count = 0
+        try:
+            with open(json_file, encoding="utf-8") as f:
+                data = json.load(f)
+                message_count = len(data.get("messages", []))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        sessions.append(
+            {
+                "file": json_file,
+                "workspace": workspace,
+                "workspace_readable": workspace,
+                "filename": json_file.name,
+                "modified": modified,
+                "message_count": message_count,
+                "size_kb": json_file.stat().st_size / 1024,
+                "agent": AGENT_GEMINI,
+            }
+        )
+
+    return sessions
+
+
+def _get_batch_ssh_codex_sessions(
+    remote_host: str, patterns: list, since_date, until_date, hostname: str
+) -> list:
+    """Get Codex sessions from SSH remote for batch export."""
+    # Fetch all Codex sessions from remote
+    local_cache_dir = get_config_dir()
+    result = codex_fetch_remote_sessions(remote_host, local_cache_dir, hostname)
+
+    if not result["success"]:
+        sys.stderr.write(
+            f"Warning: Failed to fetch Codex sessions: {result.get('error', 'Unknown')}\n"
+        )
+        return []
+    if result.get("warning"):
+        sys.stderr.write(f"Warning: codex: {result['warning']}\n")
+
+    # Scan the local cache for Codex sessions
+    local_codex_dir = local_cache_dir / f"remote_{hostname}_codex"
+    if not local_codex_dir.exists():
+        return []
+
+    sessions = []
+    for jsonl_file in local_codex_dir.glob("*/*/*/*.jsonl"):
+        # Extract workspace from first line
+        workspace = codex_get_workspace_from_session(jsonl_file)
+        if not workspace:
+            workspace = "unknown"
+
+        ws_short = workspace.split("/")[-1] if "/" in workspace else workspace
+
+        # Apply pattern filter
+        if not (
+            matches_any_pattern(workspace, patterns) or matches_any_pattern(ws_short, patterns)
+        ):
+            continue
+
+        modified = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
+
+        # Apply date filter
+        if not is_date_in_range(modified, since_date, until_date):
+            continue
+
+        # Count messages (use helper to count valid messages only)
+        message_count = _count_file_messages(jsonl_file, skip_count=False)
+
+        sessions.append(
+            {
+                "file": jsonl_file,
+                "workspace": ws_short,
+                "workspace_readable": ws_short,
+                "filename": jsonl_file.name,
+                "modified": modified,
+                "message_count": message_count,
+                "size_kb": jsonl_file.stat().st_size / 1024,
+                "agent": AGENT_CODEX,
+            }
+        )
+
+    return sessions
+
+
+def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> list:
+    """Get sessions from SSH remote for batch export."""
+    remote_host = getattr(args, "remote", None)
+    agent = getattr(args, "agent", None) or "auto"
+
+    if not check_ssh_connection(remote_host):
+        sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+        sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+        sys.exit(1)
+
+    hostname = get_remote_hostname(remote_host)
+    all_sessions = []
+
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX]
+
+    for scan_agent in agents_to_scan:
+        if scan_agent == AGENT_CLAUDE:
+            all_sessions.extend(
+                _get_batch_ssh_claude_sessions(
+                    remote_host, patterns, since_date, until_date, hostname
+                )
+            )
+        elif scan_agent == AGENT_GEMINI:
+            all_sessions.extend(
+                _get_batch_ssh_gemini_sessions(
+                    remote_host, patterns, since_date, until_date, hostname
+                )
+            )
+        elif scan_agent == AGENT_CODEX:
+            all_sessions.extend(
+                _get_batch_ssh_codex_sessions(
+                    remote_host, patterns, since_date, until_date, hostname
+                )
+            )
+
+    return all_sessions
 
 
 def _get_batch_local_sessions(patterns: list, since_date, until_date, agent: str = "auto") -> list:
@@ -7565,7 +9041,13 @@ def _get_export_output_path(
         if ts_prefix
         else f"{source_tag}{jsonl_file.stem}.md"
     )
-    workspace_name = get_workspace_name_from_path(session["workspace"])
+    workspace = session["workspace"]
+    # Handle absolute paths (Gemini returns real paths like /home/user/project)
+    if workspace.startswith("/") or (len(workspace) > 1 and workspace[1] == ":"):
+        # Use last path component for absolute paths
+        workspace_name = Path(workspace).name
+    else:
+        workspace_name = get_workspace_name_from_path(workspace)
     workspace_subdir = output_dir / workspace_name
     workspace_subdir.mkdir(parents=True, exist_ok=True)
     return workspace_subdir / output_name, output_name
@@ -7871,15 +9353,7 @@ def _filter_workspaces_by_patterns(workspaces, patterns):
 
 def _session_in_date_range(session: dict, since_date, until_date) -> bool:
     """Check if session falls within date range."""
-    modified = session.get("modified")
-    if not modified:
-        return True
-    session_date = modified.date()
-    if since_date and session_date < since_date:
-        return False
-    if until_date and session_date > until_date:
-        return False
-    return True
+    return is_date_in_range(session.get("modified"), since_date, until_date)
 
 
 def _enrich_and_filter_sessions(ws_info, ws_name, since_date, until_date) -> list:
@@ -7894,37 +9368,121 @@ def _enrich_and_filter_sessions(ws_info, ws_name, since_date, until_date) -> lis
     return sessions
 
 
-def _collect_remote_sessions(remote, patterns, since_date, until_date):
+def _collect_remote_claude_sessions_simple(remote, patterns, since_date, until_date):
+    """Collect Claude sessions from a single SSH remote (no caching)."""
+    all_remote_workspaces = list_remote_workspaces(remote)
+    remote_workspaces = _filter_workspaces_by_patterns(all_remote_workspaces, patterns)
+
+    if not remote_workspaces:
+        return []
+
+    sessions = []
+    for ws_name in remote_workspaces:
+        ws_info = get_remote_session_info(remote, ws_name)
+        for session in ws_info:
+            if not _session_in_date_range(session, since_date, until_date):
+                continue
+            session["workspace"] = ws_name
+            session["workspace_readable"] = normalize_workspace_name(ws_name)
+            session["agent"] = AGENT_CLAUDE
+            sessions.append(session)
+    return sessions
+
+
+def _collect_remote_gemini_sessions_simple(remote, patterns, since_date, until_date):
+    """Collect Gemini sessions from a single SSH remote (no caching)."""
+    sessions_info = gemini_get_remote_session_info(remote)
+    if not sessions_info:
+        return []
+
+    # Try to resolve hash names using remote hash index
+    remote_index = gemini_fetch_remote_hash_index(remote, get_config_dir())
+
+    sessions = []
+    for session_info in sessions_info:
+        ws_hash = session_info.get("workspace", "unknown")
+        resolved_path = remote_index.get(ws_hash, ws_hash)
+
+        # Apply pattern filter
+        if not (
+            matches_any_pattern(resolved_path, patterns) or matches_any_pattern(ws_hash, patterns)
+        ):
+            continue
+
+        # Apply date filter
+        if not _session_in_date_range(session_info, since_date, until_date):
+            continue
+
+        session_info["workspace"] = ws_hash
+        session_info["workspace_readable"] = resolved_path
+        session_info["agent"] = AGENT_GEMINI
+        sessions.append(session_info)
+
+    return sessions
+
+
+def _collect_remote_codex_sessions_simple(remote, patterns, since_date, until_date):
+    """Collect Codex sessions from a single SSH remote (no caching)."""
+    sessions_info = codex_get_remote_session_info(remote)
+    if not sessions_info:
+        return []
+
+    sessions = []
+    for session_info in sessions_info:
+        ws_short = session_info.get("workspace", "unknown")
+        ws_full = session_info.get("workspace_full", ws_short)
+
+        # Apply pattern filter
+        if not (matches_any_pattern(ws_full, patterns) or matches_any_pattern(ws_short, patterns)):
+            continue
+
+        # Apply date filter
+        if not _session_in_date_range(session_info, since_date, until_date):
+            continue
+
+        session_info["workspace_readable"] = ws_short
+        session_info["agent"] = AGENT_CODEX
+        sessions.append(session_info)
+
+    return sessions
+
+
+def _collect_remote_sessions(remote, patterns, since_date, until_date, agent: str = "auto"):
     """Collect sessions from a single SSH remote."""
     if not check_ssh_connection(remote):
         sys.stderr.write(f"Cannot connect to remote: {remote}\n")
         return None
 
     hostname = get_remote_hostname(remote)
-    all_remote_workspaces = list_remote_workspaces(remote)
-    remote_workspaces = _filter_workspaces_by_patterns(all_remote_workspaces, patterns)
+    all_sessions = []
 
-    if not remote_workspaces:
-        return None
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX]
 
-    remote_sessions = []
-    for ws_name in remote_workspaces:
-        ws_info = get_remote_session_info(remote, ws_name)
-        remote_sessions.extend(
-            _enrich_and_filter_sessions(ws_info, ws_name, since_date, until_date)
-        )
+    for scan_agent in agents_to_scan:
+        if scan_agent == AGENT_CLAUDE:
+            all_sessions.extend(
+                _collect_remote_claude_sessions_simple(remote, patterns, since_date, until_date)
+            )
+        elif scan_agent == AGENT_GEMINI:
+            all_sessions.extend(
+                _collect_remote_gemini_sessions_simple(remote, patterns, since_date, until_date)
+            )
+        elif scan_agent == AGENT_CODEX:
+            all_sessions.extend(
+                _collect_remote_codex_sessions_simple(remote, patterns, since_date, until_date)
+            )
 
-    if remote_sessions:
-        return (f"Remote ({hostname})", remote_sessions)
+    if all_sessions:
+        return (f"Remote ({hostname})", all_sessions)
     return None
 
 
-def _collect_all_remote_sessions(remotes, patterns, since_date, until_date):
+def _collect_all_remote_sessions(remotes, patterns, since_date, until_date, agent: str = "auto"):
     """Collect sessions from all SSH remotes."""
     results = []
     for remote in remotes:
         try:
-            result = _collect_remote_sessions(remote, patterns, since_date, until_date)
+            result = _collect_remote_sessions(remote, patterns, since_date, until_date, agent)
             if result:
                 results.append(result)
         except (OSError, subprocess.SubprocessError) as e:
@@ -7990,7 +9548,9 @@ def cmd_list_all_homes(args):
             _collect_wsl_sessions_from_windows(patterns, since_date, until_date, agent)
         )
 
-    all_results.extend(_collect_all_remote_sessions(remotes, patterns, since_date, until_date))
+    all_results.extend(
+        _collect_all_remote_sessions(remotes, patterns, since_date, until_date, agent)
+    )
 
     _print_all_homes_results(all_results, workspaces_only)
 
@@ -8267,14 +9827,14 @@ def _gemini_index_add(paths: list):
         missing_note = " [path doesn't exist]" if path_missing else ""
 
         if status == "added":
-            print(f"  ✅ {path}{missing_note}")
-            print(f"     → [hash:{hash_short}] (added)")
+            print(f"  + {path}{missing_note}")
+            print(f"    hash:{hash_short} (added)")
         elif status == "existing":
-            print(f"  ⏭️  {path}{missing_note}")
-            print(f"     → [hash:{hash_short}] (already in index)")
+            print(f"  = {path}{missing_note}")
+            print(f"    hash:{hash_short} (existing)")
         elif status == "no_sessions":
-            print(f"  ❌ {path}{missing_note}")
-            print(f"     → [hash:{hash_short}] (no Gemini sessions found)")
+            print(f"  - {path}{missing_note}")
+            print(f"    hash:{hash_short} (no sessions)")
 
     # Summary
     print(
@@ -8318,6 +9878,8 @@ def _fetch_and_report(remote_host: str, workspaces: list, local_projects_dir: Pa
 
         result = fetch_workspace_files(remote_host, remote_workspace, local_projects_dir, hostname)
         if result["success"]:
+            if result.get("warning"):
+                sys.stderr.write(f"Warning: {readable_name}: {result['warning']}\n")
             print(normalize_workspace_name(local_name, verify_local=False))
         else:
             error = result.get("error", "Unknown error")
@@ -8858,6 +10420,18 @@ def _setup_windows_encoding():
             sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "strict")
 
 
+def _validate_wsl_windows_mutex(args):
+    """Validate that --wsl and --windows are not used together."""
+    wsl_flag = getattr(args, "wsl", False)
+    windows_flag = getattr(args, "windows", False)
+
+    if wsl_flag and windows_flag:
+        sys.stderr.write("Error: --wsl and --windows cannot be used together\n")
+        sys.stderr.write("  • Use --wsl to access WSL from Windows\n")
+        sys.stderr.write("  • Use --windows to access Windows from WSL\n")
+        sys.exit(1)
+
+
 def _resolve_remote_flag(args):
     """Convert --wsl and --windows flags to remote format.
 
@@ -8867,6 +10441,8 @@ def _resolve_remote_flag(args):
     Returns:
         Remote string (e.g., 'wsl://Ubuntu', 'windows', 'user@host') or None
     """
+    _validate_wsl_windows_mutex(args)
+
     remotes = getattr(args, "remotes", None)
     remote = remotes[0] if remotes else None
     wsl_flag = getattr(args, "wsl", False)
@@ -8906,6 +10482,8 @@ def _get_wsl_remote_for_export() -> str:
 
 def _resolve_remote_list(args):
     """Convert --wsl and --windows flags to remote list for export command."""
+    _validate_wsl_windows_mutex(args)
+
     remotes = list(getattr(args, "remotes", None) or [])
 
     if getattr(args, "wsl", False):
@@ -9609,17 +11187,7 @@ def _filter_sessions_by_date(sessions: list, since_date, until_date) -> list:
     """Filter sessions by date range."""
     if not since_date and not until_date:
         return sessions
-    filtered = []
-    for session in sessions:
-        mtime = session.get("modified")
-        if mtime:
-            mdate = mtime.replace(hour=0, minute=0, second=0, microsecond=0)
-            if since_date and mdate < since_date:
-                continue
-            if until_date and mdate > until_date:
-                continue
-        filtered.append(session)
-    return filtered
+    return [s for s in sessions if is_date_in_range(s.get("modified"), since_date, until_date)]
 
 
 def _get_remote_sessions_for_additive(remote: str, patterns: list, since_date, until_date) -> tuple:
@@ -9753,17 +11321,18 @@ def _dispatch_lsw(args):
 
 def _dispatch_lss_to_alias(alias_name: str, args):
     """Handle lss dispatch to alias command."""
-    since_date = parse_date_string(args.since) if args.since else None
-    until_date = parse_date_string(args.until) if args.until else None
+    since_date = parse_date_with_validation(args.since, "--since")
+    until_date = parse_date_with_validation(args.until, "--until")
     agent = getattr(args, "agent", None) or "auto"
     cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date, agent=agent)
 
 
 def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
     """Handle lss with --local and -r flags (additive mode)."""
-    since_date = parse_date_string(args.since) if args.since else None
-    until_date = parse_date_string(args.until) if args.until else None
-    patterns, _ = resolve_patterns_for_command(workspace_list)
+    since_date = parse_date_with_validation(args.since, "--since")
+    until_date = parse_date_with_validation(args.until, "--until")
+    agent = getattr(args, "agent", None) or "auto"
+    patterns, _ = resolve_patterns_for_command(workspace_list, agent=agent)
 
     class LssAdditiveArgs:
         workspaces_only = False
@@ -9780,12 +11349,12 @@ def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
 def _dispatch_lss_all_homes(args, workspace_list: list):
     """Handle lss with --all-homes flag."""
     this_only = getattr(args, "this_only", False)
-    since_date = parse_date_string(args.since) if args.since else None
-    until_date = parse_date_string(args.until) if args.until else None
+    since_date = parse_date_with_validation(args.since, "--since")
+    until_date = parse_date_with_validation(args.until, "--until")
     lss_remotes = getattr(args, "remotes", None) or []
     agent = getattr(args, "agent", None) or "auto"
 
-    patterns, alias_for_ws = resolve_patterns_for_command(workspace_list, this_only)
+    patterns, alias_for_ws = resolve_patterns_for_command(workspace_list, this_only, agent=agent)
     if alias_for_ws:
         sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
         cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date, agent=agent)
@@ -9819,6 +11388,7 @@ def _dispatch_lss_local(args, workspace_list: list):
         "  • Specify a workspace pattern: lss <pattern>\n"
         "  • Use --ah to list from all homes: lss --ah"
     )
+    agent = getattr(args, "agent", None) or "auto"
     if all_workspaces_flag and not workspace_list:
         patterns = [""]
         alias_for_ws = None
@@ -9826,7 +11396,7 @@ def _dispatch_lss_local(args, workspace_list: list):
         require_ws = not needs_remote_scope
         err = error_msg if require_ws else None
         patterns, alias_for_ws = resolve_patterns_for_command(
-            workspace_list, this_only, require_workspace=require_ws, error_message=err
+            workspace_list, this_only, require_workspace=require_ws, error_message=err, agent=agent
         )
     if alias_for_ws:
         sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
@@ -10008,6 +11578,13 @@ def _resolve_export_targets(args, targets: list, output_dir: Path) -> tuple:
         return targets, False
 
     this_only = getattr(args, "this_only", False)
+    agent = getattr(args, "agent", None) or "auto"
+
+    # For non-Claude agents, use CWD name as pattern (matches against workspace_readable)
+    if agent in ("gemini", "codex"):
+        cwd = Path.cwd()
+        return [cwd.name], False
+
     pattern, exists = check_current_workspace_exists()
 
     if not exists:
@@ -10023,7 +11600,8 @@ def _resolve_export_targets(args, targets: list, output_dir: Path) -> tuple:
             "  • Use --ah to export from all homes: export --ah"
         )
 
-    if not this_only:
+    # Aliases are Claude-specific; skip for other agents
+    if not this_only and agent in ("auto", "claude"):
         alias_for_ws = get_alias_for_workspace(pattern, "local")
         if alias_for_ws:
             sys.stderr.write(
@@ -10135,6 +11713,7 @@ def _build_stats_args(args):
         all_workspaces = getattr(args, "all_workspaces", False)
         top_ws = getattr(args, "top_ws", None)
         this_only = getattr(args, "this_only", False)
+        agent = getattr(args, "agent", None) or "auto"
 
     return StatsArgs()
 
