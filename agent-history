@@ -8209,10 +8209,26 @@ def cmd_reset(args):
         print(f"Deleted {desc.lower()}")
 
 
-def cmd_gemini_index(args):
-    """Add project paths to Gemini hash→path index."""
-    paths = getattr(args, "paths", None) or ["."]
+def _gemini_index_list(full_hash: bool):
+    """List all mappings in the Gemini hash index."""
+    index = gemini_load_hash_index()
+    mappings = index.get("hashes", {})
 
+    if not mappings:
+        print("Hash index is empty. Use 'gemini-index <path>' to add mappings.")
+        return
+
+    print(f"Hash Index Mappings ({len(mappings)} entries):\n")
+    for project_hash, path in sorted(mappings.items(), key=lambda x: x[1]):
+        if full_hash:
+            print(f"  {project_hash}")
+            print(f"    → {path}")
+        else:
+            print(f"  [hash:{project_hash[:HASH_DISPLAY_LEN]}] → {path}")
+
+
+def _gemini_index_add(paths: list):
+    """Add paths to the Gemini hash index."""
     # Convert to Path objects and validate
     path_objects = []
     for p in paths:
@@ -8251,12 +8267,24 @@ def cmd_gemini_index(args):
 
     # Summary
     print(
-        f"\nSummary: {result['added']} added, {result['existing']} existing, {result['no_sessions']} skipped"
+        f"\nSummary: {result['added']} added, {result['existing']} existing, "
+        f"{result['no_sessions']} skipped"
     )
 
     # Show current index stats
     index = gemini_load_hash_index()
     print(f"Total mappings in index: {len(index['hashes'])}")
+
+
+def cmd_gemini_index(args):
+    """Add project paths to Gemini hash→path index, or list existing mappings."""
+    list_index = getattr(args, "list_index", False)
+
+    if list_index:
+        _gemini_index_list(getattr(args, "full_hash", False))
+    else:
+        paths = getattr(args, "paths", None) or ["."]
+        _gemini_index_add(paths)
 
 
 def _filter_fetch_workspaces(workspaces: list, pattern: str) -> list:
@@ -9433,8 +9461,20 @@ def _add_gemini_index_parser(subparsers):
     parser.add_argument(
         "paths",
         nargs="*",
-        default=["."],
-        help="Project directories to add (default: current directory)",
+        default=[],
+        help="Project directories to add (default: current directory if no --list)",
+    )
+    parser.add_argument(
+        "--list",
+        "-l",
+        action="store_true",
+        dest="list_index",
+        help="List all mappings in the hash index",
+    )
+    parser.add_argument(
+        "--full-hash",
+        action="store_true",
+        help="Show full SHA-256 hashes instead of truncated (with --list)",
     )
     return parser
 
