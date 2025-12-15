@@ -533,6 +533,182 @@ class TestCodexMessageCounting:
         assert count == 0
 
 
+class TestCodexIndex:
+    """Tests for Codex incremental indexing functions."""
+
+    def test_get_index_file_returns_expected_path(self, monkeypatch, tmp_path):
+        """codex_get_index_file should return path in config dir."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        index_file = ch.codex_get_index_file()
+        assert index_file.name == "codex_index.json"
+        assert ".claude-history" in str(index_file)
+
+    def test_load_index_returns_empty_for_missing_file(self, monkeypatch, tmp_path):
+        """codex_load_index should return empty structure if file doesn't exist."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        index = ch.codex_load_index()
+        assert index["version"] == ch.CODEX_INDEX_VERSION
+        assert index["last_scan_date"] is None
+        assert index["sessions"] == {}
+
+    def test_load_index_reads_existing_file(self, monkeypatch, tmp_path):
+        """codex_load_index should load existing index file."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True)
+        index_file = config_dir / "codex_index.json"
+        test_data = {
+            "version": ch.CODEX_INDEX_VERSION,
+            "last_scan_date": "2025-12-10",
+            "sessions": {"/path/to/session.jsonl": "-home-user-project"},
+        }
+        with open(index_file, "w") as f:
+            json.dump(test_data, f)
+
+        loaded = ch.codex_load_index()
+        assert loaded["last_scan_date"] == "2025-12-10"
+        assert loaded["sessions"] == {"/path/to/session.jsonl": "-home-user-project"}
+
+    def test_load_index_ignores_old_version(self, monkeypatch, tmp_path):
+        """codex_load_index should return empty for old version files."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = tmp_path / ".claude-history"
+        config_dir.mkdir(parents=True)
+        index_file = config_dir / "codex_index.json"
+        old_data = {"version": 0, "sessions": {"old": "data"}}
+        with open(index_file, "w") as f:
+            json.dump(old_data, f)
+
+        loaded = ch.codex_load_index()
+        assert loaded["version"] == ch.CODEX_INDEX_VERSION
+        assert loaded["sessions"] == {}
+
+    def test_save_index_creates_file(self, monkeypatch, tmp_path):
+        """codex_save_index should create index file."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        test_index = {
+            "version": ch.CODEX_INDEX_VERSION,
+            "last_scan_date": "2025-12-15",
+            "sessions": {"/a/b.jsonl": "-workspace"},
+        }
+        ch.codex_save_index(test_index)
+
+        index_file = tmp_path / ".claude-history" / "codex_index.json"
+        assert index_file.exists()
+        with open(index_file) as f:
+            saved = json.load(f)
+        assert saved == test_index
+
+    def test_date_folders_since_returns_all_for_none(self, tmp_path):
+        """_codex_date_folders_since(None) should return all date folders."""
+        base = tmp_path / "sessions"
+        # Create YYYY/MM/DD structure
+        (base / "2025" / "12" / "08").mkdir(parents=True)
+        (base / "2025" / "12" / "09").mkdir(parents=True)
+        (base / "2025" / "12" / "15").mkdir(parents=True)
+
+        folders = ch._codex_date_folders_since(base, None)
+        assert len(folders) == 3
+
+    def test_date_folders_since_filters_by_date(self, tmp_path):
+        """_codex_date_folders_since should only return folders >= since_date."""
+        base = tmp_path / "sessions"
+        (base / "2025" / "12" / "08").mkdir(parents=True)
+        (base / "2025" / "12" / "09").mkdir(parents=True)
+        (base / "2025" / "12" / "15").mkdir(parents=True)
+
+        # Only get folders from 2025-12-10 onwards
+        folders = ch._codex_date_folders_since(base, "2025-12-10")
+        assert len(folders) == 1
+        assert folders[0].name == "15"
+
+    def test_date_folders_since_includes_since_date(self, tmp_path):
+        """_codex_date_folders_since should include the since_date itself."""
+        base = tmp_path / "sessions"
+        (base / "2025" / "12" / "08").mkdir(parents=True)
+        (base / "2025" / "12" / "09").mkdir(parents=True)
+
+        folders = ch._codex_date_folders_since(base, "2025-12-09")
+        assert len(folders) == 1
+        assert folders[0].name == "09"
+
+    def test_ensure_index_updated_builds_initial_index(
+        self, monkeypatch, tmp_path, sample_codex_jsonl_content
+    ):
+        """codex_ensure_index_updated should build full index on first run."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        sessions_dir = tmp_path / "codex_sessions"
+        day_dir = sessions_dir / "2025" / "12" / "08"
+        day_dir.mkdir(parents=True)
+        session_file = day_dir / "rollout-test.jsonl"
+        with open(session_file, "w") as f:
+            for entry in sample_codex_jsonl_content:
+                f.write(json.dumps(entry) + "\n")
+
+        mapping = ch.codex_ensure_index_updated(sessions_dir)
+
+        assert str(session_file) in mapping
+        assert mapping[str(session_file)] == "-home-user-project"
+
+    def test_ensure_index_updated_incremental(
+        self, monkeypatch, tmp_path, sample_codex_jsonl_content
+    ):
+        """codex_ensure_index_updated should only scan new date folders."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        sessions_dir = tmp_path / "codex_sessions"
+
+        # Create initial session
+        day1_dir = sessions_dir / "2025" / "12" / "08"
+        day1_dir.mkdir(parents=True)
+        session1 = day1_dir / "rollout-test1.jsonl"
+        with open(session1, "w") as f:
+            for entry in sample_codex_jsonl_content:
+                f.write(json.dumps(entry) + "\n")
+
+        # First scan builds index
+        ch.codex_ensure_index_updated(sessions_dir)
+
+        # Now manually set last_scan_date to yesterday to simulate incremental
+        index = ch.codex_load_index()
+        index["last_scan_date"] = "2025-12-14"  # Yesterday
+        ch.codex_save_index(index)
+
+        # Add a new session in today's folder
+        day2_dir = sessions_dir / "2025" / "12" / "15"
+        day2_dir.mkdir(parents=True)
+        session2 = day2_dir / "rollout-test2.jsonl"
+        with open(session2, "w") as f:
+            for entry in sample_codex_jsonl_content:
+                f.write(json.dumps(entry) + "\n")
+
+        # Incremental scan should find the new session
+        mapping = ch.codex_ensure_index_updated(sessions_dir)
+        assert str(session2) in mapping
+
+    def test_ensure_index_updated_cleans_stale_entries(
+        self, monkeypatch, tmp_path, sample_codex_jsonl_content
+    ):
+        """codex_ensure_index_updated should remove entries for deleted files."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        sessions_dir = tmp_path / "codex_sessions"
+        day_dir = sessions_dir / "2025" / "12" / "08"
+        day_dir.mkdir(parents=True)
+        session_file = day_dir / "rollout-test.jsonl"
+        with open(session_file, "w") as f:
+            for entry in sample_codex_jsonl_content:
+                f.write(json.dumps(entry) + "\n")
+
+        # Build index with the session
+        ch.codex_ensure_index_updated(sessions_dir)
+
+        # Delete the session file
+        session_file.unlink()
+
+        # Re-scan should clean up stale entry
+        mapping = ch.codex_ensure_index_updated(sessions_dir)
+        assert str(session_file) not in mapping
+
+
 class TestCodexSessionScanning:
     """Tests for codex_scan_sessions."""
 
@@ -588,6 +764,432 @@ class TestCodexSessionScanning:
 
 
 # ============================================================================
+# Gemini Backend Tests
+# ============================================================================
+
+
+@pytest.fixture
+def sample_gemini_session():
+    """Sample Gemini session JSON content matching actual Gemini CLI format."""
+    return {
+        "sessionId": "test-session-123",
+        "projectHash": "abc123def456",
+        "startTime": "2025-12-08T10:30:00.000Z",
+        "lastUpdated": "2025-12-08T11:00:00.000Z",
+        "summary": "Test session summary",
+        "messages": [
+            {"type": "user", "content": "Hello Gemini", "timestamp": "2025-12-08T10:30:00.000Z"},
+            {
+                "type": "gemini",
+                "content": "Hello! How can I help you?",
+                "timestamp": "2025-12-08T10:30:05.000Z",
+                "model": "gemini-2.5-flash",
+                "thoughts": [
+                    {
+                        "subject": "Greeting",
+                        "description": "Processing user greeting...",
+                        "timestamp": "2025-12-08T10:30:04.000Z",
+                    }
+                ],
+                "tokens": {"input": 10, "output": 15, "total": 25},
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def temp_gemini_sessions_dir(tmp_path, sample_gemini_session):
+    """Create temp Gemini sessions directory with test files."""
+    sessions_dir = tmp_path / ".gemini" / "tmp"
+
+    # Create a project hash directory with chat sessions
+    hash1 = "abc123def456789012345678901234567890123456789012345678901234"
+    hash2 = "xyz987654321098765432109876543210987654321098765432109876543"
+
+    chat_dir1 = sessions_dir / hash1 / "chats"
+    chat_dir1.mkdir(parents=True)
+
+    session1 = chat_dir1 / "session-2025-12-08T10-30-abc123.json"
+    session1.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+    # Second session with different workspace
+    session2_data = sample_gemini_session.copy()
+    session2_data["sessionId"] = "test-session-456"
+    session2_data["projectHash"] = "xyz987"
+    session2_data["startTime"] = "2025-12-07T09:00:00.000Z"
+
+    chat_dir2 = sessions_dir / hash2 / "chats"
+    chat_dir2.mkdir(parents=True)
+    session2 = chat_dir2 / "session-2025-12-07T09-00-xyz987.json"
+    session2.write_text(json.dumps(session2_data), encoding="utf-8")
+
+    return sessions_dir
+
+
+class TestGeminiConstants:
+    """Tests for Gemini-related constants and detection."""
+
+    def test_agent_gemini_constant_defined(self):
+        """Gemini agent constant should be defined."""
+        assert ch.AGENT_GEMINI == "gemini"
+
+    def test_gemini_home_dir_default(self):
+        """Gemini home dir should point to ~/.gemini/tmp/."""
+        result = ch.gemini_get_home_dir()
+        assert result == Path.home() / ".gemini" / "tmp"
+
+    def test_gemini_home_dir_env_override(self, tmp_path, monkeypatch):
+        """GEMINI_SESSIONS_DIR env var should override default."""
+        custom_dir = tmp_path / "custom_gemini"
+        monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(custom_dir))
+        result = ch.gemini_get_home_dir()
+        assert result == custom_dir
+
+    def test_detect_agent_from_gemini_path(self):
+        """Gemini paths should be detected as gemini agent."""
+        path = Path("/home/user/.gemini/tmp/hash/chats/session.json")
+        assert ch.detect_agent_from_path(path) == "gemini"
+
+    def test_detect_agent_windows_gemini_path(self):
+        """Windows-style Gemini paths should be detected."""
+        path = Path("C:\\Users\\test\\.gemini\\tmp\\hash\\chats\\session.json")
+        assert ch.detect_agent_from_path(path) == "gemini"
+
+
+class TestGeminiJSONReading:
+    """Tests for gemini_read_json_messages."""
+
+    def test_read_user_messages(self, tmp_path, sample_gemini_session):
+        """Should read user messages from JSON."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        messages, meta = ch.gemini_read_json_messages(json_file)
+        user_msgs = [m for m in messages if m["role"] == "user"]
+
+        assert len(user_msgs) == 1
+        assert user_msgs[0]["content"] == "Hello Gemini"
+
+    def test_read_assistant_messages(self, tmp_path, sample_gemini_session):
+        """Should read assistant (gemini) messages from JSON."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        messages, meta = ch.gemini_read_json_messages(json_file)
+        assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+
+        assert len(assistant_msgs) == 1
+        assert "How can I help you?" in assistant_msgs[0]["content"]
+        assert assistant_msgs[0]["model"] == "gemini-2.5-flash"
+
+    def test_read_session_metadata(self, tmp_path, sample_gemini_session):
+        """Should extract session metadata."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        messages, meta = ch.gemini_read_json_messages(json_file)
+
+        assert meta["sessionId"] == "test-session-123"
+        assert meta["projectHash"] == "abc123def456"
+        assert meta["startTime"] == "2025-12-08T10:30:00.000Z"
+
+    def test_read_handles_empty_file(self, tmp_path):
+        """Should handle empty JSON files gracefully."""
+        json_file = tmp_path / "empty.json"
+        json_file.write_text("{}", encoding="utf-8")
+
+        messages, meta = ch.gemini_read_json_messages(json_file)
+
+        assert messages == []
+
+    def test_read_handles_invalid_json(self, tmp_path):
+        """Should handle invalid JSON gracefully."""
+        json_file = tmp_path / "invalid.json"
+        json_file.write_text("not valid json", encoding="utf-8")
+
+        messages, meta = ch.gemini_read_json_messages(json_file)
+
+        assert messages == []
+        assert meta is None
+
+    def test_read_handles_list_content_with_text_parts(self, tmp_path):
+        """Should extract text from PartListUnion content."""
+        session = {
+            "sessionId": "test",
+            "projectHash": "hash",
+            "messages": [
+                {
+                    "type": "gemini",
+                    "timestamp": "2025-01-15T10:00:00Z",
+                    "content": [{"text": "First part"}, {"text": "Second part"}],
+                }
+            ],
+        }
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(session), encoding="utf-8")
+
+        messages, _ = ch.gemini_read_json_messages(json_file)
+
+        assert len(messages) == 1
+        assert "First part" in messages[0]["content"]
+        assert "Second part" in messages[0]["content"]
+
+    def test_read_handles_inline_data_parts(self, tmp_path):
+        """Should show placeholder for inline data (images)."""
+        session = {
+            "sessionId": "test",
+            "projectHash": "hash",
+            "messages": [
+                {
+                    "type": "user",
+                    "timestamp": "2025-01-15T10:00:00Z",
+                    "content": [
+                        {"text": "Here's an image:"},
+                        {"inlineData": {"mimeType": "image/png", "data": "base64..."}},
+                    ],
+                }
+            ],
+        }
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(session), encoding="utf-8")
+
+        messages, _ = ch.gemini_read_json_messages(json_file)
+
+        assert "[Inline data: image/png]" in messages[0]["content"]
+
+    def test_read_handles_executable_code_parts(self, tmp_path):
+        """Should format executable code blocks."""
+        session = {
+            "sessionId": "test",
+            "projectHash": "hash",
+            "messages": [
+                {
+                    "type": "gemini",
+                    "timestamp": "2025-01-15T10:00:00Z",
+                    "content": [
+                        {"executableCode": {"language": "python", "code": "print('hello')"}}
+                    ],
+                }
+            ],
+        }
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(session), encoding="utf-8")
+
+        messages, _ = ch.gemini_read_json_messages(json_file)
+
+        assert "```python" in messages[0]["content"]
+        assert "print('hello')" in messages[0]["content"]
+
+    def test_read_handles_code_execution_result(self, tmp_path):
+        """Should format code execution results."""
+        session = {
+            "sessionId": "test",
+            "projectHash": "hash",
+            "messages": [
+                {
+                    "type": "gemini",
+                    "timestamp": "2025-01-15T10:00:00Z",
+                    "content": [{"codeExecutionResult": {"output": "hello world"}}],
+                }
+            ],
+        }
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(session), encoding="utf-8")
+
+        messages, _ = ch.gemini_read_json_messages(json_file)
+
+        assert "**Output:**" in messages[0]["content"]
+        assert "hello world" in messages[0]["content"]
+
+
+class TestGeminiMarkdownGeneration:
+    """Tests for gemini_parse_json_to_markdown."""
+
+    def test_generates_markdown_header(self, tmp_path, sample_gemini_session):
+        """Should generate markdown with proper header."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        md = ch.gemini_parse_json_to_markdown(json_file)
+
+        assert "# Gemini Conversation" in md
+        assert "Session ID" in md
+
+    def test_includes_message_content(self, tmp_path, sample_gemini_session):
+        """Should include message content in markdown."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        md = ch.gemini_parse_json_to_markdown(json_file)
+
+        assert "Hello Gemini" in md
+        assert "How can I help you?" in md
+
+    def test_minimal_mode_excludes_metadata(self, tmp_path, sample_gemini_session):
+        """Minimal mode should exclude detailed metadata."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        md_full = ch.gemini_parse_json_to_markdown(json_file, minimal=False)
+        md_minimal = ch.gemini_parse_json_to_markdown(json_file, minimal=True)
+
+        # Minimal should still have content
+        assert "Hello Gemini" in md_minimal
+        # Full should have more details
+        assert len(md_full) > len(md_minimal)
+
+
+class TestGeminiFormatThoughts:
+    """Tests for gemini_format_thoughts edge cases."""
+
+    def test_handles_empty_list(self):
+        """Should return empty string for empty thoughts."""
+        result = ch.gemini_format_thoughts([])
+        assert result == ""
+
+    def test_handles_dict_format(self):
+        """Should format dict-style thoughts with subject/description."""
+        thoughts = [{"subject": "Planning", "description": "Analyzing requirements..."}]
+        result = ch.gemini_format_thoughts(thoughts)
+        assert "Reasoning:" in result
+        assert "**Planning**:" in result
+        assert "Analyzing requirements" in result
+
+    def test_handles_string_format(self):
+        """Should handle string-style thoughts (legacy format)."""
+        thoughts = ["Thinking about the problem", "Considering options"]
+        result = ch.gemini_format_thoughts(thoughts)
+        assert "Reasoning:" in result
+        assert "Thinking about the problem" in result
+        assert "Considering options" in result
+
+    def test_truncates_long_description(self):
+        """Should truncate descriptions over 200 chars."""
+        long_desc = "x" * 250
+        thoughts = [{"subject": "Test", "description": long_desc}]
+        result = ch.gemini_format_thoughts(thoughts)
+        assert "..." in result
+        # Should have truncated to ~200 chars
+        assert "x" * 201 not in result
+
+    def test_handles_mixed_formats(self):
+        """Should handle mix of string and dict thoughts."""
+        thoughts = [
+            "Simple string thought",
+            {"subject": "Complex", "description": "Dict thought"},
+        ]
+        result = ch.gemini_format_thoughts(thoughts)
+        assert "Simple string thought" in result
+        assert "**Complex**:" in result
+
+    def test_skips_invalid_types(self):
+        """Should skip thoughts that are neither strings nor dicts."""
+        thoughts = [
+            {"subject": "Valid", "description": "desc"},
+            123,  # Invalid type - should be skipped
+            None,  # Invalid type - should be skipped
+        ]
+        result = ch.gemini_format_thoughts(thoughts)
+        assert "**Valid**:" in result
+        assert "123" not in result
+
+
+class TestGeminiSessionScanning:
+    """Tests for gemini_scan_sessions."""
+
+    def test_scan_finds_sessions(self, temp_gemini_sessions_dir):
+        """Should find session files in Gemini directory structure."""
+        sessions = ch.gemini_scan_sessions(sessions_dir=temp_gemini_sessions_dir)
+
+        assert len(sessions) == 2
+
+    def test_scan_returns_session_metadata(self, temp_gemini_sessions_dir):
+        """Sessions should include expected metadata fields."""
+        sessions = ch.gemini_scan_sessions(sessions_dir=temp_gemini_sessions_dir)
+
+        session = sessions[0]
+        assert "file" in session
+        assert "workspace" in session
+        assert "modified" in session
+        assert "message_count" in session
+        assert session["agent"] == "gemini"
+
+    def test_scan_empty_dir(self, tmp_path):
+        """Should return empty list for directory without sessions."""
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        sessions = ch.gemini_scan_sessions(sessions_dir=empty_dir)
+
+        assert sessions == []
+
+    def test_scan_nonexistent_dir(self, tmp_path):
+        """Should return empty list for nonexistent directory."""
+        sessions = ch.gemini_scan_sessions(sessions_dir=tmp_path / "nonexistent")
+
+        assert sessions == []
+
+    def test_scan_sorted_by_modified(self, temp_gemini_sessions_dir):
+        """Sessions should be sorted by modified time (newest first)."""
+        sessions = ch.gemini_scan_sessions(sessions_dir=temp_gemini_sessions_dir)
+
+        for i in range(len(sessions) - 1):
+            assert sessions[i]["modified"] >= sessions[i + 1]["modified"]
+
+
+class TestGeminiMetricsExtraction:
+    """Tests for gemini_extract_metrics_from_json."""
+
+    def test_extracts_session_info(self, tmp_path, sample_gemini_session):
+        """Should extract session information."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        metrics = ch.gemini_extract_metrics_from_json(json_file)
+
+        # The function maps sessionId -> id, projectHash -> cwd
+        assert metrics["session"]["id"] == "test-session-123"
+        assert metrics["session"]["cwd"] == "abc123def456"
+
+    def test_extracts_message_metrics(self, tmp_path, sample_gemini_session):
+        """Should extract message metrics."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        metrics = ch.gemini_extract_metrics_from_json(json_file)
+
+        assert len(metrics["messages"]) == 2
+
+    def test_extracts_per_message_tokens(self, tmp_path, sample_gemini_session):
+        """Should extract per-message token info for stats database."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        metrics = ch.gemini_extract_metrics_from_json(json_file)
+
+        # User messages don't have tokens
+        assert metrics["messages"][0]["role"] == "user"
+        assert "input_tokens" not in metrics["messages"][0]
+
+        # Assistant messages should have per-message tokens
+        assert metrics["messages"][1]["role"] == "assistant"
+        assert metrics["messages"][1]["input_tokens"] == 10
+        assert metrics["messages"][1]["output_tokens"] == 15
+
+    def test_extracts_token_counts(self, tmp_path, sample_gemini_session):
+        """Should extract aggregated token counts from all messages."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        metrics = ch.gemini_extract_metrics_from_json(json_file)
+
+        # Tokens are aggregated into metrics["tokens"], not per-message
+        assert metrics["tokens"]["input"] == 10
+        assert metrics["tokens"]["output"] == 15
+        assert metrics["tokens"]["total"] == 25
+
+
+# ============================================================================
 # Unified Backend Dispatch Tests
 # ============================================================================
 
@@ -618,12 +1220,13 @@ class TestBackendDispatch:
                 assert "codex" in backends
 
     def test_get_active_backends_nonexistent(self, tmp_path):
-        """Should return empty list when neither backend exists."""
+        """Should return empty list when no backend exists."""
         with patch.object(ch, "codex_get_home_dir", return_value=tmp_path / "nonexistent"):
-            with patch("pathlib.Path.home", return_value=tmp_path):
-                backends = ch.get_active_backends("auto")
-                # Neither backend exists
-                assert backends == []
+            with patch.object(ch, "gemini_get_home_dir", return_value=tmp_path / "nonexistent"):
+                with patch("pathlib.Path.home", return_value=tmp_path):
+                    backends = ch.get_active_backends("auto")
+                    # No backend exists
+                    assert backends == []
 
     def test_get_active_backends_codex_not_found(self, tmp_path):
         """Should return empty list when Codex requested but not found."""
@@ -1290,12 +1893,17 @@ class TestAgentExtensibility:
     when adding new agents like Gemini.
     """
 
-    def test_detect_agent_unknown_path_defaults_to_claude(self):
-        """Unknown paths (e.g., Gemini) should default to Claude."""
-        # This documents current behavior - when adding Gemini, update detect_agent_from_path
-        path = Path("/home/user/.gemini/sessions/test.jsonl")
+    def test_detect_agent_gemini_path(self):
+        """Gemini paths should return 'gemini'."""
+        path = Path("/home/user/.gemini/tmp/hash/chats/session.json")
         result = ch.detect_agent_from_path(path)
-        assert result == "claude", "Unknown paths currently default to Claude"
+        assert result == "gemini", "Gemini paths should be detected"
+
+    def test_detect_agent_unknown_path_defaults_to_claude(self):
+        """Unknown paths should default to Claude."""
+        path = Path("/home/user/.unknown/sessions/test.jsonl")
+        result = ch.detect_agent_from_path(path)
+        assert result == "claude", "Unknown paths default to Claude"
 
     def test_detect_agent_with_known_paths(self):
         """Verify detection for known agent paths."""
@@ -1305,18 +1913,24 @@ class TestAgentExtensibility:
         assert ch.detect_agent_from_path(claude_path) == "claude"
         assert ch.detect_agent_from_path(codex_path) == "codex"
 
-    def test_get_active_backends_unknown_agent_falls_through_to_auto(self):
-        """Unknown agent values currently fall through to auto mode.
-
-        NOTE: This documents current behavior. Unknown agents like 'gemini'
-        are treated as 'auto' and return all available backends. When adding
-        a new agent, consider whether this fallback behavior is desired or
-        if unknown agents should raise an error.
-        """
-        # gemini falls through to else/auto branch in get_active_backends
+    def test_get_active_backends_gemini_returns_gemini(self):
+        """Gemini agent should return gemini backends when Gemini directory exists."""
         backends = ch.get_active_backends("gemini")
-        auto_backends = ch.get_active_backends("auto")
-        assert backends == auto_backends, "Unknown agents fall through to auto mode"
+        # Returns gemini only if ~/.gemini/tmp exists, otherwise empty
+        if ch.gemini_get_home_dir().exists():
+            assert backends == ["gemini"]
+        else:
+            assert backends == []
+
+    def test_get_active_backends_unknown_agent_falls_through_to_auto(self, tmp_path):
+        """Unknown agent values currently fall through to auto mode."""
+        # Mock all homes to not exist so we get consistent behavior
+        with patch.object(ch, "codex_get_home_dir", return_value=tmp_path / "nonexistent"):
+            with patch.object(ch, "gemini_get_home_dir", return_value=tmp_path / "nonexistent"):
+                with patch("pathlib.Path.home", return_value=tmp_path):
+                    backends = ch.get_active_backends("future-agent")
+                    auto_backends = ch.get_active_backends("auto")
+                    assert backends == auto_backends, "Unknown agents fall through to auto mode"
 
     def test_get_active_backends_known_agents(self, monkeypatch, tmp_path):
         """Verify known agents return their backends when directories exist."""
@@ -1340,19 +1954,19 @@ class TestAgentExtensibility:
         import subprocess
 
         result = subprocess.run(
-            ["python3", "agent-history", "--agent", "gemini", "lsw"],
+            ["python3", "agent-history", "--agent", "future-agent", "lsw"],
             capture_output=True,
             text=True,
             check=False,
         )
         assert result.returncode != 0, "Unknown agent should be rejected"
-        assert "invalid choice" in result.stderr.lower() or "gemini" in result.stderr
+        assert "invalid choice" in result.stderr.lower() or "future-agent" in result.stderr
 
     def test_cli_agent_flag_accepts_known_values(self):
-        """CLI should accept known agent values."""
+        """CLI should accept known agent values including gemini."""
         import subprocess
 
-        for agent in ["auto", "claude", "codex"]:
+        for agent in ["auto", "claude", "codex", "gemini"]:
             result = subprocess.run(
                 ["python3", "agent-history", "--agent", agent, "lsw"],
                 capture_output=True,
@@ -1435,7 +2049,7 @@ class TestParserSelection:
         assert not parser_called["codex"], "Codex parser should NOT be called for .claude paths"
 
     def test_write_single_file_uses_correct_parser(self, monkeypatch, tmp_path):
-        """_write_single_file should select parser based on is_codex flag."""
+        """_write_single_file should select parser based on agent flag."""
         parsers_called = []
 
         def spy_codex_parse(path, *args, **kwargs):
@@ -1446,30 +2060,43 @@ class TestParserSelection:
             parsers_called.append(("claude", str(path)))
             return "# Claude output"
 
+        def spy_gemini_parse(path, *args, **kwargs):
+            parsers_called.append(("gemini", str(path)))
+            return "# Gemini output"
+
         monkeypatch.setattr(ch, "codex_parse_jsonl_to_markdown", spy_codex_parse)
         monkeypatch.setattr(ch, "parse_jsonl_to_markdown", spy_claude_parse)
+        monkeypatch.setattr(ch, "gemini_parse_json_to_markdown", spy_gemini_parse)
 
         # Create test files
         codex_file = tmp_path / "codex.jsonl"
         claude_file = tmp_path / "claude.jsonl"
+        gemini_file = tmp_path / "gemini.json"
         codex_file.write_text('{"type": "message"}\n')
         claude_file.write_text('{"type": "user"}\n')
+        gemini_file.write_text('{"messages": []}\n')
 
         output_codex = tmp_path / "codex.md"
         output_claude = tmp_path / "claude.md"
+        output_gemini = tmp_path / "gemini.md"
 
-        # Call with is_codex=True
-        ch._write_single_file(codex_file, output_codex, minimal=False, is_codex=True)
+        # Call with agent=codex
+        ch._write_single_file(codex_file, output_codex, minimal=False, agent=ch.AGENT_CODEX)
 
-        # Call with is_codex=False
-        ch._write_single_file(claude_file, output_claude, minimal=False, is_codex=False)
+        # Call with agent=claude
+        ch._write_single_file(claude_file, output_claude, minimal=False, agent=ch.AGENT_CLAUDE)
+
+        # Call with agent=gemini
+        ch._write_single_file(gemini_file, output_gemini, minimal=False, agent=ch.AGENT_GEMINI)
 
         # Verify correct parsers were called
         codex_calls = [p for p in parsers_called if p[0] == "codex"]
         claude_calls = [p for p in parsers_called if p[0] == "claude"]
+        gemini_calls = [p for p in parsers_called if p[0] == "gemini"]
 
-        assert len(codex_calls) == 1, "Codex parser should be called once for is_codex=True"
-        assert len(claude_calls) == 1, "Claude parser should be called once for is_codex=False"
+        assert len(codex_calls) == 1, "Codex parser should be called once for agent=codex"
+        assert len(claude_calls) == 1, "Claude parser should be called once for agent=claude"
+        assert len(gemini_calls) == 1, "Gemini parser should be called once for agent=gemini"
 
     def test_detect_agent_from_path_drives_parser_selection(self, monkeypatch, tmp_path):
         """Verify detect_agent_from_path determines which parser is used in export."""
@@ -8129,8 +8756,9 @@ class TestStatsAndExportEndToEnd:
         monkeypatch.setattr(ch, "get_windows_projects_dir", lambda username=None: windows_projects)
         monkeypatch.setattr(ch, "get_saved_sources", lambda: [])
         monkeypatch.setattr(ch, "validate_export_all_homes", lambda args, _: (True, []))
-        # Mock Codex home dir to avoid picking up real Codex sessions
+        # Mock Codex and Gemini home dirs to avoid picking up real sessions
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: tmp_path / "nonexistent_codex")
+        monkeypatch.setattr(ch, "gemini_get_home_dir", lambda: tmp_path / "nonexistent_gemini")
 
         args = SimpleNamespace(
             output_dir=str(output_dir),
@@ -8353,6 +8981,72 @@ class TestAliasEndToEnd:
                 workspaces = ch.resolve_alias_workspaces("nonexistent")
                 assert workspaces == []
 
+    def test_alias_lss_filters_by_agent(self, alias_e2e_env, monkeypatch):
+        """cmd_alias_lss should filter by agent when specified."""
+        with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
+            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+                with patch.object(
+                    ch, "get_claude_projects_dir", return_value=alias_e2e_env["projects_dir"]
+                ):
+                    # Mock Gemini and Codex to avoid picking up real sessions
+                    monkeypatch.setattr(
+                        ch, "gemini_get_home_dir", lambda: alias_e2e_env["tmp_path"] / "nonexistent"
+                    )
+                    monkeypatch.setattr(
+                        ch, "codex_get_home_dir", lambda: alias_e2e_env["tmp_path"] / "nonexistent"
+                    )
+
+                    # Get all sessions (agent=auto)
+                    aliases_data = ch.load_aliases()
+                    alias_config = aliases_data["aliases"]["myproject"]
+                    all_sessions = ch._collect_alias_sessions(alias_config, None, None)
+
+                    # All sessions should be claude (from fixture)
+                    assert len(all_sessions) == 2
+                    for s in all_sessions:
+                        assert s.get("agent", ch.AGENT_CLAUDE) == ch.AGENT_CLAUDE
+
+                    # Filter for gemini should return empty
+                    filtered = [
+                        s
+                        for s in all_sessions
+                        if s.get("agent", ch.AGENT_CLAUDE) == ch.AGENT_GEMINI
+                    ]
+                    assert len(filtered) == 0
+
+    def test_get_alias_export_options_includes_agent(self):
+        """_get_alias_export_options should include agent parameter."""
+
+        class MockArgs:
+            since = None
+            until = None
+            force = False
+            minimal = False
+            split = None
+            flat = False
+            agent = "gemini"
+
+        opts = ch._get_alias_export_options(MockArgs())
+
+        assert "agent" in opts
+        assert opts["agent"] == "gemini"
+
+    def test_get_alias_export_options_defaults_to_auto(self):
+        """_get_alias_export_options should default agent to auto."""
+
+        class MockArgs:
+            since = None
+            until = None
+            force = False
+            minimal = False
+            split = None
+            flat = False
+            # No agent attribute
+
+        opts = ch._get_alias_export_options(MockArgs())
+
+        assert opts["agent"] == "auto"
+
 
 # ============================================================================
 # Section 17: Command Combination Matrix Tests
@@ -8461,8 +9155,9 @@ class TestCommandCombinationMatrix:
         monkeypatch.setattr(ch, "check_ssh_connection", lambda host: True)
         monkeypatch.setattr(ch, "list_remote_workspaces", lambda host: ["-home-user-remoteproj"])
         monkeypatch.setattr(ch, "get_remote_hostname", lambda host: "mock")
-        # Mock Codex home dir to avoid picking up real Codex sessions
+        # Mock Codex and Gemini home dirs to avoid picking up real sessions
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: projects_dir / "nonexistent_codex")
+        monkeypatch.setattr(ch, "gemini_get_home_dir", lambda: projects_dir / "nonexistent_gemini")
 
         def fake_fetch(remote_host, remote_workspace, local_projects_dir, hostname):
             src = env["remote_template"] / remote_workspace

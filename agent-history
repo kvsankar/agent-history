@@ -40,9 +40,13 @@ DEFAULT_CLEANUP_DAYS = 99999
 # Agent backend identifiers
 AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
+AGENT_GEMINI = "gemini"
 
 # Codex home directory
 CODEX_HOME_DIR = Path.home() / ".codex" / "sessions"
+
+# Gemini home directory (sessions stored in ~/.gemini/tmp/<hash>/chats/)
+GEMINI_HOME_DIR = Path.home() / ".gemini" / "tmp"
 
 # ============================================================================
 # Named Constants (for readability and maintainability)
@@ -72,6 +76,12 @@ WINDOWS_PREFIX_LEN = 8  # Length of "windows:"
 # Display constants
 MAX_WORKSPACE_NAME_DISPLAY = 28  # Max chars for workspace name in stats display
 MAX_SHORT_PART_LEN = 10  # Max length for "short" path component heuristic
+HASH_DISPLAY_LEN = 8  # Characters to show for truncated hash display
+MAX_THOUGHT_LEN = 200  # Max length for thought descriptions before truncating
+MAX_TOOL_OUTPUT_LEN = 2000  # Max length for tool output before truncating
+
+# Codex date folder parsing
+CODEX_DATE_FOLDER_DEPTH = 4  # Depth of YYYY/MM/DD/file structure
 
 # Time constants
 SECONDS_PER_MINUTE = 60
@@ -93,6 +103,18 @@ def codex_get_home_dir() -> Path:
     return CODEX_HOME_DIR
 
 
+def gemini_get_home_dir() -> Path:
+    """Get Gemini sessions directory (~/.gemini/tmp/).
+
+    Supports GEMINI_SESSIONS_DIR environment variable override for testing
+    and custom configurations.
+    """
+    env_override = os.environ.get("GEMINI_SESSIONS_DIR")
+    if env_override:
+        return Path(env_override).expanduser()
+    return GEMINI_HOME_DIR
+
+
 def detect_agent_from_path(path: Path) -> str:
     """Detect agent type from file path.
 
@@ -100,9 +122,13 @@ def detect_agent_from_path(path: Path) -> str:
         path: Path to a session file
 
     Returns:
-        AGENT_CODEX if path contains .codex, otherwise AGENT_CLAUDE
+        AGENT_GEMINI if path contains .gemini,
+        AGENT_CODEX if path contains .codex,
+        otherwise AGENT_CLAUDE
     """
     path_str = str(path)
+    if "/.gemini/" in path_str or "\\.gemini\\" in path_str:
+        return AGENT_GEMINI
     if "/.codex/" in path_str or "\\.codex\\" in path_str:
         return AGENT_CODEX
     return AGENT_CLAUDE
@@ -1665,6 +1691,174 @@ def codex_count_messages(jsonl_file: Path) -> int:
     return count
 
 
+# ============================================================================
+# Codex Session Index - Incremental workspace mapping
+# ============================================================================
+
+CODEX_INDEX_VERSION = 1
+
+
+def codex_get_index_file() -> Path:
+    """Get path to Codex session index file (~/.claude-history/codex_index.json)."""
+    return get_config_dir() / "codex_index.json"
+
+
+def codex_load_index() -> dict:
+    """Load Codex session index from file.
+
+    Returns:
+        Index dict with keys: version, last_scan_date, sessions
+        sessions maps session file path (str) to encoded workspace name
+    """
+    index_file = codex_get_index_file()
+    if index_file.exists():
+        try:
+            with open(index_file, encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("version") == CODEX_INDEX_VERSION:
+                    return data
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {"version": CODEX_INDEX_VERSION, "last_scan_date": None, "sessions": {}}
+
+
+def codex_save_index(index: dict) -> None:
+    """Save Codex session index to file."""
+    index_file = codex_get_index_file()
+    index_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(index_file, "w", encoding="utf-8") as f:
+        json.dump(index, f, indent=2)
+
+
+def _codex_parse_date_folder(folder_path: Path) -> str:
+    """Parse YYYY/MM/DD folder structure to date string.
+
+    Args:
+        folder_path: Path like .../2025/12/15/rollout-xxx.jsonl
+
+    Returns:
+        Date string like "2025-12-15" or empty string if invalid
+    """
+    try:
+        parts = folder_path.parts
+        # Find YYYY/MM/DD pattern in path (last 4 parts before filename)
+        if len(parts) >= CODEX_DATE_FOLDER_DEPTH:
+            year, month, day = parts[-4], parts[-3], parts[-2]
+            if year.isdigit() and month.isdigit() and day.isdigit():
+                return f"{year}-{month}-{day}"
+    except (ValueError, IndexError):
+        pass
+    return ""
+
+
+def _codex_date_folders_since(sessions_dir: Path, since_date: str) -> list:  # noqa: C901
+    """Get list of date folders on or after since_date.
+
+    Args:
+        sessions_dir: Base sessions directory (~/.codex/sessions/)
+        since_date: Date string "YYYY-MM-DD" to start from (inclusive)
+
+    Returns:
+        List of Path objects for YYYY/MM/DD folders to scan
+    """
+    folders_to_scan = []
+
+    if not sessions_dir.exists():
+        return folders_to_scan
+
+    since_dt = datetime.strptime(since_date, "%Y-%m-%d") if since_date else None
+
+    # Walk through year folders
+    for year_dir in sorted(sessions_dir.iterdir()):
+        if not year_dir.is_dir() or not year_dir.name.isdigit():
+            continue
+        year = int(year_dir.name)
+
+        # Quick skip: if entire year is before since_date
+        if since_dt and year < since_dt.year:
+            continue
+
+        for month_dir in sorted(year_dir.iterdir()):
+            if not month_dir.is_dir() or not month_dir.name.isdigit():
+                continue
+            month = int(month_dir.name)
+
+            # Quick skip: if entire month is before since_date
+            if since_dt and year == since_dt.year and month < since_dt.month:
+                continue
+
+            for day_dir in sorted(month_dir.iterdir()):
+                if not day_dir.is_dir() or not day_dir.name.isdigit():
+                    continue
+                day = int(day_dir.name)
+
+                # Check if this date is >= since_date
+                if since_dt:
+                    folder_date = datetime(year, month, day)
+                    if folder_date.date() < since_dt.date():
+                        continue
+
+                folders_to_scan.append(day_dir)
+
+    return folders_to_scan
+
+
+def codex_ensure_index_updated(sessions_dir: Path = None) -> dict:
+    """Ensure Codex session index is up-to-date.
+
+    This is the common function used by all Codex operations. It:
+    1. Loads existing index
+    2. Scans only new date folders since last_scan_date
+    3. Updates and saves the index
+    4. Returns the session->workspace mapping
+
+    Args:
+        sessions_dir: Override sessions directory (for testing)
+
+    Returns:
+        Dict mapping session file paths (str) to encoded workspace names
+    """
+    if sessions_dir is None:
+        sessions_dir = codex_get_home_dir()
+
+    if not sessions_dir.exists():
+        return {}
+
+    index = codex_load_index()
+    last_scan = index.get("last_scan_date")
+    sessions_map = index.get("sessions", {})
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Clean up stale entries (files that no longer exist)
+    stale_keys = [k for k in sessions_map if not Path(k).exists()]
+    for k in stale_keys:
+        del sessions_map[k]
+
+    # Determine what to scan
+    if last_scan is None:
+        # First run: scan everything
+        folders_to_scan = _codex_date_folders_since(sessions_dir, None)
+    else:
+        # Incremental: scan from last_scan_date onwards
+        # We re-scan last_scan_date in case new sessions were added that day
+        folders_to_scan = _codex_date_folders_since(sessions_dir, last_scan)
+
+    # Scan new folders
+    for day_dir in folders_to_scan:
+        for jsonl_file in day_dir.glob("rollout-*.jsonl"):
+            file_key = str(jsonl_file)
+            if file_key not in sessions_map:
+                workspace = codex_get_workspace_from_session(jsonl_file)
+                sessions_map[file_key] = workspace
+
+    # Update and save index
+    index["sessions"] = sessions_map
+    index["last_scan_date"] = today
+    codex_save_index(index)
+
+    return sessions_map
+
+
 def _codex_build_session_dict(
     jsonl_file: Path, workspace: str, modified: datetime, skip_message_count: bool
 ) -> dict:
@@ -1703,6 +1897,9 @@ def codex_scan_sessions(
 ) -> list:
     """Scan ~/.codex/sessions/YYYY/MM/DD/ for rollout-*.jsonl files.
 
+    Uses incremental indexing for efficient workspace lookups. The index maps
+    session files to workspaces and is updated incrementally based on date folders.
+
     Args:
         pattern: Substring pattern to filter workspaces (empty matches all)
         since_date: Only include sessions modified on or after this date
@@ -1719,15 +1916,510 @@ def codex_scan_sessions(
     if not sessions_dir.exists():
         return []
 
+    # Get workspace mapping from incremental index
+    sessions_map = codex_ensure_index_updated(sessions_dir)
+
     sessions = []
-    # Walk through YYYY/MM/DD structure using glob for simplicity
+    # Walk through YYYY/MM/DD structure using glob
     for jsonl_file in sessions_dir.glob("*/*/*/rollout-*.jsonl"):
-        workspace = codex_get_workspace_from_session(jsonl_file)
+        file_key = str(jsonl_file)
+        # Look up workspace from index (fallback to file read if not in index)
+        workspace = sessions_map.get(file_key)
+        if workspace is None:
+            workspace = codex_get_workspace_from_session(jsonl_file)
+
         modified = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
 
         if _codex_session_matches_filters(workspace, modified, pattern, since_date, until_date):
             sessions.append(
                 _codex_build_session_dict(jsonl_file, workspace, modified, skip_message_count)
+            )
+
+    return sorted(sessions, key=lambda s: s["modified"], reverse=True)
+
+
+# ============================================================================
+# Gemini Backend - JSON Parsing
+# ============================================================================
+
+
+def gemini_read_json_messages(json_file: Path) -> tuple:  # noqa: C901
+    """Read messages from Gemini CLI JSON session file.
+
+    Gemini stores sessions as single JSON files (not JSONL) with structure:
+    {sessionId, projectHash, startTime, lastUpdated, messages: [...]}
+
+    Args:
+        json_file: Path to the Gemini session .json file
+
+    Returns:
+        Tuple of (messages_list, session_meta_dict or None)
+        Messages contain: role, content, timestamp, and optionally
+        is_tool_call, thoughts, tokens, model fields
+    """
+    messages = []
+    session_meta = None
+
+    try:
+        with open(json_file, encoding="utf-8") as f:
+            data = json.load(f)
+
+        session_meta = {
+            "sessionId": data.get("sessionId"),
+            "projectHash": data.get("projectHash"),
+            "startTime": data.get("startTime"),
+            "lastUpdated": data.get("lastUpdated"),
+            "summary": data.get("summary"),
+        }
+
+        for msg in data.get("messages", []):
+            msg_type = msg.get("type", "")
+            content = msg.get("content", "")
+
+            # Handle content that may be a string or PartListUnion
+            if isinstance(content, list):
+                # Extract content from parts array (handles various part types)
+                text_parts = []
+                for part in content:
+                    if isinstance(part, str):
+                        text_parts.append(part)
+                    elif isinstance(part, dict):
+                        if "text" in part:
+                            text_parts.append(part["text"])
+                        elif "inlineData" in part:
+                            # Binary data (images, etc.) - show placeholder
+                            mime = part["inlineData"].get("mimeType", "unknown")
+                            text_parts.append(f"[Inline data: {mime}]")
+                        elif "executableCode" in part:
+                            # Code block
+                            code = part["executableCode"]
+                            lang = code.get("language", "")
+                            text_parts.append(f"```{lang}\n{code.get('code', '')}\n```")
+                        elif "codeExecutionResult" in part:
+                            # Code execution result
+                            result = part["codeExecutionResult"]
+                            text_parts.append(f"**Output:**\n```\n{result.get('output', '')}\n```")
+                content = "\n".join(text_parts)
+
+            if msg_type == "user":
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": content,
+                        "timestamp": msg.get("timestamp", ""),
+                    }
+                )
+            elif msg_type == "gemini":
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": content,
+                        "timestamp": msg.get("timestamp", ""),
+                        "thoughts": msg.get("thoughts", []),
+                        "tokens": msg.get("tokens"),
+                        "model": msg.get("model"),
+                        "tool_calls": msg.get("toolCalls", []),
+                    }
+                )
+            elif msg_type in ("info", "error", "warning"):
+                messages.append(
+                    {
+                        "role": msg_type,
+                        "content": content,
+                        "timestamp": msg.get("timestamp", ""),
+                    }
+                )
+
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    return messages, session_meta
+
+
+def gemini_format_tool_call(tool_call: dict) -> str:
+    """Format a Gemini tool call as markdown.
+
+    Args:
+        tool_call: Tool call dict with id, name, args, result, status, etc.
+
+    Returns:
+        Formatted markdown string for the tool call
+    """
+    name = tool_call.get("displayName") or tool_call.get("name", "unknown")
+    args = tool_call.get("args", {})
+    status = tool_call.get("status", "")
+    result = tool_call.get("result", [])
+
+    lines = [f"**[Tool: {name}]** ({status})"]
+
+    if args:
+        try:
+            args_str = json.dumps(args, indent=2)
+        except (TypeError, ValueError):
+            args_str = str(args)
+        lines.append(f"```json\n{args_str}\n```")
+
+    # Extract result output if present
+    if result:
+        for r in result:
+            if isinstance(r, dict):
+                func_resp = r.get("functionResponse", {})
+                output = func_resp.get("response", {}).get("output", "")
+                if output:
+                    # Truncate very long outputs
+                    if len(output) > MAX_TOOL_OUTPUT_LEN:
+                        output = output[:MAX_TOOL_OUTPUT_LEN] + "\n... [truncated]"
+                    lines.append(f"**Result:**\n```\n{output}\n```")
+
+    return "\n".join(lines)
+
+
+def gemini_format_thoughts(thoughts: list) -> str:
+    """Format Gemini reasoning thoughts as markdown.
+
+    Args:
+        thoughts: List of thought dicts with subject, description, timestamp
+                  (or strings for legacy/alternative formats)
+
+    Returns:
+        Formatted markdown string for the thoughts
+    """
+    if not thoughts:
+        return ""
+
+    lines = ["", "**Reasoning:**"]
+    for thought in thoughts:
+        # Handle both dict format and potential string format
+        if isinstance(thought, str):
+            if thought.strip():
+                truncated = len(thought) > MAX_THOUGHT_LEN
+                text = thought[:MAX_THOUGHT_LEN] + "..." if truncated else thought
+                lines.append(f"- {text}")
+        elif isinstance(thought, dict):
+            subject = thought.get("subject", "")
+            description = thought.get("description", "")
+            truncated = len(description) > MAX_THOUGHT_LEN
+            desc_text = description[:MAX_THOUGHT_LEN] + ("..." if truncated else "")
+            if subject:
+                lines.append(f"- **{subject}**: {desc_text}")
+            elif description:
+                lines.append(f"- {desc_text}")
+        # Skip other types silently
+
+    return "\n".join(lines)
+
+
+def gemini_get_first_timestamp(json_file: Path) -> str:
+    """Get startTime from Gemini session.
+
+    Args:
+        json_file: Path to the Gemini session .json file
+
+    Returns:
+        ISO 8601 timestamp string or None if not found
+    """
+    try:
+        with open(json_file, encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("startTime", "")
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def gemini_parse_json_to_markdown(json_file: Path, minimal: bool = False) -> str:  # noqa: C901
+    """Convert Gemini session JSON to markdown format.
+
+    Args:
+        json_file: Path to the Gemini session .json file
+        minimal: If True, omit metadata sections
+
+    Returns:
+        Markdown formatted string of the conversation
+    """
+    messages, session_meta = gemini_read_json_messages(json_file)
+
+    md_lines = ["# Gemini Conversation", ""]
+
+    if session_meta and not minimal:
+        project_hash = session_meta.get("projectHash", "unknown")
+        # Show first 8 chars of hash for readability
+        short_hash = (
+            project_hash[:HASH_DISPLAY_LEN]
+            if len(project_hash) > HASH_DISPLAY_LEN
+            else project_hash
+        )
+        md_lines.extend(
+            [
+                "## Session Metadata",
+                "",
+                f"- **Session ID:** `{session_meta.get('sessionId', 'unknown')}`",
+                f"- **Project Hash:** `{short_hash}...`",
+                f"- **Start Time:** `{session_meta.get('startTime', 'unknown')}`",
+                f"- **Last Updated:** `{session_meta.get('lastUpdated', 'unknown')}`",
+                "",
+            ]
+        )
+        if session_meta.get("summary"):
+            md_lines.extend(
+                [
+                    "### Summary",
+                    "",
+                    session_meta["summary"],
+                    "",
+                ]
+            )
+
+    md_lines.extend(["---", ""])
+
+    for i, msg in enumerate(messages, 1):
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        timestamp = msg.get("timestamp", "")
+        thoughts = msg.get("thoughts", [])
+        tool_calls = msg.get("tool_calls", [])
+        tokens = msg.get("tokens")
+        model = msg.get("model")
+
+        if role == "user":
+            md_lines.append(f"## 👤 User (Message {i})")
+        elif role == "assistant":
+            md_lines.append(f"## 🤖 Gemini (Message {i})")
+        elif role == "info":
+            md_lines.append(f"## Info (Message {i})")
+        elif role == "error":
+            md_lines.append(f"## ❌ Error (Message {i})")
+        elif role == "warning":
+            md_lines.append(f"## ⚠️ Warning (Message {i})")
+        else:
+            md_lines.append(f"## {role.title()} (Message {i})")
+
+        if timestamp and not minimal:
+            md_lines.append(f"*{timestamp}*")
+
+        if model and not minimal:
+            md_lines.append(f"*Model: {model}*")
+
+        md_lines.append("")
+
+        # Add thoughts/reasoning if present
+        if thoughts and not minimal:
+            md_lines.append(gemini_format_thoughts(thoughts))
+            md_lines.append("")
+
+        # Add content
+        if content:
+            md_lines.append(content)
+            md_lines.append("")
+
+        # Add tool calls if present
+        for tc in tool_calls:
+            md_lines.append(gemini_format_tool_call(tc))
+            md_lines.append("")
+
+        # Add token usage if present and not minimal
+        if tokens and not minimal:
+            md_lines.append(
+                f"*Tokens: {tokens.get('total', 0)} total "
+                f"(in: {tokens.get('input', 0)}, out: {tokens.get('output', 0)}, "
+                f"cached: {tokens.get('cached', 0)})*"
+            )
+            md_lines.append("")
+
+        md_lines.extend(["---", ""])
+
+    return "\n".join(md_lines)
+
+
+def gemini_extract_metrics_from_json(json_file: Path) -> dict:
+    """Extract metrics from Gemini JSON file for stats database.
+
+    Args:
+        json_file: Path to the Gemini session .json file
+
+    Returns:
+        Dict with session, messages, and tool_uses data
+    """
+    messages, session_meta = gemini_read_json_messages(json_file)
+
+    metrics = {
+        "session": {
+            "id": session_meta.get("sessionId") if session_meta else None,
+            "cwd": session_meta.get("projectHash")
+            if session_meta
+            else None,  # Use hash as workspace
+            "cli_version": None,  # Gemini doesn't store CLI version in session
+            "model": None,
+        },
+        "messages": [],
+        "tool_uses": [],
+        "tokens": {
+            "input": 0,
+            "output": 0,
+            "total": 0,
+        },
+    }
+
+    for msg in messages:
+        role = msg.get("role")
+        timestamp = msg.get("timestamp")
+
+        # Extract model from first assistant message
+        if role == "assistant" and not metrics["session"]["model"]:
+            metrics["session"]["model"] = msg.get("model")
+
+        # Accumulate token usage
+        tokens = msg.get("tokens")
+        if tokens:
+            metrics["tokens"]["input"] += tokens.get("input", 0)
+            metrics["tokens"]["output"] += tokens.get("output", 0)
+            metrics["tokens"]["total"] += tokens.get("total", 0)
+
+        # Track tool calls
+        for tc in msg.get("tool_calls", []):
+            status = tc.get("status", "")
+            metrics["tool_uses"].append(
+                {
+                    "name": tc.get("name", "unknown"),
+                    "timestamp": tc.get("timestamp") or timestamp,
+                    "is_error": status.lower() in ("error", "failed", "failure")
+                    if status
+                    else False,
+                }
+            )
+
+        # Track messages (exclude system messages)
+        if role in ("user", "assistant"):
+            msg_data = {
+                "role": role,
+                "timestamp": timestamp,
+                "model": msg.get("model"),
+            }
+            # Include per-message token usage for stats
+            if tokens:
+                msg_data["input_tokens"] = tokens.get("input", 0)
+                msg_data["output_tokens"] = tokens.get("output", 0)
+            metrics["messages"].append(msg_data)
+
+    return metrics
+
+
+# ============================================================================
+# Gemini Backend - Session Scanning
+# ============================================================================
+
+
+def gemini_get_workspace_from_session(json_file: Path) -> str:
+    """Extract workspace identifier from Gemini session.
+
+    Since Gemini uses SHA-256 hashes for project paths, we return the hash
+    as the workspace identifier. The parent directory name IS the hash.
+
+    Args:
+        json_file: Path to the Gemini session .json file
+
+    Returns:
+        Project hash as workspace identifier, or 'unknown'
+    """
+    # The file is in ~/.gemini/tmp/<project_hash>/chats/<session>.json
+    # So we need to go up two levels to get the project hash
+    try:
+        chats_dir = json_file.parent  # chats/
+        project_dir = chats_dir.parent  # <project_hash>/
+        return project_dir.name
+    except (AttributeError, IndexError):
+        pass
+    return "unknown"
+
+
+def gemini_count_messages(json_file: Path) -> int:
+    """Count user/assistant messages in a Gemini session.
+
+    Args:
+        json_file: Path to the Gemini session .json file
+
+    Returns:
+        Number of user and gemini messages
+    """
+    count = 0
+    try:
+        with open(json_file, encoding="utf-8") as f:
+            data = json.load(f)
+            for msg in data.get("messages", []):
+                if msg.get("type") in ("user", "gemini"):
+                    count += 1
+    except (OSError, json.JSONDecodeError):
+        pass
+    return count
+
+
+def _gemini_build_session_dict(
+    json_file: Path, workspace: str, modified: datetime, skip_message_count: bool
+) -> dict:
+    """Build a session dictionary for a Gemini session file."""
+    # For Gemini, workspace is the project hash - show first 8 chars for readability
+    workspace_readable = (
+        f"[hash:{workspace[:HASH_DISPLAY_LEN]}]" if len(workspace) > HASH_DISPLAY_LEN else workspace
+    )
+    return {
+        "agent": AGENT_GEMINI,
+        "workspace": workspace,
+        "workspace_readable": workspace_readable,
+        "file": json_file,
+        "filename": json_file.name,
+        "message_count": 0 if skip_message_count else gemini_count_messages(json_file),
+        "modified": modified,
+        "source": "local",
+    }
+
+
+def _gemini_session_matches_filters(
+    workspace: str, modified: datetime, pattern: str, since_date, until_date
+) -> bool:
+    """Check if a Gemini session matches the given filters."""
+    if pattern and pattern not in workspace:
+        return False
+    if since_date and modified.date() < since_date.date():
+        return False
+    if until_date and modified.date() > until_date.date():
+        return False
+    return True
+
+
+def gemini_scan_sessions(
+    pattern: str = "",
+    since_date=None,
+    until_date=None,
+    sessions_dir: Path = None,
+    skip_message_count: bool = False,
+) -> list:
+    """Scan ~/.gemini/tmp/*/chats/ for session-*.json files.
+
+    Args:
+        pattern: Substring pattern to filter workspaces (empty matches all)
+        since_date: Only include sessions modified on or after this date
+        until_date: Only include sessions modified on or before this date
+        sessions_dir: Override sessions directory (for testing)
+        skip_message_count: If True, skip counting messages (set to 0)
+
+    Returns:
+        List of session dicts sorted by modified time (newest first)
+    """
+    if sessions_dir is None:
+        sessions_dir = gemini_get_home_dir()
+
+    if not sessions_dir.exists():
+        return []
+
+    sessions = []
+    # Gemini stores sessions in ~/.gemini/tmp/<project_hash>/chats/session-*.json
+    for json_file in sessions_dir.glob("*/chats/session-*.json"):
+        workspace = gemini_get_workspace_from_session(json_file)
+        modified = datetime.fromtimestamp(json_file.stat().st_mtime)
+
+        if _gemini_session_matches_filters(workspace, modified, pattern, since_date, until_date):
+            sessions.append(
+                _gemini_build_session_dict(json_file, workspace, modified, skip_message_count)
             )
 
     return sorted(sessions, key=lambda s: s["modified"], reverse=True)
@@ -1742,16 +2434,18 @@ def get_active_backends(agent: str) -> list:
     """Return list of active backends based on agent flag.
 
     Args:
-        agent: Agent selection - 'auto', 'claude', or 'codex'
+        agent: Agent selection - 'auto', 'claude', 'codex', or 'gemini'
 
     Returns:
-        List of backend identifiers (AGENT_CLAUDE, AGENT_CODEX) that exist
+        List of backend identifiers (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI) that exist
     """
     if agent == AGENT_CLAUDE:
         projects_dir = Path.home() / ".claude" / "projects"
         return [AGENT_CLAUDE] if projects_dir.exists() else []
     elif agent == AGENT_CODEX:
         return [AGENT_CODEX] if codex_get_home_dir().exists() else []
+    elif agent == AGENT_GEMINI:
+        return [AGENT_GEMINI] if gemini_get_home_dir().exists() else []
     else:  # auto
         backends = []
         projects_dir = Path.home() / ".claude" / "projects"
@@ -1759,6 +2453,8 @@ def get_active_backends(agent: str) -> list:
             backends.append(AGENT_CLAUDE)
         if codex_get_home_dir().exists():
             backends.append(AGENT_CODEX)
+        if gemini_get_home_dir().exists():
+            backends.append(AGENT_GEMINI)
         return backends
 
 
@@ -1773,7 +2469,7 @@ def get_unified_sessions(
     """Get sessions from specified agent backend(s).
 
     Args:
-        agent: Agent selection - 'auto', 'claude', or 'codex'
+        agent: Agent selection - 'auto', 'claude', 'codex', or 'gemini'
         pattern: Workspace pattern to filter by
         since_date: Filter to sessions modified on or after this date
         until_date: Filter to sessions modified on or before this date
@@ -1804,6 +2500,14 @@ def get_unified_sessions(
                 pass
         elif backend == AGENT_CODEX:
             sessions = codex_scan_sessions(
+                pattern=pattern,
+                since_date=since_date,
+                until_date=until_date,
+                skip_message_count=skip_message_count,
+            )
+            all_sessions.extend(sessions)
+        elif backend == AGENT_GEMINI:
+            sessions = gemini_scan_sessions(
                 pattern=pattern,
                 since_date=since_date,
                 until_date=until_date,
@@ -4261,7 +4965,7 @@ def _format_date_range_message(since_date, until_date) -> str:
     return " ".join(parts)
 
 
-def cmd_alias_lss(alias_name: str, since_date=None, until_date=None):
+def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str = "auto"):
     """List sessions across all workspaces in an alias."""
     aliases_data = load_aliases()
 
@@ -4272,20 +4976,25 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None):
     alias_config = aliases_data["aliases"][alias_name]
     all_sessions = _collect_alias_sessions(alias_config, since_date, until_date)
 
+    # Filter by agent type if specified
+    if agent != "auto":
+        all_sessions = [s for s in all_sessions if s.get("agent", AGENT_CLAUDE) == agent]
+
     if not all_sessions:
         if since_date or until_date:
             sys.stderr.write(
                 f"No sessions found {_format_date_range_message(since_date, until_date)}\n"
             )
         else:
-            sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'\n")
+            agent_msg = f" for agent '{agent}'" if agent != "auto" else ""
+            sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'{agent_msg}\n")
         sys.exit(1)
 
     print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
     for session in all_sessions:
-        agent = session.get("agent", AGENT_CLAUDE)
+        session_agent = session.get("agent", AGENT_CLAUDE)
         print(
-            f"{agent}\t{session['source']}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+            f"{session_agent}\t{session['source']}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
         )
 
 
@@ -4298,6 +5007,7 @@ def _get_alias_export_options(args) -> dict:
         "minimal": getattr(args, "minimal", False),
         "split_lines": getattr(args, "split", None),
         "flat": getattr(args, "flat", False),
+        "agent": getattr(args, "agent", "auto"),
     }
 
 
@@ -4393,6 +5103,7 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
 
     alias_config = aliases_data["aliases"][alias_name]
     opts = _get_alias_export_options(args)
+    agent_filter = opts.get("agent", "auto")
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -4411,6 +5122,12 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
             )
             if not sessions:
                 continue
+
+            # Filter by agent type if specified
+            if agent_filter != "auto":
+                sessions = [s for s in sessions if s.get("agent", AGENT_CLAUDE) == agent_filter]
+                if not sessions:
+                    continue
 
             ws_output_path = _get_ws_output_path(output_path, workspace, opts["flat"])
             for session in sessions:
@@ -4837,7 +5554,7 @@ def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
     return {"session": session_info, "messages": messages, "tool_uses": tool_uses}
 
 
-def sync_file_to_db(
+def sync_file_to_db(  # noqa: C901, PLR0915
     conn: sqlite3.Connection, jsonl_file: Path, source: str = "local", force: bool = False
 ) -> bool:
     """Sync a single JSONL file to the database.
@@ -4858,7 +5575,27 @@ def sync_file_to_db(
     agent = detect_agent_from_path(jsonl_file)
 
     # Extract metrics based on agent type
-    if agent == AGENT_CODEX:
+    if agent == AGENT_GEMINI:
+        metrics = gemini_extract_metrics_from_json(jsonl_file)
+        session = metrics["session"]
+        # Gemini uses projectHash, convert to workspace format
+        if session.get("projectHash"):
+            session["workspace"] = f"gemini-{session['projectHash'][:HASH_DISPLAY_LEN]}"
+        else:
+            session["workspace"] = "gemini-unknown"
+        session["source"] = source
+        session["file_mtime"] = current_mtime
+        session["is_agent"] = False
+        session["parent_session_id"] = None
+        session["message_count"] = len(metrics["messages"])
+        session["git_branch"] = None
+        session["claude_version"] = None  # Gemini doesn't have version info in sessions
+        session["work_period_seconds"] = 0
+        session["num_work_periods"] = 1
+        # Get timestamps from session metadata
+        session["start_time"] = session.get("startTime")
+        session["end_time"] = session.get("lastUpdated")
+    elif agent == AGENT_CODEX:
         metrics = codex_extract_metrics_from_jsonl(jsonl_file)
         session = metrics["session"]
         # Codex uses cwd directly, need to convert to workspace
@@ -5060,6 +5797,39 @@ def _sync_codex_to_db(conn, patterns: list, force: bool) -> dict:
     return stats
 
 
+def _sync_gemini_to_db(conn, patterns: list, force: bool) -> dict:
+    """Sync Gemini sessions from ~/.gemini/tmp/*/chats/ to database.
+
+    Gemini stores sessions in ~/.gemini/tmp/<project_hash>/chats/session-*.json
+    """
+    stats = {"synced": 0, "skipped": 0, "errors": 0}
+    sessions_dir = gemini_get_home_dir()
+
+    if not sessions_dir.exists():
+        return stats
+
+    print("Scanning Gemini sessions...")
+
+    # Walk through <hash>/chats/ structure
+    for json_file in sessions_dir.glob("*/chats/session-*.json"):
+        # Filter by workspace pattern if specified
+        if patterns and patterns[0]:
+            workspace = gemini_get_workspace_from_session(json_file)
+            if not _matches_pattern(workspace, patterns):
+                continue
+
+        try:
+            if sync_file_to_db(conn, json_file, "gemini", force):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
+            sys.stderr.write(f"  Error syncing {json_file.name}: {e}\n")
+            stats["errors"] += 1
+
+    return stats
+
+
 def _filter_workspaces_by_pattern(workspaces: list, patterns: list) -> list:
     """Filter workspaces by patterns (substring match)."""
     if not patterns or not patterns[0]:
@@ -5182,6 +5952,10 @@ def cmd_stats_sync(args):
 
     # Sync local Codex sessions (~/.codex/sessions/)
     stats = _sync_codex_to_db(conn, patterns, force)
+    _accumulate_stats(totals, stats)
+
+    # Sync local Gemini sessions (~/.gemini/tmp/)
+    stats = _sync_gemini_to_db(conn, patterns, force)
     _accumulate_stats(totals, stats)
 
     # Sync WSL/Windows if --ah flag
@@ -6291,7 +7065,7 @@ def cmd_list(args):
         _list_local_sessions(args, patterns, since_date, until_date)
 
 
-def cmd_convert(args):
+def cmd_convert(args):  # noqa: C901
     """Convert a single .jsonl file to markdown."""
     remote_host = getattr(args, "remote", None)
 
@@ -6329,7 +7103,9 @@ def cmd_convert(args):
 
             # Detect agent type from original remote path and use appropriate parser
             agent_type = detect_agent_from_path(Path(args.jsonl_file))
-            if agent_type == AGENT_CODEX:
+            if agent_type == AGENT_GEMINI:
+                markdown = gemini_parse_json_to_markdown(jsonl_file)
+            elif agent_type == AGENT_CODEX:
                 markdown = codex_parse_jsonl_to_markdown(jsonl_file)
             else:
                 markdown = parse_jsonl_to_markdown(jsonl_file)
@@ -6355,7 +7131,9 @@ def cmd_convert(args):
         try:
             # Detect agent type and use appropriate parser
             agent_type = detect_agent_from_path(jsonl_file)
-            if agent_type == AGENT_CODEX:
+            if agent_type == AGENT_GEMINI:
+                markdown = gemini_parse_json_to_markdown(jsonl_file)
+            elif agent_type == AGENT_CODEX:
                 markdown = codex_parse_jsonl_to_markdown(jsonl_file)
             else:
                 markdown = parse_jsonl_to_markdown(jsonl_file)
@@ -6558,7 +7336,7 @@ def _get_export_output_path(
     return workspace_subdir / output_name, output_name
 
 
-def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
+def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noqa: C901
     """Export sessions to markdown files.
 
     Args:
@@ -6579,10 +7357,11 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
 
         # Detect agent type and use appropriate reader/parser
         agent_type = detect_agent_from_path(jsonl_file)
-        is_codex = agent_type == AGENT_CODEX
 
         try:
-            if is_codex:
+            if agent_type == AGENT_GEMINI:
+                messages, _ = gemini_read_json_messages(jsonl_file)
+            elif agent_type == AGENT_CODEX:
                 messages, _ = codex_read_jsonl_messages(jsonl_file)
             else:
                 messages = read_jsonl_messages(jsonl_file)
@@ -6601,10 +7380,10 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
                 continue
 
         try:
-            # Codex files don't support splitting yet; use direct export
-            if is_codex:
+            # Codex/Gemini files don't support splitting yet; use direct export
+            if agent_type in (AGENT_CODEX, AGENT_GEMINI):
                 _write_single_file(
-                    jsonl_file, output_file, minimal, messages=messages, is_codex=True
+                    jsonl_file, output_file, minimal, messages=messages, agent=agent_type
                 )
             elif split_lines and messages:
                 parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
@@ -6643,18 +7422,20 @@ def _write_single_file(
     output_file: Path,
     minimal: bool,
     messages: list = None,
-    is_codex: bool = False,
+    agent: str = AGENT_CLAUDE,
 ):
     """Write a single markdown file.
 
     Args:
-        jsonl_file: Source JSONL file path
+        jsonl_file: Source JSONL/JSON file path
         output_file: Destination markdown file path
         minimal: If True, produce minimal output without metadata
         messages: Pre-read messages (optional, avoids re-reading file)
-        is_codex: If True, use Codex parser instead of Claude parser
+        agent: Agent type (claude, codex, or gemini)
     """
-    if is_codex:
+    if agent == AGENT_GEMINI:
+        markdown = gemini_parse_json_to_markdown(jsonl_file, minimal=minimal)
+    elif agent == AGENT_CODEX:
         markdown = codex_parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
     else:
         markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal, messages=messages)
@@ -8298,7 +9079,7 @@ def _create_argument_parser():
     parser.add_argument(
         "--agent",
         "-a",
-        choices=["auto", "claude", "codex"],
+        choices=["auto", "claude", "codex", "gemini"],
         default="auto",
         help="Agent backend to use (default: auto-detect based on available data)",
     )
@@ -8607,7 +9388,8 @@ def _dispatch_lss_to_alias(alias_name: str, args):
     """Handle lss dispatch to alias command."""
     since_date = parse_date_string(args.since) if args.since else None
     until_date = parse_date_string(args.until) if args.until else None
-    cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date)
+    agent = getattr(args, "agent", "auto")
+    cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date, agent=agent)
 
 
 def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
@@ -8634,11 +9416,12 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
     since_date = parse_date_string(args.since) if args.since else None
     until_date = parse_date_string(args.until) if args.until else None
     lss_remotes = getattr(args, "remotes", None) or []
+    agent = getattr(args, "agent", "auto")
 
     patterns, alias_for_ws = resolve_patterns_for_command(workspace_list, this_only)
     if alias_for_ws:
         sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
-        cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date)
+        cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date, agent=agent)
         return
 
     class LssAllArgs:

@@ -1,10 +1,22 @@
 # agent-history
 
-A CLI tool to browse and export AI coding assistant conversation history (Claude Code, Codex CLI) with multi-environment support.
+A CLI tool to browse and export AI coding assistant conversation history with multi-environment support.
 
 > **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
-Claude Code leaves conversation data fragmented across JSONL files. This tool solves the pain points:
+## Supported Agents
+
+| Agent | Status | Format | Documentation |
+|-------|--------|--------|---------------|
+| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [CLAUDE-FORMAT.md](docs/CLAUDE-FORMAT.md) |
+| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [CODEX-FORMAT.md](docs/CODEX-FORMAT.md) |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [GEMINI-FORMAT.md](docs/GEMINI-FORMAT.md) |
+
+Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query.
+
+## Why This Tool?
+
+Claude Code and Codex CLI leave conversation data fragmented across JSONL files. This tool solves the pain points:
 - Finding past work by project, not by opaque session IDs.
 - Getting readable exports for sharing, backup, or audits.
 - Seeing where and how you code across homes (local/WSL/Windows/SSH) with session/token/tool/time metrics.
@@ -75,7 +87,7 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 <!-- help-snippet:start -->
 ```
-usage: agent-history [-h] [--version] [--agent {auto,claude,codex}]
+usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini}]
                      {lsw,lss,lsh,export,alias,stats,reset,install} ...
 
 Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)
@@ -95,7 +107,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
-  --agent, -a {auto,claude,codex}
+  --agent, -a {auto,claude,codex,gemini}
                         Agent backend to use (default: auto-detect based on
                         available data)
 
