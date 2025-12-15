@@ -2409,26 +2409,26 @@ def gemini_get_path_for_hash(project_hash: str) -> str | None:
 def gemini_get_workspace_readable(workspace: str) -> str:
     """Get human-readable workspace name for a Gemini workspace identifier.
 
-    Handles both cases:
-    - Encoded path (like -home-user-project): normalizes to readable path
+    Handles three cases:
+    - Real path (starts with /): return as-is
     - SHA-256 hash: looks up in hash index, falls back to truncated hash
+    - Encoded path (like -home-user-project): normalizes to readable path
 
     Args:
-        workspace: Encoded workspace path or SHA-256 hash
+        workspace: Real path, encoded workspace path, or SHA-256 hash
 
     Returns:
         Readable workspace name (path or [hash:xxxxxxxx])
     """
-    # If it looks like an encoded path (starts with - and contains multiple -),
-    # normalize it directly
-    if workspace.startswith("-") and workspace.count("-") > 1:
-        return normalize_workspace_name(workspace, verify_local=False)
+    # If it's already a real path, return it directly
+    if workspace.startswith("/"):
+        return workspace
 
     # Try to look up as a hash in the index
     real_path = gemini_get_path_for_hash(workspace)
     if real_path:
-        # Return a normalized/shortened version of the path
-        return normalize_workspace_name(path_to_encoded_workspace(real_path), verify_local=False)
+        # Return the path directly - it's already readable
+        return real_path
 
     # Fall back to truncated hash display
     if len(workspace) > HASH_DISPLAY_LEN:
@@ -2527,7 +2527,8 @@ def gemini_get_workspace_from_session(json_file: Path) -> str:
         # Try to get the real path from hash index
         real_path = gemini_get_path_for_hash(project_hash)
         if real_path:
-            return path_to_encoded_workspace(real_path)
+            # Return real path directly - encoding would mangle hyphens in folder names
+            return real_path
         return project_hash
     except (AttributeError, IndexError):
         pass
