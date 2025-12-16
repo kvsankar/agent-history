@@ -1620,13 +1620,13 @@ class TestMetricsDBSchema:
         assert "agent" in columns
         conn.close()
 
-    def test_db_version_is_4(self, tmp_path):
-        """Database should be version 4."""
+    def test_db_version_is_5(self, tmp_path):
+        """Database should be version 5."""
         db_path = tmp_path / "test.db"
         conn = ch.init_metrics_db(db_path)
         cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
         row = cursor.fetchone()
-        assert row["version"] == 4
+        assert row["version"] == 5
         conn.close()
 
     def test_agent_index_exists(self, tmp_path):
@@ -1691,9 +1691,9 @@ class TestMetricsDBSchema:
         assert agent_by_path["/home/user/.codex/sessions/session2.jsonl"] == "codex"
         assert agent_by_path["/home/user/.gemini/tmp/abc123/chats/session-001.json"] == "gemini"
 
-        # Verify version is now 4
+        # Verify version is now 5
         cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
-        assert cursor.fetchone()["version"] == 4
+        assert cursor.fetchone()["version"] == 5
 
         conn.close()
 

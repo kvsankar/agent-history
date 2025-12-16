@@ -105,7 +105,7 @@ positional arguments:
     stats               Show usage statistics and metrics
     reset               Reset stored data (database, settings, aliases)
     install             Install CLI and Claude skill
-    gemini-index        Add project paths to Gemini hash→path index
+    gemini-index        Manage Gemini hash→path index
 
 options:
   -h, --help            show this help message and exit

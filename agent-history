@@ -89,6 +89,7 @@ SECONDS_PER_MINUTE = 60
 # Database migration versions
 DB_VERSION_TIME_TRACKING = 3  # Version that added time tracking
 DB_VERSION_AGENT_COLUMN = 4  # Version that added agent column with path-based detection
+DB_VERSION_GEMINI_TIMESTAMPS = 5  # Version that fixes Gemini timestamps
 
 
 def codex_get_home_dir() -> Path:
@@ -2500,7 +2501,7 @@ def gemini_get_workspace_readable(workspace: str) -> str:
     """
     # If it's already a real path, return it directly
     # Check for Unix paths (/) or Windows paths (drive letter like C:\)
-    if workspace.startswith("/") or (len(workspace) >= 2 and workspace[1] == ":"):
+    if workspace.startswith("/") or (len(workspace) > 1 and workspace[1] == ":"):
         return workspace
 
     # Try to look up as a hash in the index
@@ -6440,7 +6441,7 @@ def cmd_alias_config_import(args):
 # Metrics Database (SQLite)
 # ============================================================================
 
-METRICS_DB_VERSION = 4
+METRICS_DB_VERSION = 5
 
 
 def get_metrics_db_path() -> Path:
@@ -6577,43 +6578,61 @@ def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
     current_version = row["version"] if row else 0
 
     if current_version < METRICS_DB_VERSION:
-        # Migrate from version 2 to 3: add time tracking columns
-        if current_version < DB_VERSION_TIME_TRACKING:
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN work_period_seconds REAL DEFAULT 0")
-                conn.execute("ALTER TABLE sessions ADD COLUMN num_work_periods INTEGER DEFAULT 1")
-            except sqlite3.OperationalError:
-                pass  # Columns already exist
-
-        # Migrate from version 3 to 4: add agent column with path-based detection
-        # Session files are stored in agent-specific directories:
-        #   Claude: ~/.claude/projects/.../*.jsonl
-        #   Codex:  ~/.codex/sessions/*.jsonl
-        #   Gemini: ~/.gemini/tmp/*/chats/session-*.json
-        if current_version < DB_VERSION_AGENT_COLUMN:
-            # Add agent column (may fail if already exists for new DBs)
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN agent TEXT DEFAULT 'claude'")
-            except sqlite3.OperationalError as e:
-                if "duplicate column" not in str(e).lower():
-                    sys.stderr.write(f"Warning: Migration to v4 failed (add column): {e}\n")
-
-            # Create index (runs for both migrated and new databases)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent)")
-
-            # Set correct agent values for existing sessions based on file paths
-            # (no-op for new databases with no sessions)
-            conn.execute("UPDATE sessions SET agent = 'gemini' WHERE file_path LIKE '%/.gemini/%'")
-            conn.execute("UPDATE sessions SET agent = 'codex' WHERE file_path LIKE '%/.codex/%'")
-
-        # Update version
-        if row is None:
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (METRICS_DB_VERSION,))
-        else:
-            conn.execute("UPDATE schema_version SET version = ?", (METRICS_DB_VERSION,))
+        _run_metrics_db_migrations(conn, current_version, row)
 
     conn.commit()
     return conn
+
+
+def _run_metrics_db_migrations(conn: sqlite3.Connection, current_version: int, version_row) -> None:
+    """Run database schema migrations."""
+    # Migrate from version 2 to 3: add time tracking columns
+    if current_version < DB_VERSION_TIME_TRACKING:
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN work_period_seconds REAL DEFAULT 0")
+            conn.execute("ALTER TABLE sessions ADD COLUMN num_work_periods INTEGER DEFAULT 1")
+        except sqlite3.OperationalError:
+            pass  # Columns already exist
+
+    # Migrate from version 3 to 4: add agent column with path-based detection
+    # Session files are stored in agent-specific directories:
+    #   Claude: ~/.claude/projects/.../*.jsonl
+    #   Codex:  ~/.codex/sessions/*.jsonl
+    #   Gemini: ~/.gemini/tmp/*/chats/session-*.json
+    if current_version < DB_VERSION_AGENT_COLUMN:
+        # Add agent column (may fail if already exists for new DBs)
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN agent TEXT DEFAULT 'claude'")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                sys.stderr.write(f"Warning: Migration to v4 failed (add column): {e}\n")
+
+        # Create index (runs for both migrated and new databases)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent)")
+
+        # Set correct agent values for existing sessions based on file paths
+        # (no-op for new databases with no sessions)
+        conn.execute("UPDATE sessions SET agent = 'gemini' WHERE file_path LIKE '%/.gemini/%'")
+        conn.execute("UPDATE sessions SET agent = 'codex' WHERE file_path LIKE '%/.codex/%'")
+
+    # Migrate from version 4 to 5: fix Gemini sessions missing timestamps
+    # Delete synced_files entries for Gemini sessions with NULL start_time to force resync
+    if current_version < DB_VERSION_GEMINI_TIMESTAMPS:
+        cursor = conn.execute(
+            """DELETE FROM synced_files WHERE file_path IN (
+                SELECT file_path FROM sessions WHERE agent = 'gemini' AND start_time IS NULL
+            )"""
+        )
+        if cursor.rowcount > 0:
+            sys.stderr.write(
+                f"Migration: {cursor.rowcount} Gemini sessions will be resynced for timestamps\n"
+            )
+
+    # Update version
+    if version_row is None:
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (METRICS_DB_VERSION,))
+    else:
+        conn.execute("UPDATE schema_version SET version = ?", (METRICS_DB_VERSION,))
 
 
 def calculate_work_periods(
@@ -9958,7 +9977,6 @@ def _gemini_index_add(paths: list):
 def cmd_gemini_index(args):
     """Manage Gemini hash→path index: list mappings or add paths."""
     add_paths = getattr(args, "add_paths", None)
-    list_index = getattr(args, "list_index", False)
 
     # If --add was specified (even with no paths), add paths
     if add_paths is not None:
@@ -11003,7 +11021,10 @@ def _add_stats_parser(subparsers):
     )
     parser.add_argument("--sync", action="store_true", help="Sync only (don't show stats)")
     parser.add_argument(
-        "--no-sync", action="store_true", dest="no_sync", help="Skip auto-sync (faster, uses cached data)"
+        "--no-sync",
+        action="store_true",
+        dest="no_sync",
+        help="Skip auto-sync (faster, uses cached data)",
     )
     parser.add_argument(
         "--force", action="store_true", help="Force re-sync all files (ignore mtime)"
