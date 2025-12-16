@@ -304,7 +304,8 @@ def test_e2e_stats_top_ws_limit(tmp_path: Path):
     env["HOME"] = str(home_dir)
     env["USERPROFILE"] = str(home_dir)
 
-    result = run_cli(["stats", "--aw", "--top-ws", "1"], env=env)
+    # Use --no-sync since we already populated the database directly
+    result = run_cli(["stats", "--aw", "--top-ws", "1", "--no-sync"], env=env)
     assert result.returncode == 0, result.stderr
 
     output = result.stdout

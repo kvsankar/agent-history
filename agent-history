@@ -11001,7 +11001,10 @@ def _add_stats_parser(subparsers):
     parser.add_argument(
         "workspace", nargs="*", default=None, help="Filter by workspace pattern(s) or @alias"
     )
-    parser.add_argument("--sync", action="store_true", help="Sync JSONL files to metrics database")
+    parser.add_argument("--sync", action="store_true", help="Sync only (don't show stats)")
+    parser.add_argument(
+        "--no-sync", action="store_true", dest="no_sync", help="Skip auto-sync (faster, uses cached data)"
+    )
     parser.add_argument(
         "--force", action="store_true", help="Force re-sync all files (ignore mtime)"
     )
@@ -11843,13 +11846,17 @@ def _dispatch_stats(args):
     """Dispatch stats command."""
     remotes = _get_stats_remotes(args)
 
-    if args.sync:
+    # Always auto-sync before showing stats (unless --no-sync)
+    no_sync = getattr(args, "no_sync", False)
+    if not no_sync:
         cmd_stats_sync(_build_sync_args(args, remotes))
-        return
+        if not args.sync:
+            # Only print separator if not explicit --sync (which already shows summary)
+            print()
 
-    if args.all_homes:
-        cmd_stats_sync(_build_sync_args(args, remotes))
-        print()
+    # If explicit --sync, we're done (just sync, don't show stats)
+    if args.sync:
+        return
 
     cmd_stats(_build_stats_args(args))
 
