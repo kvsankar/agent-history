@@ -1465,6 +1465,16 @@ class TestGeminiMetricsExtraction:
         assert metrics["session"]["id"] == "test-session-123"
         assert metrics["session"]["cwd"] == "abc123def456"
 
+    def test_preserves_session_timestamps(self, tmp_path, sample_gemini_session):
+        """Should carry start/end timestamps through to metrics."""
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(sample_gemini_session), encoding="utf-8")
+
+        metrics = ch.gemini_extract_metrics_from_json(json_file)
+
+        assert metrics["session"]["startTime"] == sample_gemini_session["startTime"]
+        assert metrics["session"]["lastUpdated"] == sample_gemini_session["lastUpdated"]
+
     def test_extracts_message_metrics(self, tmp_path, sample_gemini_session):
         """Should extract message metrics."""
         json_file = tmp_path / "session.json"
@@ -1518,6 +1528,18 @@ class TestBackendDispatch:
             with patch("pathlib.Path.home", return_value=temp_projects_dir.parent.parent):
                 backends = ch.get_active_backends("claude")
                 assert backends == ["claude"]
+
+    def test_get_active_backends_uses_env_override(self, tmp_path, monkeypatch):
+        """Should honor CLAUDE_PROJECTS_DIR when detecting Claude backend."""
+        projects_dir = tmp_path / "custom_claude"
+        projects_dir.mkdir(parents=True)
+        monkeypatch.setenv("CLAUDE_PROJECTS_DIR", str(projects_dir))
+        monkeypatch.setenv("CODEX_SESSIONS_DIR", str(tmp_path / "codex_missing"))
+        monkeypatch.setenv("GEMINI_SESSIONS_DIR", str(tmp_path / "gemini_missing"))
+
+        backends = ch.get_active_backends("claude")
+
+        assert backends == [ch.AGENT_CLAUDE]
 
     def test_get_active_backends_explicit_codex(self, temp_codex_sessions_dir):
         """Should return only Codex backend when explicitly requested."""
@@ -8941,6 +8963,31 @@ class TestLocalFlagBehavior:
 # ============================================================================
 # Section 14: Stats SQL Aggregation Integration Tests
 # ============================================================================
+
+
+class TestStatsRemoteSync:
+    """Tests for stats sync helpers."""
+
+    def test_sync_remote_to_db_passes_windows_username(self, tmp_path, monkeypatch):
+        """_sync_remote_to_db should pass explicit Windows username to resolver."""
+        totals = {"synced": 0, "skipped": 0, "errors": 0}
+        captured = {}
+
+        def fake_get_windows_projects_dir(username=None):
+            captured["username"] = username
+            return tmp_path
+
+        def fake_sync_source_to_db(conn, projects_dir, source, label, patterns, force):
+            captured["projects_dir"] = projects_dir
+            return {"synced": 0, "skipped": 0, "errors": 0}
+
+        monkeypatch.setattr(ch, "get_windows_projects_dir", fake_get_windows_projects_dir)
+        monkeypatch.setattr(ch, "_sync_source_to_db", fake_sync_source_to_db)
+
+        ch._sync_remote_to_db(None, "windows:alice", totals, ["proj"], False)
+
+        assert captured["username"] == "alice"
+        assert captured["projects_dir"] == tmp_path
 
 
 class TestStatsAggregation:
