@@ -2329,6 +2329,8 @@ def gemini_extract_metrics_from_json(json_file: Path) -> dict:
             else None,  # Use hash as workspace
             "cli_version": None,  # Gemini doesn't store CLI version in session
             "model": None,
+            "startTime": session_meta.get("startTime") if session_meta else None,
+            "lastUpdated": session_meta.get("lastUpdated") if session_meta else None,
         },
         "messages": [],
         "tool_uses": [],
@@ -2741,17 +2743,22 @@ def get_active_backends(agent: str) -> list:
     Returns:
         List of backend identifiers (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI) that exist
     """
+    # Get Claude projects dir without exiting on error (for detection only)
+    env_override = os.environ.get("CLAUDE_PROJECTS_DIR")
+    if env_override:
+        claude_projects = Path(env_override).expanduser()
+    else:
+        claude_projects = Path.home() / ".claude" / "projects"
+
     if agent == AGENT_CLAUDE:
-        projects_dir = Path.home() / ".claude" / "projects"
-        return [AGENT_CLAUDE] if projects_dir.exists() else []
+        return [AGENT_CLAUDE] if claude_projects.exists() else []
     elif agent == AGENT_CODEX:
         return [AGENT_CODEX] if codex_get_home_dir().exists() else []
     elif agent == AGENT_GEMINI:
         return [AGENT_GEMINI] if gemini_get_home_dir().exists() else []
     else:  # auto
         backends = []
-        projects_dir = Path.home() / ".claude" / "projects"
-        if projects_dir.exists():
+        if claude_projects.exists():
             backends.append(AGENT_CLAUDE)
         if codex_get_home_dir().exists():
             backends.append(AGENT_CODEX)
@@ -7289,9 +7296,17 @@ def _sync_remote_to_db(conn, remote: str, totals: dict, patterns: list, force: b
             )
             _accumulate_stats(totals, stats)
     elif remote == "windows" or remote.startswith("windows:"):
-        win_projects = get_windows_projects_dir()
+        # Parse optional username from windows:<user> format
+        win_user = None
+        if remote.startswith("windows:"):
+            win_user = remote[8:]  # Extract user after "windows:"
+        win_projects = get_windows_projects_dir(win_user)
         if win_projects:
-            stats = _sync_source_to_db(conn, win_projects, "windows", "Windows", patterns, force)
+            source_tag = f"windows:{win_user}" if win_user else "windows"
+            display_name = f"Windows ({win_user})" if win_user else "Windows"
+            stats = _sync_source_to_db(
+                conn, win_projects, source_tag, display_name, patterns, force
+            )
             _accumulate_stats(totals, stats)
     else:
         stats = _sync_ssh_remote_to_db(conn, remote, patterns, force)
