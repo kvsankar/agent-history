@@ -1947,9 +1947,20 @@ def _codex_build_session_dict(
 def _codex_session_matches_filters(
     workspace: str, modified: datetime, pattern: str, since_date, until_date
 ) -> bool:
-    """Check if a Codex session matches the given filters."""
-    if pattern and pattern not in workspace:
-        return False
+    """Check if a Codex session matches the given filters.
+
+    Pattern matching checks:
+    1. Direct substring match in workspace path
+    2. Claude-style encoded pattern (dashes converted to slashes)
+    """
+    if pattern:
+        if pattern in workspace:
+            pass  # Direct match
+        else:
+            # Check Claude-style encoded pattern (home-user-project -> /home/user/project)
+            pattern_as_path = "/" + pattern.replace("-", "/")
+            if pattern_as_path not in workspace:
+                return False
     return is_date_in_range(modified, since_date, until_date)
 
 
@@ -2659,16 +2670,21 @@ def _gemini_session_matches_filters(
     Pattern matching checks:
     1. The workspace identifier (encoded path or hash)
     2. The readable workspace name (for hash->path lookups)
+    3. Claude-style encoded pattern (dashes converted to slashes)
     """
     if pattern:
         # Check workspace directly (encoded path or hash)
         if pattern in workspace:
             pass  # Match found
         else:
-            # Also check readable name (handles hash->path from index)
             readable = gemini_get_workspace_readable(workspace)
-            if pattern not in readable:
-                return False
+            if pattern in readable:
+                pass  # Match found in readable name
+            else:
+                # Check Claude-style encoded pattern (home-user-project -> /home/user/project)
+                pattern_as_path = "/" + pattern.replace("-", "/")
+                if pattern_as_path not in readable:
+                    return False
     return is_date_in_range(modified, since_date, until_date)
 
 
