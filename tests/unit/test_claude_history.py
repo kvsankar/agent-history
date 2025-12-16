@@ -636,9 +636,7 @@ class TestCodexIndex:
         assert len(folders) == 1
         assert folders[0].name == "09"
 
-    def test_ensure_index_updated_builds_initial_index(
-        self, tmp_path, sample_codex_jsonl_content
-    ):
+    def test_ensure_index_updated_builds_initial_index(self, tmp_path, sample_codex_jsonl_content):
         """codex_ensure_index_updated should build full index on first run."""
         config_dir = tmp_path / ".claude-history"
         sessions_dir = tmp_path / "codex_sessions"
@@ -655,9 +653,7 @@ class TestCodexIndex:
             assert str(session_file) in mapping
             assert mapping[str(session_file)] == "-home-user-project"
 
-    def test_ensure_index_updated_incremental(
-        self, tmp_path, sample_codex_jsonl_content
-    ):
+    def test_ensure_index_updated_incremental(self, tmp_path, sample_codex_jsonl_content):
         """codex_ensure_index_updated should only scan new date folders."""
         config_dir = tmp_path / ".claude-history"
         sessions_dir = tmp_path / "codex_sessions"
@@ -691,9 +687,7 @@ class TestCodexIndex:
             mapping = ch.codex_ensure_index_updated(sessions_dir)
             assert str(session2) in mapping
 
-    def test_ensure_index_updated_cleans_stale_entries(
-        self, tmp_path, sample_codex_jsonl_content
-    ):
+    def test_ensure_index_updated_cleans_stale_entries(self, tmp_path, sample_codex_jsonl_content):
         """codex_ensure_index_updated should remove entries for deleted files."""
         config_dir = tmp_path / ".claude-history"
         sessions_dir = tmp_path / "codex_sessions"
@@ -11418,6 +11412,128 @@ class TestFutureDateWarning:
 
         captured = capsys.readouterr()
         assert "future" not in captured.err.lower()
+
+
+# ============================================================================
+# Tests for Review Findings Fixes
+# ============================================================================
+
+
+class TestClaudeProjectsDirEnvVar:
+    """Test that CLAUDE_PROJECTS_DIR env var is honored."""
+
+    def test_get_active_backends_honors_env_var(self, tmp_path, monkeypatch):
+        """Verify get_active_backends uses CLAUDE_PROJECTS_DIR env var."""
+        # Create a custom Claude projects directory
+        custom_claude_dir = tmp_path / "custom-claude" / "projects"
+        custom_claude_dir.mkdir(parents=True)
+
+        # Set the env var
+        monkeypatch.setenv("CLAUDE_PROJECTS_DIR", str(custom_claude_dir))
+
+        # Should detect Claude backend via env var path
+        backends = ch.get_active_backends("claude")
+        assert ch.AGENT_CLAUDE in backends
+
+    def test_get_active_backends_env_var_nonexistent(self, tmp_path, monkeypatch):
+        """Verify get_active_backends returns empty when env var points to nonexistent path."""
+        # Point to nonexistent directory
+        monkeypatch.setenv("CLAUDE_PROJECTS_DIR", str(tmp_path / "nonexistent"))
+
+        backends = ch.get_active_backends("claude")
+        assert backends == []
+
+    def test_get_active_backends_auto_mode_honors_env_var(self, tmp_path, monkeypatch):
+        """Verify auto mode also uses CLAUDE_PROJECTS_DIR."""
+        custom_claude_dir = tmp_path / "custom-claude" / "projects"
+        custom_claude_dir.mkdir(parents=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECTS_DIR", str(custom_claude_dir))
+        # Also ensure other backends don't exist
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        backends = ch.get_active_backends("auto")
+        assert ch.AGENT_CLAUDE in backends
+
+
+class TestWindowsUserParsing:
+    """Test windows:<user> format parsing in sync."""
+
+    def test_sync_remote_parses_windows_user(self, tmp_path, monkeypatch):
+        """Verify _sync_remote_to_db parses windows:<user> format."""
+        # We can't easily test the full sync, but we can verify the parsing logic
+        # by checking the function handles the format correctly
+
+        # Create a mock that captures the call
+        calls = []
+
+        def mock_get_windows(username=None):
+            calls.append(username)
+
+        monkeypatch.setattr(ch, "get_windows_projects_dir", mock_get_windows)
+
+        # Create minimal connection mock
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+
+        totals = {"synced": 0, "up_to_date": 0, "errors": 0}
+
+        # Test with user specified
+        ch._sync_remote_to_db(conn, "windows:testuser", totals, [], False)
+        assert "testuser" in calls
+
+        # Test without user
+        calls.clear()
+        ch._sync_remote_to_db(conn, "windows", totals, [], False)
+        assert None in calls
+
+        conn.close()
+
+
+class TestGeminiTimestampsInMetrics:
+    """Test that Gemini session timestamps are extracted."""
+
+    def test_gemini_extract_metrics_includes_timestamps(self, tmp_path):
+        """Verify gemini_extract_metrics_from_json includes startTime and lastUpdated."""
+        # Create a minimal Gemini session file
+        session_file = tmp_path / "session.json"
+        session_data = {
+            "sessionId": "test-session-123",
+            "projectHash": "abc123",
+            "startTime": "2025-12-01T10:00:00.000Z",
+            "lastUpdated": "2025-12-01T11:30:00.000Z",
+            "messages": [
+                {"type": "user", "content": "Hello"},
+                {"type": "model", "content": "Hi there!"},
+            ],
+        }
+
+        import json
+
+        session_file.write_text(json.dumps(session_data))
+
+        # Extract metrics
+        metrics = ch.gemini_extract_metrics_from_json(session_file)
+
+        # Verify timestamps are present
+        assert metrics["session"]["startTime"] == "2025-12-01T10:00:00.000Z"
+        assert metrics["session"]["lastUpdated"] == "2025-12-01T11:30:00.000Z"
+
+    def test_gemini_extract_metrics_handles_missing_timestamps(self, tmp_path):
+        """Verify gemini_extract_metrics_from_json handles missing timestamps gracefully."""
+        session_file = tmp_path / "session.json"
+        session_data = {"sessionId": "test-session-456", "projectHash": "def456", "messages": []}
+
+        import json
+
+        session_file.write_text(json.dumps(session_data))
+
+        metrics = ch.gemini_extract_metrics_from_json(session_file)
+
+        # Should be None, not crash
+        assert metrics["session"]["startTime"] is None
+        assert metrics["session"]["lastUpdated"] is None
 
 
 # ============================================================================
