@@ -145,8 +145,9 @@ chmod +x agent-history
 ./agent-history --agent gemini lss         # Gemini CLI only
 
 # Gemini CLI hash index management
-./agent-history gemini-index               # scan current dir for .gemini/ folders
-./agent-history gemini-index ~/projects    # scan specific directory recursively
+./agent-history gemini-index               # list all hash→path mappings
+./agent-history gemini-index --add         # add current directory to index
+./agent-history gemini-index --add ~/proj  # add specific directory to index
 ```
 
 ### Testing Workflow

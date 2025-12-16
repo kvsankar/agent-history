@@ -9956,14 +9956,18 @@ def _gemini_index_add(paths: list):
 
 
 def cmd_gemini_index(args):
-    """Add project paths to Gemini hash→path index, or list existing mappings."""
+    """Manage Gemini hash→path index: list mappings or add paths."""
+    add_paths = getattr(args, "add_paths", None)
     list_index = getattr(args, "list_index", False)
 
-    if list_index:
-        _gemini_index_list(getattr(args, "full_hash", False))
-    else:
-        paths = getattr(args, "paths", None) or ["."]
+    # If --add was specified (even with no paths), add paths
+    if add_paths is not None:
+        # Default to current directory if --add given with no paths
+        paths = add_paths if add_paths else ["."]
         _gemini_index_add(paths)
+    else:
+        # Default behavior: list the index
+        _gemini_index_list(getattr(args, "full_hash", False))
 
 
 def _filter_fetch_workspaces(workspaces: list, pattern: str) -> list:
@@ -11175,27 +11179,30 @@ def _add_gemini_index_parser(subparsers):
     """Add gemini-index subparser."""
     parser = subparsers.add_parser(
         "gemini-index",
-        help="Add project paths to Gemini hash→path index",
+        help="Manage Gemini hash→path index",
         description=(
-            "Add project directory paths to the Gemini hash-to-path index. "
-            "For each path, computes its SHA-256 hash and checks if Gemini "
+            "Manage the Gemini hash-to-path index. By default, lists all mappings. "
+            "Use --add to add project paths to the index. "
+            "For each path added, computes its SHA-256 hash and checks if Gemini "
             "has sessions for that project. If sessions exist, adds the mapping "
             "so agent-history can display readable workspace paths instead of hashes."
         ),
     )
 
     parser.add_argument(
-        "paths",
+        "--add",
+        "-a",
         nargs="*",
-        default=[],
-        help="Project directories to add (default: current directory if no --list)",
+        dest="add_paths",
+        metavar="PATH",
+        help="Add project directories to index (default: current directory if no paths given)",
     )
     parser.add_argument(
         "--list",
         "-l",
         action="store_true",
         dest="list_index",
-        help="List all mappings in the hash index",
+        help="List all mappings in the hash index (default if no options)",
     )
     parser.add_argument(
         "--full-hash",

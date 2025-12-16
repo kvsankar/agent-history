@@ -1387,7 +1387,7 @@ class TestGeminiIndexCommand:
         from types import SimpleNamespace
 
         args = SimpleNamespace(
-            paths=["/nonexistent/path/that/does/not/exist"],
+            add_paths=["/nonexistent/path/that/does/not/exist"],
             list_index=False,
             full_hash=False,
         )
