@@ -6095,7 +6095,21 @@ def _format_date_range_message(since_date, until_date) -> str:
     return " ".join(parts)
 
 
-def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str = "auto"):
+def _get_alias_workspace_patterns(alias_config: dict) -> list:
+    """Extract workspace patterns from alias config for multi-agent scanning."""
+    patterns = set()
+    for source_key, workspaces in alias_config.items():
+        for workspace in workspaces:
+            # Convert encoded workspace back to pattern
+            readable = normalize_workspace_name(workspace)
+            # Use the last path component as pattern
+            pattern = readable.split("/")[-1] if "/" in readable else readable
+            if pattern:
+                patterns.add(pattern)
+    return list(patterns)
+
+
+def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str = "auto"):  # noqa: C901
     """List sessions across all workspaces in an alias."""
     aliases_data = load_aliases()
 
@@ -6104,11 +6118,33 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str 
         sys.exit(1)
 
     alias_config = aliases_data["aliases"][alias_name]
-    all_sessions = _collect_alias_sessions(alias_config, since_date, until_date)
 
-    # Filter by agent type if specified
-    if agent != "auto":
-        all_sessions = [s for s in all_sessions if s.get("agent", AGENT_CLAUDE) == agent]
+    # Collect Claude sessions from alias (if not filtering to non-Claude only)
+    all_sessions = []
+    if agent in ("auto", AGENT_CLAUDE):
+        all_sessions = _collect_alias_sessions(alias_config, since_date, until_date)
+
+    # For auto mode, also scan Codex and Gemini using alias workspace patterns
+    if agent in ("auto", AGENT_CODEX, AGENT_GEMINI):
+        patterns = _get_alias_workspace_patterns(alias_config)
+        for pattern in patterns:
+            if agent in ("auto", AGENT_CODEX):
+                codex_sessions = codex_scan_sessions(
+                    pattern=pattern, since_date=since_date, until_date=until_date
+                )
+                for s in codex_sessions:
+                    s["source"] = "local"
+                all_sessions.extend(codex_sessions)
+            if agent in ("auto", AGENT_GEMINI):
+                gemini_sessions = gemini_scan_sessions(
+                    pattern=pattern, since_date=since_date, until_date=until_date
+                )
+                for s in gemini_sessions:
+                    s["source"] = "local"
+                all_sessions.extend(gemini_sessions)
+
+    # Sort by modified date (newest first)
+    all_sessions.sort(key=lambda s: s["modified"], reverse=True)
 
     if not all_sessions:
         if since_date or until_date:
