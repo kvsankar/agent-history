@@ -5038,7 +5038,7 @@ def codex_list_remote_workspaces(remote_host: str) -> list:
     try:
         # Extract unique cwds from all Codex session files
         # Codex stores cwd in the first line of each jsonl file
-        cmd = 'grep -h \'"cwd":\' ~/.codex/sessions/*/*/*.jsonl 2>/dev/null | sed \'s/.*"cwd":"\\([^"]*\\)".*/\\1/\' | sort -u'
+        cmd = 'grep -h \'"cwd":\' ~/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | sed \'s/.*"cwd":"\\([^"]*\\)".*/\\1/\' | sort -u'
 
         result = subprocess.run(
             [get_command_path("ssh"), remote_host, cmd],
@@ -5077,7 +5077,7 @@ def codex_get_remote_session_info(remote_host: str, workspace_filter: str = None
     try:
         # Get file stats and extract cwd from each session file
         # Output: filepath|size|mtime|msg_count|cwd
-        cmd = """for f in ~/.codex/sessions/*/*/*.jsonl; do
+        cmd = """for f in ~/.codex/sessions/*/*/*/*.jsonl; do
             [ -f "$f" ] || continue
             size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
             mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
