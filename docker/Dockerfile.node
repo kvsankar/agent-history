@@ -1,0 +1,32 @@
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install SSH server, Python, rsync, and utilities
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    python3 \
+    rsync \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure SSH for key-based auth only
+RUN mkdir /var/run/sshd && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+# Copy setup scripts
+COPY scripts/create-users.sh /usr/local/bin/
+COPY scripts/generate-sessions.sh /usr/local/bin/
+COPY scripts/entrypoint-node.sh /usr/local/bin/entrypoint.sh
+
+RUN chmod +x /usr/local/bin/create-users.sh \
+    /usr/local/bin/generate-sessions.sh \
+    /usr/local/bin/entrypoint.sh
+
+EXPOSE 22
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["/usr/sbin/sshd", "-D"]

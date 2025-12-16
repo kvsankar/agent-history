@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install SSH client and rsync (needed for remote operations)
+RUN apt-get update && apt-get install -y \
+    openssh-client \
+    rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pytest
+RUN pip install --no-cache-dir pytest
+
+# Create test user (non-root for realistic testing)
+RUN useradd -m -s /bin/bash tester
+
+# Copy SSH setup script
+COPY scripts/setup-ssh-client.sh /usr/local/bin/
+COPY scripts/entrypoint-runner.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/setup-ssh-client.sh /usr/local/bin/entrypoint.sh
+
+# Working directory is the mounted app
+WORKDIR /app
+
+# Run as tester user
+USER tester
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["pytest", "tests/e2e_docker/", "-v"]

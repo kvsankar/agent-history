@@ -1,0 +1,54 @@
+services:
+  # SSH-enabled node with users alice and bob
+  node-alpha:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    hostname: node-alpha
+    networks:
+      - agent-history-net
+    environment:
+      - NODE_USERS=alice,bob
+    volumes:
+      - ssh-keys:/ssh-keys
+
+  # SSH-enabled node with users charlie and dave
+  node-beta:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    hostname: node-beta
+    networks:
+      - agent-history-net
+    environment:
+      - NODE_USERS=charlie,dave
+    volumes:
+      - ssh-keys:/ssh-keys
+
+  # Test runner - runs pytest against the nodes
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    depends_on:
+      - node-alpha
+      - node-beta
+    networks:
+      - agent-history-net
+    volumes:
+      # Mount the project code (read-only)
+      - ..:/app:ro
+      # Shared SSH keys for passwordless auth
+      - ssh-keys:/ssh-keys:ro
+    environment:
+      - NODE_ALPHA=node-alpha
+      - NODE_BETA=node-beta
+      - ALPHA_USERS=alice,bob
+      - BETA_USERS=charlie,dave
+
+networks:
+  agent-history-net:
+    driver: bridge
+
+volumes:
+  ssh-keys:
