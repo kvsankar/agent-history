@@ -223,6 +223,24 @@ set USERPROFILE=C:\temp\cfg       # Windows
 export HOME=/tmp/cfg               # WSL/Linux
 ```
 
+### Docker E2E Tests
+
+For testing real SSH remote operations, use the Docker-based E2E test suite:
+
+```bash
+cd docker
+docker-compose up -d --build      # Start 2 SSH nodes + test runner
+docker-compose run test-runner    # Run E2E tests
+docker-compose down -v            # Cleanup
+```
+
+This creates containers with:
+- **node-alpha**: Users alice, bob with synthetic Claude/Codex/Gemini sessions
+- **node-beta**: Users charlie, dave with synthetic sessions
+- **test-runner**: Executes tests with real SSH connections between nodes
+
+See [docker/README.md](docker/README.md) for details.
+
 CI: GitHub Actions runs unit and integration tests on `ubuntu-latest` and `windows-latest`.
 Hosted Windows runners do not include WSL; WSL flows are exercised via env overrides.
 

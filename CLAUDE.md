@@ -152,7 +152,40 @@ chmod +x agent-history
 
 ### Testing Workflow
 
-Manual testing is required since this tool operates on local Claude Code data:
+**Automated tests (861 unit tests, 52 integration tests):**
+
+```bash
+# Run all tests
+uv run pytest
+
+# Unit tests only
+uv run pytest tests/unit/ -v
+
+# Integration tests only
+uv run pytest -m integration tests/integration/
+
+# With coverage
+uv run pytest --cov=. --cov-report=term-missing tests/unit/
+```
+
+**Docker E2E tests (real SSH connections):**
+
+```bash
+cd docker
+docker-compose up -d --build      # Start SSH nodes
+docker-compose run test-runner    # Run E2E tests
+docker-compose down -v            # Cleanup
+```
+
+The Docker setup creates:
+- `node-alpha`: SSH node with users alice, bob
+- `node-beta`: SSH node with users charlie, dave
+- Synthetic Claude/Codex/Gemini session fixtures
+- Real SSH key-based authentication between containers
+
+See [docker/README.md](docker/README.md) for details.
+
+**Manual testing with real data:**
 
 ```bash
 # Test with your own Claude Code data
@@ -619,6 +652,29 @@ if not path.exists():
 - Comments for complex logic only
 - Keep functions focused and small
 - Use type hints in function signatures where it aids clarity
+
+### Code Quality Metrics
+
+The codebase uses pre-commit hooks for quality enforcement:
+
+```bash
+# Check complexity manually
+uv run radon cc agent-history -a -s    # Cyclomatic complexity
+uv run radon mi agent-history -s       # Maintainability index
+```
+
+**Current metrics (472 functions):**
+- Grade A (1-5): 288 functions (61%)
+- Grade B (6-10): 166 functions (35%)
+- Grade C (11-20): 18 functions (4%)
+- Grade D/E/F (21+): 0 functions
+- Average complexity: B (5.0)
+
+**Dataclasses for configuration:**
+- `ListCommandArgs`, `SyncCommandArgs`, `StatsCommandArgs`, `ConvertCommandArgs`
+- `ExportAllConfig`, `SummaryStatsData`
+
+These replace ad-hoc argument classes, improving testability and IDE support.
 
 ### Incremental Export
 
