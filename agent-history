@@ -2488,7 +2488,7 @@ def gemini_get_workspace_readable(workspace: str) -> str:
     """Get human-readable workspace name for a Gemini workspace identifier.
 
     Handles three cases:
-    - Real path (starts with /): return as-is
+    - Real path (starts with / or drive letter): return as-is
     - SHA-256 hash: looks up in hash index, falls back to truncated hash
     - Encoded path (like -home-user-project): normalizes to readable path
 
@@ -2499,7 +2499,8 @@ def gemini_get_workspace_readable(workspace: str) -> str:
         Readable workspace name (path or [hash:xxxxxxxx])
     """
     # If it's already a real path, return it directly
-    if workspace.startswith("/"):
+    # Check for Unix paths (/) or Windows paths (drive letter like C:\)
+    if workspace.startswith("/") or (len(workspace) >= 2 and workspace[1] == ":"):
         return workspace
 
     # Try to look up as a hash in the index

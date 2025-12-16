@@ -7,7 +7,7 @@ muscle memory using 'claude-history'. It simply forwards all arguments to
 'agent-history'.
 """
 
-import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,4 +20,9 @@ if not agent_history.exists():
     sys.exit(1)
 
 # Execute agent-history with the same arguments
-os.execv(sys.executable, [sys.executable, str(agent_history)] + sys.argv[1:])
+# Use subprocess.run instead of os.execv for Windows compatibility (handles paths with spaces)
+result = subprocess.run(
+    [sys.executable, str(agent_history)] + sys.argv[1:],
+    check=False,
+)
+sys.exit(result.returncode)
