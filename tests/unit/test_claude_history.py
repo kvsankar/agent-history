@@ -10589,7 +10589,7 @@ class TestStatsHeaderAgentNames:
 
     def test_print_summary_stats_claude_header(self, capsys, empty_stats):
         """Test stats header shows 'CLAUDE CODE' for claude agent."""
-        ch._print_summary_stats(
+        stats = ch.SummaryStatsData(
             session_stats=empty_stats["session_stats"],
             token_stats=empty_stats["token_stats"],
             tool_stats=empty_stats["tool_stats"],
@@ -10598,12 +10598,13 @@ class TestStatsHeaderAgentNames:
             top_workspaces=[],
             agent="claude",
         )
+        ch._print_summary_stats(stats)
         captured = capsys.readouterr()
         assert "CLAUDE CODE METRICS SUMMARY" in captured.out
 
     def test_print_summary_stats_codex_header(self, capsys, empty_stats):
         """Test stats header shows 'CODEX CLI' for codex agent."""
-        ch._print_summary_stats(
+        stats = ch.SummaryStatsData(
             session_stats=empty_stats["session_stats"],
             token_stats=empty_stats["token_stats"],
             tool_stats=empty_stats["tool_stats"],
@@ -10612,12 +10613,13 @@ class TestStatsHeaderAgentNames:
             top_workspaces=[],
             agent="codex",
         )
+        ch._print_summary_stats(stats)
         captured = capsys.readouterr()
         assert "CODEX CLI METRICS SUMMARY" in captured.out
 
     def test_print_summary_stats_gemini_header(self, capsys, empty_stats):
         """Test stats header shows 'GEMINI CLI' for gemini agent."""
-        ch._print_summary_stats(
+        stats = ch.SummaryStatsData(
             session_stats=empty_stats["session_stats"],
             token_stats=empty_stats["token_stats"],
             tool_stats=empty_stats["tool_stats"],
@@ -10626,12 +10628,13 @@ class TestStatsHeaderAgentNames:
             top_workspaces=[],
             agent="gemini",
         )
+        ch._print_summary_stats(stats)
         captured = capsys.readouterr()
         assert "GEMINI CLI METRICS SUMMARY" in captured.out
 
     def test_print_summary_stats_auto_header(self, capsys, empty_stats):
         """Test stats header shows 'AI ASSISTANT' for auto agent."""
-        ch._print_summary_stats(
+        stats = ch.SummaryStatsData(
             session_stats=empty_stats["session_stats"],
             token_stats=empty_stats["token_stats"],
             tool_stats=empty_stats["tool_stats"],
@@ -10640,12 +10643,13 @@ class TestStatsHeaderAgentNames:
             top_workspaces=[],
             agent="auto",
         )
+        ch._print_summary_stats(stats)
         captured = capsys.readouterr()
         assert "AI ASSISTANT METRICS SUMMARY" in captured.out
 
     def test_print_summary_stats_unknown_agent_defaults_to_ai_assistant(self, capsys, empty_stats):
         """Test stats header defaults to 'AI ASSISTANT' for unknown agent."""
-        ch._print_summary_stats(
+        stats = ch.SummaryStatsData(
             session_stats=empty_stats["session_stats"],
             token_stats=empty_stats["token_stats"],
             tool_stats=empty_stats["tool_stats"],
@@ -10654,6 +10658,7 @@ class TestStatsHeaderAgentNames:
             top_workspaces=[],
             agent="unknown_agent",
         )
+        ch._print_summary_stats(stats)
         captured = capsys.readouterr()
         assert "AI ASSISTANT METRICS SUMMARY" in captured.out
 

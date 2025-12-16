@@ -191,6 +191,140 @@ class ExportConfig:
         )
 
 
+@dataclass
+class ListCommandArgs:
+    """Arguments for list commands (lsw/lss).
+
+    This dataclass replaces ad-hoc LswArgs, LssArgs, LswAllArgs, etc. classes,
+    providing a single source of truth for list command parameters.
+
+    Note: since/until can be either strings (YYYY-MM-DD) or datetime objects.
+    Use since_date/until_date properties to get datetime objects.
+    """
+
+    patterns: list = field(default_factory=list)
+    workspaces_only: bool = False
+    since: Optional[str] = None  # String format YYYY-MM-DD
+    until: Optional[str] = None  # String format YYYY-MM-DD
+    remote: Optional[str] = None
+    remotes: list = field(default_factory=list)
+    local_only: bool = False
+    agent: str = "auto"
+    projects_dir: Optional[Path] = None
+
+    @property
+    def workspace(self) -> str:
+        """First pattern as workspace (backward compatibility)."""
+        return self.patterns[0] if self.patterns else ""
+
+    @property
+    def since_date(self) -> Optional[datetime]:
+        """Since as datetime object."""
+        if self.since is None:
+            return None
+        if isinstance(self.since, datetime):
+            return self.since
+        return parse_date_string(self.since)
+
+    @property
+    def until_date(self) -> Optional[datetime]:
+        """Until as datetime object."""
+        if self.until is None:
+            return None
+        if isinstance(self.until, datetime):
+            return self.until
+        return parse_date_string(self.until)
+
+
+@dataclass
+class SyncCommandArgs:
+    """Arguments for stats sync command.
+
+    Replaces ad-hoc SyncArgs class for cleaner sync operations.
+    """
+
+    patterns: list = field(default_factory=list)
+    remotes: list = field(default_factory=list)
+    force: bool = False
+    all_homes: bool = False
+
+
+@dataclass
+class StatsCommandArgs:
+    """Arguments for stats display command.
+
+    Replaces ad-hoc StatsArgs class for cleaner stats operations.
+    """
+
+    workspace: list = field(default_factory=list)
+    source: Optional[str] = None
+    since: Optional[str] = None
+    until: Optional[str] = None
+    tools: bool = False
+    models: bool = False
+    time: bool = False
+    by_workspace: bool = False
+    by_day: bool = False
+    all_workspaces: bool = False
+    top_ws: Optional[int] = None
+    this_only: bool = False
+    agent: str = "auto"
+
+
+@dataclass
+class ConvertCommandArgs:
+    """Arguments for single file conversion command.
+
+    Replaces ad-hoc ConvertArgs class.
+    """
+
+    jsonl_file: str = ""
+    output: Optional[str] = None
+    remote: Optional[str] = None
+
+
+@dataclass
+class ExportAllConfig:
+    """Configuration for export-all-homes operations.
+
+    Used by cmd_export_all to export from local, WSL, Windows, and remotes.
+    """
+
+    output_dir: str
+    patterns: list = field(default_factory=list)
+    remotes: list = field(default_factory=list)
+    since: Optional[str] = None
+    until: Optional[str] = None
+    force: bool = False
+    minimal: bool = False
+    split: Optional[int] = None
+    agent: str = "auto"
+    index: bool = True
+
+    @property
+    def workspace(self) -> str:
+        """First pattern as workspace (backward compatibility)."""
+        return self.patterns[0] if self.patterns else ""
+
+
+@dataclass
+class SummaryStatsData:
+    """Aggregated statistics for display.
+
+    Groups all the data needed by _print_summary_stats to avoid too many parameters.
+    """
+
+    session_stats: dict
+    token_stats: dict
+    tool_stats: dict
+    sources: list
+    models: list
+    top_workspaces: list
+    top_limit: Optional[int] = None
+    time_stats: Optional[dict] = None
+    agent: str = "auto"
+
+
 # ============================================================================
 # Date Parsing
 # ============================================================================
@@ -645,6 +779,35 @@ def resolve_patterns_for_command(
     return [pattern], None
 
 
+def _iter_sessions_deduped(
+    patterns: list,
+    since_date,
+    until_date,
+    projects_dir: Path,
+    quiet: bool,
+    skip_message_count: bool,
+    agent: str,
+):
+    """Generate deduplicated sessions from patterns."""
+    seen_files = set()
+
+    for pattern in patterns if patterns else [""]:
+        pattern_sessions = get_unified_sessions(
+            agent=agent,
+            pattern=pattern,
+            since_date=since_date,
+            until_date=until_date,
+            skip_message_count=skip_message_count,
+            projects_dir=projects_dir,
+            quiet=quiet,
+        )
+        for session in pattern_sessions:
+            file_key = str(session["file"])
+            if file_key not in seen_files:
+                seen_files.add(file_key)
+                yield session
+
+
 def collect_sessions_with_dedup(
     patterns: list,
     since_date=None,
@@ -673,35 +836,17 @@ def collect_sessions_with_dedup(
     Returns:
         List of session dictionaries, deduplicated by file path.
     """
-    all_sessions = []
-    seen_files = set()
+    sessions = _iter_sessions_deduped(
+        patterns, since_date, until_date, projects_dir, quiet, skip_message_count, agent
+    )
 
-    for pattern in patterns if patterns else [""]:
-        # Use unified sessions when agent is specified (for multi-backend support)
-        pattern_sessions = get_unified_sessions(
-            agent=agent,
-            pattern=pattern,
-            since_date=since_date,
-            until_date=until_date,
-            skip_message_count=skip_message_count,
-            projects_dir=projects_dir,
-            quiet=quiet,
-        )
-        for session in pattern_sessions:
-            file_key = str(session["file"])
-            if file_key not in seen_files:
-                seen_files.add(file_key)
-                all_sessions.append(session)
+    if include_cached:
+        return list(sessions)
 
-    # Filter out cached workspaces if requested (only for Claude backend)
-    if not include_cached:
-        all_sessions = [
-            s
-            for s in all_sessions
-            if s.get("agent") == AGENT_CODEX or is_native_workspace(s["workspace"])
-        ]
-
-    return all_sessions
+    # Filter out cached workspaces (only for Claude backend)
+    return [
+        s for s in sessions if s.get("agent") == AGENT_CODEX or is_native_workspace(s["workspace"])
+    ]
 
 
 def format_session_line(session: dict, source_label: str) -> str:
@@ -1818,7 +1963,46 @@ def _codex_parse_date_folder(folder_path: Path) -> str:
     return ""
 
 
-def _codex_date_folders_since(sessions_dir: Path, since_date: str) -> list:  # noqa: C901
+def _iter_numeric_subdirs(parent: Path):
+    """Iterate sorted numeric subdirectories of a parent directory."""
+    for child in sorted(parent.iterdir()):
+        if child.is_dir() and child.name.isdigit():
+            yield child
+
+
+def _iter_day_folders(month_dir: Path, year: int, month: int, since_dt):
+    """Generate day folders within a month, filtering by since_dt."""
+    for day_dir in _iter_numeric_subdirs(month_dir):
+        day = int(day_dir.name)
+        if since_dt:
+            from datetime import date as date_type
+
+            folder_date = date_type(year, month, day)
+            since = since_dt.date() if hasattr(since_dt, "date") else since_dt
+            if folder_date < since:
+                continue
+        yield day_dir
+
+
+def _iter_month_folders(year_dir: Path, year: int, since_dt):
+    """Generate month folders within a year, filtering by since_dt."""
+    for month_dir in _iter_numeric_subdirs(year_dir):
+        month = int(month_dir.name)
+        if since_dt and year == since_dt.year and month < since_dt.month:
+            continue
+        yield from _iter_day_folders(month_dir, year, month, since_dt)
+
+
+def _iter_date_folders(sessions_dir: Path, since_dt):
+    """Generate date folder paths, filtering by since_dt."""
+    for year_dir in _iter_numeric_subdirs(sessions_dir):
+        year = int(year_dir.name)
+        if since_dt and year < since_dt.year:
+            continue
+        yield from _iter_month_folders(year_dir, year, since_dt)
+
+
+def _codex_date_folders_since(sessions_dir: Path, since_date: str) -> list:
     """Get list of date folders on or after since_date.
 
     Args:
@@ -1828,49 +2012,11 @@ def _codex_date_folders_since(sessions_dir: Path, since_date: str) -> list:  # n
     Returns:
         List of Path objects for YYYY/MM/DD folders to scan
     """
-    folders_to_scan = []
-
     if not sessions_dir.exists():
-        return folders_to_scan
+        return []
 
     since_dt = datetime.strptime(since_date, "%Y-%m-%d") if since_date else None
-
-    # Walk through year folders
-    for year_dir in sorted(sessions_dir.iterdir()):
-        if not year_dir.is_dir() or not year_dir.name.isdigit():
-            continue
-        year = int(year_dir.name)
-
-        # Quick skip: if entire year is before since_date
-        if since_dt and year < since_dt.year:
-            continue
-
-        for month_dir in sorted(year_dir.iterdir()):
-            if not month_dir.is_dir() or not month_dir.name.isdigit():
-                continue
-            month = int(month_dir.name)
-
-            # Quick skip: if entire month is before since_date
-            if since_dt and year == since_dt.year and month < since_dt.month:
-                continue
-
-            for day_dir in sorted(month_dir.iterdir()):
-                if not day_dir.is_dir() or not day_dir.name.isdigit():
-                    continue
-                day = int(day_dir.name)
-
-                # Check if this date is >= since_date (skip old folders)
-                if since_dt:
-                    from datetime import date as date_type
-
-                    folder_date = date_type(year, month, day)
-                    since = since_dt.date() if hasattr(since_dt, "date") else since_dt
-                    if folder_date < since:
-                        continue
-
-                folders_to_scan.append(day_dir)
-
-    return folders_to_scan
+    return list(_iter_date_folders(sessions_dir, since_dt))
 
 
 def codex_ensure_index_updated(sessions_dir: Path = None) -> dict:
@@ -2023,7 +2169,61 @@ def codex_scan_sessions(
 # ============================================================================
 
 
-def gemini_read_json_messages(json_file: Path) -> tuple:  # noqa: C901
+def _extract_gemini_content_part(part) -> str:
+    """Extract text from a single Gemini content part."""
+    if isinstance(part, str):
+        return part
+    if not isinstance(part, dict):
+        return ""
+
+    if "text" in part:
+        return part["text"]
+    if "inlineData" in part:
+        mime = part["inlineData"].get("mimeType", "unknown")
+        return f"[Inline data: {mime}]"
+    if "executableCode" in part:
+        code = part["executableCode"]
+        lang = code.get("language", "")
+        return f"```{lang}\n{code.get('code', '')}\n```"
+    if "codeExecutionResult" in part:
+        result = part["codeExecutionResult"]
+        return f"**Output:**\n```\n{result.get('output', '')}\n```"
+    return ""
+
+
+def _extract_gemini_content(content) -> str:
+    """Extract text content from Gemini message content field."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [_extract_gemini_content_part(p) for p in content]
+        return "\n".join(p for p in parts if p)
+    return ""
+
+
+def _build_gemini_message(msg: dict, content: str) -> dict:
+    """Build a normalized message dict from Gemini message data."""
+    msg_type = msg.get("type", "")
+    timestamp = msg.get("timestamp", "")
+
+    if msg_type == "user":
+        return {"role": "user", "content": content, "timestamp": timestamp}
+    if msg_type == "gemini":
+        return {
+            "role": "assistant",
+            "content": content,
+            "timestamp": timestamp,
+            "thoughts": msg.get("thoughts", []),
+            "tokens": msg.get("tokens"),
+            "model": msg.get("model"),
+            "tool_calls": msg.get("toolCalls", []),
+        }
+    if msg_type in ("info", "error", "warning"):
+        return {"role": msg_type, "content": content, "timestamp": timestamp}
+    return None
+
+
+def gemini_read_json_messages(json_file: Path) -> tuple:
     """Read messages from Gemini CLI JSON session file.
 
     Gemini stores sessions as single JSON files (not JSONL) with structure:
@@ -2037,81 +2237,26 @@ def gemini_read_json_messages(json_file: Path) -> tuple:  # noqa: C901
         Messages contain: role, content, timestamp, and optionally
         is_tool_call, thoughts, tokens, model fields
     """
-    messages = []
-    session_meta = None
-
     try:
         with open(json_file, encoding="utf-8") as f:
             data = json.load(f)
-
-        session_meta = {
-            "sessionId": data.get("sessionId"),
-            "projectHash": data.get("projectHash"),
-            "startTime": data.get("startTime"),
-            "lastUpdated": data.get("lastUpdated"),
-            "summary": data.get("summary"),
-        }
-
-        for msg in data.get("messages", []):
-            msg_type = msg.get("type", "")
-            content = msg.get("content", "")
-
-            # Handle content that may be a string or PartListUnion
-            if isinstance(content, list):
-                # Extract content from parts array (handles various part types)
-                text_parts = []
-                for part in content:
-                    if isinstance(part, str):
-                        text_parts.append(part)
-                    elif isinstance(part, dict):
-                        if "text" in part:
-                            text_parts.append(part["text"])
-                        elif "inlineData" in part:
-                            # Binary data (images, etc.) - show placeholder
-                            mime = part["inlineData"].get("mimeType", "unknown")
-                            text_parts.append(f"[Inline data: {mime}]")
-                        elif "executableCode" in part:
-                            # Code block
-                            code = part["executableCode"]
-                            lang = code.get("language", "")
-                            text_parts.append(f"```{lang}\n{code.get('code', '')}\n```")
-                        elif "codeExecutionResult" in part:
-                            # Code execution result
-                            result = part["codeExecutionResult"]
-                            text_parts.append(f"**Output:**\n```\n{result.get('output', '')}\n```")
-                content = "\n".join(text_parts)
-
-            if msg_type == "user":
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": content,
-                        "timestamp": msg.get("timestamp", ""),
-                    }
-                )
-            elif msg_type == "gemini":
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": content,
-                        "timestamp": msg.get("timestamp", ""),
-                        "thoughts": msg.get("thoughts", []),
-                        "tokens": msg.get("tokens"),
-                        "model": msg.get("model"),
-                        "tool_calls": msg.get("toolCalls", []),
-                    }
-                )
-            elif msg_type in ("info", "error", "warning"):
-                messages.append(
-                    {
-                        "role": msg_type,
-                        "content": content,
-                        "timestamp": msg.get("timestamp", ""),
-                    }
-                )
-
     except (OSError, json.JSONDecodeError):
-        pass
+        return [], None
+
+    session_meta = {
+        "sessionId": data.get("sessionId"),
+        "projectHash": data.get("projectHash"),
+        "startTime": data.get("startTime"),
+        "lastUpdated": data.get("lastUpdated"),
+        "summary": data.get("summary"),
+    }
+
+    messages = []
+    for msg in data.get("messages", []):
+        content = _extract_gemini_content(msg.get("content", ""))
+        normalized = _build_gemini_message(msg, content)
+        if normalized:
+            messages.append(normalized)
 
     return messages, session_meta
 
@@ -2207,7 +2352,76 @@ def gemini_get_first_timestamp(json_file: Path) -> str:
     return None
 
 
-def gemini_parse_json_to_markdown(json_file: Path, minimal: bool = False) -> str:  # noqa: C901
+def _gemini_format_session_metadata(session_meta: dict) -> list:
+    """Format Gemini session metadata as markdown lines."""
+    project_hash = session_meta.get("projectHash", "unknown")
+    short_hash = (
+        project_hash[:HASH_DISPLAY_LEN] if len(project_hash) > HASH_DISPLAY_LEN else project_hash
+    )
+    lines = [
+        "## Session Metadata",
+        "",
+        f"- **Session ID:** `{session_meta.get('sessionId', 'unknown')}`",
+        f"- **Project Hash:** `{short_hash}...`",
+        f"- **Start Time:** `{session_meta.get('startTime', 'unknown')}`",
+        f"- **Last Updated:** `{session_meta.get('lastUpdated', 'unknown')}`",
+        "",
+    ]
+    if session_meta.get("summary"):
+        lines.extend(["### Summary", "", session_meta["summary"], ""])
+    return lines
+
+
+def _gemini_get_role_header(role: str, msg_num: int) -> str:
+    """Get the markdown header for a message role."""
+    role_names = {
+        "user": "User",
+        "assistant": "Model",
+        "info": "Info",
+        "error": "Error",
+        "warning": "Warning",
+    }
+    name = role_names.get(role, role.title())
+    return f"## {name} (Message {msg_num})"
+
+
+def _gemini_format_message(msg: dict, msg_num: int, minimal: bool) -> list:
+    """Format a single Gemini message as markdown lines."""
+    lines = [_gemini_get_role_header(msg.get("role", "unknown"), msg_num)]
+
+    if not minimal:
+        if msg.get("timestamp"):
+            lines.append(f"*{msg['timestamp']}*")
+        if msg.get("model"):
+            lines.append(f"*Model: {msg['model']}*")
+
+    lines.append("")
+
+    if msg.get("thoughts") and not minimal:
+        lines.extend([gemini_format_thoughts(msg["thoughts"]), ""])
+
+    if msg.get("content"):
+        lines.extend([msg["content"], ""])
+
+    for tc in msg.get("tool_calls", []):
+        lines.extend([gemini_format_tool_call(tc), ""])
+
+    if msg.get("tokens") and not minimal:
+        tokens = msg["tokens"]
+        lines.extend(
+            [
+                f"*Tokens: {tokens.get('total', 0)} total "
+                f"(in: {tokens.get('input', 0)}, out: {tokens.get('output', 0)}, "
+                f"cached: {tokens.get('cached', 0)})*",
+                "",
+            ]
+        )
+
+    lines.extend(["---", ""])
+    return lines
+
+
+def gemini_parse_json_to_markdown(json_file: Path, minimal: bool = False) -> str:
     """Convert Gemini session JSON to markdown format.
 
     Args:
@@ -2218,95 +2432,15 @@ def gemini_parse_json_to_markdown(json_file: Path, minimal: bool = False) -> str
         Markdown formatted string of the conversation
     """
     messages, session_meta = gemini_read_json_messages(json_file)
-
     md_lines = ["# Gemini Conversation", ""]
 
     if session_meta and not minimal:
-        project_hash = session_meta.get("projectHash", "unknown")
-        # Show first 8 chars of hash for readability
-        short_hash = (
-            project_hash[:HASH_DISPLAY_LEN]
-            if len(project_hash) > HASH_DISPLAY_LEN
-            else project_hash
-        )
-        md_lines.extend(
-            [
-                "## Session Metadata",
-                "",
-                f"- **Session ID:** `{session_meta.get('sessionId', 'unknown')}`",
-                f"- **Project Hash:** `{short_hash}...`",
-                f"- **Start Time:** `{session_meta.get('startTime', 'unknown')}`",
-                f"- **Last Updated:** `{session_meta.get('lastUpdated', 'unknown')}`",
-                "",
-            ]
-        )
-        if session_meta.get("summary"):
-            md_lines.extend(
-                [
-                    "### Summary",
-                    "",
-                    session_meta["summary"],
-                    "",
-                ]
-            )
+        md_lines.extend(_gemini_format_session_metadata(session_meta))
 
     md_lines.extend(["---", ""])
 
     for i, msg in enumerate(messages, 1):
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        timestamp = msg.get("timestamp", "")
-        thoughts = msg.get("thoughts", [])
-        tool_calls = msg.get("tool_calls", [])
-        tokens = msg.get("tokens")
-        model = msg.get("model")
-
-        if role == "user":
-            md_lines.append(f"## User (Message {i})")
-        elif role == "assistant":
-            md_lines.append(f"## Model (Message {i})")
-        elif role == "info":
-            md_lines.append(f"## Info (Message {i})")
-        elif role == "error":
-            md_lines.append(f"## Error (Message {i})")
-        elif role == "warning":
-            md_lines.append(f"## Warning (Message {i})")
-        else:
-            md_lines.append(f"## {role.title()} (Message {i})")
-
-        if timestamp and not minimal:
-            md_lines.append(f"*{timestamp}*")
-
-        if model and not minimal:
-            md_lines.append(f"*Model: {model}*")
-
-        md_lines.append("")
-
-        # Add thoughts/reasoning if present
-        if thoughts and not minimal:
-            md_lines.append(gemini_format_thoughts(thoughts))
-            md_lines.append("")
-
-        # Add content
-        if content:
-            md_lines.append(content)
-            md_lines.append("")
-
-        # Add tool calls if present
-        for tc in tool_calls:
-            md_lines.append(gemini_format_tool_call(tc))
-            md_lines.append("")
-
-        # Add token usage if present and not minimal
-        if tokens and not minimal:
-            md_lines.append(
-                f"*Tokens: {tokens.get('total', 0)} total "
-                f"(in: {tokens.get('input', 0)}, out: {tokens.get('output', 0)}, "
-                f"cached: {tokens.get('cached', 0)})*"
-            )
-            md_lines.append("")
-
-        md_lines.extend(["---", ""])
+        md_lines.extend(_gemini_format_message(msg, i, minimal))
 
     return "\n".join(md_lines)
 
@@ -5717,7 +5851,34 @@ def get_sessions_for_source(
 # ============================================================================
 
 
-def cmd_alias_list(args):  # noqa: C901
+def _print_workspace_with_count(source_key: str, workspace: str) -> int:
+    """Print workspace with session count. Returns count."""
+    ws_readable = normalize_workspace_name(workspace)
+    sessions = get_sessions_for_source(source_key, workspace)
+    count = len(sessions)
+    if count > 0 or source_key == "local":
+        print(f"    {ws_readable}\t{count} sessions")
+    else:
+        print(f"    {ws_readable}\t(not cached)")
+    return count
+
+
+def _print_alias_sources(sources: dict, show_counts: bool) -> int:
+    """Print alias sources and return total session count."""
+    total_sessions = 0
+    for source_key, workspaces in sorted(sources.items()):
+        if not workspaces:
+            continue
+        print(f"  {source_key}:")
+        for workspace in workspaces:
+            if show_counts:
+                total_sessions += _print_workspace_with_count(source_key, workspace)
+            else:
+                print(f"    {normalize_workspace_name(workspace)}")
+    return total_sessions
+
+
+def cmd_alias_list(args):
     """List all aliases with their workspaces."""
     aliases_data = load_aliases()
     aliases = aliases_data.get("aliases", {})
@@ -5730,7 +5891,7 @@ def cmd_alias_list(args):  # noqa: C901
         print("  agent-history alias add <name> <workspace>")
         return
 
-    # Check if any aliases have Windows/WSL sources (may be slow)
+    # Warn about slow sources when counting
     if show_counts:
         has_slow_sources = any(
             source_key in ("windows", "wsl") or source_key.startswith(("windows:", "wsl:"))
@@ -5742,27 +5903,8 @@ def cmd_alias_list(args):  # noqa: C901
             sys.stderr.flush()
 
     for alias_name, sources in sorted(aliases.items()):
-        total_sessions = 0
         print(f"\n{alias_name}:")
-
-        for source_key, workspaces in sorted(sources.items()):
-            if workspaces:
-                print(f"  {source_key}:")
-                for workspace in workspaces:
-                    ws_readable = normalize_workspace_name(workspace)
-                    if show_counts:
-                        # Get session count (slow for Windows/remote)
-                        sessions = get_sessions_for_source(source_key, workspace)
-                        count = len(sessions)
-                        total_sessions += count
-                        if count > 0 or source_key == "local":
-                            print(f"    {ws_readable}\t{count} sessions")
-                        else:
-                            print(f"    {ws_readable}\t(not cached)")
-                    else:
-                        # Fast listing without counts
-                        print(f"    {ws_readable}")
-
+        total_sessions = _print_alias_sources(sources, show_counts)
         if show_counts:
             print(f"  Total: {total_sessions} sessions")
 
@@ -5876,12 +6018,11 @@ def _resolve_workspaces_for_source(
         return interactive_workspace_picker(source_key, args)
 
     workspaces_to_add = []
+    remote_value = source_param if source_key.startswith("remote:") else None
+    lookup_args = ListCommandArgs(remote=remote_value)
+
     for ws_input in raw_workspaces:
-
-        class MockArgs:
-            remote = source_param if source_key.startswith("remote:") else None
-
-        resolved = resolve_workspace_input(ws_input, source_key, MockArgs())
+        resolved = resolve_workspace_input(ws_input, source_key, lookup_args)
         if resolved:
             workspaces_to_add.extend(resolved)
     return workspaces_to_add
@@ -6134,7 +6275,40 @@ def _get_alias_workspace_patterns(alias_config: dict) -> list:
     return list(patterns)
 
 
-def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str = "auto"):  # noqa: C901
+def _collect_non_claude_alias_sessions(patterns: list, since_date, until_date, agent: str) -> list:
+    """Collect Codex and Gemini sessions for alias patterns."""
+    sessions = []
+    for pattern in patterns:
+        if agent in ("auto", AGENT_CODEX):
+            codex_sessions = codex_scan_sessions(
+                pattern=pattern, since_date=since_date, until_date=until_date
+            )
+            for s in codex_sessions:
+                s["source"] = "local"
+            sessions.extend(codex_sessions)
+        if agent in ("auto", AGENT_GEMINI):
+            gemini_sessions = gemini_scan_sessions(
+                pattern=pattern, since_date=since_date, until_date=until_date
+            )
+            for s in gemini_sessions:
+                s["source"] = "local"
+            sessions.extend(gemini_sessions)
+    return sessions
+
+
+def _print_alias_sessions(sessions: list):
+    """Print alias sessions in tabular format."""
+    print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+    for session in sessions:
+        session_agent = session.get("agent", AGENT_CLAUDE)
+        print(
+            f"{session_agent}\t{session['source']}\t{session['workspace_readable']}\t"
+            f"{session['filename']}\t{session['message_count']}\t"
+            f"{session['modified'].strftime('%Y-%m-%d')}"
+        )
+
+
+def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str = "auto"):
     """List sessions across all workspaces in an alias."""
     aliases_data = load_aliases()
 
@@ -6143,32 +6317,19 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str 
         sys.exit(1)
 
     alias_config = aliases_data["aliases"][alias_name]
-
-    # Collect Claude sessions from alias (if not filtering to non-Claude only)
     all_sessions = []
+
+    # Collect Claude sessions
     if agent in ("auto", AGENT_CLAUDE):
         all_sessions = _collect_alias_sessions(alias_config, since_date, until_date)
 
-    # For auto mode, also scan Codex and Gemini using alias workspace patterns
+    # Collect Codex/Gemini sessions
     if agent in ("auto", AGENT_CODEX, AGENT_GEMINI):
         patterns = _get_alias_workspace_patterns(alias_config)
-        for pattern in patterns:
-            if agent in ("auto", AGENT_CODEX):
-                codex_sessions = codex_scan_sessions(
-                    pattern=pattern, since_date=since_date, until_date=until_date
-                )
-                for s in codex_sessions:
-                    s["source"] = "local"
-                all_sessions.extend(codex_sessions)
-            if agent in ("auto", AGENT_GEMINI):
-                gemini_sessions = gemini_scan_sessions(
-                    pattern=pattern, since_date=since_date, until_date=until_date
-                )
-                for s in gemini_sessions:
-                    s["source"] = "local"
-                all_sessions.extend(gemini_sessions)
+        all_sessions.extend(
+            _collect_non_claude_alias_sessions(patterns, since_date, until_date, agent)
+        )
 
-    # Sort by modified date (newest first)
     all_sessions.sort(key=lambda s: s["modified"], reverse=True)
 
     if not all_sessions:
@@ -6181,12 +6342,7 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str 
             sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'{agent_msg}\n")
         sys.exit(1)
 
-    print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
-    for session in all_sessions:
-        session_agent = session.get("agent", AGENT_CLAUDE)
-        print(
-            f"{session_agent}\t{session['source']}\t{session['workspace_readable']}\t{session['filename']}\t{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
-        )
+    _print_alias_sessions(all_sessions)
 
 
 def _get_alias_export_options(args) -> dict:
@@ -6359,29 +6515,37 @@ def _validate_alias_source_key(source_key: str) -> bool:
     return source_key in valid_keys
 
 
-def _merge_alias_sources(existing_sources: dict, new_sources: dict):  # noqa: C901
+def _merge_nested_sources(existing: dict, incoming: dict):
+    """Merge nested source dicts (wsl, remote) without duplicates."""
+    for sub_key, ws_list in incoming.items():
+        if sub_key not in existing:
+            existing[sub_key] = ws_list
+        else:
+            for ws in ws_list:
+                if ws not in existing[sub_key]:
+                    existing[sub_key].append(ws)
+
+
+def _merge_flat_list(existing: list, incoming: list):
+    """Merge flat workspace lists without duplicates."""
+    for ws in incoming:
+        if ws not in existing:
+            existing.append(ws)
+
+
+def _merge_alias_sources(existing_sources: dict, new_sources: dict):
     """Merge new sources into existing alias sources."""
     for source_key, workspaces in new_sources.items():
-        # Validate source key
         if not _validate_alias_source_key(source_key):
             sys.stderr.write(f"Warning: Ignoring invalid source key '{source_key}'\n")
             continue
 
         if source_key not in existing_sources:
             existing_sources[source_key] = workspaces
-        # Handle nested dicts (wsl, remote) vs flat lists (local, windows)
         elif isinstance(workspaces, dict) and isinstance(existing_sources[source_key], dict):
-            for sub_key, ws_list in workspaces.items():
-                if sub_key not in existing_sources[source_key]:
-                    existing_sources[source_key][sub_key] = ws_list
-                else:
-                    for ws in ws_list:
-                        if ws not in existing_sources[source_key][sub_key]:
-                            existing_sources[source_key][sub_key].append(ws)
+            _merge_nested_sources(existing_sources[source_key], workspaces)
         elif isinstance(workspaces, list):
-            for ws in workspaces:
-                if ws not in existing_sources[source_key]:
-                    existing_sources[source_key].append(ws)
+            _merge_flat_list(existing_sources[source_key], workspaces)
 
 
 def _backup_aliases_file() -> Path | None:
@@ -6829,7 +6993,169 @@ def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
     return {"session": session_info, "messages": messages, "tool_uses": tool_uses}
 
 
-def sync_file_to_db(  # noqa: C901, PLR0912, PLR0915
+def _is_file_synced(conn: sqlite3.Connection, file_path: str, current_mtime: float) -> bool:
+    """Check if file is already synced and up to date."""
+    cursor = conn.execute("SELECT mtime FROM synced_files WHERE file_path = ?", (file_path,))
+    row = cursor.fetchone()
+    return row is not None and row["mtime"] >= current_mtime
+
+
+def _prepare_gemini_session(session: dict, metrics: dict, source: str, mtime: float) -> None:
+    """Prepare Gemini session dict with required fields (modifies session in place)."""
+    # Gemini stores projectHash in 'cwd' field
+    project_hash = session.get("cwd", "")
+    if project_hash:
+        real_path = gemini_get_path_for_hash(project_hash)
+        if real_path:
+            encoded = path_to_encoded_workspace(real_path)
+            session["workspace"] = get_workspace_name_from_path(encoded)
+        else:
+            session["workspace"] = project_hash
+    else:
+        session["workspace"] = "gemini-unknown"
+
+    session["source"] = source
+    session["file_mtime"] = mtime
+    session["is_agent"] = False
+    session["parent_session_id"] = None
+    session["message_count"] = len(metrics["messages"])
+    session["git_branch"] = None
+    session["claude_version"] = None
+    session["work_period_seconds"] = 0
+    session["num_work_periods"] = 1
+    session["start_time"] = session.get("startTime")
+    session["end_time"] = session.get("lastUpdated")
+
+
+def _prepare_codex_session(session: dict, metrics: dict, source: str, mtime: float) -> None:
+    """Prepare Codex session dict with required fields (modifies session in place)."""
+    if session.get("cwd"):
+        encoded = path_to_encoded_workspace(session["cwd"])
+        session["workspace"] = get_workspace_name_from_path(encoded)
+    else:
+        session["workspace"] = "unknown"
+
+    session["source"] = source
+    session["file_mtime"] = mtime
+    session["is_agent"] = False
+    session["parent_session_id"] = None
+    session["start_time"] = None
+    session["end_time"] = None
+    session["message_count"] = len(metrics["messages"])
+    session["git_branch"] = None
+    session["claude_version"] = session.get("cli_version")
+    session["work_period_seconds"] = 0
+    session["num_work_periods"] = 1
+
+    # Get timestamps from messages
+    if metrics["messages"]:
+        timestamps = [m.get("timestamp") for m in metrics["messages"] if m.get("timestamp")]
+        if timestamps:
+            session["start_time"] = min(timestamps)
+            session["end_time"] = max(timestamps)
+
+
+def _write_metrics_to_db(
+    conn: sqlite3.Connection,
+    file_path: str,
+    session: dict,
+    metrics: dict,
+    agent: str,
+    mtime: float,
+) -> None:
+    """Write session, messages, and tool uses to database."""
+    # Delete existing data for this file (for re-sync)
+    conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (file_path,))
+    conn.execute("DELETE FROM messages WHERE file_path = ?", (file_path,))
+    conn.execute("DELETE FROM sessions WHERE file_path = ?", (file_path,))
+
+    # Insert session
+    conn.execute(
+        """
+        INSERT INTO sessions (
+            file_path, session_id, workspace, source, agent, file_mtime,
+            is_agent, parent_session_id, start_time, end_time,
+            message_count, git_branch, claude_version, cwd,
+            work_period_seconds, num_work_periods
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+        (
+            file_path,
+            session.get("session_id") or session.get("id"),
+            session["workspace"],
+            session["source"],
+            agent,
+            session["file_mtime"],
+            1 if session.get("is_agent") else 0,
+            session.get("parent_session_id"),
+            session.get("start_time"),
+            session.get("end_time"),
+            session.get("message_count", len(metrics.get("messages", []))),
+            session.get("git_branch"),
+            session.get("claude_version"),
+            session.get("cwd"),
+            session.get("work_period_seconds", 0),
+            session.get("num_work_periods", 1),
+        ),
+    )
+
+    # Insert messages
+    session_id = session.get("session_id") or session.get("id")
+    for msg in metrics["messages"]:
+        conn.execute(
+            """
+            INSERT INTO messages (
+                uuid, file_path, session_id, parent_uuid, type, timestamp,
+                model, stop_reason, input_tokens, output_tokens,
+                cache_creation_tokens, cache_read_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                msg.get("uuid"),
+                file_path,
+                msg.get("session_id") or session_id,
+                msg.get("parent_uuid"),
+                msg.get("type") or msg.get("role"),
+                msg.get("timestamp"),
+                msg.get("model"),
+                msg.get("stop_reason"),
+                msg.get("input_tokens", 0),
+                msg.get("output_tokens", 0),
+                msg.get("cache_creation_tokens", 0),
+                msg.get("cache_read_tokens", 0),
+            ),
+        )
+
+    # Insert tool uses
+    for tu in metrics["tool_uses"]:
+        conn.execute(
+            """
+            INSERT INTO tool_uses (
+                tool_use_id, message_uuid, file_path, session_id, tool_name, is_error, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                tu.get("tool_use_id"),
+                tu.get("message_uuid"),
+                file_path,
+                tu.get("session_id") or session_id,
+                tu.get("tool_name") or tu.get("name"),
+                1 if tu.get("is_error") else 0,
+                tu.get("timestamp"),
+            ),
+        )
+
+    # Update synced files tracking
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO synced_files (file_path, mtime, synced_at)
+        VALUES (?, ?, ?)
+    """,
+        (file_path, mtime, datetime.now().isoformat()),
+    )
+
+
+def sync_file_to_db(
     conn: sqlite3.Connection, jsonl_file: Path, source: str = "local", force: bool = False
 ) -> bool:
     """Sync a single JSONL file to the database.
@@ -6840,172 +7166,33 @@ def sync_file_to_db(  # noqa: C901, PLR0912, PLR0915
     current_mtime = jsonl_file.stat().st_mtime if jsonl_file.exists() else 0
 
     # Check if already synced and up to date
-    if not force:
-        cursor = conn.execute("SELECT mtime FROM synced_files WHERE file_path = ?", (file_path,))
-        row = cursor.fetchone()
-        if row and row["mtime"] >= current_mtime:
-            return False  # Already up to date
+    if not force and _is_file_synced(conn, file_path, current_mtime):
+        return False
 
-    # Detect agent type from file path
+    # Detect agent type and extract metrics
     agent = detect_agent_from_path(jsonl_file)
 
-    # Extract metrics based on agent type
     if agent == AGENT_GEMINI:
         metrics = gemini_extract_metrics_from_json(jsonl_file)
         session = metrics["session"]
-        # Gemini stores projectHash in 'cwd' field from gemini_extract_metrics_from_json
-        project_hash = session.get("cwd", "")
-        if project_hash:
-            real_path = gemini_get_path_for_hash(project_hash)
-            if real_path:
-                # Use short workspace name (consistent with Claude stats display)
-                encoded = path_to_encoded_workspace(real_path)
-                session["workspace"] = get_workspace_name_from_path(encoded)
-            else:
-                # Fallback to hash-based workspace
-                session["workspace"] = project_hash
-        else:
-            session["workspace"] = "gemini-unknown"
-        session["source"] = source
-        session["file_mtime"] = current_mtime
-        session["is_agent"] = False
-        session["parent_session_id"] = None
-        session["message_count"] = len(metrics["messages"])
-        session["git_branch"] = None
-        session["claude_version"] = None  # Gemini doesn't have version info in sessions
-        session["work_period_seconds"] = 0
-        session["num_work_periods"] = 1
-        # Get timestamps from session metadata
-        session["start_time"] = session.get("startTime")
-        session["end_time"] = session.get("lastUpdated")
+        _prepare_gemini_session(session, metrics, source, current_mtime)
     elif agent == AGENT_CODEX:
         metrics = codex_extract_metrics_from_jsonl(jsonl_file)
         session = metrics["session"]
-        # Codex uses cwd directly, need to convert to workspace
-        if session.get("cwd"):
-            # Use short workspace name (consistent with Claude stats display)
-            encoded = path_to_encoded_workspace(session["cwd"])
-            session["workspace"] = get_workspace_name_from_path(encoded)
-        else:
-            session["workspace"] = "unknown"
-        session["source"] = source
-        session["file_mtime"] = current_mtime
-        session["is_agent"] = False
-        session["parent_session_id"] = None
-        session["start_time"] = None
-        session["end_time"] = None
-        session["message_count"] = len(metrics["messages"])
-        session["git_branch"] = None
-        session["claude_version"] = session.get("cli_version")
-        session["work_period_seconds"] = 0
-        session["num_work_periods"] = 1
-        # Get timestamps from messages
-        if metrics["messages"]:
-            timestamps = [m.get("timestamp") for m in metrics["messages"] if m.get("timestamp")]
-            if timestamps:
-                session["start_time"] = min(timestamps)
-                session["end_time"] = max(timestamps)
+        _prepare_codex_session(session, metrics, source, current_mtime)
     else:
         metrics = extract_metrics_from_jsonl(jsonl_file, source)
         session = metrics["session"]
 
+    # Skip empty files
     if session.get("message_count", 0) == 0 and len(metrics.get("messages", [])) == 0:
-        return False  # No messages in file
+        return False
 
-    # Wrap all database operations in a transaction with rollback on error
+    # Write to database with transaction
     try:
-        # Delete existing data for this file (for re-sync)
-        conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (file_path,))
-        conn.execute("DELETE FROM messages WHERE file_path = ?", (file_path,))
-        conn.execute("DELETE FROM sessions WHERE file_path = ?", (file_path,))
-
-        # Insert session
-        conn.execute(
-            """
-            INSERT INTO sessions (
-                file_path, session_id, workspace, source, agent, file_mtime,
-                is_agent, parent_session_id, start_time, end_time,
-                message_count, git_branch, claude_version, cwd,
-                work_period_seconds, num_work_periods
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                file_path,
-                session.get("session_id") or session.get("id"),
-                session["workspace"],
-                session["source"],
-                agent,
-                session["file_mtime"],
-                1 if session.get("is_agent") else 0,
-                session.get("parent_session_id"),
-                session.get("start_time"),
-                session.get("end_time"),
-                session.get("message_count", len(metrics.get("messages", []))),
-                session.get("git_branch"),
-                session.get("claude_version"),
-                session.get("cwd"),
-                session.get("work_period_seconds", 0),
-                session.get("num_work_periods", 1),
-            ),
-        )
-
-        # Insert messages
-        for msg in metrics["messages"]:
-            conn.execute(
-                """
-                INSERT INTO messages (
-                    uuid, file_path, session_id, parent_uuid, type, timestamp,
-                    model, stop_reason, input_tokens, output_tokens,
-                    cache_creation_tokens, cache_read_tokens
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    msg.get("uuid"),
-                    file_path,
-                    msg.get("session_id") or session.get("session_id") or session.get("id"),
-                    msg.get("parent_uuid"),
-                    msg.get("type") or msg.get("role"),
-                    msg.get("timestamp"),
-                    msg.get("model"),
-                    msg.get("stop_reason"),
-                    msg.get("input_tokens", 0),
-                    msg.get("output_tokens", 0),
-                    msg.get("cache_creation_tokens", 0),
-                    msg.get("cache_read_tokens", 0),
-                ),
-            )
-
-        # Insert tool uses
-        for tu in metrics["tool_uses"]:
-            conn.execute(
-                """
-                INSERT INTO tool_uses (
-                    tool_use_id, message_uuid, file_path, session_id, tool_name, is_error, timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    tu.get("tool_use_id"),
-                    tu.get("message_uuid"),
-                    file_path,
-                    tu.get("session_id") or session.get("session_id") or session.get("id"),
-                    tu.get("tool_name") or tu.get("name"),
-                    1 if tu.get("is_error") else 0,
-                    tu.get("timestamp"),
-                ),
-            )
-
-        # Update synced files tracking
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO synced_files (file_path, mtime, synced_at)
-            VALUES (?, ?, ?)
-        """,
-            (file_path, current_mtime, datetime.now().isoformat()),
-        )
-
+        _write_metrics_to_db(conn, file_path, session, metrics, agent, current_mtime)
         conn.commit()
         return True
-
     except sqlite3.Error as e:
         conn.rollback()
         sys.stderr.write(f"Warning: Database error syncing {jsonl_file}: {e}\n")
@@ -7756,17 +7943,7 @@ def _print_homes_and_workspaces(sources, top_workspaces, top_limit=None):
             _print_workspace_item(ws)
 
 
-def _print_summary_stats(  # noqa: PLR0913
-    session_stats,
-    token_stats,
-    tool_stats,
-    sources,
-    models,
-    top_workspaces,
-    top_limit=None,
-    time_stats=None,
-    agent: str = "auto",
-):
+def _print_summary_stats(stats: SummaryStatsData):
     """Print the formatted summary statistics."""
     agent_names = {
         "claude": "CLAUDE CODE",
@@ -7774,18 +7951,18 @@ def _print_summary_stats(  # noqa: PLR0913
         "gemini": "GEMINI CLI",
         "auto": "AI ASSISTANT",
     }
-    agent_name = agent_names.get(agent, "AI ASSISTANT")
+    agent_name = agent_names.get(stats.agent, "AI ASSISTANT")
     print("=" * DISPLAY_SEPARATOR_WIDTH)
     print(f"{agent_name} METRICS SUMMARY")
     print("=" * DISPLAY_SEPARATOR_WIDTH)
 
-    _print_homes_and_workspaces(sources, top_workspaces, top_limit=top_limit)
-    _print_session_section(session_stats)
-    _print_token_section(token_stats)
-    _print_tool_section(tool_stats)
-    _print_models_section(models)
-    if time_stats is not None:
-        _print_time_summary(time_stats, include_breakdown=False)
+    _print_homes_and_workspaces(stats.sources, stats.top_workspaces, top_limit=stats.top_limit)
+    _print_session_section(stats.session_stats)
+    _print_token_section(stats.token_stats)
+    _print_tool_section(stats.tool_stats)
+    _print_models_section(stats.models)
+    if stats.time_stats is not None:
+        _print_time_summary(stats.time_stats, include_breakdown=False)
     print()
 
 
@@ -7824,17 +8001,18 @@ def display_summary_stats(
 
     time_stats = _compute_time_stats(conn, where_sql, params)
 
-    _print_summary_stats(
-        session_stats,
-        token_stats,
-        tool_stats,
-        sources,
-        models,
-        top_workspaces,
+    stats = SummaryStatsData(
+        session_stats=session_stats,
+        token_stats=token_stats,
+        tool_stats=tool_stats,
+        sources=sources,
+        models=models,
+        top_workspaces=top_workspaces,
         top_limit=top_limit,
         time_stats=time_stats,
         agent=agent,
     )
+    _print_summary_stats(stats)
 
 
 def display_tool_stats(conn: sqlite3.Connection, where_sql: str, params: list):
@@ -8247,26 +8425,56 @@ def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
 # ============================================================================
 
 
-def _list_windows_sessions(args, patterns: list, since_date, until_date):  # noqa: C901
-    """List sessions from Windows (called from WSL).
+def _scan_codex_gemini_sessions(
+    scan_agent: str, patterns: list, since_date, until_date, sessions_dir: Path, source: str
+) -> list:
+    """Scan Codex or Gemini sessions from a directory."""
+    pattern_str = patterns[0] if patterns else ""
+    if scan_agent == AGENT_CODEX:
+        sessions = codex_scan_sessions(
+            pattern=pattern_str,
+            since_date=since_date,
+            until_date=until_date,
+            sessions_dir=sessions_dir,
+            skip_message_count=True,
+        )
+    else:  # AGENT_GEMINI
+        sessions = gemini_scan_sessions(
+            pattern=pattern_str,
+            since_date=since_date,
+            until_date=until_date,
+            sessions_dir=sessions_dir,
+            skip_message_count=True,
+        )
+    for s in sessions:
+        s["source"] = source
+    return sessions
 
-    Args:
-        args: Parsed arguments
-        patterns: List of workspace patterns
-        since_date: Optional start date filter
-        until_date: Optional end date filter
-    """
+
+def _show_no_sessions_error(agent: str, location: str, platform_flag: str):
+    """Show error message when no sessions are found."""
+    if agent == "auto":
+        sys.stderr.write(f"Error: No sessions found in {location}\n")
+        sys.stderr.write("\nTips:\n")
+        sys.stderr.write("  • Check that Claude/Codex/Gemini is installed\n")
+        sys.stderr.write(f"  • Try: agent-history lsh {platform_flag}\n")
+    else:
+        sys.stderr.write(f"Error: No {agent} sessions found in {location}\n")
+        sys.stderr.write("\nTips:\n")
+        sys.stderr.write(f"  • Check that {agent} is installed\n")
+        sys.stderr.write(f"  • Try: agent-history --agent auto lss {platform_flag}\n")
+    sys.exit(1)
+
+
+def _list_windows_sessions(args, patterns: list, since_date, until_date):
+    """List sessions from Windows (called from WSL)."""
     agent = getattr(args, "agent", None) or "auto"
     workspaces_only = getattr(args, "workspaces_only", False)
 
     remote_host = getattr(args, "remote", None)
-    username = None
-    if remote_host and remote_host.startswith("windows://"):
-        username = remote_host[10:]
+    username = remote_host[10:] if remote_host and remote_host.startswith("windows://") else None
 
     all_sessions = []
-
-    # Determine which agents to scan
     agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
 
     for scan_agent in agents_to_scan:
@@ -8280,74 +8488,50 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):  # noq
                 since_date,
                 until_date,
                 projects_dir=sessions_dir,
-                skip_message_count=True,  # Slow over WSL mount
+                skip_message_count=True,
                 agent=AGENT_CLAUDE,
             )
             all_sessions.extend(sessions)
-        elif scan_agent == AGENT_CODEX:
-            pattern_str = patterns[0] if patterns else ""
-            sessions = codex_scan_sessions(
-                pattern=pattern_str,
-                since_date=since_date,
-                until_date=until_date,
-                sessions_dir=sessions_dir,
-                skip_message_count=True,
-            )
-            # Add source info
-            for s in sessions:
-                s["source"] = "windows"
-            all_sessions.extend(sessions)
-        elif scan_agent == AGENT_GEMINI:
-            pattern_str = patterns[0] if patterns else ""
-            sessions = gemini_scan_sessions(
-                pattern=pattern_str,
-                since_date=since_date,
-                until_date=until_date,
-                sessions_dir=sessions_dir,
-                skip_message_count=True,
-            )
-            # Add source info
-            for s in sessions:
-                s["source"] = "windows"
-            all_sessions.extend(sessions)
-
-    # If no sessions found with specific agent, show helpful error
-    if not all_sessions:
-        if agent == "auto":
-            sys.stderr.write("Error: No sessions found in Windows\n")
-            sys.stderr.write("\nTips:\n")
-            sys.stderr.write("  • Check that Windows has Claude/Codex/Gemini installed\n")
-            sys.stderr.write("  • Try: agent-history lsh --windows\n")
         else:
-            sys.stderr.write(f"Error: No {agent} sessions found in Windows\n")
-            sys.stderr.write("\nTips:\n")
-            sys.stderr.write(f"  • Check that {agent} is installed on Windows\n")
-            sys.stderr.write("  • Try: agent-history --agent auto lss --windows\n")
-        sys.exit(1)
+            all_sessions.extend(
+                _scan_codex_gemini_sessions(
+                    scan_agent, patterns, since_date, until_date, sessions_dir, "windows"
+                )
+            )
+
+    if not all_sessions:
+        _show_no_sessions_error(agent, "Windows", "--windows")
 
     source_label = f"Windows ({username})" if username else "Windows"
     print_sessions_output(all_sessions, source_label, workspaces_only)
 
 
-def _list_wsl_sessions(args, patterns: list, since_date, until_date):  # noqa: C901
-    """List sessions from WSL (called from Windows).
+def _list_wsl_claude_workspaces(sessions_dir: Path, patterns: list) -> list:
+    """List Claude workspaces from WSL directory."""
+    raw_workspaces = _get_workspaces_from_dir(sessions_dir)
+    workspaces = _filter_workspaces_by_patterns(raw_workspaces, patterns)
+    base_path = _detect_wsl_base_path(sessions_dir)
+    return [
+        {
+            "workspace": ws,
+            "workspace_readable": normalize_workspace_name(ws, base_path=base_path),
+            "agent": AGENT_CLAUDE,
+        }
+        for ws in workspaces
+    ]
 
-    Args:
-        args: Parsed arguments
-        patterns: List of workspace patterns
-        since_date: Optional start date filter
-        until_date: Optional end date filter
-    """
+
+def _list_wsl_sessions(args, patterns: list, since_date, until_date):
+    """List sessions from WSL (called from Windows)."""
     agent = getattr(args, "agent", None) or "auto"
     workspaces_only = getattr(args, "workspaces_only", False)
 
     remote_host = getattr(args, "remote", None)
-    distro_name = remote_host[WSL_PREFIX_LEN:]  # Remove 'wsl://' prefix
+    distro_name = remote_host[WSL_PREFIX_LEN:]
 
     all_sessions = []
-
-    # Determine which agents to scan
     agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+    source = f"wsl:{distro_name}"
 
     for scan_agent in agents_to_scan:
         sessions_dir = get_agent_wsl_dir(distro_name, scan_agent)
@@ -8356,67 +8540,26 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):  # noqa: C
 
         if scan_agent == AGENT_CLAUDE:
             if workspaces_only:
-                raw_workspaces = _get_workspaces_from_dir(sessions_dir)
-                workspaces = _filter_workspaces_by_patterns(raw_workspaces, patterns)
-                base_path = _detect_wsl_base_path(sessions_dir)
-                for ws in workspaces:
-                    all_sessions.append(
-                        {
-                            "workspace": ws,
-                            "workspace_readable": normalize_workspace_name(ws, base_path=base_path),
-                            "agent": AGENT_CLAUDE,
-                        }
-                    )
+                all_sessions.extend(_list_wsl_claude_workspaces(sessions_dir, patterns))
             else:
                 sessions = collect_sessions_with_dedup(
                     patterns,
                     since_date,
                     until_date,
                     projects_dir=sessions_dir,
-                    skip_message_count=True,  # Slow over Windows/WSL boundary
+                    skip_message_count=True,
                     agent=AGENT_CLAUDE,
                 )
                 all_sessions.extend(sessions)
-        elif scan_agent == AGENT_CODEX:
-            pattern_str = patterns[0] if patterns else ""
-            sessions = codex_scan_sessions(
-                pattern=pattern_str,
-                since_date=since_date,
-                until_date=until_date,
-                sessions_dir=sessions_dir,
-                skip_message_count=True,
-            )
-            # Add source info
-            for s in sessions:
-                s["source"] = f"wsl:{distro_name}"
-            all_sessions.extend(sessions)
-        elif scan_agent == AGENT_GEMINI:
-            pattern_str = patterns[0] if patterns else ""
-            sessions = gemini_scan_sessions(
-                pattern=pattern_str,
-                since_date=since_date,
-                until_date=until_date,
-                sessions_dir=sessions_dir,
-                skip_message_count=True,
-            )
-            # Add source info
-            for s in sessions:
-                s["source"] = f"wsl:{distro_name}"
-            all_sessions.extend(sessions)
-
-    # If no sessions found, show helpful error
-    if not all_sessions:
-        if agent == "auto":
-            sys.stderr.write(f"Error: No sessions found in WSL '{distro_name}'\n")
-            sys.stderr.write("\nTips:\n")
-            sys.stderr.write("  • Check that Claude/Codex/Gemini is installed in WSL\n")
-            sys.stderr.write("  • Try: agent-history lsh --wsl\n")
         else:
-            sys.stderr.write(f"Error: No {agent} sessions found in WSL '{distro_name}'\n")
-            sys.stderr.write("\nTips:\n")
-            sys.stderr.write(f"  • Check that {agent} is installed in WSL\n")
-            sys.stderr.write("  • Try: agent-history --agent auto lss --wsl\n")
-        sys.exit(1)
+            all_sessions.extend(
+                _scan_codex_gemini_sessions(
+                    scan_agent, patterns, since_date, until_date, sessions_dir, source
+                )
+            )
+
+    if not all_sessions:
+        _show_no_sessions_error(agent, f"WSL '{distro_name}'", "--wsl")
 
     source_label = f"WSL ({distro_name})"
     print_sessions_output(all_sessions, source_label, workspaces_only)
@@ -8736,84 +8879,85 @@ def cmd_list(args):
         _list_local_sessions(args, patterns, since_date, until_date)
 
 
-def cmd_convert(args):  # noqa: C901
+def _parse_file_to_markdown(jsonl_file: Path, agent_type: str) -> str:
+    """Parse a file to markdown using the appropriate parser for the agent type."""
+    if agent_type == AGENT_GEMINI:
+        return gemini_parse_json_to_markdown(jsonl_file)
+    if agent_type == AGENT_CODEX:
+        return codex_parse_jsonl_to_markdown(jsonl_file)
+    return parse_jsonl_to_markdown(jsonl_file)
+
+
+def _download_remote_file(remote_host: str, remote_path: str, local_path: Path) -> bool:
+    """Download a file from remote host via scp. Returns True on success."""
+    result = subprocess.run(
+        [get_command_path("scp"), f"{remote_host}:{remote_path}", str(local_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=SCP_TIMEOUT,
+    )
+    if result.returncode != 0:
+        sys.stderr.write(f"Error downloading file: {result.stderr}\n")
+        return False
+    return True
+
+
+def _convert_remote_file(args, remote_host: str):
+    """Convert a remote file to markdown."""
+    if not check_ssh_connection(remote_host):
+        sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+        sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+        sys.exit(1)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+
+    try:
+        if not _download_remote_file(remote_host, args.jsonl_file, tmp_path):
+            tmp_path.unlink()
+            sys.exit(1)
+
+        filename = Path(args.jsonl_file).name
+        output_file = Path(args.output) if args.output else Path(filename).with_suffix(".md")
+        agent_type = detect_agent_from_path(Path(args.jsonl_file))
+
+        markdown = _parse_file_to_markdown(tmp_path, agent_type)
+        output_file.write_text(markdown, encoding="utf-8")
+        print(output_file)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def _convert_local_file(args):
+    """Convert a local file to markdown."""
+    jsonl_file = Path(args.jsonl_file)
+
+    if not jsonl_file.exists():
+        sys.stderr.write(f"Error: {jsonl_file} not found\n")
+        sys.exit(1)
+
+    output_file = Path(args.output) if args.output else jsonl_file.with_suffix(".md")
+
+    try:
+        agent_type = detect_agent_from_path(jsonl_file)
+        markdown = _parse_file_to_markdown(jsonl_file, agent_type)
+        output_file.write_text(markdown, encoding="utf-8")
+        print(output_file)
+    except (OSError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"Error converting file: {e}\n")
+        sys.exit(1)
+
+
+def cmd_convert(args):
     """Convert a single .jsonl file to markdown."""
     remote_host = getattr(args, "remote", None)
 
     if remote_host:
-        # Handle remote file conversion
-        # Check SSH connectivity
-        if not check_ssh_connection(remote_host):
-            sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
-            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
-            sys.exit(1)
-
-        # Download file to temporary location
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-
-        try:
-            # Use scp to download the file
-            result = subprocess.run(
-                [get_command_path("scp"), f"{remote_host}:{args.jsonl_file}", str(tmp_path)],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=SCP_TIMEOUT,
-            )
-
-            if result.returncode != 0:
-                sys.stderr.write(f"Error downloading file: {result.stderr}\n")
-                tmp_path.unlink()
-                sys.exit(1)
-
-            # Convert the downloaded file
-            jsonl_file = tmp_path
-            filename = Path(args.jsonl_file).name
-            output_file = Path(args.output) if args.output else Path(filename).with_suffix(".md")
-
-            # Detect agent type from original remote path and use appropriate parser
-            agent_type = detect_agent_from_path(Path(args.jsonl_file))
-            if agent_type == AGENT_GEMINI:
-                markdown = gemini_parse_json_to_markdown(jsonl_file)
-            elif agent_type == AGENT_CODEX:
-                markdown = codex_parse_jsonl_to_markdown(jsonl_file)
-            else:
-                markdown = parse_jsonl_to_markdown(jsonl_file)
-            output_file.write_text(markdown, encoding="utf-8")
-
-            print(output_file)
-
-        finally:
-            # Clean up temporary file
-            if tmp_path.exists():
-                tmp_path.unlink()
-
+        _convert_remote_file(args, remote_host)
     else:
-        # Handle local file conversion
-        jsonl_file = Path(args.jsonl_file)
-
-        if not jsonl_file.exists():
-            sys.stderr.write(f"Error: {jsonl_file} not found\n")
-            sys.exit(1)
-
-        output_file = Path(args.output) if args.output else jsonl_file.with_suffix(".md")
-
-        try:
-            # Detect agent type and use appropriate parser
-            agent_type = detect_agent_from_path(jsonl_file)
-            if agent_type == AGENT_GEMINI:
-                markdown = gemini_parse_json_to_markdown(jsonl_file)
-            elif agent_type == AGENT_CODEX:
-                markdown = codex_parse_jsonl_to_markdown(jsonl_file)
-            else:
-                markdown = parse_jsonl_to_markdown(jsonl_file)
-            output_file.write_text(markdown, encoding="utf-8")
-
-            print(output_file)
-        except (OSError, json.JSONDecodeError) as e:
-            sys.stderr.write(f"Error converting file: {e}\n")
-            sys.exit(1)
+        _convert_local_file(args)
 
 
 def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) -> list:
@@ -9180,7 +9324,67 @@ def _get_export_output_path(
     return workspace_subdir / output_name, output_name
 
 
-def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noqa: C901
+def _read_session_messages(jsonl_file: Path, agent_type: str) -> Optional[list]:
+    """Read messages from a session file based on agent type.
+
+    Returns:
+        List of messages, or None if reading failed.
+    """
+    try:
+        if agent_type == AGENT_GEMINI:
+            messages, _ = gemini_read_json_messages(jsonl_file)
+        elif agent_type == AGENT_CODEX:
+            messages, _ = codex_read_jsonl_messages(jsonl_file)
+        else:
+            messages = read_jsonl_messages(jsonl_file)
+        return messages
+    except (OSError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"Error reading {jsonl_file.name}: {e}\n")
+        return None
+
+
+def _is_export_up_to_date(output_file: Path, jsonl_file: Path, force: bool) -> bool:
+    """Check if export output is already up-to-date.
+
+    Returns:
+        True if output is up-to-date and can be skipped.
+    """
+    if force:
+        return False
+    if not output_file.exists():
+        return False
+    return output_file.stat().st_mtime >= jsonl_file.stat().st_mtime
+
+
+def _export_single_session(
+    jsonl_file: Path,
+    output_file: Path,
+    output_name: str,
+    agent_type: str,
+    messages: list,
+    minimal: bool,
+    split_lines: Optional[int],
+):
+    """Export a single session to markdown file(s)."""
+    try:
+        # Codex/Gemini files don't support splitting yet; use direct export
+        if agent_type in (AGENT_CODEX, AGENT_GEMINI):
+            _write_single_file(
+                jsonl_file, output_file, minimal, messages=messages, agent=agent_type
+            )
+        elif split_lines and messages:
+            parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+            if parts:
+                _write_split_parts(parts, output_name, output_file)
+            else:
+                _write_single_file(jsonl_file, output_file, minimal, messages=messages)
+        else:
+            _write_single_file(jsonl_file, output_file, minimal, messages=messages)
+    except (OSError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
+
+
+def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
     """Export sessions to markdown files.
 
     Args:
@@ -9198,19 +9402,10 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noq
 
     for session in sessions:
         jsonl_file = session["file"]
-
-        # Detect agent type and use appropriate reader/parser
         agent_type = detect_agent_from_path(jsonl_file)
 
-        try:
-            if agent_type == AGENT_GEMINI:
-                messages, _ = gemini_read_json_messages(jsonl_file)
-            elif agent_type == AGENT_CODEX:
-                messages, _ = codex_read_jsonl_messages(jsonl_file)
-            else:
-                messages = read_jsonl_messages(jsonl_file)
-        except (OSError, json.JSONDecodeError) as e:
-            sys.stderr.write(f"Error reading {jsonl_file.name}: {e}\n")
+        messages = _read_session_messages(jsonl_file, agent_type)
+        if messages is None:
             continue
 
         ts_prefix = _extract_timestamp_prefix(messages)
@@ -9218,27 +9413,12 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noq
             session, ts_prefix, output_dir, flat, remote_host
         )
 
-        # Skip if up-to-date (incremental export)
-        if not force and output_file.exists():
-            if output_file.stat().st_mtime >= jsonl_file.stat().st_mtime:
-                continue
+        if _is_export_up_to_date(output_file, jsonl_file, force):
+            continue
 
-        try:
-            # Codex/Gemini files don't support splitting yet; use direct export
-            if agent_type in (AGENT_CODEX, AGENT_GEMINI):
-                _write_single_file(
-                    jsonl_file, output_file, minimal, messages=messages, agent=agent_type
-                )
-            elif split_lines and messages:
-                parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
-                if parts:
-                    _write_split_parts(parts, output_name, output_file)
-                else:
-                    _write_single_file(jsonl_file, output_file, minimal, messages=messages)
-            else:
-                _write_single_file(jsonl_file, output_file, minimal, messages=messages)
-        except (OSError, json.JSONDecodeError) as e:
-            sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
+        _export_single_session(
+            jsonl_file, output_file, output_name, agent_type, messages, minimal, split_lines
+        )
 
 
 def _write_split_parts(parts: list, output_name: str, output_file: Path):
@@ -11430,38 +11610,31 @@ def _dispatch_lsw(args):
     agent = getattr(args, "agent", None) or "auto"
 
     if getattr(args, "all_homes", False):
-
-        class LswAllArgs:
-            workspaces_only = True
-            since_date = None
-            until_date = None
-
-        LswAllArgs.remotes = remotes
-        LswAllArgs.patterns = patterns
-        LswAllArgs.agent = agent
-        cmd_list_all_homes(LswAllArgs())
+        list_args = ListCommandArgs(
+            patterns=patterns,
+            workspaces_only=True,
+            remotes=remotes,
+            agent=agent,
+        )
+        cmd_list_all_homes(list_args)
     elif local_flag and remotes:
         # --local with -r: show both local and remotes (additive)
-        class LswAdditiveArgs:
-            workspaces_only = True
-            since_date = None
-            until_date = None
-
-        LswAdditiveArgs.remotes = remotes
-        LswAdditiveArgs.patterns = patterns
-        LswAdditiveArgs.local_only = True  # Skip Windows/WSL scanning
-        LswAdditiveArgs.agent = agent
-        _dispatch_lsw_additive(LswAdditiveArgs())
+        list_args = ListCommandArgs(
+            patterns=patterns,
+            workspaces_only=True,
+            remotes=remotes,
+            local_only=True,
+            agent=agent,
+        )
+        _dispatch_lsw_additive(list_args)
     else:
-
-        class LswArgs:
-            remote = _resolve_remote_flag(args)
-            workspaces_only = True
-
-        LswArgs.patterns = patterns
-        LswArgs.workspace = patterns[0] if patterns and patterns[0] else ""
-        LswArgs.agent = agent
-        cmd_list(LswArgs())
+        list_args = ListCommandArgs(
+            patterns=patterns,
+            workspaces_only=True,
+            remote=_resolve_remote_flag(args),
+            agent=agent,
+        )
+        cmd_list(list_args)
 
 
 def _dispatch_lss_to_alias(alias_name: str, args):
@@ -11474,21 +11647,18 @@ def _dispatch_lss_to_alias(alias_name: str, args):
 
 def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
     """Handle lss with --local and -r flags (additive mode)."""
-    since_date = parse_date_with_validation(args.since, "--since")
-    until_date = parse_date_with_validation(args.until, "--until")
     agent = getattr(args, "agent", None) or "auto"
     patterns, _ = resolve_patterns_for_command(workspace_list, agent=agent)
 
-    class LssAdditiveArgs:
-        workspaces_only = False
-
-    LssAdditiveArgs.patterns = patterns
-    LssAdditiveArgs.since_date = since_date
-    LssAdditiveArgs.until_date = until_date
-    LssAdditiveArgs.remotes = remotes
-    LssAdditiveArgs.local_only = True
-    LssAdditiveArgs.agent = getattr(args, "agent", None) or "auto"
-    _dispatch_lss_additive(LssAdditiveArgs())
+    list_args = ListCommandArgs(
+        patterns=patterns,
+        since=args.since,
+        until=args.until,
+        remotes=remotes,
+        local_only=True,
+        agent=agent,
+    )
+    _dispatch_lss_additive(list_args)
 
 
 def _dispatch_lss_all_homes(args, workspace_list: list):
@@ -11505,15 +11675,14 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
         cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date, agent=agent)
         return
 
-    class LssAllArgs:
-        workspaces_only = False
-
-    LssAllArgs.patterns = patterns
-    LssAllArgs.since_date = since_date
-    LssAllArgs.until_date = until_date
-    LssAllArgs.remotes = lss_remotes
-    LssAllArgs.agent = getattr(args, "agent", None) or "auto"
-    cmd_list_all_homes(LssAllArgs())
+    list_args = ListCommandArgs(
+        patterns=patterns,
+        since=args.since,
+        until=args.until,
+        remotes=lss_remotes,
+        agent=agent,
+    )
+    cmd_list_all_homes(list_args)
 
 
 def _dispatch_lss_local(args, workspace_list: list):
@@ -11548,16 +11717,15 @@ def _dispatch_lss_local(args, workspace_list: list):
         _dispatch_lss_to_alias(alias_for_ws, args)
         return
 
-    class LssArgs:
-        since = args.since
-        until = args.until
-        remote = remote_value
-        workspaces_only = False
-        projects_dir = projects_dir_override
-        agent = getattr(args, "agent", None) or "auto"
-
-    LssArgs.patterns = patterns
-    cmd_list(LssArgs())
+    list_args = ListCommandArgs(
+        patterns=patterns,
+        since=args.since,
+        until=args.until,
+        remote=remote_value,
+        projects_dir=projects_dir_override,
+        agent=getattr(args, "agent", None) or "auto",
+    )
+    cmd_list(list_args)
 
 
 def _detect_projects_dir_override(workspace_inputs: list[str]) -> tuple[Path | None, bool]:
@@ -11673,12 +11841,11 @@ def _dispatch_export_single_file(args, jsonl_file: str):
     final_remotes = _resolve_remote_list(args)
     final_remote = final_remotes[0] if final_remotes else None
 
-    class ConvertArgs:
-        output = None
-        remote = final_remote
-
-    ConvertArgs.jsonl_file = jsonl_file
-    cmd_convert(ConvertArgs())
+    convert_args = ConvertCommandArgs(
+        jsonl_file=jsonl_file,
+        remote=final_remote,
+    )
+    cmd_convert(convert_args)
 
 
 def _dispatch_export_additive(args, output_dir: str, patterns: list, remotes: list):
@@ -11697,20 +11864,18 @@ def _dispatch_export_additive(args, output_dir: str, patterns: list, remotes: li
 
 def _dispatch_export_all_homes(args, output_dir: str, patterns: list, remotes: list):
     """Handle export with --all-homes flag."""
-
-    class ExportAllArgs:
-        workspace = ""
-
-    ExportAllArgs.patterns = patterns
-    ExportAllArgs.output_dir = output_dir
-    ExportAllArgs.remotes = remotes
-    ExportAllArgs.since = args.since
-    ExportAllArgs.until = args.until
-    ExportAllArgs.force = args.force
-    ExportAllArgs.minimal = args.minimal
-    ExportAllArgs.split = args.split
-    ExportAllArgs.agent = getattr(args, "agent", None) or "auto"
-    cmd_export_all(ExportAllArgs())
+    export_config = ExportAllConfig(
+        output_dir=output_dir,
+        patterns=patterns,
+        remotes=remotes,
+        since=args.since,
+        until=args.until,
+        force=args.force,
+        minimal=args.minimal,
+        split=args.split,
+        agent=getattr(args, "agent", None) or "auto",
+    )
+    cmd_export_all(export_config)
 
 
 def _resolve_export_targets(args, targets: list, output_dir: Path) -> tuple:
@@ -11830,37 +11995,33 @@ def _get_stats_remotes(args) -> list:
     return remotes
 
 
-def _build_sync_args(args, remotes: list):
-    """Build SyncArgs class for cmd_stats_sync."""
-
-    class SyncArgs:
-        force = args.force
-        all_homes = getattr(args, "all_homes", False)
-        patterns = args.workspace if args.workspace else [""]
-
-    SyncArgs.remotes = remotes
-    return SyncArgs()
+def _build_sync_args(args, remotes: list) -> SyncCommandArgs:
+    """Build SyncCommandArgs for cmd_stats_sync."""
+    return SyncCommandArgs(
+        patterns=args.workspace if args.workspace else [""],
+        remotes=remotes,
+        force=args.force,
+        all_homes=getattr(args, "all_homes", False),
+    )
 
 
-def _build_stats_args(args):
-    """Build StatsArgs class for cmd_stats."""
-
-    class StatsArgs:
-        workspace = args.workspace
-        source = args.source
-        since = args.since
-        until = args.until
-        tools = args.tools
-        models = args.models
-        time = getattr(args, "time", False)
-        by_workspace = getattr(args, "by_workspace", False)
-        by_day = getattr(args, "by_day", False)
-        all_workspaces = getattr(args, "all_workspaces", False)
-        top_ws = getattr(args, "top_ws", None)
-        this_only = getattr(args, "this_only", False)
-        agent = getattr(args, "agent", None) or "auto"
-
-    return StatsArgs()
+def _build_stats_args(args) -> StatsCommandArgs:
+    """Build StatsCommandArgs for cmd_stats."""
+    return StatsCommandArgs(
+        workspace=args.workspace,
+        source=args.source,
+        since=args.since,
+        until=args.until,
+        tools=args.tools,
+        models=args.models,
+        time=getattr(args, "time", False),
+        by_workspace=getattr(args, "by_workspace", False),
+        by_day=getattr(args, "by_day", False),
+        all_workspaces=getattr(args, "all_workspaces", False),
+        top_ws=getattr(args, "top_ws", None),
+        this_only=getattr(args, "this_only", False),
+        agent=getattr(args, "agent", None) or "auto",
+    )
 
 
 def _dispatch_stats(args):
