@@ -26,10 +26,11 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path, PureWindowsPath
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 __version__ = "1.5.1"
 
@@ -104,6 +105,82 @@ SECONDS_PER_MINUTE = 60
 DB_VERSION_TIME_TRACKING = 3  # Version that added time tracking
 DB_VERSION_AGENT_COLUMN = 4  # Version that added agent column with path-based detection
 DB_VERSION_GEMINI_TIMESTAMPS = 5  # Version that fixes Gemini timestamps
+
+
+# ============================================================================
+# Text Truncation Utilities (M4: Extracted helpers)
+# ============================================================================
+
+
+def _truncate_tool_output(output: str, max_len: int = MAX_TOOL_OUTPUT_LEN) -> str:
+    """Truncate tool output to max length with indicator.
+
+    Args:
+        output: Tool output string
+        max_len: Maximum length before truncation
+
+    Returns:
+        Original string if within limit, otherwise truncated with indicator
+    """
+    if len(output) <= max_len:
+        return output
+    return output[:max_len] + "\n... [truncated]"
+
+
+def _truncate_thought(thought: str, max_len: int = MAX_THOUGHT_LEN) -> str:
+    """Truncate thought description to max length.
+
+    Args:
+        thought: Thought description string
+        max_len: Maximum length before truncation
+
+    Returns:
+        Original string if within limit, otherwise truncated with ellipsis
+    """
+    if len(thought) <= max_len:
+        return thought
+    return thought[:max_len] + "..."
+
+
+# ============================================================================
+# JSON Serialization Utilities (L10: Extracted helpers)
+# ============================================================================
+
+
+def pretty_json(obj: Any) -> str:
+    """Format object as indented JSON.
+
+    Args:
+        obj: Object to serialize
+
+    Returns:
+        Pretty-printed JSON string
+    """
+    return json.dumps(obj, indent=2, ensure_ascii=False)
+
+
+def save_json(path: Path, data: dict[str, Any]) -> None:
+    """Save JSON to file with pretty formatting.
+
+    Args:
+        path: Path to save to
+        data: Dictionary to serialize
+    """
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(pretty_json(data))
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    """Load JSON from file.
+
+    Args:
+        path: Path to load from
+
+    Returns:
+        Parsed dictionary
+    """
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def codex_get_home_dir() -> Path:
@@ -192,8 +269,13 @@ class ExportConfig:
         """
 
         def get_field(name: str, default=None):
-            """Get field from overrides or args with fallback."""
-            return overrides.get(name, getattr(args, name, default))
+            """Get field from overrides or args with fallback.
+
+            Precedence: overrides > args > default (M1: explicit precedence)
+            """
+            if name in overrides:
+                return overrides[name]
+            return getattr(args, name, default)
 
         return cls(
             output_dir=get_field("output_dir", "."),
@@ -420,7 +502,43 @@ class _WindowsHomeCache:
         self._cache.clear()
 
 
-_windows_home_cache = _WindowsHomeCache()
+# Use holder dict to avoid global statement (PLW0603)
+_cache_holder: dict[str, _WindowsHomeCache] = {"instance": _WindowsHomeCache()}
+
+
+def _get_windows_home_cache() -> _WindowsHomeCache:
+    """Get the current Windows home cache instance."""
+    return _cache_holder["instance"]
+
+
+@contextmanager
+def windows_home_cache_context(cache: Optional[_WindowsHomeCache] = None):
+    """Context manager to temporarily override the Windows home cache.
+
+    This enables testing without affecting global state. When used in tests,
+    provides an isolated cache instance that doesn't affect other tests.
+
+    Args:
+        cache: Optional cache instance to use. If None, creates a new empty cache.
+
+    Yields:
+        The active cache instance.
+
+    Example:
+        def test_windows_home_caching():
+            cache = _WindowsHomeCache()
+            with windows_home_cache_context(cache):
+                # Test with isolated cache
+                result = get_windows_user_home("alice")
+                assert cache.has("alice")
+    """
+    old_cache = _cache_holder["instance"]
+    try:
+        _cache_holder["instance"] = cache if cache is not None else _WindowsHomeCache()
+        yield _cache_holder["instance"]
+    finally:
+        _cache_holder["instance"] = old_cache
+
 
 # Pattern for valid SSH remote host specifications
 # Allow: user@hostname, hostname, user@hostname:port, IPv4/IPv6
@@ -749,7 +867,11 @@ def parse_and_validate_dates(since_str: str, until_str: str) -> tuple:
     return since_date, until_date
 
 
-def is_date_in_range(dt, since_date, until_date) -> bool:
+def is_date_in_range(
+    dt: Optional[datetime],
+    since_date: Optional[datetime],
+    until_date: Optional[datetime],
+) -> bool:
     """Check if datetime is within date range (inclusive).
 
     Args:
@@ -772,6 +894,79 @@ def is_date_in_range(dt, since_date, until_date) -> bool:
         if check_date > until:
             return False
     return True
+
+
+# ============================================================================
+# Shared Session Filter Logic (H2: DRY, H6: Early Returns, H8: Flat Conditionals)
+# ============================================================================
+
+
+def _matches_workspace_pattern(
+    workspace: str,
+    pattern: str,
+    get_readable: Optional[Callable[[str], str]] = None,
+) -> bool:
+    """Check if workspace matches pattern with optional readable name lookup.
+
+    This is a shared helper that eliminates duplicate filter logic between
+    Codex and Gemini backends.
+
+    Args:
+        workspace: Encoded workspace identifier
+        pattern: Pattern to match (substring or Claude-style encoded)
+        get_readable: Optional function to get human-readable workspace name
+
+    Returns:
+        True if pattern matches workspace
+    """
+    # No pattern filter - match all
+    if not pattern:
+        return True
+
+    # Direct substring match
+    if pattern in workspace:
+        return True
+
+    # Try readable name if available
+    if get_readable:
+        readable = get_readable(workspace)
+        if pattern in readable:
+            return True
+    else:
+        readable = workspace
+
+    # Claude-style encoded pattern match (home-user-project -> /home/user/project)
+    pattern_as_path = "/" + pattern.replace("-", "/")
+    return pattern_as_path in readable
+
+
+def _session_matches_filters(
+    workspace: str,
+    modified: datetime,
+    pattern: str,
+    since_date: Optional[datetime],
+    until_date: Optional[datetime],
+    get_readable: Optional[Callable[[str], str]] = None,
+) -> bool:
+    """Check if session matches all filters.
+
+    Shared implementation for Codex and Gemini backends, eliminating
+    duplicate filter logic.
+
+    Args:
+        workspace: Workspace identifier
+        modified: Session modification datetime
+        pattern: Workspace pattern to match
+        since_date: Start date filter (inclusive)
+        until_date: End date filter (inclusive)
+        get_readable: Optional function to get human-readable workspace name
+
+    Returns:
+        True if session matches all filters
+    """
+    if not _matches_workspace_pattern(workspace, pattern, get_readable):
+        return False
+    return is_date_in_range(modified, since_date, until_date)
 
 
 def get_patterns_from_args(args) -> list:
@@ -930,9 +1125,14 @@ def collect_sessions_with_dedup(
         return list(sessions)
 
     # Filter out cached workspaces (only for Claude backend)
-    return [
-        s for s in sessions if s.get("agent") == AGENT_CODEX or is_native_workspace(s["workspace"])
-    ]
+    # M2: Extracted predicate for readability
+    def _should_include_session(session: dict[str, Any]) -> bool:
+        """Check if session should be included (Codex/Gemini or native workspace)."""
+        if session.get("agent") in (AGENT_CODEX, AGENT_GEMINI):
+            return True
+        return is_native_workspace(session["workspace"])
+
+    return [s for s in sessions if _should_include_session(s)]
 
 
 def format_session_line(session: dict, source_label: str) -> str:
@@ -960,6 +1160,18 @@ def print_sessions_output(sessions: list, source_label: str, workspaces_only: bo
         source_label: Source label for output
         workspaces_only: If True, print only unique workspace names
     """
+
+    # M3: Extracted Windows path filtering for testability
+    def _should_skip_windows_workspace(workspace: str) -> bool:
+        """Check if Windows workspace should be skipped (non-existent path)."""
+        if sys.platform != "win32" or not source_label.startswith("Windows"):
+            return False
+        path_str = workspace.replace(" [missing]", "")
+        try:
+            return not Path(path_str).exists()
+        except OSError:
+            return True  # Skip on error
+
     if workspaces_only:
         seen = set()
         ordered = []
@@ -971,14 +1183,8 @@ def print_sessions_output(sessions: list, source_label: str, workspaces_only: bo
             seen.add(key)
             ordered.append(s["workspace_readable"])
         for ws in sorted(ordered):
-            # On Windows, only filter non-existent paths for Windows sources
-            if sys.platform == "win32" and source_label.startswith("Windows"):
-                path_str = ws.replace(" [missing]", "")
-                try:
-                    if not Path(path_str).exists():
-                        continue
-                except Exception:
-                    pass
+            if _should_skip_windows_workspace(ws):
+                continue
             print(ws)
     else:
         print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
@@ -1077,7 +1283,7 @@ def _format_tool_use_block(block: dict) -> list:
     lines = [f"\n**[Tool Use: {tool_name}]**"]
     if tool_id:
         lines.append(f"Tool ID: `{tool_id}`")
-    lines.extend(["\nInput:", "```json", json.dumps(tool_input, indent=2), "```\n"])
+    lines.extend(["\nInput:", "```json", pretty_json(tool_input), "```\n"])
     return lines
 
 
@@ -1426,79 +1632,6 @@ def read_jsonl_messages(jsonl_file: Path):
     return messages
 
 
-def _generate_identifiers_metadata(msg: dict, uuid_to_index: dict) -> list:
-    """Generate core identifiers metadata with navigation links."""
-    lines = []
-    if msg.get("uuid"):
-        lines.append(f"- **UUID:** `{msg['uuid']}`")
-
-    if msg.get("parentUuid"):
-        parent_uuid = msg["parentUuid"]
-        if parent_uuid in uuid_to_index:
-            parent_msg_num = uuid_to_index[parent_uuid]
-            lines.append(
-                f"- **Parent UUID:** [`{parent_uuid}`](#msg-{parent_uuid}) *(→ Message {parent_msg_num})*"
-            )
-        else:
-            lines.append(f"- **Parent UUID:** `{parent_uuid}` *(in different session)*")
-
-    if msg.get("sessionId"):
-        lines.append(f"- **Session ID:** `{msg['sessionId']}`")
-    if msg.get("agentId"):
-        lines.append(f"- **Agent ID:** `{msg['agentId']}`")
-    if msg.get("requestId"):
-        lines.append(f"- **Request ID:** `{msg['requestId']}`")
-    return lines
-
-
-def _generate_environment_metadata(msg: dict) -> list:
-    """Generate environment info metadata."""
-    lines = []
-    if msg.get("cwd"):
-        lines.append(f"- **Working Directory:** `{msg['cwd']}`")
-    if msg.get("gitBranch"):
-        lines.append(f"- **Git Branch:** `{msg['gitBranch']}`")
-    if msg.get("version"):
-        lines.append(f"- **Version:** `{msg['version']}`")
-    if msg.get("userType"):
-        lines.append(f"- **User Type:** `{msg['userType']}`")
-    if msg.get("isSidechain") is not None:
-        lines.append(f"- **Is Sidechain:** `{msg['isSidechain']}`")
-    return lines
-
-
-def _generate_model_metadata(msg: dict) -> list:
-    """Generate model info and usage stats metadata."""
-    lines = []
-    if msg.get("model"):
-        lines.append(f"- **Model:** `{msg['model']}`")
-    if msg.get("stop_reason"):
-        lines.append(f"- **Stop Reason:** `{msg['stop_reason']}`")
-    if msg.get("stop_sequence"):
-        lines.append(f"- **Stop Sequence:** `{msg['stop_sequence']}`")
-
-    if msg.get("usage"):
-        usage = msg["usage"]
-        lines.append("- **Usage:**")
-        lines.append(f"  - Input tokens: {usage.get('input_tokens', 0)}")
-        lines.append(f"  - Output tokens: {usage.get('output_tokens', 0)}")
-        if usage.get("cache_creation_input_tokens"):
-            lines.append(f"  - Cache creation tokens: {usage['cache_creation_input_tokens']}")
-        if usage.get("cache_read_input_tokens"):
-            lines.append(f"  - Cache read tokens: {usage['cache_read_input_tokens']}")
-    return lines
-
-
-def _generate_full_metadata(msg: dict, uuid_to_index: dict) -> list:
-    """Generate complete metadata section for a message."""
-    lines = ["### Metadata", ""]
-    lines.extend(_generate_identifiers_metadata(msg, uuid_to_index))
-    lines.extend(_generate_environment_metadata(msg))
-    lines.extend(_generate_model_metadata(msg))
-    lines.append("")
-    return lines
-
-
 def _generate_message_section(
     msg: dict, msg_num: int, is_agent: bool, minimal: bool, uuid_to_index: dict
 ) -> list:
@@ -1523,9 +1656,9 @@ def _generate_message_section(
     lines.append(msg["content"])
     lines.append("")
 
-    # Add metadata section (skip in minimal mode)
+    # Add metadata section (skip in minimal mode) - uses consolidated function (H5)
     if not minimal:
-        lines.extend(_generate_full_metadata(msg, uuid_to_index))
+        lines.extend(_generate_message_metadata(msg, uuid_to_index))
 
     lines.append("---")
     lines.append("")
@@ -2230,18 +2363,35 @@ def _iter_numeric_subdirs(parent: Path):
             yield child
 
 
+def _is_date_before_cutoff(year: int, month: int, day: int, cutoff) -> bool:
+    """Check if date is before cutoff date.
+
+    M5: Extracted for testability.
+
+    Args:
+        year: Year component
+        month: Month component
+        day: Day component
+        cutoff: Cutoff datetime or date (or None)
+
+    Returns:
+        True if the date is before cutoff
+    """
+    if not cutoff:
+        return False
+    from datetime import date as date_type
+
+    folder_date = date_type(year, month, day)
+    since = cutoff.date() if hasattr(cutoff, "date") else cutoff
+    return folder_date < since
+
+
 def _iter_day_folders(month_dir: Path, year: int, month: int, since_dt):
     """Generate day folders within a month, filtering by since_dt."""
     for day_dir in _iter_numeric_subdirs(month_dir):
         day = int(day_dir.name)
-        if since_dt:
-            from datetime import date as date_type
-
-            folder_date = date_type(year, month, day)
-            since = since_dt.date() if hasattr(since_dt, "date") else since_dt
-            if folder_date < since:
-                continue
-        yield day_dir
+        if not _is_date_before_cutoff(year, month, day, since_dt):
+            yield day_dir
 
 
 def _iter_month_folders(year_dir: Path, year: int, since_dt):
@@ -2294,14 +2444,32 @@ def _remove_stale_entries(sessions_map: dict) -> int:
     return len(stale_keys)
 
 
-def codex_ensure_index_updated(sessions_dir: Path = None) -> dict:
+def _scan_folders_for_sessions(
+    folders: list[Path],
+    existing_sessions: dict[str, str],
+) -> dict[str, str]:
+    """Scan folders and add new sessions to the map.
+
+    Args:
+        folders: List of date folders to scan
+        existing_sessions: Current session->workspace mapping
+
+    Returns:
+        Updated session mapping (modifies in place and returns for chaining)
+    """
+    for day_dir in folders:
+        for jsonl_file in day_dir.glob("rollout-*.jsonl"):
+            file_key = str(jsonl_file)
+            if file_key not in existing_sessions:
+                workspace = codex_get_workspace_from_session(jsonl_file)
+                existing_sessions[file_key] = workspace
+    return existing_sessions
+
+
+def codex_ensure_index_updated(sessions_dir: Optional[Path] = None) -> dict[str, str]:
     """Ensure Codex session index is up-to-date.
 
-    This is the common function used by all Codex operations. It:
-    1. Loads existing index
-    2. Scans only new date folders since last_scan_date
-    3. Updates and saves the index
-    4. Returns the session->workspace mapping
+    Performs incremental indexing: only scans date folders since last update.
 
     Args:
         sessions_dir: Override sessions directory (for testing)
@@ -2309,40 +2477,24 @@ def codex_ensure_index_updated(sessions_dir: Path = None) -> dict:
     Returns:
         Dict mapping session file paths (str) to encoded workspace names
     """
-    if sessions_dir is None:
-        sessions_dir = codex_get_home_dir()
+    sessions_dir = sessions_dir or codex_get_home_dir()
 
     if not sessions_dir.exists():
         return {}
 
     index = codex_load_index()
-    last_scan = index.get("last_scan_date")
     sessions_map = index.get("sessions", {})
-    today = datetime.now().strftime("%Y-%m-%d")
 
-    # Clean up stale entries (files that no longer exist)
+    # Clean up deleted files
     _remove_stale_entries(sessions_map)
 
-    # Determine what to scan
-    if last_scan is None:
-        # First run: scan everything
-        folders_to_scan = _codex_date_folders_since(sessions_dir, None)
-    else:
-        # Incremental: scan from last_scan_date onwards
-        # We re-scan last_scan_date in case new sessions were added that day
-        folders_to_scan = _codex_date_folders_since(sessions_dir, last_scan)
+    # Incremental scan from last scan date (or full scan if first run)
+    folders = _codex_date_folders_since(sessions_dir, index.get("last_scan_date"))
+    _scan_folders_for_sessions(folders, sessions_map)
 
-    # Scan new folders
-    for day_dir in folders_to_scan:
-        for jsonl_file in day_dir.glob("rollout-*.jsonl"):
-            file_key = str(jsonl_file)
-            if file_key not in sessions_map:
-                workspace = codex_get_workspace_from_session(jsonl_file)
-                sessions_map[file_key] = workspace
-
-    # Update and save index
+    # Save updated index
     index["sessions"] = sessions_map
-    index["last_scan_date"] = today
+    index["last_scan_date"] = datetime.now().strftime("%Y-%m-%d")
     codex_save_index(index)
 
     return sessions_map
@@ -2365,23 +2517,17 @@ def _codex_build_session_dict(
 
 
 def _codex_session_matches_filters(
-    workspace: str, modified: datetime, pattern: str, since_date, until_date
+    workspace: str,
+    modified: datetime,
+    pattern: str,
+    since_date: Optional[datetime],
+    until_date: Optional[datetime],
 ) -> bool:
     """Check if a Codex session matches the given filters.
 
-    Pattern matching checks:
-    1. Direct substring match in workspace path
-    2. Claude-style encoded pattern (dashes converted to slashes)
+    Uses shared _session_matches_filters for DRY implementation.
     """
-    if pattern:
-        if pattern in workspace:
-            pass  # Direct match
-        else:
-            # Check Claude-style encoded pattern (home-user-project -> /home/user/project)
-            pattern_as_path = "/" + pattern.replace("-", "/")
-            if pattern_as_path not in workspace:
-                return False
-    return is_date_in_range(modified, since_date, until_date)
+    return _session_matches_filters(workspace, modified, pattern, since_date, until_date)
 
 
 def codex_scan_sessions(
@@ -2552,7 +2698,7 @@ def gemini_format_tool_call(tool_call: dict) -> str:
 
     if args:
         try:
-            args_str = json.dumps(args, indent=2)
+            args_str = pretty_json(args)
         except (TypeError, ValueError):
             args_str = str(args)
         lines.append(f"```json\n{args_str}\n```")
@@ -2564,9 +2710,8 @@ def gemini_format_tool_call(tool_call: dict) -> str:
                 func_resp = r.get("functionResponse", {})
                 output = func_resp.get("response", {}).get("output", "")
                 if output:
-                    # Truncate very long outputs
-                    if len(output) > MAX_TOOL_OUTPUT_LEN:
-                        output = output[:MAX_TOOL_OUTPUT_LEN] + "\n... [truncated]"
+                    # Use helper for consistent truncation (M4)
+                    output = _truncate_tool_output(output)
                     lines.append(f"**Result:**\n```\n{output}\n```")
 
     return "\n".join(lines)
@@ -2590,14 +2735,12 @@ def gemini_format_thoughts(thoughts: list) -> str:
         # Handle both dict format and potential string format
         if isinstance(thought, str):
             if thought.strip():
-                truncated = len(thought) > MAX_THOUGHT_LEN
-                text = thought[:MAX_THOUGHT_LEN] + "..." if truncated else thought
+                text = _truncate_thought(thought)
                 lines.append(f"- {text}")
         elif isinstance(thought, dict):
             subject = thought.get("subject", "")
             description = thought.get("description", "")
-            truncated = len(description) > MAX_THOUGHT_LEN
-            desc_text = description[:MAX_THOUGHT_LEN] + ("..." if truncated else "")
+            desc_text = _truncate_thought(description)
             if subject:
                 lines.append(f"- **{subject}**: {desc_text}")
             elif description:
@@ -2912,7 +3055,82 @@ def gemini_get_workspace_readable(workspace: str) -> str:
     return workspace
 
 
-def gemini_add_paths_to_index(paths: list) -> dict:
+def _has_gemini_sessions(project_hash: str, gemini_dir: Path) -> bool:
+    """Check if Gemini has sessions for this project hash.
+
+    Args:
+        project_hash: SHA-256 hash of project path
+        gemini_dir: Gemini home directory
+
+    Returns:
+        True if sessions exist for this hash
+    """
+    hash_dir = gemini_dir / project_hash / "chats"
+    return hash_dir.exists() and any(hash_dir.glob("session-*.json"))
+
+
+def _build_path_mapping(
+    project_str: str,
+    project_hash: str,
+    status: str,
+    path_missing: bool,
+) -> dict[str, Any]:
+    """Build a path mapping result dict.
+
+    Args:
+        project_str: Resolved path string
+        project_hash: SHA-256 hash of project path
+        status: Status string ('added', 'existing', 'no_sessions')
+        path_missing: Whether the path doesn't exist
+
+    Returns:
+        Mapping dict for the result
+    """
+    return {
+        "path": project_str,
+        "hash": project_hash[:HASH_DISPLAY_LEN],
+        "status": status,
+        "path_missing": path_missing,
+    }
+
+
+def _try_add_path_to_index(
+    path: Path,
+    index: dict[str, Any],
+    gemini_dir: Path,
+) -> tuple[str, dict[str, Any]]:
+    """Try to add a single path to the index.
+
+    Args:
+        path: Path to add
+        index: Current index dictionary
+        gemini_dir: Gemini home directory
+
+    Returns:
+        Tuple of (status, mapping_dict)
+    """
+    resolved = path.resolve()
+    project_hash = gemini_compute_project_hash(resolved)
+    project_str = str(resolved)
+    path_missing = not resolved.exists()
+
+    # No sessions for this hash
+    if not _has_gemini_sessions(project_hash, gemini_dir):
+        return "no_sessions", _build_path_mapping(
+            project_str, project_hash, "no_sessions", path_missing
+        )
+
+    # Already in index with same path
+    existing = index["hashes"].get(project_hash)
+    if existing == project_str:
+        return "existing", _build_path_mapping(project_str, project_hash, "existing", path_missing)
+
+    # Add to index
+    index["hashes"][project_hash] = project_str
+    return "added", _build_path_mapping(project_str, project_hash, "added", path_missing)
+
+
+def gemini_add_paths_to_index(paths: list[Path]) -> dict[str, Any]:
     """Add explicit paths to the Gemini hash→path index.
 
     For each path, computes its SHA-256 hash and checks if Gemini has
@@ -2924,68 +3142,28 @@ def gemini_add_paths_to_index(paths: list) -> dict:
     Returns:
         Dict with 'added', 'existing', 'no_sessions' counts and 'mappings' list
     """
-    result = {"added": 0, "existing": 0, "no_sessions": 0, "mappings": []}
-
     if not paths:
-        return result
+        return {"added": 0, "existing": 0, "no_sessions": 0, "mappings": []}
 
-    # Load existing index
     index = gemini_load_hash_index()
     gemini_dir = gemini_get_home_dir()
 
-    for path in paths:
-        resolved_path = path.resolve()
-        project_hash = gemini_compute_project_hash(resolved_path)
-        project_str = str(resolved_path)
-        path_missing = not resolved_path.exists()
+    # Process each path
+    results = [_try_add_path_to_index(p, index, gemini_dir) for p in paths]
 
-        # Check if sessions exist for this hash
-        hash_dir = gemini_dir / project_hash / "chats"
-        has_sessions = hash_dir.exists() and any(hash_dir.glob("session-*.json"))
+    # Aggregate results
+    counts = {
+        "added": sum(1 for status, _ in results if status == "added"),
+        "existing": sum(1 for status, _ in results if status == "existing"),
+        "no_sessions": sum(1 for status, _ in results if status == "no_sessions"),
+        "mappings": [mapping for _, mapping in results],
+    }
 
-        if not has_sessions:
-            result["no_sessions"] += 1
-            result["mappings"].append(
-                {
-                    "path": project_str,
-                    "hash": project_hash[:HASH_DISPLAY_LEN],
-                    "status": "no_sessions",
-                    "path_missing": path_missing,
-                }
-            )
-            continue
-
-        # Check if already in index
-        existing = index["hashes"].get(project_hash)
-        if existing == project_str:
-            result["existing"] += 1
-            result["mappings"].append(
-                {
-                    "path": project_str,
-                    "hash": project_hash[:HASH_DISPLAY_LEN],
-                    "status": "existing",
-                    "path_missing": path_missing,
-                }
-            )
-            continue
-
-        # Add to index
-        index["hashes"][project_hash] = project_str
-        result["added"] += 1
-        result["mappings"].append(
-            {
-                "path": project_str,
-                "hash": project_hash[:HASH_DISPLAY_LEN],
-                "status": "added",
-                "path_missing": path_missing,
-            }
-        )
-
-    # Save updated index
-    if result["added"] > 0:
+    # Save if we added anything
+    if counts["added"] > 0:
         gemini_save_hash_index(index)
 
-    return result
+    return counts
 
 
 # ============================================================================
@@ -3063,29 +3241,25 @@ def _gemini_build_session_dict(
 
 
 def _gemini_session_matches_filters(
-    workspace: str, modified: datetime, pattern: str, since_date, until_date
+    workspace: str,
+    modified: datetime,
+    pattern: str,
+    since_date: Optional[datetime],
+    until_date: Optional[datetime],
 ) -> bool:
     """Check if a Gemini session matches the given filters.
 
-    Pattern matching checks:
-    1. The workspace identifier (encoded path or hash)
-    2. The readable workspace name (for hash->path lookups)
-    3. Claude-style encoded pattern (dashes converted to slashes)
+    Uses shared _session_matches_filters with gemini_get_workspace_readable
+    for hash-to-path lookups.
     """
-    if pattern:
-        # Check workspace directly (encoded path or hash)
-        if pattern in workspace:
-            pass  # Match found
-        else:
-            readable = gemini_get_workspace_readable(workspace)
-            if pattern in readable:
-                pass  # Match found in readable name
-            else:
-                # Check Claude-style encoded pattern (home-user-project -> /home/user/project)
-                pattern_as_path = "/" + pattern.replace("-", "/")
-                if pattern_as_path not in readable:
-                    return False
-    return is_date_in_range(modified, since_date, until_date)
+    return _session_matches_filters(
+        workspace,
+        modified,
+        pattern,
+        since_date,
+        until_date,
+        get_readable=gemini_get_workspace_readable,
+    )
 
 
 def gemini_scan_sessions(
@@ -3174,6 +3348,65 @@ def get_active_backends(agent: str) -> list:
         return backends
 
 
+def _scan_backend(
+    backend: str,
+    pattern: str,
+    since_date,
+    until_date,
+    skip_message_count: bool,
+    **kwargs,
+) -> list[dict[str, Any]]:
+    """Scan sessions for a single backend.
+
+    M6: Consolidated agent dispatch for cleaner code and easier extension.
+
+    Args:
+        backend: Backend identifier (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI)
+        pattern: Workspace pattern to filter
+        since_date: Start date filter
+        until_date: End date filter
+        skip_message_count: Skip counting messages
+        **kwargs: Additional arguments for Claude backend
+
+    Returns:
+        List of session dicts with agent field set
+    """
+    try:
+        if backend == AGENT_CLAUDE:
+            sessions = get_workspace_sessions(
+                pattern,
+                since_date=since_date,
+                until_date=until_date,
+                skip_message_count=skip_message_count,
+                **kwargs,
+            )
+        elif backend == AGENT_CODEX:
+            sessions = codex_scan_sessions(
+                pattern=pattern,
+                since_date=since_date,
+                until_date=until_date,
+                skip_message_count=skip_message_count,
+            )
+        elif backend == AGENT_GEMINI:
+            sessions = gemini_scan_sessions(
+                pattern=pattern,
+                since_date=since_date,
+                until_date=until_date,
+                skip_message_count=skip_message_count,
+            )
+        else:
+            return []
+
+        # Ensure agent field is set
+        for s in sessions:
+            if "agent" not in s:
+                s["agent"] = backend
+        return sessions
+    except SystemExit:
+        # Claude backend may exit if projects dir not found
+        return []
+
+
 def get_unified_sessions(
     agent: str = "auto",
     pattern: str = "",
@@ -3198,38 +3431,17 @@ def get_unified_sessions(
     all_sessions = []
     backends = get_active_backends(agent)
 
+    # M6: Use consolidated backend dispatch
     for backend in backends:
-        if backend == AGENT_CLAUDE:
-            try:
-                sessions = get_workspace_sessions(
-                    pattern,
-                    since_date=since_date,
-                    until_date=until_date,
-                    skip_message_count=skip_message_count,
-                    **kwargs,
-                )
-                for s in sessions:
-                    s["agent"] = AGENT_CLAUDE
-                all_sessions.extend(sessions)
-            except SystemExit:
-                # get_claude_projects_dir() calls sys.exit if not found
-                pass
-        elif backend == AGENT_CODEX:
-            sessions = codex_scan_sessions(
-                pattern=pattern,
-                since_date=since_date,
-                until_date=until_date,
-                skip_message_count=skip_message_count,
-            )
-            all_sessions.extend(sessions)
-        elif backend == AGENT_GEMINI:
-            sessions = gemini_scan_sessions(
-                pattern=pattern,
-                since_date=since_date,
-                until_date=until_date,
-                skip_message_count=skip_message_count,
-            )
-            all_sessions.extend(sessions)
+        sessions = _scan_backend(
+            backend,
+            pattern=pattern,
+            since_date=since_date,
+            until_date=until_date,
+            skip_message_count=skip_message_count,
+            **kwargs,
+        )
+        all_sessions.extend(sessions)
 
     return sorted(all_sessions, key=lambda s: s["modified"], reverse=True)
 
@@ -3476,7 +3688,53 @@ def _is_windows_encoded_path(name: str) -> bool:
     return len(name) >= MIN_ENCODED_PATH_LEN and name[0].isalpha() and name[1:3] == "--"
 
 
-def _resolve_path_segments(parts: list, base_path: Path) -> list:
+def _build_current_path(base_path: Path, segments: list[str]) -> Path:
+    """Build current path from base and accumulated segments.
+
+    Args:
+        base_path: Base path
+        segments: List of path segments
+
+    Returns:
+        Combined path
+    """
+    return base_path / "/".join(segments) if segments else base_path
+
+
+def _find_longest_matching_segment(
+    parts: list[str],
+    start_idx: int,
+    current_path: Path,
+    unc_mode: bool,
+) -> tuple[Optional[str], int]:
+    """Find longest matching segment starting at start_idx.
+
+    Args:
+        parts: List of dash-split path components
+        start_idx: Starting index in parts
+        current_path: Current filesystem path
+        unc_mode: Whether in UNC path mode (skip is_dir check)
+
+    Returns:
+        Tuple of (matched_segment, parts_consumed) or (None, 0) if no match
+    """
+    for end_idx in range(len(parts), start_idx, -1):
+        candidate = "-".join(parts[start_idx:end_idx])
+        candidate_path = current_path / candidate
+
+        try:
+            exists = candidate_path.exists()
+            is_dir = candidate_path.is_dir() if not unc_mode else True
+
+            if exists and is_dir:
+                return candidate, end_idx - start_idx
+        except OSError:
+            continue
+
+    return None, 0
+
+
+def _resolve_path_segments(parts: list[str], base_path: Path) -> list[str]:
     """Resolve dash-separated parts to actual filesystem path segments.
 
     Tries progressively longer combinations of parts to handle directory
@@ -3489,37 +3747,20 @@ def _resolve_path_segments(parts: list, base_path: Path) -> list:
     Returns:
         List of resolved path segments
     """
-    path_segments = []
+    path_segments: list[str] = []
     i = 0
+    unc_mode = _is_wsl_unc_path(base_path)
 
     while i < len(parts):
-        # Build current path to check children against
-        if path_segments:
-            current_path = base_path / "/".join(path_segments)
+        current_path = _build_current_path(base_path, path_segments)
+
+        match, consumed = _find_longest_matching_segment(parts, i, current_path, unc_mode)
+
+        if match:
+            path_segments.append(match)
+            i += consumed
         else:
-            current_path = base_path
-
-        # Try progressively longer combinations (longest first)
-        best_match = None
-        best_match_len = 0
-
-        unc_mode = _is_wsl_unc_path(base_path)
-
-        for j in range(len(parts), i, -1):
-            candidate_segment = "-".join(parts[i:j])
-            candidate_path = current_path / candidate_segment
-
-            exists = candidate_path.exists()
-            is_directory = candidate_path.is_dir() if not unc_mode else True
-            if exists and is_directory:
-                best_match = candidate_segment
-                best_match_len = j - i
-                break
-
-        if best_match:
-            path_segments.append(best_match)
-            i += best_match_len
-        else:
+            # No match - use single part as-is
             path_segments.append(parts[i])
             i += 1
 
@@ -3902,18 +4143,89 @@ def _get_session_from_file(
     }
 
 
-def _is_session_in_date_range(session: dict, since_date, until_date) -> bool:
+def _is_session_in_date_range(
+    session: dict[str, Any],
+    since_date: Optional[datetime],
+    until_date: Optional[datetime],
+) -> bool:
     """Check if session modification date is within the specified range."""
     return is_date_in_range(session.get("modified"), since_date, until_date)
 
 
+def _is_valid_workspace_dir(
+    workspace_dir: Path,
+    projects_dir: Path,
+    include_cached: bool,
+) -> bool:
+    """Check if workspace directory is valid for scanning.
+
+    Centralizes validation logic for workspace directories, making the main
+    scanning loop cleaner and the validation independently testable.
+
+    Args:
+        workspace_dir: Workspace directory to validate
+        projects_dir: Parent projects directory
+        include_cached: Whether to include cached remote/WSL workspaces
+
+    Returns:
+        True if workspace is valid for scanning
+    """
+    if not workspace_dir.is_dir():
+        return False
+
+    dir_name = workspace_dir.name
+
+    if not validate_workspace_name(dir_name):
+        return False
+
+    if not is_safe_path(projects_dir, workspace_dir):
+        return False
+
+    if _should_skip_workspace(dir_name, include_cached):
+        return False
+
+    return True
+
+
+def _normalize_pattern(pattern: str) -> str:
+    """Normalize pattern for cross-platform matching.
+
+    Converts path separators to dashes for Claude-style encoded matching.
+    """
+    return pattern.replace("\\", "-").replace("/", "-")
+
+
+def _get_pattern_tail(pattern: str) -> str:
+    """Get last component of pattern for partial matching."""
+    return pattern.replace("\\", "/").split("/")[-1]
+
+
 def _workspace_matches_pattern(dir_name: str, workspace_pattern: str, match_all: bool) -> bool:
-    """Check if workspace matches the pattern."""
+    """Check if workspace matches the pattern.
+
+    Args:
+        dir_name: Workspace directory name (encoded path)
+        workspace_pattern: Pattern to match
+        match_all: If True, match all workspaces
+
+    Returns:
+        True if workspace matches pattern
+    """
     if match_all:
         return True
-    normalized = workspace_pattern.replace("\\", "-").replace("/", "-")
-    tail = workspace_pattern.replace("\\", "/").split("/")[-1]
-    return workspace_pattern in dir_name or normalized in dir_name or (tail and tail in dir_name)
+
+    # Direct match
+    if workspace_pattern in dir_name:
+        return True
+
+    # Normalized match (handle path separators)
+    normalized = _normalize_pattern(workspace_pattern)
+    if normalized in dir_name:
+        return True
+
+    # Tail match (just the last component)
+    tail = _get_pattern_tail(workspace_pattern)
+    return bool(tail and tail in dir_name)
 
 
 def get_workspace_sessions(
@@ -3947,14 +4259,11 @@ def get_workspace_sessions(
     sessions = []
 
     for workspace_dir in projects_dir.iterdir():
-        if not workspace_dir.is_dir():
+        # Use centralized validation (H10)
+        if not _is_valid_workspace_dir(workspace_dir, projects_dir, include_cached):
             continue
 
         dir_name = workspace_dir.name
-        if not validate_workspace_name(dir_name) or not is_safe_path(projects_dir, workspace_dir):
-            continue
-        if _should_skip_workspace(dir_name, include_cached):
-            continue
         if not _workspace_matches_pattern(dir_name, workspace_pattern, match_all):
             continue
 
@@ -4065,25 +4374,26 @@ def get_windows_home_from_wsl(username: str = None) -> Optional[Path]:
         Path to Windows home directory, or None if not found.
     """
     cache_key = username or "_default_"
+    cache = _get_windows_home_cache()
 
     # Check cache first to avoid slow filesystem operations
-    if _windows_home_cache.has(cache_key):
-        return _windows_home_cache.get(cache_key)
+    if cache.has(cache_key):
+        return cache.get(cache_key)
 
     if username:
         result = _find_user_home_on_drives(username)
-        _windows_home_cache.set(cache_key, result)
+        cache.set(cache_key, result)
         return result
 
     # Primary approach: use Windows USERPROFILE
     home = _get_userprofile_via_cmd()
     if home:
-        _windows_home_cache.set(cache_key, home)
+        cache.set(cache_key, home)
         return home
 
     # Fallback: scan all drives
     result = _scan_drives_for_claude_user()
-    _windows_home_cache.set(cache_key, result)
+    cache.set(cache_key, result)
     return result
 
 
@@ -6504,7 +6814,7 @@ def cmd_alias_remove(args):
 def cmd_alias_config_export(args):
     """Export aliases configuration to JSON (stdout)."""
     aliases_data = load_aliases()
-    print(json.dumps(aliases_data, indent=2))
+    print(pretty_json(aliases_data))
 
 
 def _collect_alias_sessions(alias_config: dict, since_date, until_date) -> list:
@@ -12390,7 +12700,7 @@ def _ensure_cleanup_settings():
 
     previous_value = data.get("cleanupPeriodDays")
     data["cleanupPeriodDays"] = DEFAULT_CLEANUP_DAYS
-    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    settings_path.write_text(pretty_json(data) + "\n")
 
     if previous_value == DEFAULT_CLEANUP_DAYS:
         print(f"{settings_path} already had cleanupPeriodDays={DEFAULT_CLEANUP_DAYS}")
