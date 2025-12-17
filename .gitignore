@@ -15,9 +15,13 @@ build/
 .coverage
 .coverage.*
 .coverage-data/
+.coverage-merged/
 .coveragerc
 htmlcov/
 .hypothesis/
+
+# Coverage orchestrator config (contains personal paths)
+scripts/coverage.config
 
 # IDE
 .vscode/

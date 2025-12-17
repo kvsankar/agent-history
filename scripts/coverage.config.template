@@ -1,0 +1,17 @@
+# Coverage Orchestrator Configuration
+# Copy this file to coverage.config and fill in your paths
+# DO NOT commit coverage.config - it contains personal paths
+
+[paths]
+# Windows project path (use forward slashes or escaped backslashes)
+windows_project = C:/Users/yourname/projects/claude-history
+
+# WSL project path (Linux-style path inside WSL)
+wsl_project = /home/yourname/projects/claude-history
+
+# WSL distribution name (run 'wsl -l' to see available distros)
+wsl_distro = Ubuntu
+
+[output]
+# Where to store merged coverage data (relative to Windows project)
+output_dir = .coverage-merged
