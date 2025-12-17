@@ -9,16 +9,26 @@ RUN apt-get update && apt-get install -y \
     rsync \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pytest
-RUN pip install --no-cache-dir pytest
+# Install pytest with coverage and test dependencies
+RUN pip install --no-cache-dir pytest pytest-cov coverage hypothesis
 
 # Create test user (non-root for realistic testing)
 RUN useradd -m -s /bin/bash tester
 
-# Copy SSH setup script
+# Create dummy Claude/Codex/Gemini directories (agent-history requires these to exist)
+# Also create /coverage for coverage data files
+RUN mkdir -p /home/tester/.claude/projects \
+    && mkdir -p /home/tester/.codex/sessions \
+    && mkdir -p /home/tester/.gemini/tmp \
+    && mkdir -p /home/tester/.claude-history \
+    && mkdir -p /coverage \
+    && chown -R tester:tester /home/tester/.claude /home/tester/.codex /home/tester/.gemini /home/tester/.claude-history /coverage
+
+# Copy SSH setup script and coverage script
 COPY scripts/setup-ssh-client.sh /usr/local/bin/
 COPY scripts/entrypoint-runner.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/setup-ssh-client.sh /usr/local/bin/entrypoint.sh
+COPY scripts/run-e2e-coverage.sh /usr/local/bin/run-e2e-coverage.sh
+RUN chmod +x /usr/local/bin/setup-ssh-client.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-e2e-coverage.sh
 
 # Working directory is the mounted app
 WORKDIR /app

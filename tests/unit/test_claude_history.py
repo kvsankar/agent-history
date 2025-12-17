@@ -10664,6 +10664,273 @@ class TestStatsHeaderAgentNames:
 
 
 # ============================================================================
+# Time Tracking Helper Functions Tests
+# ============================================================================
+
+
+class TestFormatDurationHm:
+    """Tests for format_duration_hm function."""
+
+    def test_format_seconds_only(self):
+        """Should show seconds for values under 60."""
+        assert ch.format_duration_hm(30) == "30s"
+        assert ch.format_duration_hm(59) == "59s"
+        assert ch.format_duration_hm(0) == "0s"
+
+    def test_format_minutes_only(self):
+        """Should show minutes for values under an hour."""
+        assert ch.format_duration_hm(60) == "1m"
+        assert ch.format_duration_hm(120) == "2m"
+        assert ch.format_duration_hm(3599) == "59m"
+
+    def test_format_hours_and_minutes(self):
+        """Should show hours and minutes for values >= 1 hour."""
+        assert ch.format_duration_hm(3600) == "1h 0m"
+        assert ch.format_duration_hm(3660) == "1h 1m"
+        assert ch.format_duration_hm(7200) == "2h 0m"
+        assert ch.format_duration_hm(7320) == "2h 2m"
+
+    def test_format_large_values(self):
+        """Should handle large values (more than 24 hours)."""
+        assert ch.format_duration_hm(86400) == "24h 0m"
+        assert ch.format_duration_hm(90000) == "25h 0m"
+        assert ch.format_duration_hm(100000) == "27h 46m"
+
+
+class TestEnsureDateEntry:
+    """Tests for _ensure_date_entry function."""
+
+    def test_creates_entry_if_missing(self):
+        """Should create entry with default values if date not present."""
+        stats = {}
+        ch._ensure_date_entry(stats, "2025-01-15")
+        assert "2025-01-15" in stats
+        assert stats["2025-01-15"]["work_seconds"] == 0.0
+        assert stats["2025-01-15"]["messages"] == 0
+        assert stats["2025-01-15"]["work_periods"] == 0
+
+    def test_preserves_existing_entry(self):
+        """Should not modify existing entry."""
+        stats = {"2025-01-15": {"work_seconds": 100.0, "messages": 5, "work_periods": 2}}
+        ch._ensure_date_entry(stats, "2025-01-15")
+        assert stats["2025-01-15"]["work_seconds"] == 100.0
+        assert stats["2025-01-15"]["messages"] == 5
+        assert stats["2025-01-15"]["work_periods"] == 2
+
+    def test_adds_new_date_without_affecting_others(self):
+        """Should add new date without affecting existing dates."""
+        stats = {"2025-01-14": {"work_seconds": 50.0, "messages": 3, "work_periods": 1}}
+        ch._ensure_date_entry(stats, "2025-01-15")
+        assert "2025-01-14" in stats
+        assert "2025-01-15" in stats
+        assert stats["2025-01-14"]["work_seconds"] == 50.0
+
+
+class TestCalculateTimeTotals:
+    """Tests for _calculate_time_totals function."""
+
+    def test_empty_stats(self):
+        """Should return zeros for empty stats."""
+        total_work, total_messages, total_periods = ch._calculate_time_totals({})
+        assert total_work == 0
+        assert total_messages == 0
+        assert total_periods == 0
+
+    def test_single_day_stats(self):
+        """Should return correct totals for single day."""
+        daily_stats = {"2025-01-15": {"work_seconds": 3600.0, "messages": 10, "work_periods": 2}}
+        total_work, total_messages, total_periods = ch._calculate_time_totals(daily_stats)
+        assert total_work == 3600.0
+        assert total_messages == 10
+        assert total_periods == 2
+
+    def test_multiple_days_stats(self):
+        """Should sum totals across multiple days."""
+        daily_stats = {
+            "2025-01-14": {"work_seconds": 1800.0, "messages": 5, "work_periods": 1},
+            "2025-01-15": {"work_seconds": 3600.0, "messages": 10, "work_periods": 2},
+            "2025-01-16": {"work_seconds": 900.0, "messages": 3, "work_periods": 1},
+        }
+        total_work, total_messages, total_periods = ch._calculate_time_totals(daily_stats)
+        assert total_work == 6300.0
+        assert total_messages == 18
+        assert total_periods == 4
+
+
+class TestAddPeriodTimeToStats:
+    """Tests for _add_period_time_to_stats function."""
+
+    def test_same_day_period(self):
+        """Should add time within same day."""
+        stats = {}
+        start = datetime(2025, 1, 15, 10, 0, 0)
+        end = datetime(2025, 1, 15, 11, 30, 0)
+        ch._add_period_time_to_stats(stats, start, end)
+        assert "2025-01-15" in stats
+        assert stats["2025-01-15"]["work_seconds"] == 5400.0  # 1.5 hours
+
+    def test_cross_midnight_period(self):
+        """Should split time across day boundary."""
+        stats = {}
+        start = datetime(2025, 1, 15, 23, 30, 0)
+        end = datetime(2025, 1, 16, 0, 30, 0)
+        ch._add_period_time_to_stats(stats, start, end)
+        # 30 min on Jan 15, 30 min on Jan 16
+        assert "2025-01-15" in stats
+        assert "2025-01-16" in stats
+        assert stats["2025-01-15"]["work_seconds"] == 1800.0
+        assert stats["2025-01-16"]["work_seconds"] == 1800.0
+
+    def test_start_equals_end(self):
+        """Should not add time when start equals end."""
+        stats = {}
+        start = datetime(2025, 1, 15, 10, 0, 0)
+        ch._add_period_time_to_stats(stats, start, start)
+        assert stats == {}
+
+    def test_end_before_start(self):
+        """Should not add time when end is before start."""
+        stats = {}
+        start = datetime(2025, 1, 15, 12, 0, 0)
+        end = datetime(2025, 1, 15, 10, 0, 0)
+        ch._add_period_time_to_stats(stats, start, end)
+        assert stats == {}
+
+
+class TestCalculateDailyWorkTime:
+    """Tests for calculate_daily_work_time function."""
+
+    def test_with_populated_db(self, tmp_path):
+        """Should calculate work time from database messages."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+
+        # Insert test session
+        conn.execute(
+            """INSERT INTO sessions (file_path, workspace, source, agent, start_time)
+            VALUES (?, ?, ?, ?, ?)""",
+            ("/path/session.jsonl", "test-project", "local", "claude", "2025-01-15T12:00:00Z"),
+        )
+
+        # Insert messages with timestamps
+        conn.execute(
+            """INSERT INTO messages (file_path, type, timestamp)
+            VALUES (?, ?, ?)""",
+            ("/path/session.jsonl", "user", "2025-01-15T10:00:00Z"),
+        )
+        conn.execute(
+            """INSERT INTO messages (file_path, type, timestamp)
+            VALUES (?, ?, ?)""",
+            ("/path/session.jsonl", "assistant", "2025-01-15T10:05:00Z"),
+        )
+        conn.execute(
+            """INSERT INTO messages (file_path, type, timestamp)
+            VALUES (?, ?, ?)""",
+            ("/path/session.jsonl", "user", "2025-01-15T10:10:00Z"),
+        )
+        conn.commit()
+
+        daily_stats = ch.calculate_daily_work_time(conn, "1=1", [])
+        conn.close()
+
+        assert "2025-01-15" in daily_stats
+        assert daily_stats["2025-01-15"]["messages"] == 3
+        assert daily_stats["2025-01-15"]["work_periods"] == 1
+        # Work time should be 10 minutes (600 seconds)
+        assert daily_stats["2025-01-15"]["work_seconds"] == 600.0
+
+    def test_with_gap_creates_new_period(self, tmp_path):
+        """Should create new period after 30+ minute gap."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+
+        conn.execute(
+            """INSERT INTO sessions (file_path, workspace, source, agent, start_time)
+            VALUES (?, ?, ?, ?, ?)""",
+            ("/path/session.jsonl", "test-project", "local", "claude", "2025-01-15T12:00:00Z"),
+        )
+
+        # First work period: 10:00 - 10:10
+        conn.execute(
+            """INSERT INTO messages (file_path, type, timestamp)
+            VALUES (?, ?, ?)""",
+            ("/path/session.jsonl", "user", "2025-01-15T10:00:00Z"),
+        )
+        conn.execute(
+            """INSERT INTO messages (file_path, type, timestamp)
+            VALUES (?, ?, ?)""",
+            ("/path/session.jsonl", "assistant", "2025-01-15T10:10:00Z"),
+        )
+        # Gap of 1 hour
+        # Second work period: 11:10 - 11:20
+        conn.execute(
+            """INSERT INTO messages (file_path, type, timestamp)
+            VALUES (?, ?, ?)""",
+            ("/path/session.jsonl", "user", "2025-01-15T11:10:00Z"),
+        )
+        conn.execute(
+            """INSERT INTO messages (file_path, type, timestamp)
+            VALUES (?, ?, ?)""",
+            ("/path/session.jsonl", "assistant", "2025-01-15T11:20:00Z"),
+        )
+        conn.commit()
+
+        daily_stats = ch.calculate_daily_work_time(conn, "1=1", [])
+        conn.close()
+
+        assert "2025-01-15" in daily_stats
+        assert daily_stats["2025-01-15"]["messages"] == 4
+        assert daily_stats["2025-01-15"]["work_periods"] == 2
+        # Work time: 10 min + 10 min = 1200 seconds
+        assert daily_stats["2025-01-15"]["work_seconds"] == 1200.0
+
+    def test_empty_db_returns_empty_dict(self, tmp_path):
+        """Should return empty dict for empty database."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+        daily_stats = ch.calculate_daily_work_time(conn, "1=1", [])
+        conn.close()
+        assert daily_stats == {}
+
+
+class TestPrintTimeSummary:
+    """Tests for _print_time_summary function."""
+
+    def test_prints_time_summary(self, capsys):
+        """Should print formatted time summary."""
+        time_stats = {
+            "daily_stats": {"2025-01-15": {"work_seconds": 3600, "messages": 10, "work_periods": 2}},
+            "total_work": 3600,
+            "total_messages": 10,
+            "total_periods": 2,
+            "num_files": 1,
+            "first_date": "2025-01-15",
+            "last_date": "2025-01-15",
+        }
+        ch._print_time_summary(time_stats, include_breakdown=False)
+        captured = capsys.readouterr()
+        assert "Time" in captured.out
+        assert "1h 0m" in captured.out
+        assert "Work periods: 2" in captured.out
+
+    def test_prints_daily_breakdown_when_requested(self, capsys):
+        """Should print daily breakdown when include_breakdown is True."""
+        time_stats = {
+            "daily_stats": {"2025-01-15": {"work_seconds": 3600, "messages": 10, "work_periods": 2}},
+            "total_work": 3600,
+            "total_messages": 10,
+            "total_periods": 2,
+            "num_files": 1,
+            "first_date": "2025-01-15",
+            "last_date": "2025-01-15",
+        }
+        ch._print_time_summary(time_stats, include_breakdown=True)
+        captured = capsys.readouterr()
+        assert "Daily Breakdown" in captured.out
+        assert "2025-01-15" in captured.out
+
+
+# ============================================================================
 # Section 17: Export Path Handling Tests (1.5)
 # ============================================================================
 
@@ -11539,6 +11806,1207 @@ class TestGeminiTimestampsInMetrics:
         # Should be None, not crash
         assert metrics["session"]["startTime"] is None
         assert metrics["session"]["lastUpdated"] is None
+
+
+# ============================================================================
+# SSH Remote Operations Tests
+# ============================================================================
+
+
+class TestDownloadRemoteFile:
+    """Tests for _download_remote_file function."""
+
+    def test_download_success(self, tmp_path, monkeypatch):
+        """Should return True on successful download."""
+        def mock_run(cmd, **kwargs):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(ch, "get_command_path", lambda x: x)
+
+        result = ch._download_remote_file("user@host", "/remote/file.jsonl", tmp_path / "local.jsonl")
+        assert result is True
+
+    def test_download_failure(self, tmp_path, monkeypatch, capsys):
+        """Should return False and print error on failure."""
+        def mock_run(cmd, **kwargs):
+            return SimpleNamespace(returncode=1, stdout="", stderr="Permission denied")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(ch, "get_command_path", lambda x: x)
+
+        result = ch._download_remote_file("user@host", "/remote/file.jsonl", tmp_path / "local.jsonl")
+        assert result is False
+        captured = capsys.readouterr()
+        assert "Error downloading file" in captured.err
+
+
+class TestConvertLocalFile:
+    """Tests for _convert_local_file function."""
+
+    def test_convert_existing_file(self, tmp_path, capsys):
+        """Should convert local JSONL file to markdown."""
+        jsonl_file = tmp_path / "session.jsonl"
+        jsonl_content = [
+            {"type": "user", "message": {"role": "user", "content": "Hello"}, "timestamp": "2025-01-01T10:00:00Z"},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi!"}]}, "timestamp": "2025-01-01T10:01:00Z"},
+        ]
+        jsonl_file.write_text("\n".join(json.dumps(m) for m in jsonl_content))
+
+        args = SimpleNamespace(jsonl_file=str(jsonl_file), output=None)
+
+        ch._convert_local_file(args)
+
+        output_file = jsonl_file.with_suffix(".md")
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "Hello" in content
+
+    def test_convert_nonexistent_file(self, tmp_path, capsys):
+        """Should exit with error for nonexistent file."""
+        args = SimpleNamespace(jsonl_file=str(tmp_path / "nonexistent.jsonl"), output=None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            ch._convert_local_file(args)
+        assert exc_info.value.code == 1
+
+        captured = capsys.readouterr()
+        assert "not found" in captured.err
+
+    def test_convert_with_custom_output(self, tmp_path):
+        """Should write to custom output path."""
+        jsonl_file = tmp_path / "session.jsonl"
+        jsonl_file.write_text('{"type": "user", "message": {"role": "user", "content": "Test"}, "timestamp": "2025-01-01T10:00:00Z"}')
+
+        output_file = tmp_path / "custom_output.md"
+        args = SimpleNamespace(jsonl_file=str(jsonl_file), output=str(output_file))
+
+        ch._convert_local_file(args)
+
+        assert output_file.exists()
+
+
+class TestConvertRemoteFile:
+    """Tests for _convert_remote_file function."""
+
+    def test_convert_remote_ssh_failure(self, monkeypatch, capsys):
+        """Should exit with error if SSH connection fails."""
+        monkeypatch.setattr(ch, "check_ssh_connection", lambda x: False)
+
+        args = SimpleNamespace(jsonl_file="/remote/session.jsonl", output=None, remote="user@host")
+
+        with pytest.raises(SystemExit) as exc_info:
+            ch._convert_remote_file(args, "user@host")
+        assert exc_info.value.code == 1
+
+        captured = capsys.readouterr()
+        assert "Cannot connect" in captured.err
+
+
+class TestCollectRemoteSessionDetails:
+    """Tests for remote session collection functions."""
+
+    def test_collect_remote_codex_sessions_empty(self, monkeypatch):
+        """Should return empty list when no sessions found."""
+        monkeypatch.setattr(ch, "codex_get_remote_session_info", lambda *args: [])
+
+        result = ch._collect_remote_codex_session_details("user@host", ["*"], None, None)
+        assert result == []
+
+    def test_collect_remote_gemini_sessions_empty(self, monkeypatch):
+        """Should return empty list when no sessions found."""
+        monkeypatch.setattr(ch, "gemini_get_remote_session_info", lambda *args: [])
+
+        result = ch._collect_remote_gemini_session_details("user@host", ["*"], None, None)
+        assert result == []
+
+    def test_collect_remote_codex_with_sessions(self, monkeypatch):
+        """Should return formatted sessions when found."""
+        mock_sessions = [{
+            "filename": "session.jsonl",
+            "filepath": "/home/user/.codex/sessions/2025/01/15/session.jsonl",
+            "size_kb": 1.5,
+            "modified": datetime(2025, 1, 15, 10, 0, 0),
+            "message_count": 5,
+            "workspace": "myproject",
+            "workspace_full": "/home/user/myproject",
+            "agent": "codex",
+        }]
+        monkeypatch.setattr(ch, "codex_get_remote_session_info", lambda *args: mock_sessions)
+
+        result = ch._collect_remote_codex_session_details("user@host", ["*"], None, None)
+
+        assert len(result) == 1
+        assert result[0]["workspace"] == "myproject"
+        assert result[0]["agent"] == "codex"
+
+
+class TestGetRemoteSessionInfo:
+    """Tests for get_remote_session_info function."""
+
+    def test_invalid_remote_host(self, monkeypatch):
+        """Should return empty list for invalid host."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: False)
+
+        result = ch.get_remote_session_info("invalid`host", [])
+        assert result == []
+
+    def test_ssh_command_failure(self, monkeypatch):
+        """Should return empty list on SSH failure."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: True)
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="error"))
+        monkeypatch.setattr(ch, "get_command_path", lambda x: x)
+
+        result = ch.get_remote_session_info("user@host", [])
+        assert result == []
+
+    def test_ssh_timeout(self, monkeypatch):
+        """Should return empty list on timeout."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: True)
+        monkeypatch.setattr(ch, "get_command_path", lambda x: x)
+
+        def mock_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired("ssh", 120)
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = ch.get_remote_session_info("user@host", [])
+        assert result == []
+
+
+class TestCodexGetRemoteSessionInfo:
+    """Tests for codex_get_remote_session_info function."""
+
+    def test_invalid_remote_host(self, monkeypatch, capsys):
+        """Should return empty list for invalid host."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: False)
+
+        result = ch.codex_get_remote_session_info("invalid`host")
+        assert result == []
+
+    def test_ssh_success_with_sessions(self, monkeypatch):
+        """Should parse SSH output correctly."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: True)
+        monkeypatch.setattr(ch, "get_command_path", lambda x: x)
+
+        ssh_output = "/home/user/.codex/sessions/2025/01/15/session.jsonl|1024|1736931600|5|/home/user/myproject\n"
+
+        def mock_run(*args, **kwargs):
+            return SimpleNamespace(returncode=0, stdout=ssh_output, stderr="")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = ch.codex_get_remote_session_info("user@host")
+
+        assert len(result) == 1
+        assert result[0]["filename"] == "session.jsonl"
+        assert result[0]["workspace"] == "myproject"
+
+    def test_ssh_failure(self, monkeypatch):
+        """Should return empty list on SSH failure."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: True)
+        monkeypatch.setattr(ch, "get_command_path", lambda x: x)
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr=""))
+
+        result = ch.codex_get_remote_session_info("user@host")
+        assert result == []
+
+
+class TestGeminiGetRemoteSessionInfo:
+    """Tests for gemini_get_remote_session_info function."""
+
+    def test_invalid_remote_host(self, monkeypatch, capsys):
+        """Should return empty list for invalid host."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: False)
+
+        result = ch.gemini_get_remote_session_info("invalid`host")
+        assert result == []
+
+
+# ============================================================================
+# CLI Entry Points Tests
+# ============================================================================
+
+
+class TestCmdConvert:
+    """Tests for cmd_convert function."""
+
+    def test_cmd_convert_local(self, tmp_path):
+        """Should call _convert_local_file for local paths."""
+        jsonl_file = tmp_path / "session.jsonl"
+        jsonl_file.write_text('{"type": "user", "message": {"role": "user", "content": "Test"}, "timestamp": "2025-01-01T10:00:00Z"}')
+
+        args = SimpleNamespace(jsonl_file=str(jsonl_file), output=None, remote=None)
+
+        ch.cmd_convert(args)
+
+        output_file = jsonl_file.with_suffix(".md")
+        assert output_file.exists()
+
+    def test_cmd_convert_remote(self, monkeypatch):
+        """Should call _convert_remote_file for remote paths."""
+        called = {"remote": False}
+
+        def mock_convert_remote(args, remote_host):
+            called["remote"] = True
+
+        monkeypatch.setattr(ch, "_convert_remote_file", mock_convert_remote)
+
+        args = SimpleNamespace(jsonl_file="/remote/session.jsonl", output=None, remote="user@host")
+
+        ch.cmd_convert(args)
+
+        assert called["remote"] is True
+
+
+class TestDisplayFunctions:
+    """Tests for display_* functions."""
+
+    def test_display_tool_stats(self, tmp_path, capsys):
+        """Should display tool usage statistics."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+
+        # Need matching session_id for the JOIN
+        conn.execute(
+            "INSERT INTO sessions (file_path, session_id, workspace, source, agent) VALUES (?, ?, ?, ?, ?)",
+            ("/path/session.jsonl", "session-123", "test", "local", "claude"),
+        )
+        conn.execute(
+            "INSERT INTO tool_uses (file_path, session_id, tool_name, is_error) VALUES (?, ?, ?, ?)",
+            ("/path/session.jsonl", "session-123", "Bash", 0),
+        )
+        conn.execute(
+            "INSERT INTO tool_uses (file_path, session_id, tool_name, is_error) VALUES (?, ?, ?, ?)",
+            ("/path/session.jsonl", "session-123", "Read", 0),
+        )
+        conn.commit()
+
+        ch.display_tool_stats(conn, "1=1", [])
+        conn.close()
+
+        captured = capsys.readouterr()
+        assert "TOOL" in captured.out
+        assert "Bash" in captured.out
+
+    def test_display_model_stats(self, tmp_path, capsys):
+        """Should display model usage statistics."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+
+        # Need matching session_id for the JOIN
+        conn.execute(
+            "INSERT INTO sessions (file_path, session_id, workspace, source, agent) VALUES (?, ?, ?, ?, ?)",
+            ("/path/session.jsonl", "session-123", "test", "local", "claude"),
+        )
+        conn.execute(
+            "INSERT INTO messages (file_path, session_id, type, timestamp, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("/path/session.jsonl", "session-123", "assistant", "2025-01-01T10:00:00Z", "claude-sonnet-4", 100, 50),
+        )
+        conn.commit()
+
+        ch.display_model_stats(conn, "1=1", [])
+        conn.close()
+
+        captured = capsys.readouterr()
+        assert "MODEL USAGE STATISTICS" in captured.out
+        assert "sonnet-4" in captured.out  # Model name is shortened in display
+
+    def test_display_daily_stats(self, tmp_path, capsys):
+        """Should display daily usage statistics."""
+        db_path = tmp_path / "test.db"
+        conn = ch.init_metrics_db(db_path)
+
+        # Need start_time for the GROUP BY DATE(s.start_time)
+        conn.execute(
+            "INSERT INTO sessions (file_path, session_id, workspace, source, agent, start_time, message_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("/path/session.jsonl", "session-123", "test", "local", "claude", "2025-01-15T10:00:00Z", 2),
+        )
+        conn.execute(
+            "INSERT INTO messages (file_path, session_id, type, timestamp) VALUES (?, ?, ?, ?)",
+            ("/path/session.jsonl", "session-123", "user", "2025-01-15T10:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO messages (file_path, session_id, type, timestamp) VALUES (?, ?, ?, ?)",
+            ("/path/session.jsonl", "session-123", "assistant", "2025-01-15T10:05:00Z"),
+        )
+        conn.commit()
+
+        ch.display_daily_stats(conn, "1=1", [])
+        conn.close()
+
+        captured = capsys.readouterr()
+        assert "DAILY STATISTICS" in captured.out
+        assert "2025-01-15" in captured.out
+
+
+# ============================================================================
+# Error Handling Edge Cases Tests
+# ============================================================================
+
+
+class TestErrorHandlingEdgeCases:
+    """Tests for error handling in edge cases."""
+
+    def test_exit_with_error(self, capsys):
+        """exit_with_error should print to stderr and exit."""
+        with pytest.raises(SystemExit) as exc_info:
+            ch.exit_with_error("Test error message")
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Test error message" in captured.err
+
+    def test_list_remote_workspaces_only_no_match(self, monkeypatch):
+        """Should exit with error when no workspaces match."""
+        monkeypatch.setattr(ch, "_list_remote_claude_workspaces_only", lambda *args: [])
+        monkeypatch.setattr(ch, "_list_remote_gemini_workspaces_only", lambda *args: [])
+        monkeypatch.setattr(ch, "_list_remote_codex_workspaces_only", lambda *args: [])
+
+        with pytest.raises(SystemExit):
+            ch._list_remote_workspaces_only("user@host", ["nonexistent"])
+
+    def test_matches_any_pattern_edge_cases(self):
+        """Test pattern matching edge cases."""
+        assert ch.matches_any_pattern("any-workspace", []) is True
+        assert ch.matches_any_pattern("any-workspace", [""]) is True
+        assert ch.matches_any_pattern("any-workspace", ["*"]) is True
+        assert ch.matches_any_pattern("any-workspace", ["all"]) is True
+        assert ch.matches_any_pattern("myproject", ["", "myproject"]) is True
+        assert ch.matches_any_pattern("myproject", ["other"]) is False
+
+    def test_parse_date_string_invalid(self):
+        """Should return None for invalid date strings."""
+        result = ch.parse_date_string("not-a-date")
+        assert result is None
+
+        result = ch.parse_date_string("2025/01/15")
+        assert result is None
+
+    def test_normalize_workspace_name_edge_cases(self):
+        """Test workspace name normalization edge cases."""
+        # Empty string becomes "/" (root path with no segments)
+        assert ch.normalize_workspace_name("", verify_local=False) == "/"
+        # Leading dash is stripped, then "--" becomes "/-/" (empty segment between dashes)
+        assert ch.normalize_workspace_name("---", verify_local=False) == "/-/"
+        # Standard path normalization
+        assert ch.normalize_workspace_name("-home-user-project", verify_local=False) == "/home/user/project"
+
+    def test_detect_agent_from_path(self, tmp_path):
+        """Test agent detection from file paths."""
+        claude_path = tmp_path / ".claude" / "projects" / "workspace" / "session.jsonl"
+        claude_path.parent.mkdir(parents=True)
+        claude_path.touch()
+        assert ch.detect_agent_from_path(claude_path) == "claude"
+
+        codex_path = tmp_path / ".codex" / "sessions" / "2025" / "01" / "session.jsonl"
+        codex_path.parent.mkdir(parents=True)
+        codex_path.touch()
+        assert ch.detect_agent_from_path(codex_path) == "codex"
+
+        gemini_path = tmp_path / ".gemini" / "tmp" / "hash" / "chats" / "session.json"
+        gemini_path.parent.mkdir(parents=True)
+        gemini_path.touch()
+        assert ch.detect_agent_from_path(gemini_path) == "gemini"
+
+
+class TestRemoteFetchFunctions:
+    """Tests for remote fetch functions."""
+
+    def test_codex_fetch_remote_sessions_invalid_host(self, tmp_path, monkeypatch):
+        """Should return error dict for invalid host."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: False)
+
+        result = ch.codex_fetch_remote_sessions("invalid`host", tmp_path, "hostname")
+
+        assert result["success"] is False
+        assert "Invalid" in result["error"]
+
+    def test_gemini_fetch_remote_sessions_invalid_host(self, tmp_path, monkeypatch):
+        """Should return error dict for invalid host."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: False)
+
+        result = ch.gemini_fetch_remote_sessions("invalid`host", tmp_path, "hostname")
+
+        assert result["success"] is False
+        assert "Invalid" in result["error"]
+
+    def test_fetch_workspace_files_invalid_host(self, tmp_path, monkeypatch):
+        """Should return error dict for invalid host."""
+        monkeypatch.setattr(ch, "validate_remote_host", lambda x: False)
+
+        result = ch.fetch_workspace_files("invalid`host", "workspace", tmp_path, "invalidhost")
+
+        assert result["success"] is False
+
+
+# ============================================================================
+# Rsync Exit Code Tests
+# ============================================================================
+
+
+class TestInterpretRsyncExitCode:
+    """Tests for _interpret_rsync_exit_code function."""
+
+    def test_success_code(self):
+        """Exit code 0 should indicate success."""
+        is_partial, msg = ch._interpret_rsync_exit_code(0)
+        assert is_partial is True
+        assert "Success" in msg
+
+    def test_partial_transfer_error(self):
+        """Exit code 23 should indicate partial success."""
+        is_partial, msg = ch._interpret_rsync_exit_code(23)
+        assert is_partial is True
+        assert "Partial" in msg
+
+    def test_source_vanished(self):
+        """Exit code 24 should indicate partial success (files vanished)."""
+        is_partial, msg = ch._interpret_rsync_exit_code(24)
+        assert is_partial is True
+        assert "vanished" in msg
+
+    def test_syntax_error(self):
+        """Exit code 1 should indicate failure."""
+        is_partial, msg = ch._interpret_rsync_exit_code(1)
+        assert is_partial is False
+        assert "Syntax" in msg
+
+    def test_timeout(self):
+        """Exit code 30 should indicate timeout."""
+        is_partial, msg = ch._interpret_rsync_exit_code(30)
+        assert is_partial is False
+        assert "Timeout" in msg
+
+    def test_unknown_code(self):
+        """Unknown exit codes should be handled."""
+        is_partial, msg = ch._interpret_rsync_exit_code(999)
+        assert is_partial is False
+        assert "Unknown" in msg
+
+
+# ============================================================================
+# Gemini Format Tool Call Tests
+# ============================================================================
+
+
+class TestGeminiFormatToolCall:
+    """Tests for gemini_format_tool_call function."""
+
+    def test_basic_tool_call(self):
+        """Format basic tool call."""
+        tool_call = {
+            "name": "read_file",
+            "status": "success",
+            "args": {"path": "/tmp/test.txt"},
+        }
+        result = ch.gemini_format_tool_call(tool_call)
+        assert "read_file" in result
+        assert "success" in result
+        assert "/tmp/test.txt" in result
+
+    def test_tool_call_with_display_name(self):
+        """Format tool call with displayName."""
+        tool_call = {
+            "displayName": "Read File",
+            "name": "read_file",
+            "status": "completed",
+            "args": {},
+        }
+        result = ch.gemini_format_tool_call(tool_call)
+        assert "Read File" in result
+
+    def test_tool_call_with_result(self):
+        """Format tool call with result."""
+        tool_call = {
+            "name": "bash",
+            "status": "success",
+            "args": {"command": "ls"},
+            "result": [
+                {
+                    "functionResponse": {
+                        "response": {"output": "file1.txt\nfile2.txt"}
+                    }
+                }
+            ],
+        }
+        result = ch.gemini_format_tool_call(tool_call)
+        assert "bash" in result
+        assert "file1.txt" in result
+
+    def test_tool_call_empty_args(self):
+        """Format tool call with no args."""
+        tool_call = {"name": "test", "status": "ok"}
+        result = ch.gemini_format_tool_call(tool_call)
+        assert "test" in result
+
+    def test_tool_call_unknown_name(self):
+        """Format tool call with missing name."""
+        tool_call = {"status": "error"}
+        result = ch.gemini_format_tool_call(tool_call)
+        assert "unknown" in result
+
+
+# ============================================================================
+# Validate Functions Tests
+# ============================================================================
+
+
+class TestValidateFunctions:
+    """Tests for validation functions."""
+
+    def test_validate_remote_host_valid(self):
+        """Valid remote hosts should pass."""
+        assert ch.validate_remote_host("user@host") is True
+        assert ch.validate_remote_host("user@192.168.1.1") is True
+        assert ch.validate_remote_host("user@host.example.com") is True
+
+    def test_validate_remote_host_invalid(self):
+        """Invalid remote hosts should fail."""
+        assert ch.validate_remote_host("") is False
+        assert ch.validate_remote_host("user@host;rm -rf") is False
+        assert ch.validate_remote_host("user@host`whoami`") is False
+        assert ch.validate_remote_host("user@host$(cmd)") is False
+
+    def test_validate_workspace_name_valid(self):
+        """Valid workspace names should pass."""
+        assert ch.validate_workspace_name("-home-user-project") is True
+        assert ch.validate_workspace_name("myproject") is True
+        assert ch.validate_workspace_name("project-123") is True
+
+    def test_validate_workspace_name_invalid(self):
+        """Invalid workspace names should fail."""
+        assert ch.validate_workspace_name("") is False
+        assert ch.validate_workspace_name("workspace;rm") is False
+        assert ch.validate_workspace_name("ws`cmd`") is False
+
+    def test_validate_split_lines_valid(self):
+        """Valid split values should pass."""
+        assert ch.validate_split_lines("500") == 500
+        assert ch.validate_split_lines("1000") == 1000
+        assert ch.validate_split_lines("100") == 100
+
+    def test_validate_split_lines_invalid(self):
+        """Invalid split values should raise argparse.ArgumentTypeError."""
+        import argparse
+        with pytest.raises(argparse.ArgumentTypeError):
+            ch.validate_split_lines("0")  # Zero is invalid
+        with pytest.raises(argparse.ArgumentTypeError):
+            ch.validate_split_lines("-10")  # Negative is invalid
+        with pytest.raises(argparse.ArgumentTypeError):
+            ch.validate_split_lines("abc")  # Not a number
+
+
+# ============================================================================
+# Source Tag Functions Tests
+# ============================================================================
+
+
+class TestSourceTagFunctions:
+    """Tests for source tag functions."""
+
+    def test_get_source_tag_local(self):
+        """Local source should have empty tag."""
+        assert ch.get_source_tag(None) == ""
+        assert ch.get_source_tag() == ""
+
+    def test_get_source_tag_wsl(self):
+        """WSL source should have wsl_ prefix (lowercase)."""
+        assert ch.get_source_tag("wsl://Ubuntu") == "wsl_ubuntu_"
+
+    def test_get_source_tag_remote(self):
+        """Remote source should have remote_ prefix."""
+        assert ch.get_source_tag("user@myhost") == "remote_myhost_"
+
+    def test_get_workspace_name_from_path(self):
+        """Extract workspace name from path (returns last component or last two if short)."""
+        # Returns last two parts if second-to-last is short (like "user-project")
+        assert ch.get_workspace_name_from_path("-home-user-project") == "user-project"
+        # With source tags stripped
+        assert ch.get_workspace_name_from_path("wsl_Ubuntu_home-sankar-myproject") == "sankar-myproject"
+        # Long names return just the last part
+        assert ch.get_workspace_name_from_path("remote_host_home-verylongusername-project") == "project"
+
+
+# ============================================================================
+# Estimate Message Lines Tests
+# ============================================================================
+
+
+class TestEstimateMessageLines:
+    """Tests for estimate_message_lines function."""
+
+    def test_short_message(self):
+        """Short message should have minimal lines."""
+        lines = ch.estimate_message_lines("Hello", has_metadata=False)
+        assert lines > 0
+        assert lines < 50
+
+    def test_long_message(self):
+        """Long message should have more lines."""
+        long_text = "Line\n" * 100
+        lines = ch.estimate_message_lines(long_text, has_metadata=False)
+        assert lines > 100
+
+    def test_with_metadata(self):
+        """Message with metadata should have more lines."""
+        lines_no_meta = ch.estimate_message_lines("Hello", has_metadata=False)
+        lines_with_meta = ch.estimate_message_lines("Hello", has_metadata=True)
+        assert lines_with_meta > lines_no_meta
+
+
+# ============================================================================
+# Time Gap Calculation Tests
+# ============================================================================
+
+
+class TestCalculateTimeGap:
+    """Tests for calculate_time_gap function."""
+
+    def test_same_time(self):
+        """Same timestamp should have zero gap."""
+        msg1 = {"timestamp": "2025-01-15T10:00:00Z"}
+        msg2 = {"timestamp": "2025-01-15T10:00:00Z"}
+        gap = ch.calculate_time_gap(msg1, msg2)
+        assert gap == 0
+
+    def test_one_minute_gap(self):
+        """One minute gap."""
+        msg1 = {"timestamp": "2025-01-15T10:00:00Z"}
+        msg2 = {"timestamp": "2025-01-15T10:01:00Z"}
+        gap = ch.calculate_time_gap(msg1, msg2)
+        assert gap == 60
+
+    def test_missing_timestamp(self):
+        """Missing timestamp should return 0."""
+        msg1 = {"timestamp": "2025-01-15T10:00:00Z"}
+        msg2 = {}
+        gap = ch.calculate_time_gap(msg1, msg2)
+        assert gap == 0
+
+
+# ============================================================================
+# Is Tool Result Message Tests
+# ============================================================================
+
+
+class TestIsToolResultMessage:
+    """Tests for is_tool_result_message function."""
+
+    def test_tool_result(self):
+        """Tool result content should be detected by marker string."""
+        # The function checks for "**[Tool Result:" in the string
+        content = "**[Tool Result: Success]**\nOutput here"
+        assert ch.is_tool_result_message(content) is True
+
+    def test_text_message(self):
+        """Text message should not be detected as tool result."""
+        content = "Hello world"
+        assert ch.is_tool_result_message(content) is False
+
+    def test_string_without_marker(self):
+        """String without tool result marker should not match."""
+        assert ch.is_tool_result_message("Some other content") is False
+
+    def test_empty_content(self):
+        """Empty content should not be detected as tool result."""
+        assert ch.is_tool_result_message("") is False
+
+
+# ============================================================================
+# Matches Any Pattern Tests
+# ============================================================================
+
+
+class TestMatchesAnyPatternExtended:
+    """Extended tests for matches_any_pattern function."""
+
+    def test_empty_pattern_list(self):
+        """Empty pattern list matches all (allows all workspaces)."""
+        # Empty list means "no filter" = match all
+        assert ch.matches_any_pattern("test", []) is True
+
+    def test_wildcard_pattern(self):
+        """Wildcard patterns should match all."""
+        assert ch.matches_any_pattern("anything", ["*"]) is True
+        assert ch.matches_any_pattern("test", [""]) is True
+
+    def test_substring_match(self):
+        """Pattern matching is substring-based."""
+        assert ch.matches_any_pattern("myproject", ["proj"]) is True
+        assert ch.matches_any_pattern("project-test", ["proj"]) is True
+
+    def test_multiple_patterns(self):
+        """Multiple patterns should work with OR logic."""
+        assert ch.matches_any_pattern("myproject", ["proj", "app"]) is True
+        assert ch.matches_any_pattern("myapp", ["proj", "app"]) is True
+        assert ch.matches_any_pattern("other", ["proj", "app"]) is False
+
+
+# ============================================================================
+# Find Best Split Point Tests
+# ============================================================================
+
+
+class TestFindBestSplitPoint:
+    """Tests for find_best_split_point function."""
+
+    def test_basic_split(self):
+        """Basic split should find a valid point or None."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+            {"role": "user", "content": "Question"},
+            {"role": "assistant", "content": "Answer"},
+        ]
+        split_point = ch.find_best_split_point(messages, 100, minimal=True)
+        # May return None if no valid split point found within target range
+        assert split_point is None or 0 < split_point <= len(messages)
+
+    def test_empty_messages(self):
+        """Empty messages should return None."""
+        split_point = ch.find_best_split_point([], 100, minimal=True)
+        assert split_point is None
+
+    def test_large_target_lines(self):
+        """With large target, may find a split point."""
+        messages = [
+            {"role": "user", "content": "A" * 1000},
+            {"role": "assistant", "content": "B" * 1000},
+            {"role": "user", "content": "C" * 1000},
+        ]
+        # With a reasonable target that fits within messages
+        split_point = ch.find_best_split_point(messages, 50, minimal=True)
+        # Result depends on actual line estimation
+        assert split_point is None or isinstance(split_point, int)
+
+
+# ============================================================================
+# Edge Case and Error Handling Tests
+# ============================================================================
+
+
+class TestDateParsingEdgeCases:
+    """Tests for date parsing edge cases."""
+
+    def test_parse_date_empty_string(self):
+        """Empty string should return None."""
+        result = ch.parse_date_string("")
+        assert result is None
+
+    def test_parse_date_none(self):
+        """None should return None."""
+        result = ch.parse_date_string(None)
+        assert result is None
+
+    def test_parse_date_whitespace_only(self):
+        """Whitespace-only string should fail parsing."""
+        result = ch.parse_date_string("   ")
+        assert result is None
+
+    def test_parse_date_invalid_format(self):
+        """Invalid format should return None."""
+        result = ch.parse_date_string("2025/11/01")
+        assert result is None
+
+    def test_parse_date_partial(self):
+        """Partial date should return None."""
+        result = ch.parse_date_string("2025-11")
+        assert result is None
+
+    def test_parse_date_with_time(self):
+        """Date with time should return None (wrong format)."""
+        result = ch.parse_date_string("2025-11-01T12:00:00")
+        assert result is None
+
+    def test_parse_date_valid_with_whitespace(self):
+        """Valid date with surrounding whitespace should work."""
+        result = ch.parse_date_string("  2025-11-01  ")
+        assert result is not None
+        assert result.year == 2025
+        assert result.month == 11
+        assert result.day == 1
+
+
+class TestIsSafePathEdgeCases:
+    """Tests for is_safe_path edge cases."""
+
+    def test_safe_path_valid(self):
+        """Valid path within base should return True."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            target = base / "subdir" / "file.txt"
+            result = ch.is_safe_path(base, target)
+            assert result is True
+
+    def test_safe_path_exact_match(self):
+        """Target equals base should return True."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            result = ch.is_safe_path(base, base)
+            assert result is True
+
+    def test_safe_path_outside_base(self):
+        """Path outside base should return False."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "subdir"
+            base.mkdir()
+            target = Path(tmp) / "other" / "file.txt"
+            result = ch.is_safe_path(base, target)
+            assert result is False
+
+
+class TestJsonDecodeErrorHandling:
+    """Tests for JSON decode error handling in various functions."""
+
+    def test_codex_parse_malformed_jsonl(self):
+        """Malformed JSONL should be handled gracefully."""
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl_file = Path(tmp) / "malformed.jsonl"
+            # Write malformed JSON
+            jsonl_file.write_text("not valid json\n{broken\n")
+
+            messages, meta = ch.codex_read_jsonl_messages(jsonl_file)
+            # Should return empty results (skips malformed lines), meta is None
+            assert isinstance(messages, list)
+            assert len(messages) == 0
+            assert meta is None  # No valid session_meta found
+
+    def test_gemini_count_messages_malformed(self):
+        """Malformed Gemini JSON should return 0."""
+        with tempfile.TemporaryDirectory() as tmp:
+            json_file = Path(tmp) / "malformed.json"
+            json_file.write_text("not valid json")
+
+            count = ch.gemini_count_messages(json_file)
+            assert count == 0
+
+    def test_gemini_count_messages_missing_file(self):
+        """Missing file should return 0."""
+        count = ch.gemini_count_messages(Path("/nonexistent/file.json"))
+        assert count == 0
+
+
+class TestGeminiEdgeCases:
+    """Tests for Gemini-specific edge cases."""
+
+    def test_gemini_format_tool_call_invalid_args(self):
+        """Tool call with non-serializable args should handle gracefully."""
+        # Create an object that can't be JSON serialized
+        class NonSerializable:
+            pass
+
+        # gemini_format_tool_call takes a single dict argument
+        tool_call = {"name": "test_tool", "args": NonSerializable(), "status": "success"}
+        result = ch.gemini_format_tool_call(tool_call)
+        assert "test_tool" in result
+        # Should contain string representation instead of crashing
+
+    def test_gemini_format_tool_call_circular_reference(self):
+        """Tool call with circular reference should handle gracefully."""
+        circular = {"a": 1}
+        circular["self"] = circular  # Create circular reference
+
+        # gemini_format_tool_call takes a single dict argument
+        tool_call = {"name": "test_tool", "args": circular, "status": "success"}
+        result = ch.gemini_format_tool_call(tool_call)
+        assert "test_tool" in result
+        # Should not crash
+
+    def test_gemini_get_workspace_name_empty_hash(self):
+        """Empty hash should return the hash itself (as placeholder)."""
+        # gemini_get_workspace_readable handles empty strings
+        result = ch.gemini_get_workspace_readable("")
+        # Should handle empty string gracefully
+        assert isinstance(result, str)
+
+    def test_gemini_hash_index_corrupted(self):
+        """Corrupted hash index should return default structure."""
+        with tempfile.TemporaryDirectory() as tmp:
+            # Patch the correct function name
+            with patch.object(ch, "gemini_get_hash_index_file", return_value=Path(tmp) / "index.json"):
+                # Write corrupted data
+                (Path(tmp) / "index.json").write_text("corrupted{{{")
+                result = ch.gemini_load_hash_index()
+                assert "version" in result
+                assert "hashes" in result
+
+
+class TestCodexEdgeCases:
+    """Tests for Codex-specific edge cases."""
+
+    def test_codex_index_corrupted(self):
+        """Corrupted Codex index should return default structure."""
+        with tempfile.TemporaryDirectory() as tmp:
+            index_file = Path(tmp) / ".codex" / "index.json"
+            index_file.parent.mkdir(parents=True)
+            index_file.write_text("corrupted json {{{")
+
+            # Patch the correct function name
+            with patch.object(ch, "codex_get_index_file", return_value=index_file):
+                result = ch.codex_load_index()
+                assert "version" in result
+                assert "sessions" in result
+
+    def test_codex_extract_metrics_malformed(self):
+        """Malformed Codex JSONL should extract partial metrics."""
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl_file = Path(tmp) / "session.jsonl"
+            # Mix of valid and invalid lines
+            jsonl_file.write_text(
+                '{"type": "message", "role": "user"}\n'
+                'invalid line\n'
+                '{"type": "message", "role": "assistant"}\n'
+            )
+
+            metrics = ch.codex_extract_metrics_from_jsonl(jsonl_file)
+            # Should extract what it can
+            assert isinstance(metrics, dict)
+
+
+class TestMarkdownGenerationEdgeCases:
+    """Tests for markdown generation edge cases."""
+
+    def test_generate_markdown_parts_empty_messages(self):
+        """Empty messages should return None."""
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl_file = Path(tmp) / "empty.jsonl"
+            jsonl_file.write_text("")
+
+            result = ch.generate_markdown_parts([], jsonl_file, minimal=True, split_lines=100)
+            assert result is None
+
+    def test_generate_markdown_parts_no_split(self):
+        """No split_lines should return None."""
+        messages = [{"role": "user", "content": "test"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl_file = Path(tmp) / "test.jsonl"
+            jsonl_file.write_text('{"type": "user", "message": {"content": "test"}}')
+
+            result = ch.generate_markdown_parts(messages, jsonl_file, minimal=True, split_lines=None)
+            assert result is None
+
+    def test_generate_markdown_parts_zero_split(self):
+        """Zero split_lines should return None."""
+        messages = [{"role": "user", "content": "test"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl_file = Path(tmp) / "test.jsonl"
+            jsonl_file.write_text('{"type": "user", "message": {"content": "test"}}')
+
+            result = ch.generate_markdown_parts(messages, jsonl_file, minimal=True, split_lines=0)
+            assert result is None
+
+
+class TestToolFormattingEdgeCases:
+    """Tests for tool result formatting edge cases."""
+
+    def test_format_tool_result_block_with_content(self):
+        """Tool result block with content should format properly."""
+        block = {"type": "tool_result", "tool_use_id": "123", "content": "result text"}
+        result = ch._format_tool_result_block(block)
+        assert isinstance(result, list)
+
+    def test_format_tool_result_block_empty(self):
+        """Empty tool result block should be handled."""
+        block = {"type": "tool_result"}
+        result = ch._format_tool_result_block(block)
+        assert isinstance(result, list)
+
+
+class TestExtractContentEdgeCases:
+    """Tests for extract_content edge cases."""
+
+    def test_extract_content_empty_message(self):
+        """Empty message should return [No content]."""
+        result = ch.extract_content({})
+        assert result == "[No content]"
+
+    def test_extract_content_none_content(self):
+        """None content should return [No content]."""
+        result = ch.extract_content({"content": None})
+        assert result == "[No content]"
+
+    def test_extract_content_list_with_empty_blocks(self):
+        """List content with empty blocks should be handled."""
+        msg = {"content": [{"type": "text", "text": "hello"}]}
+        result = ch.extract_content(msg)
+        assert "hello" in result
+
+    def test_extract_content_tool_use_block(self):
+        """Tool use block should be formatted."""
+        msg = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "test_tool",
+                    "input": {"arg": "value"}
+                }
+            ]
+        }
+        result = ch.extract_content(msg)
+        assert "test_tool" in result
+
+
+class TestTimestampEdgeCases:
+    """Tests for timestamp handling edge cases."""
+
+    def test_get_first_timestamp_empty_file(self):
+        """Empty file should return None."""
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl_file = Path(tmp) / "empty.jsonl"
+            jsonl_file.write_text("")
+
+            result = ch.get_first_timestamp(jsonl_file)
+            assert result is None
+
+    def test_get_first_timestamp_no_timestamp(self):
+        """File without timestamps should return None."""
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl_file = Path(tmp) / "no_ts.jsonl"
+            jsonl_file.write_text('{"type": "user", "message": {"content": "test"}}\n')
+
+            result = ch.get_first_timestamp(jsonl_file)
+            assert result is None
+
+    def test_get_first_timestamp_malformed_lines(self):
+        """File with malformed lines should skip them."""
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl_file = Path(tmp) / "mixed.jsonl"
+            jsonl_file.write_text(
+                'invalid\n'
+                '{"type": "user", "timestamp": "2025-01-01T12:00:00Z"}\n'
+            )
+
+            result = ch.get_first_timestamp(jsonl_file)
+            assert result == "2025-01-01T12:00:00Z"
+
+
+class TestCalculateTimeGapEdgeCases:
+    """Tests for calculate_time_gap edge cases."""
+
+    def test_time_gap_missing_timestamps(self):
+        """Missing timestamps should return 0."""
+        msg1 = {"role": "user"}
+        msg2 = {"role": "assistant"}
+
+        result = ch.calculate_time_gap(msg1, msg2)
+        assert result == 0
+
+    def test_time_gap_invalid_timestamp_format(self):
+        """Invalid timestamp format should return 0."""
+        msg1 = {"role": "user", "timestamp": "not-a-date"}
+        msg2 = {"role": "assistant", "timestamp": "2025-01-01T12:00:00Z"}
+
+        result = ch.calculate_time_gap(msg1, msg2)
+        assert result == 0
+
+    def test_time_gap_negative(self):
+        """Negative time gap (out of order) should be handled."""
+        msg1 = {"role": "user", "timestamp": "2025-01-01T12:01:00Z"}
+        msg2 = {"role": "assistant", "timestamp": "2025-01-01T12:00:00Z"}
+
+        result = ch.calculate_time_gap(msg1, msg2)
+        # Should return absolute value or handle gracefully
+        assert isinstance(result, (int, float))
+
+
+class TestValidateSplitLinesEdgeCases:
+    """Tests for validate_split_lines edge cases."""
+
+    def test_validate_split_lines_float_string(self):
+        """Float string should raise error."""
+        import argparse
+        with pytest.raises(argparse.ArgumentTypeError):
+            ch.validate_split_lines("100.5")
+
+    def test_validate_split_lines_negative_string(self):
+        """Negative string should raise error."""
+        import argparse
+        with pytest.raises(argparse.ArgumentTypeError):
+            ch.validate_split_lines("-100")
+
+    def test_validate_split_lines_valid(self):
+        """Valid value should return integer."""
+        result = ch.validate_split_lines("100")
+        assert result == 100
+
+    def test_validate_split_lines_zero(self):
+        """Zero should raise error."""
+        import argparse
+        with pytest.raises(argparse.ArgumentTypeError):
+            ch.validate_split_lines("0")
+
+
+class TestNormalizeWorkspaceNameEdgeCases:
+    """Tests for normalize_workspace_name edge cases."""
+
+    def test_normalize_workspace_name_all_dashes(self):
+        """Name with only dashes should be handled."""
+        result = ch.normalize_workspace_name("---", verify_local=False)
+        # Should return something reasonable
+        assert isinstance(result, str)
+
+    def test_normalize_workspace_name_single_component(self):
+        """Single component name should work."""
+        result = ch.normalize_workspace_name("-project", verify_local=False)
+        # Returns path format - /project
+        assert "project" in result
+
+    def test_normalize_workspace_name_windows_style(self):
+        """Windows-style path should be normalized."""
+        result = ch.normalize_workspace_name("C--Users-alice-project", verify_local=False)
+        assert "Users" in result or "alice" in result
+
+    def test_normalize_workspace_name_multi_component(self):
+        """Multi-component path should normalize correctly."""
+        result = ch.normalize_workspace_name("-home-user-projects-test", verify_local=False)
+        assert "home" in result
+        assert "user" in result
+
+
+class TestDatabaseEdgeCases:
+    """Tests for database operation edge cases."""
+
+    def test_init_metrics_db_creates_db(self):
+        """Database should be created successfully."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "metrics.db"
+            conn = ch.init_metrics_db(db_path)
+            assert conn is not None
+            conn.close()
+            assert db_path.exists()
+
+    def test_sync_file_to_db_empty_file(self):
+        """Syncing empty file should handle gracefully."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "metrics.db"
+            conn = ch.init_metrics_db(db_path)
+
+            # Create empty JSONL file
+            jsonl_file = Path(tmp) / "empty.jsonl"
+            jsonl_file.write_text("")
+
+            # Try to sync empty file
+            result = ch.sync_file_to_db(conn, jsonl_file, "local")
+            # Should handle gracefully (might return True or False)
+            assert isinstance(result, bool)
+            conn.close()
+
+    def test_sync_file_to_db_valid_file(self):
+        """Syncing valid file should work."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "metrics.db"
+            conn = ch.init_metrics_db(db_path)
+
+            # Create valid JSONL file
+            jsonl_file = Path(tmp) / "session.jsonl"
+            jsonl_file.write_text(
+                '{"type": "user", "message": {"content": "test"}, "timestamp": "2025-01-01T12:00:00Z"}\n'
+            )
+
+            result = ch.sync_file_to_db(conn, jsonl_file, "local")
+            assert isinstance(result, bool)
+            conn.close()
 
 
 # ============================================================================

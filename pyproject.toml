@@ -2,10 +2,10 @@
 name = "claude-history"
 version = "1.0.0"
 description = "CLI tool to browse and export Claude Code conversation history"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 
 [tool.ruff]
-target-version = "py37"
+target-version = "py38"
 line-length = 100
 
 [tool.ruff.lint]
@@ -58,6 +58,7 @@ dev = [
     "pytest>=7.4.4",
     "pytest-cov>=4.1.0",
     "radon>=6.0.1",
+    "hypothesis>=6.100.0",
 ]
 
 # Radon complexity thresholds (documented here, enforced in scripts/check_complexity.py)

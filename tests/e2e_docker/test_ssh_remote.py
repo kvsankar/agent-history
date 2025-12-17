@@ -4,7 +4,8 @@ Tests the -r/--remote flag with real SSH connections between Docker containers.
 """
 
 import pytest
-from conftest import run_cli, ssh_run
+
+from .helpers import run_cli, ssh_run
 
 pytestmark = pytest.mark.e2e_docker
 

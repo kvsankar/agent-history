@@ -1,4 +1,4 @@
-"""Fixtures and helpers for Docker-based E2E tests.
+"""Fixtures for Docker-based E2E tests.
 
 These tests run inside the test-runner container and execute the agent-history
 CLI against real SSH nodes (node-alpha and node-beta).
@@ -10,82 +10,9 @@ Environment variables (set by docker-compose):
     BETA_USERS: Comma-separated users on node-beta (default: charlie,dave)
 """
 
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 
-# Path to the agent-history script
-SCRIPT_PATH = Path("/app/agent-history")
-
-
-def get_env():
-    """Get environment configuration from docker-compose."""
-    return {
-        "node_alpha": os.environ.get("NODE_ALPHA", "node-alpha"),
-        "node_beta": os.environ.get("NODE_BETA", "node-beta"),
-        "alpha_users": os.environ.get("ALPHA_USERS", "alice,bob").split(","),
-        "beta_users": os.environ.get("BETA_USERS", "charlie,dave").split(","),
-    }
-
-
-def run_cli(args, timeout=30, env=None):
-    """Run the agent-history CLI and return the result.
-
-    Args:
-        args: List of command-line arguments
-        timeout: Command timeout in seconds
-        env: Optional environment overrides
-
-    Returns:
-        subprocess.CompletedProcess with stdout, stderr, returncode
-    """
-    cmd = [sys.executable, str(SCRIPT_PATH), *args]
-
-    run_env = os.environ.copy()
-    if env:
-        run_env.update(env)
-
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=run_env,
-        check=False,
-    )
-
-
-def ssh_run(user, host, command, timeout=30):
-    """Run a command on a remote host via SSH.
-
-    Args:
-        user: Remote username
-        host: Remote hostname
-        command: Command to execute
-        timeout: SSH timeout in seconds
-
-    Returns:
-        subprocess.CompletedProcess
-    """
-    cmd = [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=10",
-        f"{user}@{host}",
-        command,
-    ]
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+from .helpers import get_env, ssh_run
 
 
 @pytest.fixture(scope="session")
@@ -156,3 +83,22 @@ def verify_ssh_connectivity(alice, charlie):
         pytest.skip(f"Cannot SSH to charlie@node-beta: {result.stderr}")
 
     return True
+
+
+@pytest.fixture
+def isolated_home(tmp_path):
+    """Create an isolated home directory with required agent directories.
+
+    Use this fixture when tests need to override HOME for isolation.
+    Returns a dict with 'path' and 'env' ready for use with run_cli.
+    """
+    # Create required directory structure
+    (tmp_path / ".claude" / "projects").mkdir(parents=True)
+    (tmp_path / ".codex" / "sessions").mkdir(parents=True)
+    (tmp_path / ".gemini" / "sessions").mkdir(parents=True)
+    (tmp_path / ".claude-history").mkdir(parents=True)
+
+    return {
+        "path": tmp_path,
+        "env": {"HOME": str(tmp_path)},
+    }

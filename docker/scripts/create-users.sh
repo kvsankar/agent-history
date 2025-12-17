@@ -14,7 +14,8 @@ mkdir -p "$SSH_KEYS_DIR"
 if [ ! -f "$SSH_KEYS_DIR/id_ed25519" ]; then
     ssh-keygen -t ed25519 -f "$SSH_KEYS_DIR/id_ed25519" -N "" -q
     chmod 644 "$SSH_KEYS_DIR/id_ed25519.pub"
-    chmod 600 "$SSH_KEYS_DIR/id_ed25519"
+    # Make key readable by test-runner container (runs as different user)
+    chmod 604 "$SSH_KEYS_DIR/id_ed25519"
 fi
 
 # Read public key

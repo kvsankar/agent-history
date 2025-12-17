@@ -4,7 +4,8 @@ Tests that different users on the same host have isolated workspaces.
 """
 
 import pytest
-from conftest import run_cli
+
+from .helpers import run_cli
 
 pytestmark = pytest.mark.e2e_docker
 
@@ -30,25 +31,28 @@ class TestUserIsolation:
 
     def test_user_sessions_isolated(self, alice, bob, verify_ssh_connectivity):
         """Users' sessions don't leak between accounts."""
-        alice_sessions = run_cli(["lss", "-r", alice])
-        bob_sessions = run_cli(["lss", "-r", bob])
+        # Use '*' to match all workspaces on the remote
+        alice_sessions = run_cli(["lss", "*", "-r", alice])
+        bob_sessions = run_cli(["lss", "*", "-r", bob])
 
-        assert alice_sessions.returncode == 0
-        assert bob_sessions.returncode == 0
+        assert alice_sessions.returncode == 0, f"alice stderr: {alice_sessions.stderr}"
+        assert bob_sessions.returncode == 0, f"bob stderr: {bob_sessions.stderr}"
 
-        # Sessions should be separate
-        # (exact content depends on generated fixtures)
+        # Both should have sessions
+        assert alice_sessions.stdout.strip(), "Alice should have sessions"
+        assert bob_sessions.stdout.strip(), "Bob should have sessions"
 
     def test_export_user_specific(self, alice, bob, tmp_path, verify_ssh_connectivity):
         """Exporting from one user doesn't affect another."""
         alice_dir = tmp_path / "alice"
         bob_dir = tmp_path / "bob"
 
-        alice_export = run_cli(["export", "-r", alice, "-o", str(alice_dir)])
-        bob_export = run_cli(["export", "-r", bob, "-o", str(bob_dir)])
+        # Use --aw to export all workspaces from remote
+        alice_export = run_cli(["export", "--aw", "-r", alice, "-o", str(alice_dir)])
+        bob_export = run_cli(["export", "--aw", "-r", bob, "-o", str(bob_dir)])
 
-        assert alice_export.returncode == 0
-        assert bob_export.returncode == 0
+        assert alice_export.returncode == 0, f"alice stderr: {alice_export.stderr}"
+        assert bob_export.returncode == 0, f"bob stderr: {bob_export.stderr}"
 
 
 class TestCrossUserAccess:
@@ -57,7 +61,7 @@ class TestCrossUserAccess:
     def test_cannot_access_other_user_home(self, node_alpha, verify_ssh_connectivity):
         """Cannot directly access another user's home directory."""
         # Try to list bob's claude directory as alice
-        from conftest import ssh_run
+        from .helpers import ssh_run
 
         result = ssh_run("alice", node_alpha, "ls /home/bob/.claude/")
         # Should fail (permission denied) or be empty - either is acceptable

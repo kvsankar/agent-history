@@ -1,0 +1,30 @@
+[run]
+# Track coverage in subprocesses
+parallel = true
+source = .
+branch = true
+# Data file location (can be overridden by COVERAGE_DATA_FILE env var)
+data_file = .coverage
+# Include agent-history script
+include =
+    agent-history
+    */agent-history
+omit =
+    tests/*
+    .venv/*
+    */site-packages/*
+
+[paths]
+# Map paths from Docker container to local
+source =
+    .
+    /app
+
+[report]
+# Combine parallel coverage data
+show_missing = true
+skip_covered = false
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

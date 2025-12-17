@@ -38,13 +38,14 @@ generate_codex_session() {
     local sessions_dir="/home/$user/.codex/sessions/2025/01/15"
     mkdir -p "$sessions_dir"
 
-    # Create Codex JSONL (different format from Claude)
+    # Create Codex JSONL - must include "cwd" field for workspace detection
+    # The tool uses: grep -h '"cwd":' ~/.codex/sessions/*/*/*/*.jsonl
     cat > "$sessions_dir/$session_id.jsonl" << EOF
-{"type":"message","role":"user","content":[{"type":"input_text","text":"Help me with $workspace"}],"create_time":"2025-01-15T10:00:00.000Z"}
-{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll help you with $workspace."}],"create_time":"2025-01-15T10:00:05.000Z"}
+{"type":"message","role":"user","content":[{"type":"input_text","text":"Help me with $workspace"}],"cwd":"/home/$user/$workspace","create_time":"2025-01-15T10:00:00.000Z"}
+{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll help you with $workspace."}],"cwd":"/home/$user/$workspace","create_time":"2025-01-15T10:00:05.000Z"}
 EOF
 
-    # Codex also needs a workspace marker
+    # Codex also needs a workspace marker in cwd directory
     local cwd_dir="/home/$user/.codex/cwd"
     mkdir -p "$cwd_dir"
     echo "/home/$user/$workspace" > "$cwd_dir/$session_id"
@@ -58,15 +59,16 @@ generate_gemini_session() {
     local workspace=$2
     local session_id=$3
 
-    # Gemini uses hash-based structure: ~/.gemini/sessions/HASH.json
-    local sessions_dir="/home/$user/.gemini/sessions"
-    mkdir -p "$sessions_dir"
-
     # Generate a fake hash for the workspace
     local project_hash=$(echo -n "/home/$user/$workspace" | md5sum | cut -c1-32)
 
+    # Gemini uses hash-based structure: ~/.gemini/tmp/{hash}/chats/session-*.json
+    # The tool uses: for d in ~/.gemini/tmp/*/chats; do ls "$d"/*.json ...
+    local sessions_dir="/home/$user/.gemini/tmp/$project_hash/chats"
+    mkdir -p "$sessions_dir"
+
     # Create Gemini JSON (single JSON file, not JSONL)
-    cat > "$sessions_dir/$project_hash.json" << EOF
+    cat > "$sessions_dir/$session_id.json" << EOF
 {
   "id": "$session_id",
   "cwd": "$project_hash",
@@ -93,7 +95,7 @@ EOF
     echo "{\"$project_hash\": \"/home/$user/$workspace\"}" > "$index_dir/hash_index.json"
 
     chown -R "$user:$user" "/home/$user/.gemini"
-    echo "  Created Gemini session: $user/$project_hash"
+    echo "  Created Gemini session: $user/$project_hash/chats/$session_id"
 }
 
 # Create sessions for each user

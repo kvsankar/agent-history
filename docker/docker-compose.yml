@@ -40,11 +40,16 @@ services:
       - ..:/app:ro
       # Shared SSH keys for passwordless auth
       - ssh-keys:/ssh-keys:ro
+      # Writable volume for coverage data
+      - coverage-data:/coverage
     environment:
       - NODE_ALPHA=node-alpha
       - NODE_BETA=node-beta
       - ALPHA_USERS=alice,bob
       - BETA_USERS=charlie,dave
+      # Enable coverage subprocess tracking
+      - COVERAGE_PROCESS_START=/app/.coveragerc
+      - COVERAGE_DATA_FILE=/coverage/.coverage
 
 networks:
   agent-history-net:
@@ -52,3 +57,4 @@ networks:
 
 volumes:
   ssh-keys:
+  coverage-data:
