@@ -28,7 +28,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-asyncio
+          python -m pip install pytest pytest-asyncio hypothesis
 
       - name: Run unit tests (exclude integration)
         env:
@@ -46,3 +46,32 @@ jobs:
         run: |
           python -c "import pathlib,os; p=pathlib.Path(os.environ.get('HOME') or os.environ.get('USERPROFILE')); (p).mkdir(parents=True, exist_ok=True)"
           python -m pytest -q -m integration tests/integration
+
+  docker-e2e:
+    name: Docker E2E tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and start Docker environment
+        working-directory: docker
+        run: docker compose up -d --build
+
+      - name: Wait for SSH nodes to be ready
+        working-directory: docker
+        run: |
+          echo "Waiting for SSH nodes..."
+          sleep 10
+          docker compose run --rm test-runner bash -c "ssh -o BatchMode=yes -o ConnectTimeout=5 alice@node-alpha echo ok"
+          docker compose run --rm test-runner bash -c "ssh -o BatchMode=yes -o ConnectTimeout=5 charlie@node-beta echo ok"
+
+      - name: Run Docker E2E tests
+        working-directory: docker
+        run: docker compose run --rm test-runner pytest tests/e2e_docker/ -v
+
+      - name: Cleanup
+        if: always()
+        working-directory: docker
+        run: docker compose down -v

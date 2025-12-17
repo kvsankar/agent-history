@@ -10,9 +10,38 @@ Environment variables (set by docker-compose):
     BETA_USERS: Comma-separated users on node-beta (default: charlie,dave)
 """
 
+import os
+import subprocess
+
 import pytest
 
 from .helpers import get_env, ssh_run
+
+
+def _in_docker_environment():
+    """Check if we're running inside the Docker test environment."""
+    # Check for Docker-specific indicators
+    if os.path.exists("/.dockerenv"):
+        return True
+    # Check if we can reach node-alpha (only available in Docker network)
+    try:
+        result = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=2",
+             "alice@node-alpha", "echo", "ok"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+# Skip all tests in this directory if not in Docker environment
+if not _in_docker_environment():
+    pytest.skip(
+        "Docker E2E tests require Docker environment (run via docker-compose)",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture(scope="session")
