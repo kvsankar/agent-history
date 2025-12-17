@@ -13,7 +13,10 @@ build/
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
+.coverage-data/
 htmlcov/
+.hypothesis/
 
 # IDE
 .vscode/
