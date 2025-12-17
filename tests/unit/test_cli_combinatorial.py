@@ -11,7 +11,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings, strategies as st, assume, HealthCheck
+from hypothesis import HealthCheck, assume, given, settings
+from hypothesis import strategies as st
 
 # Path to the CLI script
 CLI_PATH = Path(__file__).parent.parent.parent / "agent-history"
@@ -29,8 +30,9 @@ def run_cli_in_temp(args: list, timeout: int = None) -> subprocess.CompletedProc
         env = os.environ.copy()
         env["HOME"] = str(tmp_path)
         env["USERPROFILE"] = str(tmp_path)  # Windows uses USERPROFILE
-        # Skip WSL scanning in tests to avoid timeouts
+        # Skip WSL and Windows scanning in tests to avoid timeouts
         env["CLAUDE_SKIP_WSL_SCAN"] = "1"
+        env["CLAUDE_SKIP_WINDOWS_SCAN"] = "1"
 
         # Create required directories
         (tmp_path / ".claude" / "projects").mkdir(parents=True)
@@ -38,7 +40,7 @@ def run_cli_in_temp(args: list, timeout: int = None) -> subprocess.CompletedProc
         (tmp_path / ".codex" / "sessions").mkdir(parents=True)
         (tmp_path / ".gemini").mkdir(parents=True)
 
-        cmd = [sys.executable, str(CLI_PATH)] + args
+        cmd = [sys.executable, str(CLI_PATH), *args]
         return subprocess.run(
             cmd,
             capture_output=True,
@@ -46,6 +48,7 @@ def run_cli_in_temp(args: list, timeout: int = None) -> subprocess.CompletedProc
             timeout=timeout,
             env=env,
             cwd=str(tmp_path),
+            check=False,
         )
 
 
@@ -56,15 +59,22 @@ def run_cli_in_temp(args: list, timeout: int = None) -> subprocess.CompletedProc
 # Common values
 workspace_patterns = st.sampled_from(["*", "myproject", "test", "nonexistent-ws-12345", ""])
 agent_choices = st.sampled_from(["auto", "claude", "codex", "gemini"])
-date_strings = st.sampled_from([
-    "2025-01-01", "2025-12-31", "2024-06-15",
-    "invalid-date", "2025/01/01", "",  # Include some invalid formats
-])
+date_strings = st.sampled_from(
+    [
+        "2025-01-01",
+        "2025-12-31",
+        "2024-06-15",
+        "invalid-date",
+        "2025/01/01",
+        "",  # Include some invalid formats
+    ]
+)
 
 
 # ============================================================================
 # lsw command tests
 # ============================================================================
+
 
 class TestLswCombinations:
     """Test lsw command with various flag combinations."""
@@ -91,7 +101,10 @@ class TestLswCombinations:
         result = run_cli_in_temp(args)
 
         # Should not crash - exit code 0 or 1 (no workspaces) are acceptable
-        assert result.returncode in (0, 1), f"Unexpected exit code {result.returncode}: {result.stderr}"
+        assert result.returncode in (
+            0,
+            1,
+        ), f"Unexpected exit code {result.returncode}: {result.stderr}"
         # Should not have Python tracebacks
         assert "Traceback" not in result.stderr, f"Crashed with: {result.stderr}"
 
@@ -121,6 +134,7 @@ class TestLswCombinations:
 # ============================================================================
 # lss command tests
 # ============================================================================
+
 
 class TestLssCombinations:
     """Test lss command with various flag combinations."""
@@ -177,6 +191,7 @@ class TestLssCombinations:
 # export command tests
 # ============================================================================
 
+
 class TestExportCombinations:
     """Test export command with various flag combinations."""
 
@@ -228,10 +243,16 @@ class TestExportCombinations:
             if agent:
                 args.extend(["--agent", agent])
 
-            cmd = [sys.executable, str(CLI_PATH)] + args
+            cmd = [sys.executable, str(CLI_PATH), *args]
             timeout = 30 if sys.platform == "win32" else 10
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(tmp_path)
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                cwd=str(tmp_path),
+                check=False,
             )
 
             assert "Traceback" not in result.stderr
@@ -261,10 +282,16 @@ class TestExportCombinations:
             if split_value is not None:
                 args.extend(["--split", str(split_value)])
 
-            cmd = [sys.executable, str(CLI_PATH)] + args
+            cmd = [sys.executable, str(CLI_PATH), *args]
             timeout = 30 if sys.platform == "win32" else 10
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(tmp_path)
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                cwd=str(tmp_path),
+                check=False,
             )
 
             assert "Traceback" not in result.stderr
@@ -274,6 +301,7 @@ class TestExportCombinations:
 # ============================================================================
 # stats command tests
 # ============================================================================
+
 
 class TestStatsCombinations:
     """Test stats command with various flag combinations."""
@@ -316,7 +344,9 @@ class TestStatsCombinations:
         use_time=st.booleans(),
     )
     @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-    def test_stats_multiple_views(self, use_tools, use_models, use_by_workspace, use_by_day, use_time):
+    def test_stats_multiple_views(
+        self, use_tools, use_models, use_by_workspace, use_by_day, use_time
+    ):
         """Test stats with multiple view flags."""
         args = ["stats"]
         if use_tools:
@@ -340,6 +370,7 @@ class TestStatsCombinations:
 # alias command tests
 # ============================================================================
 
+
 class TestAliasCombinations:
     """Test alias subcommands with various combinations."""
 
@@ -361,17 +392,23 @@ class TestAliasCombinations:
 
             # Create
             cmd = [sys.executable, str(CLI_PATH), "alias", "create", alias_name]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=5, env=env, check=False
+            )
             assert "Traceback" not in result.stderr or "coverage" in result.stderr.lower()
 
             # Show
             cmd = [sys.executable, str(CLI_PATH), "alias", "show", alias_name]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=5, env=env, check=False
+            )
             assert "Traceback" not in result.stderr or "coverage" in result.stderr.lower()
 
             # Delete
             cmd = [sys.executable, str(CLI_PATH), "alias", "delete", alias_name]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=env)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=5, env=env, check=False
+            )
             assert "Traceback" not in result.stderr or "coverage" in result.stderr.lower()
 
     @given(use_counts=st.booleans())
@@ -391,6 +428,7 @@ class TestAliasCombinations:
 # ============================================================================
 # Cross-command flag consistency tests
 # ============================================================================
+
 
 class TestCrossCommandConsistency:
     """Test that similar flags work consistently across commands."""
@@ -422,10 +460,16 @@ class TestCrossCommandConsistency:
             else:  # export
                 args = ["export", "*", "-o", str(output_dir), "--agent", agent]
 
-            cmd = [sys.executable, str(CLI_PATH)] + args
+            cmd = [sys.executable, str(CLI_PATH), *args]
             timeout = 30 if sys.platform == "win32" else 10
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(tmp_path)
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                cwd=str(tmp_path),
+                check=False,
             )
 
             assert "Traceback" not in result.stderr
@@ -463,10 +507,16 @@ class TestCrossCommandConsistency:
             if use_aw:
                 args.append("--aw")
 
-            cmd = [sys.executable, str(CLI_PATH)] + args
+            cmd = [sys.executable, str(CLI_PATH), *args]
             timeout = 30 if sys.platform == "win32" else 10
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(tmp_path)
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                cwd=str(tmp_path),
+                check=False,
             )
 
             assert "Traceback" not in result.stderr
@@ -477,13 +527,22 @@ class TestCrossCommandConsistency:
 # Edge case tests
 # ============================================================================
 
+
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
     @given(
-        pattern=st.text(alphabet=st.characters(blacklist_categories=["Cs"], blacklist_characters="\x00\n\r"), min_size=0, max_size=50),
+        pattern=st.text(
+            alphabet=st.characters(blacklist_categories=["Cs"], blacklist_characters="\x00\n\r"),
+            min_size=0,
+            max_size=50,
+        ),
     )
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much], deadline=None)
+    @settings(
+        max_examples=50,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much],
+        deadline=None,
+    )
     def test_arbitrary_workspace_pattern(self, pattern):
         """Test with arbitrary text as workspace pattern."""
         # Skip patterns that could be interpreted as flags
@@ -498,7 +557,7 @@ class TestEdgeCases:
     def test_multiple_workspace_patterns(self, num_patterns):
         """Test with multiple workspace patterns."""
         patterns = [f"pattern{i}" for i in range(num_patterns)]
-        args = ["lsw"] + patterns
+        args = ["lsw", *patterns]
 
         result = run_cli_in_temp(args)
 
@@ -509,6 +568,7 @@ class TestEdgeCases:
 # ============================================================================
 # gemini-index command tests
 # ============================================================================
+
 
 class TestGeminiIndexCombinations:
     """Test gemini-index command combinations."""
@@ -530,6 +590,7 @@ class TestGeminiIndexCombinations:
 # ============================================================================
 # lsh command tests
 # ============================================================================
+
 
 class TestLshCombinations:
     """Test lsh (list homes) command combinations."""
