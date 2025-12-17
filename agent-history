@@ -44,6 +44,18 @@ AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
 AGENT_GEMINI = "gemini"
 
+# Codex content types for text extraction
+CODEX_TEXT_TYPES = frozenset(["input_text", "output_text"])
+
+# Gemini role display names
+_GEMINI_ROLE_DISPLAY_NAMES = {
+    "user": "User",
+    "assistant": "Model",
+    "info": "Info",
+    "error": "Error",
+    "warning": "Warning",
+}
+
 # Codex home directory
 CODEX_HOME_DIR = Path.home() / ".codex" / "sessions"
 
@@ -178,18 +190,23 @@ class ExportConfig:
         Returns:
             ExportConfig instance
         """
+
+        def get_field(name: str, default=None):
+            """Get field from overrides or args with fallback."""
+            return overrides.get(name, getattr(args, name, default))
+
         return cls(
-            output_dir=overrides.get("output_dir", getattr(args, "output_dir", ".")),
-            patterns=overrides.get("patterns", getattr(args, "patterns", [])),
-            since=overrides.get("since", getattr(args, "since", None)),
-            until=overrides.get("until", getattr(args, "until", None)),
-            force=overrides.get("force", getattr(args, "force", False)),
-            minimal=overrides.get("minimal", getattr(args, "minimal", False)),
-            split=overrides.get("split", getattr(args, "split", None)),
-            flat=overrides.get("flat", getattr(args, "flat", False)),
-            remote=overrides.get("remote", getattr(args, "remote", None)),
-            lenient=overrides.get("lenient", getattr(args, "lenient", False)),
-            agent=overrides.get("agent", getattr(args, "agent", None) or "auto"),
+            output_dir=get_field("output_dir", "."),
+            patterns=get_field("patterns", []),
+            since=get_field("since"),
+            until=get_field("until"),
+            force=get_field("force", False),
+            minimal=get_field("minimal", False),
+            split=get_field("split"),
+            flat=get_field("flat", False),
+            remote=get_field("remote"),
+            lenient=get_field("lenient", False),
+            agent=get_field("agent") or "auto",
         )
 
 
@@ -432,7 +449,7 @@ def validate_workspace_name(workspace_name: str) -> bool:
     # Check for path traversal sequences
     if ".." in workspace_name:
         return False
-    return bool(WORKSPACE_NAME_PATTERN.match(workspace_name))
+    return WORKSPACE_NAME_PATTERN.match(workspace_name) is not None
 
 
 def validate_remote_host(remote_host: str) -> bool:
@@ -564,6 +581,8 @@ DISPLAY_SEPARATOR_WIDTH = 60  # Width of separator lines
 CACHED_REMOTE_PREFIX = "remote_"
 CACHED_WSL_PREFIX = "wsl_"
 CACHED_WINDOWS_PREFIX = "windows_"
+# Tuple for efficient membership testing
+CACHED_PREFIXES = (CACHED_REMOTE_PREFIX, CACHED_WSL_PREFIX, CACHED_WINDOWS_PREFIX)
 
 # ============================================================================
 # Error Handling Utilities
@@ -651,11 +670,7 @@ def is_cached_workspace(name: str) -> bool:
     Returns:
         True if this is a cached workspace, False otherwise.
     """
-    return (
-        name.startswith(CACHED_REMOTE_PREFIX)
-        or name.startswith(CACHED_WSL_PREFIX)
-        or name.startswith(CACHED_WINDOWS_PREFIX)
-    )
+    return any(name.startswith(prefix) for prefix in CACHED_PREFIXES)
 
 
 def is_native_workspace(name: str) -> bool:
@@ -1066,6 +1081,23 @@ def _format_tool_use_block(block: dict) -> list:
     return lines
 
 
+def _extract_text_from_result_item(item) -> str:
+    """Extract text from a single result item.
+
+    Tool result content can be either dict items with 'text' key
+    or primitive values that need string conversion.
+
+    Args:
+        item: A result item from tool_result content list
+
+    Returns:
+        Text content as string
+    """
+    if isinstance(item, dict):
+        return item.get("text", "")
+    return str(item)
+
+
 def _format_tool_result_block(block: dict) -> list:
     """Format a tool_result block as markdown lines."""
     tool_use_id = block.get("tool_use_id", "")
@@ -1074,9 +1106,7 @@ def _format_tool_result_block(block: dict) -> list:
 
     # Handle both string and list content in tool results
     if isinstance(result_content, list):
-        result_text = "\n".join(
-            item.get("text", "") if isinstance(item, dict) else str(item) for item in result_content
-        )
+        result_text = "\n".join(_extract_text_from_result_item(item) for item in result_content)
     else:
         result_text = result_content
 
@@ -1208,6 +1238,38 @@ def extract_tool_name_from_content(content: str) -> str:
     return match.group(1).strip() if match else "unknown"
 
 
+def _parse_timestamp_safe(timestamp_str: str) -> Optional[datetime]:
+    """Parse ISO 8601 timestamp, handling Z suffix.
+
+    Args:
+        timestamp_str: ISO 8601 timestamp string (may end with 'Z')
+
+    Returns:
+        datetime object or None on error
+    """
+    if not timestamp_str:
+        return None
+    try:
+        return datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _truncate_hash(hash_string: str, max_len: int = HASH_DISPLAY_LEN) -> str:
+    """Truncate hash to display length if needed.
+
+    Args:
+        hash_string: The hash string to truncate
+        max_len: Maximum length (default: HASH_DISPLAY_LEN)
+
+    Returns:
+        Truncated hash if longer than max_len, otherwise original
+    """
+    if len(hash_string) > max_len:
+        return hash_string[:max_len]
+    return hash_string
+
+
 def calculate_time_gap(msg1: dict, msg2: dict) -> float:
     """Calculate time gap in seconds between two messages.
 
@@ -1223,13 +1285,13 @@ def calculate_time_gap(msg1: dict, msg2: dict) -> float:
         Returns 0 if timestamps are missing or malformed, which
         causes the split algorithm to rely on other signals.
     """
-    try:
-        ts1 = datetime.fromisoformat(msg1["timestamp"].replace("Z", "+00:00"))
-        ts2 = datetime.fromisoformat(msg2["timestamp"].replace("Z", "+00:00"))
-        return abs((ts2 - ts1).total_seconds())
-    except (ValueError, KeyError, TypeError):
-        # Timestamps missing or malformed - expected for some messages
+    ts1 = _parse_timestamp_safe(msg1.get("timestamp", ""))
+    ts2 = _parse_timestamp_safe(msg2.get("timestamp", ""))
+
+    if ts1 is None or ts2 is None:
         return 0
+
+    return abs((ts2 - ts1).total_seconds())
 
 
 def _calculate_split_score(
@@ -1283,6 +1345,42 @@ def find_best_split_point(messages: list, target_lines: int, minimal: bool) -> i
     return best_split
 
 
+def _build_message_dict(
+    entry: dict, message_obj: dict, role: str, content: str, timestamp: str
+) -> dict:
+    """Build a message dictionary from entry and message object.
+
+    Args:
+        entry: The JSONL entry dict with metadata
+        message_obj: The message object from the entry
+        role: Message role ("user" or "assistant")
+        content: Extracted message content
+        timestamp: ISO 8601 timestamp string
+
+    Returns:
+        Message dict with all preserved metadata
+    """
+    return {
+        "role": role,
+        "content": content,
+        "timestamp": timestamp,
+        "uuid": entry.get("uuid", ""),
+        "parentUuid": entry.get("parentUuid"),
+        "sessionId": entry.get("sessionId", ""),
+        "agentId": entry.get("agentId"),
+        "requestId": entry.get("requestId"),
+        "cwd": entry.get("cwd", ""),
+        "version": entry.get("version", ""),
+        "gitBranch": entry.get("gitBranch"),
+        "isSidechain": entry.get("isSidechain"),
+        "userType": entry.get("userType"),
+        "model": message_obj.get("model"),
+        "usage": message_obj.get("usage"),
+        "stop_reason": message_obj.get("stop_reason"),
+        "stop_sequence": message_obj.get("stop_sequence"),
+    }
+
+
 def read_jsonl_messages(jsonl_file: Path):
     """Read and parse all messages from a Claude Code JSONL session file.
 
@@ -1317,27 +1415,8 @@ def read_jsonl_messages(jsonl_file: Path):
                     timestamp = entry.get("timestamp", "")
                     content = extract_content(message_obj)
 
-                    # Preserve all metadata from the entry
                     messages.append(
-                        {
-                            "role": role,
-                            "content": content,
-                            "timestamp": timestamp,
-                            "uuid": entry.get("uuid", ""),
-                            "parentUuid": entry.get("parentUuid"),
-                            "sessionId": entry.get("sessionId", ""),
-                            "agentId": entry.get("agentId"),
-                            "requestId": entry.get("requestId"),
-                            "cwd": entry.get("cwd", ""),
-                            "version": entry.get("version", ""),
-                            "gitBranch": entry.get("gitBranch"),
-                            "isSidechain": entry.get("isSidechain"),
-                            "userType": entry.get("userType"),
-                            "model": message_obj.get("model"),
-                            "usage": message_obj.get("usage"),
-                            "stop_reason": message_obj.get("stop_reason"),
-                            "stop_sequence": message_obj.get("stop_sequence"),
-                        }
+                        _build_message_dict(entry, message_obj, role, content, timestamp)
                     )
 
             except json.JSONDecodeError as e:
@@ -1700,6 +1779,26 @@ def _generate_message_block(
     return lines
 
 
+def _extract_agent_metadata(messages: list) -> tuple:
+    """Extract agent metadata from messages.
+
+    Args:
+        messages: List of message dicts
+
+    Returns:
+        Tuple of (is_agent, parent_session_id, agent_id)
+    """
+    if not messages:
+        return False, None, None
+
+    is_agent = any(msg.get("isSidechain") for msg in messages)
+    if not is_agent:
+        return False, None, None
+
+    first_msg = messages[0]
+    return True, first_msg.get("sessionId"), first_msg.get("agentId")
+
+
 def generate_markdown_for_messages(
     part_messages,
     jsonl_file,
@@ -1710,9 +1809,7 @@ def generate_markdown_for_messages(
     end_msg_num=None,
 ):
     """Generate markdown for a subset of messages (used for splitting)."""
-    is_agent = any(msg.get("isSidechain") for msg in part_messages)
-    parent_session_id = part_messages[0].get("sessionId") if is_agent and part_messages else None
-    agent_id = part_messages[0].get("agentId") if is_agent and part_messages else None
+    is_agent, parent_session_id, agent_id = _extract_agent_metadata(part_messages)
 
     md_lines = _generate_markdown_header(
         jsonl_file, part_messages, is_agent, part_num, total_parts, start_msg_num, end_msg_num
@@ -1759,7 +1856,7 @@ def codex_extract_content(payload: dict) -> str:
         return content
     parts = []
     for item in content:
-        if isinstance(item, dict) and item.get("type") in ("input_text", "output_text"):
+        if isinstance(item, dict) and item.get("type") in CODEX_TEXT_TYPES:
             parts.append(item.get("text", ""))
     return "\n".join(parts)
 
@@ -2182,6 +2279,21 @@ def _codex_date_folders_since(sessions_dir: Path, since_date: str) -> list:
     return list(_iter_date_folders(sessions_dir, since_dt))
 
 
+def _remove_stale_entries(sessions_map: dict) -> int:
+    """Remove entries for files that no longer exist.
+
+    Args:
+        sessions_map: Dict mapping file paths to workspace names
+
+    Returns:
+        Number of stale entries removed
+    """
+    stale_keys = [k for k in sessions_map if not Path(k).exists()]
+    for k in stale_keys:
+        del sessions_map[k]
+    return len(stale_keys)
+
+
 def codex_ensure_index_updated(sessions_dir: Path = None) -> dict:
     """Ensure Codex session index is up-to-date.
 
@@ -2209,9 +2321,7 @@ def codex_ensure_index_updated(sessions_dir: Path = None) -> dict:
     today = datetime.now().strftime("%Y-%m-%d")
 
     # Clean up stale entries (files that no longer exist)
-    stale_keys = [k for k in sessions_map if not Path(k).exists()]
-    for k in stale_keys:
-        del sessions_map[k]
+    _remove_stale_entries(sessions_map)
 
     # Determine what to scan
     if last_scan is None:
@@ -2518,9 +2628,7 @@ def gemini_get_first_timestamp(json_file: Path) -> str:
 def _gemini_format_session_metadata(session_meta: dict) -> list:
     """Format Gemini session metadata as markdown lines."""
     project_hash = session_meta.get("projectHash", "unknown")
-    short_hash = (
-        project_hash[:HASH_DISPLAY_LEN] if len(project_hash) > HASH_DISPLAY_LEN else project_hash
-    )
+    short_hash = _truncate_hash(project_hash)
     lines = [
         "## Session Metadata",
         "",
@@ -2537,14 +2645,7 @@ def _gemini_format_session_metadata(session_meta: dict) -> list:
 
 def _gemini_get_role_header(role: str, msg_num: int) -> str:
     """Get the markdown header for a message role."""
-    role_names = {
-        "user": "User",
-        "assistant": "Model",
-        "info": "Info",
-        "error": "Error",
-        "warning": "Warning",
-    }
-    name = role_names.get(role, role.title())
+    name = _GEMINI_ROLE_DISPLAY_NAMES.get(role, role.title())
     return f"## {name} (Message {msg_num})"
 
 
@@ -3031,6 +3132,20 @@ def gemini_scan_sessions(
 # ============================================================================
 
 
+def _get_claude_projects_path() -> Path:
+    """Get Claude projects directory path without validation.
+
+    Used for detection/existence checks where we don't want to exit on error.
+
+    Returns:
+        Path to Claude projects directory (may not exist)
+    """
+    env_override = os.environ.get("CLAUDE_PROJECTS_DIR")
+    if env_override:
+        return Path(env_override).expanduser()
+    return Path.home() / ".claude" / "projects"
+
+
 def get_active_backends(agent: str) -> list:
     """Return list of active backends based on agent flag.
 
@@ -3040,12 +3155,7 @@ def get_active_backends(agent: str) -> list:
     Returns:
         List of backend identifiers (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI) that exist
     """
-    # Get Claude projects dir without exiting on error (for detection only)
-    env_override = os.environ.get("CLAUDE_PROJECTS_DIR")
-    if env_override:
-        claude_projects = Path(env_override).expanduser()
-    else:
-        claude_projects = Path.home() / ".claude" / "projects"
+    claude_projects = _get_claude_projects_path()
 
     if agent == AGENT_CLAUDE:
         return [AGENT_CLAUDE] if claude_projects.exists() else []
@@ -3130,12 +3240,11 @@ def get_unified_sessions(
 
 
 def get_claude_projects_dir():
-    """Get the Claude projects directory, with error handling."""
-    env_override = os.environ.get("CLAUDE_PROJECTS_DIR")
-    if env_override:
-        projects_dir = Path(env_override).expanduser()
-    else:
-        projects_dir = Path.home() / ".claude" / "projects"
+    """Get the Claude projects directory, with error handling.
+
+    Exits with error if directory doesn't exist.
+    """
+    projects_dir = _get_claude_projects_path()
 
     if not projects_dir.exists():
         sys.stderr.write(f"Error: Claude projects directory not found at {projects_dir}\n")
@@ -3158,7 +3267,7 @@ def path_to_encoded_workspace(path: str) -> str:
 
     # Handle native Windows paths (C:\... or C:/...)
     # Check for drive letter followed by colon (e.g., C:, D:)
-    if len(path) >= 2 and path[1] == ":":  # noqa: PLR2004
+    if len(path) >= MIN_WINDOWS_PATH_LEN and path[1] == ":":
         return _convert_windows_path_to_encoded(path)
 
     # Handle WSL-mounted Windows paths like /mnt/c/Users/me/project
