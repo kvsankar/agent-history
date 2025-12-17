@@ -25,10 +25,12 @@ RUN mkdir -p /home/tester/.claude/projects \
     && chown -R tester:tester /home/tester/.claude /home/tester/.codex /home/tester/.gemini /home/tester/.claude-history /coverage
 
 # Copy SSH setup script and coverage script
+# Note: sed removes Windows CRLF line endings in case files were checked out on Windows
 COPY scripts/setup-ssh-client.sh /usr/local/bin/
 COPY scripts/entrypoint-runner.sh /usr/local/bin/entrypoint.sh
 COPY scripts/run-e2e-coverage.sh /usr/local/bin/run-e2e-coverage.sh
-RUN chmod +x /usr/local/bin/setup-ssh-client.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-e2e-coverage.sh
+RUN sed -i 's/\r$//' /usr/local/bin/*.sh && \
+    chmod +x /usr/local/bin/setup-ssh-client.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-e2e-coverage.sh
 
 # Working directory is the mounted app
 WORKDIR /app

@@ -18,11 +18,13 @@ RUN mkdir /var/run/sshd && \
     sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
 # Copy setup scripts
+# Note: sed removes Windows CRLF line endings in case files were checked out on Windows
 COPY scripts/create-users.sh /usr/local/bin/
 COPY scripts/generate-sessions.sh /usr/local/bin/
 COPY scripts/entrypoint-node.sh /usr/local/bin/entrypoint.sh
 
-RUN chmod +x /usr/local/bin/create-users.sh \
+RUN sed -i 's/\r$//' /usr/local/bin/*.sh && \
+    chmod +x /usr/local/bin/create-users.sh \
     /usr/local/bin/generate-sessions.sh \
     /usr/local/bin/entrypoint.sh
 

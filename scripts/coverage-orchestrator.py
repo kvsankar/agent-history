@@ -14,6 +14,8 @@ Usage:
     python scripts/coverage-orchestrator.py merge       # Merge coverage data from all sources
     python scripts/coverage-orchestrator.py report      # Generate combined coverage report
     python scripts/coverage-orchestrator.py all         # Run all: tests, merge, report
+    python scripts/coverage-orchestrator.py collect     # Import Windows coverage into WSL
+    python scripts/coverage-orchestrator.py clean       # Clean all coverage data
 
 Coverage Data Flow:
     +-----------------+     +-----------------+     +-----------------+
@@ -564,6 +566,75 @@ def cmd_all(args):
     return max(r[1] for r in results)
 
 
+def cmd_collect(args):
+    """Collect coverage data from Windows (when running in WSL)."""
+    if not is_wsl():
+        print("Error: collect command only works in WSL to import Windows coverage")
+        return 1
+
+    coverage_dir = get_coverage_dir()
+    windows_path = args.path
+
+    # If no path provided, check if current project is on Windows filesystem
+    if not windows_path:
+        project_root = get_project_root()
+        if str(project_root).startswith("/mnt/"):
+            # Already on Windows filesystem via WSL mount
+            windows_path = project_root
+
+    if not windows_path:
+        print("Error: Please specify the Windows project path")
+        print(
+            "Usage: python scripts/coverage-orchestrator.py collect --path /mnt/c/path/to/project"
+        )
+        return 1
+
+    windows_path = Path(windows_path)
+
+    if not windows_path.exists():
+        print(f"Error: Path does not exist: {windows_path}")
+        return 1
+
+    windows_coverage_dir = windows_path / ".coverage-data"
+
+    print("=== Collecting Coverage from Windows ===")
+    print(f"Source: {windows_path}")
+    print(f"Target: {coverage_dir}")
+
+    imported = 0
+
+    # Import from .coverage-data directory if it exists
+    if windows_coverage_dir.exists():
+        for f in windows_coverage_dir.glob(".coverage.*"):
+            # Copy with windows. prefix to distinguish source
+            target_name = f".coverage.windows.{f.name.replace('.coverage.', '')}"
+            target_path = coverage_dir / target_name
+
+            print(f"  Importing {f.name} -> {target_name}")
+            shutil.copy2(f, target_path)
+            imported += 1
+
+    # Also check for root .coverage file
+    windows_root_cov = windows_path / ".coverage"
+    if windows_root_cov.exists():
+        target_path = coverage_dir / ".coverage.windows.root"
+        print("  Importing .coverage -> .coverage.windows.root")
+        shutil.copy2(windows_root_cov, target_path)
+        imported += 1
+
+    if imported == 0:
+        print("\nNo coverage files found in Windows project")
+        print("Run tests on Windows first:")
+        print("  python scripts/coverage-orchestrator.py run")
+        return 1
+
+    print(f"\nImported {imported} coverage file(s) from Windows")
+    print("\nNext steps:")
+    print("  python scripts/coverage-orchestrator.py merge   # Merge all coverage")
+    print("  python scripts/coverage-orchestrator.py report  # Generate report")
+    return 0
+
+
 def cmd_clean(args):
     """Clean coverage data files."""
     project_root = get_project_root()
@@ -635,6 +706,12 @@ def main():
     # clean command (no arguments)
     subparsers.add_parser("clean", help="Clean coverage data files")
 
+    # collect command (WSL only - imports Windows coverage)
+    collect_parser = subparsers.add_parser(
+        "collect", help="Collect coverage from Windows (WSL only)"
+    )
+    collect_parser.add_argument("--path", help="Path to Windows project (via /mnt/c/...)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -648,6 +725,7 @@ def main():
         "report": cmd_report,
         "all": cmd_all,
         "clean": cmd_clean,
+        "collect": cmd_collect,
     }
 
     return commands[args.command](args)

@@ -15,10 +15,14 @@ omit =
     */site-packages/*
 
 [paths]
-# Map paths from Docker container to local
+# Map paths from different environments to local source
+# Order matters: first path is the canonical one
+# Add your WSL and Windows paths here for cross-platform coverage merging
 source =
     .
     /app
+    # Example: /home/username/projects/claude-history
+    # Example: C:\Users\username\projects\claude-history
 
 [report]
 # Combine parallel coverage data

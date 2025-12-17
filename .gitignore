@@ -15,6 +15,7 @@ build/
 .coverage
 .coverage.*
 .coverage-data/
+.coveragerc
 htmlcov/
 .hypothesis/
 
