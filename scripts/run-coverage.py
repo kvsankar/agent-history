@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Cross-platform coverage orchestrator for Windows + WSL.
+Cross-platform coverage orchestrator for Windows + WSL + Docker.
 
 Run from Windows to:
 1. Run tests with coverage on Windows
 2. Run tests with coverage in WSL (via wsl command)
-3. Collect and merge coverage data from both environments
-4. Generate combined coverage report
+3. Collect coverage data from Docker E2E tests (from .coverage-data/)
+4. Merge coverage data from all three environments
+5. Generate combined coverage report
 
 Usage:
     python scripts/run-coverage.py [--windows-only] [--wsl-only] [--merge-only] [--report]
@@ -114,7 +115,8 @@ uv run pytest --cov=. --cov-branch --cov-report= -x -q tests/unit/ && \\
 mv .coverage .coverage.wsl 2>/dev/null || true
 """
 
-    cmd = ["wsl", "-d", wsl_distro, "bash", "-c", wsl_cmd]
+    # Use login shell (-l) to ensure PATH includes ~/.local/bin where uv is installed
+    cmd = ["wsl", "-d", wsl_distro, "bash", "-l", "-c", wsl_cmd]
 
     result = subprocess.run(cmd)
     if result.returncode != 0:
@@ -145,44 +147,77 @@ def collect_wsl_coverage(windows_project: Path, wsl_project: str, wsl_distro: st
 
 
 def merge_coverage(config: dict) -> bool:
-    """Merge coverage data from Windows and WSL."""
+    """Merge coverage data from Windows, WSL, and Docker."""
     print("\n" + "=" * 60)
-    print("Merging coverage data...")
+    print("Merging coverage data from all sources...")
     print("=" * 60)
 
     project = config["windows_project"]
     output_dir = config["output_dir"]
     wsl_project = config["wsl_project"]
+    docker_data_dir = project / ".coverage-data"
 
-    # Create output directory
+    # Create output directory (clean it first to avoid stale data)
+    if output_dir.exists():
+        for f in output_dir.glob(".coverage*"):
+            if f.is_file():
+                f.unlink()
     output_dir.mkdir(exist_ok=True)
 
     # Create .coveragerc for merging with path mappings
+    # The first path is the canonical location (where source files exist on this machine)
+    # Subsequent paths are aliases that get remapped to the canonical path
     coveragerc = output_dir / ".coveragerc"
     coveragerc_content = f"""[run]
 parallel = true
-source = .
+source = {project}
 branch = true
 data_file = {output_dir / '.coverage'}
 
 [paths]
 source =
-    .
     {project}
     {wsl_project}
+    /app
 
 [report]
 show_missing = true
 skip_covered = false
+include =
+    {project / 'agent-history'}
+    {project / 'tests'}/*
 """
     coveragerc.write_text(coveragerc_content)
 
-    # Copy coverage files to output directory
+    copied_count = 0
+
+    # Copy Windows/WSL coverage files from project root
     for cov_file in project.glob(".coverage.*"):
         if cov_file.is_file() and cov_file.suffix in (".windows", ".wsl"):
             dest = output_dir / cov_file.name
             shutil.copy2(cov_file, dest)
-            print(f"  Copied {cov_file.name}")
+            print(f"  Copied {cov_file.name} (from project root)")
+            copied_count += 1
+
+    # Copy Docker coverage files from .coverage-data/
+    if docker_data_dir.exists():
+        docker_files = list(docker_data_dir.glob(".coverage.*"))
+        if docker_files:
+            print(f"  Found {len(docker_files)} Docker coverage files")
+            for cov_file in docker_files:
+                if cov_file.is_file():
+                    dest = output_dir / cov_file.name
+                    shutil.copy2(cov_file, dest)
+                    copied_count += 1
+            print(f"  Copied {len(docker_files)} Docker coverage files")
+    else:
+        print(f"  Note: No Docker coverage data found at {docker_data_dir}")
+
+    if copied_count == 0:
+        print("Warning: No coverage files found to merge!")
+        return False
+
+    print(f"\nTotal coverage files to merge: {copied_count}")
 
     # Combine coverage data
     cmd = [
