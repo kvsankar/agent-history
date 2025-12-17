@@ -6,12 +6,12 @@ A unified tool to list, filter, and export conversation sessions from Claude Cod
 and Codex CLI, organized by workspace. Supports both agents with auto-detection.
 
 Author: Built with Claude Code
-Version: 1.0.0
 License: MIT
 """
 
 import argparse
 import base64
+import hashlib
 import json
 import math
 import os
@@ -24,10 +24,12 @@ import stat
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path, PureWindowsPath
-from typing import Optional
+from typing import Any, Optional
 
 __version__ = "1.5.1"
 
@@ -52,12 +54,12 @@ GEMINI_HOME_DIR = Path.home() / ".gemini" / "tmp"
 # Named Constants (for readability and maintainability)
 # ============================================================================
 
-# Path parsing constants
-MIN_WINDOWS_PATH_LEN = 2  # Minimum length for "C:" style paths
-MIN_WSL_MNT_PATH_LEN = 6  # Length of "/mnt/c" prefix
-WSL_UNC_MIN_PARTS = 3  # Minimum parts in //wsl.localhost/Distro/path
-WSL_LOCALHOST_SKIP_PARTS = 4  # Parts to skip in /wsl.localhost/Distro/path
-MIN_ENCODED_PATH_LEN = 3  # Minimum for "C--" style encoded paths
+# Path parsing constants with explicit derivation (NAME-CONST)
+MIN_WINDOWS_PATH_LEN = len("C:")  # Minimum for "C:" style paths
+MIN_WSL_MNT_PATH_LEN = len("/mnt/c")  # WSL mount prefix length
+WSL_UNC_MIN_PARTS = len(["", "wsl.localhost", "Distro"])  # Parts in //wsl.localhost/Distro
+WSL_LOCALHOST_SKIP_PARTS = len(["", "", "wsl.localhost", "Distro"])  # Parts to skip
+MIN_ENCODED_PATH_LEN = len("C--")  # Minimum for Windows encoded paths
 
 # Splitting constants
 MIN_SPLIT_POINTS = 2  # Minimum split points (start + end) for no-split case
@@ -371,7 +373,37 @@ def validate_split_lines(value):
 WORKSPACE_NAME_PATTERN = re.compile(r"^[-a-zA-Z0-9_.\u0080-\uFFFF]+$")
 
 # Cache for Windows home path lookups (avoids repeated slow filesystem operations)
-_windows_home_cache: dict = {}
+# NO-GLOBAL-MUTABLE: Using class-based cache for testability
+
+
+class _WindowsHomeCache:
+    """Cache for Windows home directory lookups.
+
+    Avoids repeated slow filesystem operations when looking up
+    Windows user home directories from WSL.
+    """
+
+    def __init__(self) -> None:
+        self._cache: dict[str, Optional[Path]] = {}
+
+    def get(self, key: str) -> Optional[Path]:
+        """Get cached value for key."""
+        return self._cache.get(key)
+
+    def has(self, key: str) -> bool:
+        """Check if key is cached."""
+        return key in self._cache
+
+    def set(self, key: str, value: Optional[Path]) -> None:
+        """Set cached value for key."""
+        self._cache[key] = value
+
+    def clear(self) -> None:
+        """Clear cache (useful for testing)."""
+        self._cache.clear()
+
+
+_windows_home_cache = _WindowsHomeCache()
 
 # Pattern for valid SSH remote host specifications
 # Allow: user@hostname, hostname, user@hostname:port, IPv4/IPv6
@@ -480,6 +512,39 @@ SCORE_DISTANCE_PENALTY = 0.05  # Penalty per line away from target
 # Time gap thresholds (in seconds)
 TIME_GAP_LARGE = 300  # 5 minutes
 TIME_GAP_MEDIUM = 60  # 1 minute
+
+# Markdown markers for tool content (NO-MAGIC-STRING)
+TOOL_RESULT_MARKER = "**[Tool Result:"
+TOOL_USE_MARKER = "**[Tool Use:"
+
+# Pattern matching constants (SIMPLIFY-BOOLEAN)
+_MATCH_ALL_PATTERNS = frozenset(["", "*", "all"])
+
+# Regex for tool name extraction (NO-REGEX-PARSE)
+_TOOL_NAME_PATTERN = re.compile(r"\*\*\[Tool:\s*([^\]]+)\]\*\*")
+
+# Rsync exit codes (DATA-STRUCTURE: hoisted to module level)
+_RSYNC_EXIT_CODES: dict[int, tuple[bool, str]] = {
+    0: (True, "Success"),
+    1: (False, "Syntax or usage error"),
+    2: (False, "Protocol incompatibility"),
+    3: (False, "Errors selecting input/output files"),
+    5: (False, "Error starting client-server protocol"),
+    6: (False, "Daemon unable to append to log file"),
+    10: (False, "Error in socket I/O"),
+    11: (False, "Error in file I/O"),
+    12: (False, "Error in rsync protocol data stream"),
+    13: (False, "Errors with program diagnostics"),
+    14: (False, "Error in IPC code"),
+    20: (False, "Received SIGUSR1 or SIGINT"),
+    21: (False, "Error returned by waitpid()"),
+    22: (False, "Error allocating memory"),
+    23: (True, "Partial transfer due to error"),  # Some files transferred
+    24: (True, "Partial transfer - source files vanished"),  # Some files transferred
+    25: (False, "Max delete limit reached"),
+    30: (False, "Timeout in data send/receive"),
+    35: (False, "Timeout waiting for daemon"),
+}
 
 # Display limits
 MAX_WORKSPACE_CANDIDATES = 20  # Maximum workspaces to show in suggestions
@@ -607,7 +672,7 @@ def is_native_workspace(name: str) -> bool:
     return not is_cached_workspace(name)
 
 
-def matches_any_pattern(workspace_name: str, patterns: list) -> bool:
+def matches_any_pattern(workspace_name: str, patterns: list[str]) -> bool:
     """Check if workspace name matches any pattern in the list.
 
     A pattern matches if it is a substring of the workspace name.
@@ -620,8 +685,14 @@ def matches_any_pattern(workspace_name: str, patterns: list) -> bool:
     Returns:
         True if workspace matches any pattern, False otherwise.
     """
-    if not patterns or patterns in ([""], ["*"], ["all"]):
+    if not patterns:
         return True
+
+    # Check for match-all patterns using frozenset (SIMPLIFY-BOOLEAN)
+    if any(p in _MATCH_ALL_PATTERNS for p in patterns):
+        return True
+
+    # Check for substring matches
     return any(pattern and pattern in workspace_name for pattern in patterns)
 
 
@@ -901,11 +972,44 @@ def print_sessions_output(sessions: list, source_label: str, workspaces_only: bo
 
 
 # ============================================================================
-# External Command Paths (Security)
+# External Command Paths (Security) - NO-GLOBAL-MUTABLE fix
 # ============================================================================
 
-# Cache for resolved command paths
-_COMMAND_PATHS = {}
+
+class _CommandPathCache:
+    """Cache for external command path resolution.
+
+    Caches results of shutil.which() lookups to avoid repeated
+    filesystem searches for the same commands.
+
+    This class wraps the cache to make it testable and clearable,
+    following Rhodes' NO-GLOBAL-MUTABLE principle.
+    """
+
+    def __init__(self) -> None:
+        self._paths: dict[str, str] = {}
+
+    def get_path(self, cmd: str) -> str:
+        """Get absolute path for command, with caching.
+
+        Args:
+            cmd: Command name (e.g., 'ssh', 'rsync')
+
+        Returns:
+            Absolute path or original command name if not found.
+        """
+        if cmd not in self._paths:
+            path = shutil.which(cmd)
+            self._paths[cmd] = path if path else cmd
+        return self._paths[cmd]
+
+    def clear(self) -> None:
+        """Clear cache (useful for testing)."""
+        self._paths.clear()
+
+
+# Module instance (can be replaced in tests)
+_command_path_cache = _CommandPathCache()
 
 
 def get_command_path(cmd: str) -> str:
@@ -920,10 +1024,7 @@ def get_command_path(cmd: str) -> str:
     Returns:
         Absolute path to the command, or the original name if not found.
     """
-    if cmd not in _COMMAND_PATHS:
-        path = shutil.which(cmd)
-        _COMMAND_PATHS[cmd] = path if path else cmd
-    return _COMMAND_PATHS[cmd]
+    return _command_path_cache.get_path(cmd)
 
 
 # ============================================================================
@@ -1026,16 +1127,22 @@ def extract_content(message_obj: dict) -> str:
     return "\n".join(content_parts) if content_parts else "[No content]"
 
 
-def get_first_timestamp(jsonl_file: Path) -> str:
+def get_first_timestamp(jsonl_file: Path) -> Optional[str]:
     """Extract the first message timestamp from a .jsonl file.
 
     Scans the file line by line looking for the first user or assistant
     message with a timestamp. Returns None if file cannot be read or
     contains no valid messages.
+
+    Args:
+        jsonl_file: Path to JSONL file
+
+    Returns:
+        ISO 8601 timestamp string or None if not found or file cannot be read.
     """
     try:
         with open(jsonl_file, encoding="utf-8") as f:
-            for line in f:
+            for line_num, line in enumerate(f, 1):
                 try:
                     entry = json.loads(line)
                     entry_type = entry.get("type")
@@ -1043,11 +1150,17 @@ def get_first_timestamp(jsonl_file: Path) -> str:
                         timestamp = entry.get("timestamp", "")
                         if timestamp:
                             return timestamp
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    # Skip malformed lines with debug info (NO-BARE-EXCEPT)
+                    if os.environ.get("DEBUG"):
+                        sys.stderr.write(
+                            f"Warning: Malformed JSON at {jsonl_file}:{line_num}: {e}\n"
+                        )
                     continue
-    except OSError:
-        # File doesn't exist, permission denied, or other I/O error
-        pass
+    except OSError as e:
+        # Log I/O errors in debug mode (NO-BARE-EXCEPT)
+        if os.environ.get("DEBUG"):
+            sys.stderr.write(f"Warning: Cannot read {jsonl_file}: {e}\n")
     return None
 
 
@@ -1069,8 +1182,30 @@ def estimate_message_lines(msg_content: str, has_metadata: bool) -> int:
 
 
 def is_tool_result_message(msg_content: str) -> bool:
-    """Check if message content contains a tool result."""
-    return "**[Tool Result:" in msg_content
+    """Check if message content contains a tool result.
+
+    Args:
+        msg_content: Message content string (formatted as markdown)
+
+    Returns:
+        True if content contains a tool result block.
+    """
+    return TOOL_RESULT_MARKER in msg_content
+
+
+def extract_tool_name_from_content(content: str) -> str:
+    """Extract tool name from formatted tool call content.
+
+    NO-REGEX-PARSE: Uses compiled regex instead of multiple string splits.
+
+    Args:
+        content: Formatted content string like "**[Tool: Bash]**..."
+
+    Returns:
+        Tool name or "unknown" if not found
+    """
+    match = _TOOL_NAME_PATTERN.search(content)
+    return match.group(1).strip() if match else "unknown"
 
 
 def calculate_time_gap(msg1: dict, msg2: dict) -> float:
@@ -1459,33 +1594,42 @@ def _generate_markdown_header(
     return md_lines
 
 
-def _generate_agent_notice(parent_session_id, agent_id):
-    """Generate agent conversation notice."""
-    md_lines = [
-        "",
-        "> **Agent Conversation:** This is a sub-task executed by an agent spawned from the main conversation.",
-        ">",
-        "> - Messages labeled 'User' represent task instructions from the parent Claude session",
-        "> - Messages labeled 'Assistant' are responses from this agent",
-    ]
-    if parent_session_id:
-        md_lines.append(f"> - **Parent Session ID:** `{parent_session_id}`")
-    if agent_id:
-        md_lines.append(f"> - **Agent ID:** `{agent_id}`")
-    return md_lines
+def _add_metadata_field(
+    lines: list[str],
+    msg: dict,
+    key: str,
+    label: str,
+    format_str: str = "- **{label}:** `{value}`",
+) -> None:
+    """Add an optional metadata field to lines.
+
+    NO-NESTED-FUNCTION: Extracted from _generate_message_metadata.
+
+    Args:
+        lines: List to append formatted field to
+        msg: Message dictionary
+        key: Key to extract from message
+        label: Display label for the field
+        format_str: Format string with {label} and {value} placeholders
+    """
+    value = msg.get(key)
+    if value is not None:
+        lines.append(format_str.format(label=label, value=value))
 
 
-def _generate_message_metadata(msg, uuid_to_index):
-    """Generate metadata section for a message."""
+def _generate_message_metadata(msg: dict, uuid_to_index: dict) -> list[str]:
+    """Generate metadata section for a message.
+
+    Args:
+        msg: Message dictionary
+        uuid_to_index: Mapping of UUIDs to message numbers
+
+    Returns:
+        List of markdown lines for metadata section
+    """
     md_lines = ["### Metadata", ""]
 
-    # Helper to add optional field
-    def add_field(key, label, format_str="- **{label}:** `{value}`"):
-        value = msg.get(key)
-        if value is not None:
-            md_lines.append(format_str.format(label=label, value=value))
-
-    add_field("uuid", "UUID")
+    _add_metadata_field(md_lines, msg, "uuid", "UUID")
 
     # Parent UUID with link
     parent_uuid = msg.get("parentUuid")
@@ -1498,20 +1642,20 @@ def _generate_message_metadata(msg, uuid_to_index):
         else:
             md_lines.append(f"- **Parent UUID:** `{parent_uuid}` *(in different session)*")
 
-    add_field("sessionId", "Session ID")
-    add_field("agentId", "Agent ID")
-    add_field("requestId", "Request ID")
-    add_field("cwd", "Working Directory")
-    add_field("gitBranch", "Git Branch")
-    add_field("version", "Version")
-    add_field("userType", "User Type")
+    _add_metadata_field(md_lines, msg, "sessionId", "Session ID")
+    _add_metadata_field(md_lines, msg, "agentId", "Agent ID")
+    _add_metadata_field(md_lines, msg, "requestId", "Request ID")
+    _add_metadata_field(md_lines, msg, "cwd", "Working Directory")
+    _add_metadata_field(md_lines, msg, "gitBranch", "Git Branch")
+    _add_metadata_field(md_lines, msg, "version", "Version")
+    _add_metadata_field(md_lines, msg, "userType", "User Type")
 
     if msg.get("isSidechain") is not None:
         md_lines.append(f"- **Is Sidechain:** `{msg['isSidechain']}`")
 
-    add_field("model", "Model")
-    add_field("stop_reason", "Stop Reason")
-    add_field("stop_sequence", "Stop Sequence")
+    _add_metadata_field(md_lines, msg, "model", "Model")
+    _add_metadata_field(md_lines, msg, "stop_reason", "Stop Reason")
+    _add_metadata_field(md_lines, msg, "stop_sequence", "Stop Sequence")
 
     # Usage stats
     usage = msg.get("usage")
@@ -1575,7 +1719,7 @@ def generate_markdown_for_messages(
     )
 
     if is_agent:
-        md_lines.extend(_generate_agent_notice(parent_session_id, agent_id))
+        md_lines.extend(_generate_agent_conversation_notice(parent_session_id, agent_id))
 
     md_lines.extend(["", "---", ""])
 
@@ -1825,14 +1969,9 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> dict:
 
     for msg in messages:
         if msg.get("is_tool_call"):
-            # Extract tool name from content (format: "**[Tool: name]**...")
+            # Extract tool name using regex (NO-REGEX-PARSE fix)
             content = msg.get("content", "")
-            tool_name = "unknown"
-            if "**[Tool:" in content:
-                try:
-                    tool_name = content.split("**[Tool:")[1].split("]**")[0].strip()
-                except IndexError:
-                    pass
+            tool_name = extract_tool_name_from_content(content)
             metrics["tool_uses"].append(
                 {
                     "name": tool_name,
@@ -1915,23 +2054,47 @@ def codex_get_index_file() -> Path:
     return get_config_dir() / "codex_index.json"
 
 
-def codex_load_index() -> dict:
+def codex_load_index() -> dict[str, Any]:
     """Load Codex session index from file.
 
     Returns:
         Index dict with keys: version, last_scan_date, sessions
-        sessions maps session file path (str) to encoded workspace name
+        sessions maps session file path (str) to encoded workspace name.
+        Returns empty index if file doesn't exist or is invalid.
     """
     index_file = codex_get_index_file()
-    if index_file.exists():
-        try:
-            with open(index_file, encoding="utf-8") as f:
-                data = json.load(f)
-                if data.get("version") == CODEX_INDEX_VERSION:
-                    return data
-        except (OSError, json.JSONDecodeError):
-            pass
-    return {"version": CODEX_INDEX_VERSION, "last_scan_date": None, "sessions": {}}
+    default_index: dict[str, Any] = {
+        "version": CODEX_INDEX_VERSION,
+        "last_scan_date": None,
+        "sessions": {},
+    }
+
+    if not index_file.exists():
+        return default_index
+
+    try:
+        with open(index_file, encoding="utf-8") as f:
+            data = json.load(f)
+
+            # Version mismatch requires rebuild
+            if data.get("version") != CODEX_INDEX_VERSION:
+                if os.environ.get("DEBUG"):
+                    sys.stderr.write(
+                        f"Codex index version mismatch: "
+                        f"expected {CODEX_INDEX_VERSION}, got {data.get('version')}\n"
+                    )
+                return default_index
+
+            return data
+
+    except OSError as e:
+        if os.environ.get("DEBUG"):
+            sys.stderr.write(f"Cannot read Codex index {index_file}: {e}\n")
+    except json.JSONDecodeError as e:
+        if os.environ.get("DEBUG"):
+            sys.stderr.write(f"Invalid JSON in Codex index {index_file}: {e}\n")
+
+    return default_index
 
 
 def codex_save_index(index: dict) -> None:
@@ -2570,8 +2733,6 @@ def gemini_compute_project_hash(path: Path) -> str:
     Returns:
         SHA-256 hex digest of the absolute path string
     """
-    import hashlib
-
     abs_path = str(path.resolve())
     return hashlib.sha256(abs_path.encode("utf-8")).hexdigest()
 
@@ -3784,7 +3945,7 @@ def _scan_drives_for_claude_user() -> Path:
     return None
 
 
-def get_windows_home_from_wsl(username: str = None):
+def get_windows_home_from_wsl(username: str = None) -> Optional[Path]:
     """
     Get Windows user home directory from WSL.
 
@@ -3797,23 +3958,23 @@ def get_windows_home_from_wsl(username: str = None):
     cache_key = username or "_default_"
 
     # Check cache first to avoid slow filesystem operations
-    if cache_key in _windows_home_cache:
-        return _windows_home_cache[cache_key]
+    if _windows_home_cache.has(cache_key):
+        return _windows_home_cache.get(cache_key)
 
     if username:
         result = _find_user_home_on_drives(username)
-        _windows_home_cache[cache_key] = result
+        _windows_home_cache.set(cache_key, result)
         return result
 
     # Primary approach: use Windows USERPROFILE
     home = _get_userprofile_via_cmd()
     if home:
-        _windows_home_cache[cache_key] = home
+        _windows_home_cache.set(cache_key, home)
         return home
 
     # Fallback: scan all drives
     result = _scan_drives_for_claude_user()
-    _windows_home_cache[cache_key] = result
+    _windows_home_cache.set(cache_key, result)
     return result
 
 
@@ -4075,11 +4236,17 @@ def _get_wsl_candidate_paths(distro_name: str, username: str) -> list:
 
 
 def _path_exists_with_timeout(path: Path, timeout: float = 5.0) -> bool:
-    """Check if a path exists with a timeout (for UNC paths that may block)."""
-    from concurrent.futures import ThreadPoolExecutor
-    from concurrent.futures import TimeoutError as FuturesTimeoutError
+    """Check if a path exists with a timeout (for UNC paths that may block).
 
-    def check_exists():
+    Args:
+        path: Path to check
+        timeout: Maximum time to wait in seconds
+
+    Returns:
+        True if path exists, False if doesn't exist or timeout reached.
+    """
+
+    def check_exists() -> bool:
         return path.exists()
 
     try:
@@ -4124,7 +4291,7 @@ def _get_wsl_home_path(distro_name: str) -> Optional[str]:
         return None
 
 
-def get_wsl_projects_dir(distro_name: str):
+def get_wsl_projects_dir(distro_name: str) -> Optional[Path]:
     """Get Claude projects directory for a WSL distribution.
 
     Args:
@@ -4134,29 +4301,16 @@ def get_wsl_projects_dir(distro_name: str):
         Path to .claude/projects in WSL, accessible from Windows.
         Returns None if the distribution is inaccessible or Claude is not installed.
     """
-    # Test override
+    # Test override (DRY-EXTRACT-WSL: same pattern as other WSL functions)
     override = os.environ.get("CLAUDE_WSL_PROJECTS_DIR")
     if override and Path(override).exists():
         return Path(override)
 
-    # Get username from WSL
-    try:
-        result = subprocess.run(
-            [get_command_path("wsl"), "-d", distro_name, "whoami"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-        if result.returncode != 0:
-            return None
-
-        username = result.stdout.strip()
+    # Get username using common helper
+    username = _get_wsl_username(distro_name)
+    if username:
         return _locate_wsl_projects_dir(distro_name, username)
-
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return None
+    return None
 
 
 def get_windows_projects_dir(username: str = None):
@@ -4211,7 +4365,7 @@ def _get_wsl_codex_candidate_paths(distro_name: str, username: str) -> list:
     ]
 
 
-def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str):
+def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Optional[Path]:
     """Find the first accessible UNC path for an agent in a WSL distro."""
     if agent == AGENT_CLAUDE:
         candidates = _get_wsl_candidate_paths(distro_name, username)
@@ -4231,7 +4385,58 @@ def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str):
     return None
 
 
-def gemini_get_wsl_sessions_dir(distro_name: str):
+def _get_wsl_username(distro_name: str) -> Optional[str]:
+    """Get username from a WSL distribution.
+
+    DRY-EXTRACT-WSL: Common helper to avoid duplicating subprocess call.
+
+    Args:
+        distro_name: WSL distribution name
+
+    Returns:
+        Username string or None on failure
+    """
+    try:
+        result = subprocess.run(
+            [get_command_path("wsl"), "-d", distro_name, "whoami"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+def _get_wsl_agent_sessions_dir(distro_name: str, agent: str, env_var: str) -> Optional[Path]:
+    """Get session directory for an agent from WSL distribution.
+
+    DRY-EXTRACT-WSL: Common implementation for all agent WSL accessors.
+
+    Args:
+        distro_name: WSL distribution name
+        agent: Agent type (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI)
+        env_var: Environment variable name for test override
+
+    Returns:
+        Path to agent's sessions directory, or None if not found.
+    """
+    # Test override
+    override = os.environ.get(env_var)
+    if override and Path(override).exists():
+        return Path(override)
+
+    # Get username and locate directory
+    username = _get_wsl_username(distro_name)
+    if username:
+        return _locate_wsl_agent_dir(distro_name, username, agent)
+    return None
+
+
+def gemini_get_wsl_sessions_dir(distro_name: str) -> Optional[Path]:
     """Get Gemini sessions directory for a WSL distribution.
 
     Args:
@@ -4241,31 +4446,10 @@ def gemini_get_wsl_sessions_dir(distro_name: str):
         Path to .gemini/tmp in WSL, accessible from Windows.
         Returns None if the distribution is inaccessible or Gemini is not installed.
     """
-    # Test override
-    override = os.environ.get("GEMINI_WSL_SESSIONS_DIR")
-    if override and Path(override).exists():
-        return Path(override)
-
-    # Get username from WSL
-    try:
-        result = subprocess.run(
-            [get_command_path("wsl"), "-d", distro_name, "whoami"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-        if result.returncode != 0:
-            return None
-
-        username = result.stdout.strip()
-        return _locate_wsl_agent_dir(distro_name, username, AGENT_GEMINI)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None
+    return _get_wsl_agent_sessions_dir(distro_name, AGENT_GEMINI, "GEMINI_WSL_SESSIONS_DIR")
 
 
-def codex_get_wsl_sessions_dir(distro_name: str):
+def codex_get_wsl_sessions_dir(distro_name: str) -> Optional[Path]:
     """Get Codex sessions directory for a WSL distribution.
 
     Args:
@@ -4275,28 +4459,7 @@ def codex_get_wsl_sessions_dir(distro_name: str):
         Path to .codex/sessions in WSL, accessible from Windows.
         Returns None if the distribution is inaccessible or Codex is not installed.
     """
-    # Test override
-    override = os.environ.get("CODEX_WSL_SESSIONS_DIR")
-    if override and Path(override).exists():
-        return Path(override)
-
-    # Get username from WSL
-    try:
-        result = subprocess.run(
-            [get_command_path("wsl"), "-d", distro_name, "whoami"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-        if result.returncode != 0:
-            return None
-
-        username = result.stdout.strip()
-        return _locate_wsl_agent_dir(distro_name, username, AGENT_CODEX)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None
+    return _get_wsl_agent_sessions_dir(distro_name, AGENT_CODEX, "CODEX_WSL_SESSIONS_DIR")
 
 
 def gemini_get_windows_sessions_dir(username: str = None):
@@ -4806,8 +4969,6 @@ def _escape_rsync_remote_path(path: str) -> str:
 
 def _convert_to_rsync_path(local_dir: Path) -> str:
     """Convert local path to rsync-compatible format."""
-    import re
-
     local_path_posix = str(local_dir).replace("\\", "/")
 
     if ":" in local_path_posix and not local_path_posix.startswith("/"):
@@ -4819,34 +4980,16 @@ def _convert_to_rsync_path(local_dir: Path) -> str:
     return local_path_posix + "/"
 
 
-def _interpret_rsync_exit_code(code: int) -> tuple:
+def _interpret_rsync_exit_code(code: int) -> tuple[bool, str]:
     """Interpret rsync exit code.
+
+    Args:
+        code: Exit code from rsync command
 
     Returns:
         Tuple of (is_partial_success, error_message)
     """
-    rsync_errors = {
-        0: (True, "Success"),
-        1: (False, "Syntax or usage error"),
-        2: (False, "Protocol incompatibility"),
-        3: (False, "Errors selecting input/output files"),
-        5: (False, "Error starting client-server protocol"),
-        6: (False, "Daemon unable to append to log file"),
-        10: (False, "Error in socket I/O"),
-        11: (False, "Error in file I/O"),
-        12: (False, "Error in rsync protocol data stream"),
-        13: (False, "Errors with program diagnostics"),
-        14: (False, "Error in IPC code"),
-        20: (False, "Received SIGUSR1 or SIGINT"),
-        21: (False, "Error returned by waitpid()"),
-        22: (False, "Error allocating memory"),
-        23: (True, "Partial transfer due to error"),  # Some files transferred
-        24: (True, "Partial transfer - source files vanished"),  # Some files transferred
-        25: (False, "Max delete limit reached"),
-        30: (False, "Timeout in data send/receive"),
-        35: (False, "Timeout waiting for daemon"),
-    }
-    return rsync_errors.get(code, (False, f"Unknown error (code {code})"))
+    return _RSYNC_EXIT_CODES.get(code, (False, f"Unknown error (code {code})"))
 
 
 def _count_rsync_files(output: str) -> int:
