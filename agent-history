@@ -2987,10 +2987,10 @@ def path_to_encoded_workspace(path: str) -> str:
     """Convert an absolute path to Claude's encoded workspace directory name.
 
     Args:
-        path: Absolute path (e.g., '/home/user/my-project' or 'C:\\sankar\\projects')
+        path: Absolute path (e.g., '/home/user/my-project' or 'C:\\Users\\alice\\projects')
 
     Returns:
-        Encoded workspace name (e.g., '-home-user-my-project' or 'C--sankar-projects')
+        Encoded workspace name (e.g., '-home-user-my-project' or 'C--Users-alice-projects')
     """
     # Remove trailing slash/backslash if present
     path = path.rstrip("/").rstrip("\\")
@@ -3346,14 +3346,14 @@ def _resolve_existing_wsl_path(parts: list, base_path: Path) -> tuple:
 
 
 def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
-    """Normalize a Windows-style encoded path (e.g., 'C--sankar-projects').
+    """Normalize a Windows-style encoded path (e.g., 'C--Users-alice-projects').
 
     Args:
         workspace_dir_name: Encoded name starting with drive letter and '--'
         verify_local: If True, verify against /mnt/<drive>/ filesystem
 
     Returns:
-        Decoded path (e.g., 'C:\\sankar\\projects' on Windows, '/mnt/c/...' on WSL)
+        Decoded path (e.g., 'C:\\Users\\alice\\projects' on Windows, '/mnt/c/...' on WSL)
     """
     drive_letter = workspace_dir_name[0].upper()
     rest = workspace_dir_name[3:]  # Skip 'C--'
@@ -3496,7 +3496,7 @@ def normalize_workspace_name(
     Returns:
         Decoded path (e.g., '/home/user/my-project')
     """
-    # Handle Windows-style paths (e.g., 'C--sankar-projects-claude-history')
+    # Handle Windows-style paths (e.g., 'C--Users-alice-projects-myapp')
     if _is_windows_encoded_path(workspace_dir_name):
         return _normalize_windows_path(workspace_dir_name, verify_local)
 
@@ -3926,9 +3926,9 @@ def get_workspace_name_from_path(workspace_dir_name: str) -> str:
     Removes source tags and normalizes path.
 
     Examples:
-        'C--sankar-projects-claude-history' -> 'claude-history'
-        'remote_ubuntuvm01_home-sankar-projects-claude-skills' -> 'claude-skills'
-        'wsl_ubuntu_home-sankar-projects-auth' -> 'auth'
+        'C--Users-alice-projects-myapp' -> 'myapp'
+        'remote_server01_home-bob-projects-mylib' -> 'mylib'
+        'wsl_ubuntu_home-user-projects-auth' -> 'auth'
     """
     # Remove source tags if present
     if workspace_dir_name.startswith(CACHED_REMOTE_PREFIX):
@@ -3943,8 +3943,8 @@ def get_workspace_name_from_path(workspace_dir_name: str) -> str:
             workspace_dir_name = parts[2]
 
     # Get the last path component (workspace name)
-    # home-sankar-projects-claude-history -> claude-history
-    # C--sankar-projects-claude-history -> claude-history
+    # home-alice-projects-myapp -> myapp
+    # C--Users-alice-projects-myapp -> myapp
     path_parts = workspace_dir_name.split("-")
 
     # Find the workspace name (usually last component or last few)

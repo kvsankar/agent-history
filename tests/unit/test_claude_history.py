@@ -2688,9 +2688,9 @@ class TestEncodedWorkspaceConversion:
 
     def test_wsl_mnt_windows_path(self):
         """WSL /mnt/<drive>/ paths should encode using Windows drive notation."""
-        path = "/mnt/c/sankar/projects/claude-history"
+        path = "/mnt/c/Users/alice/projects/myapp"
         encoded = ch.path_to_encoded_workspace(path)
-        assert encoded == "C--sankar-projects-claude-history"
+        assert encoded == "C--Users-alice-projects-myapp"
 
 
 class TestSourceTagGeneration:
@@ -2773,9 +2773,9 @@ class TestAliasWorkspaceSanitize:
 
     def test_mnt_prefix_to_windows_encoding(self):
         """Legacy '-mnt-c-' entries should become 'C--' encoded names."""
-        original = "-mnt-c-sankar-projects-claude-history"
+        original = "-mnt-c-Users-alice-projects-myapp"
         normalized = ch._sanitize_alias_workspace_entry(original)
-        assert normalized == "C--sankar-projects-claude-history"
+        assert normalized == "C--Users-alice-projects-myapp"
 
     def test_absolute_path_normalization(self):
         """Absolute Unix paths should be converted to encoded names."""
@@ -6929,21 +6929,21 @@ class TestSection9Remaining:
             with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"remote:sankar@host": ["-home-user-proj"]}},
+                    "aliases": {"test": {"remote:alice@host": ["-home-user-proj"]}},
                 }
                 ch.save_aliases(aliases)
 
                 args = SimpleNamespace(
                     name="test",
                     workspace="/home/user/proj",
-                    remote="sankar@host",
+                    remote="alice@host",
                     wsl=False,
                     windows=False,
                 )
                 ch.cmd_alias_remove(args)
 
                 final = ch.load_aliases()
-                assert "remote:sankar@host" not in final["aliases"].get("test", {})
+                assert "remote:alice@host" not in final["aliases"].get("test", {})
 
     def test_alias_source_local(self, alias_test_env):
         """9.2.1: alias add <pattern> adds local workspace by pattern."""
@@ -8306,7 +8306,7 @@ class TestWindowsDriveFilter:
             drive_dir.mkdir(parents=True)
 
         # Multi-letter mounts (should be skipped)
-        for mount in ["wsl", "wslg", "sankar", "networkdrive"]:
+        for mount in ["wsl", "wslg", "shared", "networkdrive"]:
             mount_dir = mnt / mount / "Users" / "testuser" / ".claude" / "projects"
             mount_dir.mkdir(parents=True)
 
@@ -8322,7 +8322,7 @@ class TestWindowsDriveFilter:
             assert sorted(drives) == ["c", "d", "e"]
             assert "wsl" not in drives
             assert "wslg" not in drives
-            assert "sankar" not in drives
+            assert "shared" not in drives
             assert "networkdrive" not in drives
 
     def test_drive_filter_logic(self):
@@ -8335,7 +8335,7 @@ class TestWindowsDriveFilter:
         # Invalid - multi-letter
         assert not (len("wsl") == 1 and "wsl".isalpha())
         assert not (len("wslg") == 1 and "wslg".isalpha())
-        assert not (len("sankar") == 1 and "sankar".isalpha())
+        assert not (len("shared") == 1 and "shared".isalpha())
 
         # Invalid - numeric
         assert not (len("1") == 1 and "1".isalpha())
@@ -10899,7 +10899,9 @@ class TestPrintTimeSummary:
     def test_prints_time_summary(self, capsys):
         """Should print formatted time summary."""
         time_stats = {
-            "daily_stats": {"2025-01-15": {"work_seconds": 3600, "messages": 10, "work_periods": 2}},
+            "daily_stats": {
+                "2025-01-15": {"work_seconds": 3600, "messages": 10, "work_periods": 2}
+            },
             "total_work": 3600,
             "total_messages": 10,
             "total_periods": 2,
@@ -10916,7 +10918,9 @@ class TestPrintTimeSummary:
     def test_prints_daily_breakdown_when_requested(self, capsys):
         """Should print daily breakdown when include_breakdown is True."""
         time_stats = {
-            "daily_stats": {"2025-01-15": {"work_seconds": 3600, "messages": 10, "work_periods": 2}},
+            "daily_stats": {
+                "2025-01-15": {"work_seconds": 3600, "messages": 10, "work_periods": 2}
+            },
             "total_work": 3600,
             "total_messages": 10,
             "total_periods": 2,
@@ -11818,24 +11822,30 @@ class TestDownloadRemoteFile:
 
     def test_download_success(self, tmp_path, monkeypatch):
         """Should return True on successful download."""
+
         def mock_run(cmd, **kwargs):
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(subprocess, "run", mock_run)
         monkeypatch.setattr(ch, "get_command_path", lambda x: x)
 
-        result = ch._download_remote_file("user@host", "/remote/file.jsonl", tmp_path / "local.jsonl")
+        result = ch._download_remote_file(
+            "user@host", "/remote/file.jsonl", tmp_path / "local.jsonl"
+        )
         assert result is True
 
     def test_download_failure(self, tmp_path, monkeypatch, capsys):
         """Should return False and print error on failure."""
+
         def mock_run(cmd, **kwargs):
             return SimpleNamespace(returncode=1, stdout="", stderr="Permission denied")
 
         monkeypatch.setattr(subprocess, "run", mock_run)
         monkeypatch.setattr(ch, "get_command_path", lambda x: x)
 
-        result = ch._download_remote_file("user@host", "/remote/file.jsonl", tmp_path / "local.jsonl")
+        result = ch._download_remote_file(
+            "user@host", "/remote/file.jsonl", tmp_path / "local.jsonl"
+        )
         assert result is False
         captured = capsys.readouterr()
         assert "Error downloading file" in captured.err
@@ -11848,8 +11858,16 @@ class TestConvertLocalFile:
         """Should convert local JSONL file to markdown."""
         jsonl_file = tmp_path / "session.jsonl"
         jsonl_content = [
-            {"type": "user", "message": {"role": "user", "content": "Hello"}, "timestamp": "2025-01-01T10:00:00Z"},
-            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi!"}]}, "timestamp": "2025-01-01T10:01:00Z"},
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Hello"},
+                "timestamp": "2025-01-01T10:00:00Z",
+            },
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi!"}]},
+                "timestamp": "2025-01-01T10:01:00Z",
+            },
         ]
         jsonl_file.write_text("\n".join(json.dumps(m) for m in jsonl_content))
 
@@ -11876,7 +11894,9 @@ class TestConvertLocalFile:
     def test_convert_with_custom_output(self, tmp_path):
         """Should write to custom output path."""
         jsonl_file = tmp_path / "session.jsonl"
-        jsonl_file.write_text('{"type": "user", "message": {"role": "user", "content": "Test"}, "timestamp": "2025-01-01T10:00:00Z"}')
+        jsonl_file.write_text(
+            '{"type": "user", "message": {"role": "user", "content": "Test"}, "timestamp": "2025-01-01T10:00:00Z"}'
+        )
 
         output_file = tmp_path / "custom_output.md"
         args = SimpleNamespace(jsonl_file=str(jsonl_file), output=str(output_file))
@@ -11922,16 +11942,18 @@ class TestCollectRemoteSessionDetails:
 
     def test_collect_remote_codex_with_sessions(self, monkeypatch):
         """Should return formatted sessions when found."""
-        mock_sessions = [{
-            "filename": "session.jsonl",
-            "filepath": "/home/user/.codex/sessions/2025/01/15/session.jsonl",
-            "size_kb": 1.5,
-            "modified": datetime(2025, 1, 15, 10, 0, 0),
-            "message_count": 5,
-            "workspace": "myproject",
-            "workspace_full": "/home/user/myproject",
-            "agent": "codex",
-        }]
+        mock_sessions = [
+            {
+                "filename": "session.jsonl",
+                "filepath": "/home/user/.codex/sessions/2025/01/15/session.jsonl",
+                "size_kb": 1.5,
+                "modified": datetime(2025, 1, 15, 10, 0, 0),
+                "message_count": 5,
+                "workspace": "myproject",
+                "workspace_full": "/home/user/myproject",
+                "agent": "codex",
+            }
+        ]
         monkeypatch.setattr(ch, "codex_get_remote_session_info", lambda *args: mock_sessions)
 
         result = ch._collect_remote_codex_session_details("user@host", ["*"], None, None)
@@ -11954,7 +11976,11 @@ class TestGetRemoteSessionInfo:
     def test_ssh_command_failure(self, monkeypatch):
         """Should return empty list on SSH failure."""
         monkeypatch.setattr(ch, "validate_remote_host", lambda x: True)
-        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="error"))
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="error"),
+        )
         monkeypatch.setattr(ch, "get_command_path", lambda x: x)
 
         result = ch.get_remote_session_info("user@host", [])
@@ -12006,7 +12032,11 @@ class TestCodexGetRemoteSessionInfo:
         """Should return empty list on SSH failure."""
         monkeypatch.setattr(ch, "validate_remote_host", lambda x: True)
         monkeypatch.setattr(ch, "get_command_path", lambda x: x)
-        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr=""))
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr=""),
+        )
 
         result = ch.codex_get_remote_session_info("user@host")
         assert result == []
@@ -12034,7 +12064,9 @@ class TestCmdConvert:
     def test_cmd_convert_local(self, tmp_path):
         """Should call _convert_local_file for local paths."""
         jsonl_file = tmp_path / "session.jsonl"
-        jsonl_file.write_text('{"type": "user", "message": {"role": "user", "content": "Test"}, "timestamp": "2025-01-01T10:00:00Z"}')
+        jsonl_file.write_text(
+            '{"type": "user", "message": {"role": "user", "content": "Test"}, "timestamp": "2025-01-01T10:00:00Z"}'
+        )
 
         args = SimpleNamespace(jsonl_file=str(jsonl_file), output=None, remote=None)
 
@@ -12101,7 +12133,15 @@ class TestDisplayFunctions:
         )
         conn.execute(
             "INSERT INTO messages (file_path, session_id, type, timestamp, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("/path/session.jsonl", "session-123", "assistant", "2025-01-01T10:00:00Z", "claude-sonnet-4", 100, 50),
+            (
+                "/path/session.jsonl",
+                "session-123",
+                "assistant",
+                "2025-01-01T10:00:00Z",
+                "claude-sonnet-4",
+                100,
+                50,
+            ),
         )
         conn.commit()
 
@@ -12120,7 +12160,15 @@ class TestDisplayFunctions:
         # Need start_time for the GROUP BY DATE(s.start_time)
         conn.execute(
             "INSERT INTO sessions (file_path, session_id, workspace, source, agent, start_time, message_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("/path/session.jsonl", "session-123", "test", "local", "claude", "2025-01-15T10:00:00Z", 2),
+            (
+                "/path/session.jsonl",
+                "session-123",
+                "test",
+                "local",
+                "claude",
+                "2025-01-15T10:00:00Z",
+                2,
+            ),
         )
         conn.execute(
             "INSERT INTO messages (file_path, session_id, type, timestamp) VALUES (?, ?, ?, ?)",
@@ -12190,7 +12238,10 @@ class TestErrorHandlingEdgeCases:
         # Leading dash is stripped, then "--" → replace "-" with "/" → "//", prepend "/" → "///"
         assert ch.normalize_workspace_name("---", verify_local=False) == "///"
         # Standard path normalization
-        assert ch.normalize_workspace_name("-home-user-project", verify_local=False) == "/home/user/project"
+        assert (
+            ch.normalize_workspace_name("-home-user-project", verify_local=False)
+            == "/home/user/project"
+        )
 
     def test_detect_agent_from_path(self, tmp_path):
         """Test agent detection from file paths."""
@@ -12322,13 +12373,7 @@ class TestGeminiFormatToolCall:
             "name": "bash",
             "status": "success",
             "args": {"command": "ls"},
-            "result": [
-                {
-                    "functionResponse": {
-                        "response": {"output": "file1.txt\nfile2.txt"}
-                    }
-                }
-            ],
+            "result": [{"functionResponse": {"response": {"output": "file1.txt\nfile2.txt"}}}],
         }
         result = ch.gemini_format_tool_call(tool_call)
         assert "bash" in result
@@ -12389,6 +12434,7 @@ class TestValidateFunctions:
     def test_validate_split_lines_invalid(self):
         """Invalid split values should raise argparse.ArgumentTypeError."""
         import argparse
+
         with pytest.raises(argparse.ArgumentTypeError):
             ch.validate_split_lines("0")  # Zero is invalid
         with pytest.raises(argparse.ArgumentTypeError):
@@ -12423,9 +12469,14 @@ class TestSourceTagFunctions:
         # Returns last two parts if second-to-last is short (like "user-project")
         assert ch.get_workspace_name_from_path("-home-user-project") == "user-project"
         # With source tags stripped
-        assert ch.get_workspace_name_from_path("wsl_Ubuntu_home-sankar-myproject") == "sankar-myproject"
+        assert (
+            ch.get_workspace_name_from_path("wsl_Ubuntu_home-alice-myproject") == "alice-myproject"
+        )
         # Long names return just the last part
-        assert ch.get_workspace_name_from_path("remote_host_home-verylongusername-project") == "project"
+        assert (
+            ch.get_workspace_name_from_path("remote_host_home-verylongusername-project")
+            == "project"
+        )
 
 
 # ============================================================================
@@ -12692,6 +12743,7 @@ class TestGeminiEdgeCases:
 
     def test_gemini_format_tool_call_invalid_args(self):
         """Tool call with non-serializable args should handle gracefully."""
+
         # Create an object that can't be JSON serialized
         class NonSerializable:
             pass
@@ -12724,7 +12776,9 @@ class TestGeminiEdgeCases:
         """Corrupted hash index should return default structure."""
         with tempfile.TemporaryDirectory() as tmp:
             # Patch the correct function name
-            with patch.object(ch, "gemini_get_hash_index_file", return_value=Path(tmp) / "index.json"):
+            with patch.object(
+                ch, "gemini_get_hash_index_file", return_value=Path(tmp) / "index.json"
+            ):
                 # Write corrupted data
                 (Path(tmp) / "index.json").write_text("corrupted{{{")
                 result = ch.gemini_load_hash_index()
@@ -12755,7 +12809,7 @@ class TestCodexEdgeCases:
             # Mix of valid and invalid lines
             jsonl_file.write_text(
                 '{"type": "message", "role": "user"}\n'
-                'invalid line\n'
+                "invalid line\n"
                 '{"type": "message", "role": "assistant"}\n'
             )
 
@@ -12783,7 +12837,9 @@ class TestMarkdownGenerationEdgeCases:
             jsonl_file = Path(tmp) / "test.jsonl"
             jsonl_file.write_text('{"type": "user", "message": {"content": "test"}}')
 
-            result = ch.generate_markdown_parts(messages, jsonl_file, minimal=True, split_lines=None)
+            result = ch.generate_markdown_parts(
+                messages, jsonl_file, minimal=True, split_lines=None
+            )
             assert result is None
 
     def test_generate_markdown_parts_zero_split(self):
@@ -12834,15 +12890,7 @@ class TestExtractContentEdgeCases:
 
     def test_extract_content_tool_use_block(self):
         """Tool use block should be formatted."""
-        msg = {
-            "content": [
-                {
-                    "type": "tool_use",
-                    "name": "test_tool",
-                    "input": {"arg": "value"}
-                }
-            ]
-        }
+        msg = {"content": [{"type": "tool_use", "name": "test_tool", "input": {"arg": "value"}}]}
         result = ch.extract_content(msg)
         assert "test_tool" in result
 
@@ -12873,8 +12921,7 @@ class TestTimestampEdgeCases:
         with tempfile.TemporaryDirectory() as tmp:
             jsonl_file = Path(tmp) / "mixed.jsonl"
             jsonl_file.write_text(
-                'invalid\n'
-                '{"type": "user", "timestamp": "2025-01-01T12:00:00Z"}\n'
+                "invalid\n" '{"type": "user", "timestamp": "2025-01-01T12:00:00Z"}\n'
             )
 
             result = ch.get_first_timestamp(jsonl_file)
@@ -12916,12 +12963,14 @@ class TestValidateSplitLinesEdgeCases:
     def test_validate_split_lines_float_string(self):
         """Float string should raise error."""
         import argparse
+
         with pytest.raises(argparse.ArgumentTypeError):
             ch.validate_split_lines("100.5")
 
     def test_validate_split_lines_negative_string(self):
         """Negative string should raise error."""
         import argparse
+
         with pytest.raises(argparse.ArgumentTypeError):
             ch.validate_split_lines("-100")
 
@@ -12933,6 +12982,7 @@ class TestValidateSplitLinesEdgeCases:
     def test_validate_split_lines_zero(self):
         """Zero should raise error."""
         import argparse
+
         with pytest.raises(argparse.ArgumentTypeError):
             ch.validate_split_lines("0")
 
