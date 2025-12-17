@@ -17,13 +17,20 @@ from hypothesis import given, settings, strategies as st, assume, HealthCheck
 CLI_PATH = Path(__file__).parent.parent.parent / "agent-history"
 
 
-def run_cli_in_temp(args: list, timeout: int = 5) -> subprocess.CompletedProcess:
+def run_cli_in_temp(args: list, timeout: int = None) -> subprocess.CompletedProcess:
     """Run the CLI with given arguments in a temp directory."""
+    # Use longer timeout on Windows due to WSL scanning operations
+    if timeout is None:
+        timeout = 30 if sys.platform == "win32" else 5
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         # Set up isolated environment
         env = os.environ.copy()
         env["HOME"] = str(tmp_path)
+        env["USERPROFILE"] = str(tmp_path)  # Windows uses USERPROFILE
+        # Skip WSL scanning in tests to avoid timeouts
+        env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
         # Create required directories
         (tmp_path / ".claude" / "projects").mkdir(parents=True)
@@ -191,6 +198,8 @@ class TestExportCombinations:
             tmp_path = Path(tmp_dir)
             env = os.environ.copy()
             env["HOME"] = str(tmp_path)
+            env["USERPROFILE"] = str(tmp_path)
+            env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
             (tmp_path / ".claude-history").mkdir(parents=True)
@@ -217,8 +226,9 @@ class TestExportCombinations:
                 args.extend(["--agent", agent])
 
             cmd = [sys.executable, str(CLI_PATH)] + args
+            timeout = 30 if sys.platform == "win32" else 10
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10, env=env, cwd=str(tmp_path)
+                cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(tmp_path)
             )
 
             assert "Traceback" not in result.stderr
@@ -237,6 +247,8 @@ class TestExportCombinations:
             tmp_path = Path(tmp_dir)
             env = os.environ.copy()
             env["HOME"] = str(tmp_path)
+            env["USERPROFILE"] = str(tmp_path)
+            env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
             (tmp_path / ".claude-history").mkdir(parents=True)
@@ -247,8 +259,9 @@ class TestExportCombinations:
                 args.extend(["--split", str(split_value)])
 
             cmd = [sys.executable, str(CLI_PATH)] + args
+            timeout = 30 if sys.platform == "win32" else 10
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10, env=env, cwd=str(tmp_path)
+                cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(tmp_path)
             )
 
             assert "Traceback" not in result.stderr
@@ -387,6 +400,8 @@ class TestCrossCommandConsistency:
             tmp_path = Path(tmp_dir)
             env = os.environ.copy()
             env["HOME"] = str(tmp_path)
+            env["USERPROFILE"] = str(tmp_path)
+            env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
             (tmp_path / ".claude-history").mkdir(parents=True)
@@ -402,8 +417,9 @@ class TestCrossCommandConsistency:
                 args = ["export", "*", "-o", str(output_dir), "--agent", agent]
 
             cmd = [sys.executable, str(CLI_PATH)] + args
+            timeout = 30 if sys.platform == "win32" else 10
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10, env=env, cwd=str(tmp_path)
+                cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(tmp_path)
             )
 
             assert "Traceback" not in result.stderr
@@ -421,6 +437,8 @@ class TestCrossCommandConsistency:
             tmp_path = Path(tmp_dir)
             env = os.environ.copy()
             env["HOME"] = str(tmp_path)
+            env["USERPROFILE"] = str(tmp_path)
+            env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
             (tmp_path / ".claude-history").mkdir(parents=True)
@@ -437,8 +455,9 @@ class TestCrossCommandConsistency:
                 args.append("--aw")
 
             cmd = [sys.executable, str(CLI_PATH)] + args
+            timeout = 30 if sys.platform == "win32" else 10
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10, env=env, cwd=str(tmp_path)
+                cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(tmp_path)
             )
 
             assert "Traceback" not in result.stderr

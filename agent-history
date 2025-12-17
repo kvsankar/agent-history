@@ -3202,7 +3202,12 @@ def _coerce_target_to_workspace_pattern(target: str) -> str:
 
 def _is_windows_encoded_path(name: str) -> bool:
     """Check if name is a Windows-style encoded path (e.g., 'C--path-to-dir')."""
-    return len(name) >= MIN_ENCODED_PATH_LEN and name[1:3] == "--"
+    # Must be at least 3 chars, start with drive letter (A-Z), followed by "--"
+    return (
+        len(name) >= MIN_ENCODED_PATH_LEN
+        and name[0].isalpha()
+        and name[1:3] == "--"
+    )
 
 
 def _resolve_path_segments(parts: list, base_path: Path) -> list:
@@ -4031,7 +4036,13 @@ def get_wsl_distributions() -> list:
           - CLAUDE_WSL_PROJECTS_DIR: path to a projects dir for that distro
         then return a single entry using those values. This enables real
         filesystem E2E tests without mocking wsl.exe.
+
+        If CLAUDE_SKIP_WSL_SCAN=1 is set, skip WSL scanning entirely (for fast tests).
     """
+    # Skip WSL scanning if requested (for fast tests)
+    if os.environ.get("CLAUDE_SKIP_WSL_SCAN") == "1":
+        return []
+
     # Test override
     test_distro = os.environ.get("CLAUDE_WSL_TEST_DISTRO")
     test_projects = os.environ.get("CLAUDE_WSL_PROJECTS_DIR")

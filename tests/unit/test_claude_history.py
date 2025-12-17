@@ -12187,8 +12187,8 @@ class TestErrorHandlingEdgeCases:
         """Test workspace name normalization edge cases."""
         # Empty string becomes "/" (root path with no segments)
         assert ch.normalize_workspace_name("", verify_local=False) == "/"
-        # Leading dash is stripped, then "--" becomes "/-/" (empty segment between dashes)
-        assert ch.normalize_workspace_name("---", verify_local=False) == "/-/"
+        # Leading dash is stripped, then "--" → replace "-" with "/" → "//", prepend "/" → "///"
+        assert ch.normalize_workspace_name("---", verify_local=False) == "///"
         # Standard path normalization
         assert ch.normalize_workspace_name("-home-user-project", verify_local=False) == "/home/user/project"
 
