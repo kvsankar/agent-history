@@ -35,6 +35,10 @@ coverage-report:
 coverage-html:
 	"$(PYTHON)" -m coverage html -d .coverage-html
 
-# Remove coverage artifacts.
+# Remove coverage artifacts (cross-platform).
 coverage-clean:
+ifeq ($(OS),Windows_NT)
+	powershell -Command "Remove-Item -Force -ErrorAction SilentlyContinue .coverage, .coverage.*, .coverage-html/*"
+else
 	rm -f .coverage .coverage.* .coverage-html/*
+endif

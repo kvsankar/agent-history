@@ -84,7 +84,7 @@ def run_windows_tests(project_path: Path) -> bool:
         "--cov-report=",  # No report yet, just collect data
         "-x",
         "-q",
-        "tests/unit/",
+        "tests/",  # Run all tests (unit + integration)
     ]
 
     result = subprocess.run(cmd, cwd=project_path)
@@ -111,7 +111,7 @@ def run_wsl_tests(windows_project: Path, wsl_project: str, wsl_distro: str) -> b
     wsl_cmd = f"""
 cd "{wsl_project}" && \\
 rm -f .coverage .coverage.* && \\
-uv run pytest --cov=. --cov-branch --cov-report= -x -q tests/unit/ && \\
+uv run pytest --cov=. --cov-branch --cov-report= -x -q tests/ && \\
 mv .coverage .coverage.wsl 2>/dev/null || true
 """
 
@@ -185,7 +185,6 @@ show_missing = true
 skip_covered = false
 include =
     {project / 'agent-history'}
-    {project / 'tests'}/*
 """
     coveragerc.write_text(coveragerc_content)
 
@@ -201,12 +200,20 @@ include =
 
     # Copy Docker coverage files from .coverage-data/
     if docker_data_dir.exists():
+        # Collect both .coverage.* pattern AND plain .coverage file
         docker_files = list(docker_data_dir.glob(".coverage.*"))
+        plain_coverage = docker_data_dir / ".coverage"
+        if plain_coverage.is_file():
+            docker_files.append(plain_coverage)
         if docker_files:
             print(f"  Found {len(docker_files)} Docker coverage files")
-            for cov_file in docker_files:
+            for i, cov_file in enumerate(docker_files):
                 if cov_file.is_file():
-                    dest = output_dir / cov_file.name
+                    # Rename plain .coverage to .coverage.docker to avoid conflicts
+                    if cov_file.name == ".coverage":
+                        dest = output_dir / ".coverage.docker"
+                    else:
+                        dest = output_dir / cov_file.name
                     shutil.copy2(cov_file, dest)
                     copied_count += 1
             print(f"  Copied {len(docker_files)} Docker coverage files")

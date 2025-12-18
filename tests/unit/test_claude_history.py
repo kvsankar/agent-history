@@ -481,6 +481,73 @@ class TestUtilityHelpers:
         target = BrokenPath(tmp_path / "x")
         assert ch.is_safe_path(base, target) is False
 
+
+class TestRemoteFetchErrors:
+    def test_fetch_workspace_files_invalid_host(self, tmp_path):
+        result = ch.fetch_workspace_files("bad host", "-home-user-ws", tmp_path, "hostname")
+        assert result["success"] is False
+        assert "Invalid remote host" in result["error"]
+
+    def test_fetch_workspace_files_partial_success(self, tmp_path, monkeypatch):
+        def fake_run(cmd, check, capture_output, text, timeout):
+            return SimpleNamespace(returncode=24, stdout="file1.jsonl\nsent 1 bytes", stderr="")
+
+        monkeypatch.setattr(ch, "get_command_path", lambda _: "rsync")
+        monkeypatch.setattr(ch, "is_safe_path", lambda base, target: True)
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        result = ch.fetch_workspace_files("user@host", "-home-user-ws", tmp_path, "host")
+        assert result["success"] is True
+        assert result["files_copied"] == 1
+        assert "warning" in result
+
+    def test_fetch_workspace_files_rsync_error(self, tmp_path, monkeypatch):
+        def fake_run(cmd, check, capture_output, text, timeout):
+            return SimpleNamespace(returncode=12, stdout="", stderr="failed")
+
+        monkeypatch.setattr(ch, "get_command_path", lambda _: "rsync")
+        monkeypatch.setattr(ch, "is_safe_path", lambda base, target: True)
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        result = ch.fetch_workspace_files("user@host", "-home-user-ws", tmp_path, "host")
+        assert result["success"] is False
+        assert "error" in result["error"].lower()
+
+    def test_fetch_workspace_files_rsync_missing(self, tmp_path, monkeypatch):
+        def fake_run(cmd, check, capture_output, text, timeout):
+            raise FileNotFoundError("rsync not found")
+
+        monkeypatch.setattr(ch, "get_command_path", lambda _: "rsync")
+        monkeypatch.setattr(ch, "is_safe_path", lambda base, target: True)
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        result = ch.fetch_workspace_files("user@host", "-home-user-ws", tmp_path, "host")
+        assert result["success"] is False
+        assert "rsync not found" in result["error"]
+
+    def test_fetch_workspace_files_timeout(self, tmp_path, monkeypatch):
+        def fake_run(cmd, check, capture_output, text, timeout):
+            raise subprocess.TimeoutExpired(cmd, timeout)
+
+        monkeypatch.setattr(ch, "get_command_path", lambda _: "rsync")
+        monkeypatch.setattr(ch, "is_safe_path", lambda base, target: True)
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        result = ch.fetch_workspace_files("user@host", "-home-user-ws", tmp_path, "host")
+        assert result["success"] is False
+        assert "Timeout" in result["error"]
+
+    def test_normalize_remote_workspace_name_invalid_host(self):
+        decoded = ch.normalize_remote_workspace_name("bad host", "-home-user-proj")
+        assert decoded == "/home/user/proj"
+
+    def test_list_remote_workspaces_invalid_host(self):
+        assert ch.list_remote_workspaces("bad host") == []
+
+    def test_get_remote_session_info_invalid_inputs(self):
+        assert ch.get_remote_session_info("bad host", "-home") == []
+        assert ch.get_remote_session_info("user@host", "..") == []
+
 class TestRsyncHelpers:
     def test_interpret_rsync_exit_code_known(self):
         partial, msg = ch._interpret_rsync_exit_code(24)
