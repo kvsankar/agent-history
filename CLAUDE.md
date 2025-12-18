@@ -112,8 +112,8 @@ chmod +x agent-history
 ./agent-history export myproject --windows # export from Windows
 
 # Saved Sources (for --ah flag)
-./agent-history sources                    # list saved sources
-./agent-history lsh add user@vm01     # add SSH remote (WSL/Windows auto-detected)
+./agent-history lsh                        # list saved sources
+./agent-history lsh add user@vm01          # add SSH remote (WSL/Windows auto-detected)
 ./agent-history lsh add user@vm02     # add another remote
 ./agent-history lsh remove user@vm01  # remove a source
 ./agent-history lsh clear             # remove all saved sources
@@ -152,7 +152,7 @@ chmod +x agent-history
 
 ### Testing Workflow
 
-**Automated tests (861 unit tests, 52 integration tests):**
+**Automated tests (1100+ tests):**
 
 ```bash
 # Run all tests
@@ -638,10 +638,10 @@ Exit codes:
 Always provide helpful error messages:
 ```python
 if not path.exists():
-    print(f"❌ Error: {path} not found")
-    print("\nTips:")
-    print("  • Suggestion 1")
-    print("  • Suggestion 2")
+    print(f"Error: {path} not found", file=sys.stderr)
+    print("\nTips:", file=sys.stderr)
+    print("  - Suggestion 1", file=sys.stderr)
+    print("  - Suggestion 2", file=sys.stderr)
     sys.exit(1)
 ```
 
@@ -663,7 +663,7 @@ uv run radon cc agent-history -a -s    # Cyclomatic complexity
 uv run radon mi agent-history -s       # Maintainability index
 ```
 
-**Current metrics (472 functions):**
+**Current metrics (~485 functions):**
 - Grade A (1-5): 288 functions (61%)
 - Grade B (6-10): 166 functions (35%)
 - Grade C (11-20): 18 functions (4%)
@@ -999,12 +999,6 @@ ssh-copy-id user@hostname
 ssh -o BatchMode=yes user@hostname echo ok
 ```
 
-## Changelog
-
-**Current version:** 1.4.1
-
-See [README.md](README.md#changelog) for the full changelog.
-
 ### Orthogonal Flag Design
 
 The `--ah` and `--aw` flags are designed to be orthogonal (independent):
@@ -1043,6 +1037,98 @@ When multiple related flags are specified:
 2. `--this` forces current workspace only
 3. Remote flags (`-r`, `--wsl`, `--windows`) determine data source
 4. `--ah` expands to include all available sources
+
+## Development Tools
+
+### Pre-commit Hooks
+
+The project uses pre-commit hooks for code quality enforcement:
+
+```yaml
+# .pre-commit-config.yaml hooks:
+- ruff          # Linting and formatting
+- ruff-format   # Code formatting
+- ty            # Type checking (Astral's Python type checker)
+```
+
+**Running pre-commit manually:**
+```bash
+uv run pre-commit run --all-files    # Run all hooks
+uv run pre-commit run ty --all-files # Run ty only
+```
+
+**Type checking with ty:**
+
+The codebase uses [ty](https://github.com/astral-sh/ty) (Astral's Python type checker, 10-60x faster than mypy):
+- TypedDicts for complex nested dictionaries (`SessionMetrics`, `MetricsDict`, etc.)
+- `Optional[T]` for parameters with `None` defaults
+- `Union[str, Path]` for multi-type parameters
+- `cast()` for TypedDict → dict conversions at call sites
+- `# type: ignore[attr-defined]` for platform-specific code (e.g., `msvcrt` on Windows)
+
+```bash
+# Check types directly
+uv run ty check agent-history
+```
+
+### Cross-Platform Coverage Orchestrator
+
+The `scripts/run-coverage.py` tool aggregates test coverage from multiple environments:
+
+**Supported environments:**
+- **Windows**: Native pytest with coverage
+- **WSL**: Linux tests via `wsl` command
+- **Docker**: E2E tests from `.coverage-data/` directory
+
+**Setup:**
+```bash
+# Copy template and configure paths
+cp scripts/coverage.config.template scripts/coverage.config
+# Edit coverage.config with your Windows/WSL paths
+```
+
+**Configuration (coverage.config):**
+```ini
+[paths]
+windows_project = C:/Users/yourname/projects/claude-history
+wsl_project = /home/yourname/projects/claude-history
+wsl_distro = Ubuntu
+
+[output]
+output_dir = .coverage-merged
+```
+
+**Usage:**
+```bash
+# Run from Windows - executes tests in both Windows and WSL, then merges
+python scripts/run-coverage.py
+
+# Windows tests only
+python scripts/run-coverage.py --windows-only
+
+# WSL tests only
+python scripts/run-coverage.py --wsl-only
+
+# Merge existing coverage data (skip running tests)
+python scripts/run-coverage.py --merge-only
+
+# Generate report from previously merged data
+python scripts/run-coverage.py --report
+```
+
+**Output:**
+- Terminal coverage report with missing lines
+- HTML report at `.coverage-merged/htmlcov/index.html`
+- Merged `.coverage` file with path mappings across environments
+
+**How it works:**
+1. Runs pytest with `--cov` in Windows → `.coverage.windows`
+2. Runs pytest with `--cov` in WSL → `.coverage.wsl`
+3. Collects Docker E2E coverage from `.coverage-data/`
+4. Merges all coverage files with path remapping
+5. Generates unified coverage report
+
+**Version:** 1.5.1
 
 ## Contributing Notes
 

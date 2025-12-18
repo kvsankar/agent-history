@@ -525,15 +525,14 @@ agent-history reset db -y
 Add project directory paths to the Gemini hash→path index, or list existing mappings. This allows `agent-history` to display readable workspace paths instead of SHA-256 hashes when listing or exporting Gemini sessions.
 
 ```bash
-agent-history gemini-index [path ...]
-agent-history gemini-index --list [--full-hash]
+agent-history gemini-index                      # list all mappings (default)
+agent-history gemini-index --add [path ...]     # add paths to index
+agent-history gemini-index --list [--full-hash] # list with options
 ```
 
-**Arguments:**
-- `path`: One or more project directories to add (default: current directory)
-
 **Options:**
-- `-l`, `--list`: List all mappings in the hash index
+- `-a`, `--add [PATH ...]`: Add project directories to index (default: current directory if no paths given)
+- `-l`, `--list`: List all mappings in the hash index (default if no options)
 - `--full-hash`: Show full SHA-256 hashes instead of truncated (with `--list`)
 
 **How it works:**
@@ -550,14 +549,14 @@ Without the hash index, workspace names appear as `[hash:abc123de]`. The `gemini
 
 **Examples:**
 ```bash
-# Add current directory
-agent-history gemini-index
+# Add current directory to index
+agent-history gemini-index --add
 
 # Add a specific project
-agent-history gemini-index ~/projects/myapp
+agent-history gemini-index --add ~/projects/myapp
 
 # Add multiple projects at once
-agent-history gemini-index ~/projects/app1 ~/projects/app2 ~/projects/app3
+agent-history gemini-index --add ~/projects/app1 ~/projects/app2 ~/projects/app3
 
 # Output:
 Adding 3 path(s) to Gemini index...
