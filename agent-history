@@ -30,7 +30,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path, PureWindowsPath
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypedDict, Union, cast
 
 __version__ = "1.5.1"
 
@@ -140,6 +140,56 @@ def _truncate_thought(thought: str, max_len: int = MAX_THOUGHT_LEN) -> str:
     if len(thought) <= max_len:
         return thought
     return thought[:max_len] + "..."
+
+
+# ============================================================================
+# TypedDicts for Complex Structures (Type Safety)
+# ============================================================================
+
+
+class SessionMetrics(TypedDict):
+    """Session metadata in metrics dict."""
+
+    id: Optional[str]
+    cwd: Optional[str]
+    cli_version: Optional[str]
+    model: Optional[str]
+    startTime: Optional[str]
+    lastUpdated: Optional[str]
+
+
+class TokensMetrics(TypedDict):
+    """Token counts in metrics dict."""
+
+    input: int
+    output: int
+    total: int
+
+
+class MetricsDict(TypedDict, total=False):
+    """Full metrics dictionary structure."""
+
+    session: SessionMetrics
+    messages: list[dict[str, Any]]
+    tool_uses: list[dict[str, Any]]
+    tokens: TokensMetrics
+
+
+class ExportTotals(TypedDict):
+    """Totals tracking for export-all operations."""
+
+    sources: list[dict[str, Any]]
+    sessions: int
+    errors: int
+
+
+class HashIndexCounts(TypedDict):
+    """Counts for hash index operations."""
+
+    added: int
+    existing: int
+    no_sessions: int
+    mappings: list[Any]
 
 
 # ============================================================================
@@ -570,7 +620,7 @@ def validate_workspace_name(workspace_name: str) -> bool:
     return WORKSPACE_NAME_PATTERN.match(workspace_name) is not None
 
 
-def validate_remote_host(remote_host: str) -> bool:
+def validate_remote_host(remote_host: Optional[str]) -> bool:
     """Validate remote host specification to prevent command injection.
 
     Valid formats:
@@ -707,7 +757,7 @@ CACHED_PREFIXES = (CACHED_REMOTE_PREFIX, CACHED_WSL_PREFIX, CACHED_WINDOWS_PREFI
 # ============================================================================
 
 
-def exit_with_error(message: str, suggestions: list = None, exit_code: int = 1):
+def exit_with_error(message: str, suggestions: Optional[list] = None, exit_code: int = 1):
     """Exit with formatted error message and optional actionable suggestions.
 
     This centralizes error formatting to provide consistent, helpful error
@@ -750,7 +800,7 @@ def exit_with_date_error(flag_name: str, invalid_value: str):
     )
 
 
-def parse_date_with_validation(date_str: str, flag_name: str):
+def parse_date_with_validation(date_str: Optional[str], flag_name: str):
     """Parse date string with validation, exit on error.
 
     Args:
@@ -829,7 +879,7 @@ def matches_any_pattern(workspace_name: str, patterns: list[str]) -> bool:
     return any(pattern and pattern in workspace_name for pattern in patterns)
 
 
-def parse_and_validate_dates(since_str: str, until_str: str) -> tuple:
+def parse_and_validate_dates(since_str: Optional[str], until_str: Optional[str]) -> tuple:
     """Parse and validate date filter arguments.
 
     Validates that date strings are in YYYY-MM-DD format and that
@@ -997,7 +1047,7 @@ def get_patterns_from_args(args) -> list:
     return [work]
 
 
-def detect_alias_from_args(args, workspace_list: list = None) -> str:
+def detect_alias_from_args(args, workspace_list: Optional[list] = None) -> Optional[str]:
     """Detect alias name from args or @ prefix in workspace list.
 
     Args:
@@ -1019,7 +1069,7 @@ def resolve_patterns_for_command(
     workspace_list: list,
     this_only: bool = False,
     require_workspace: bool = False,
-    error_message: str = None,
+    error_message: Optional[str] = None,
     agent: str = "auto",
 ) -> tuple:
     """Resolve workspace patterns, optionally checking for alias membership.
@@ -1064,7 +1114,7 @@ def _iter_sessions_deduped(
     patterns: list,
     since_date,
     until_date,
-    projects_dir: Path,
+    projects_dir: Optional[Path],
     quiet: bool,
     skip_message_count: bool,
     agent: str,
@@ -1093,7 +1143,7 @@ def collect_sessions_with_dedup(
     patterns: list,
     since_date=None,
     until_date=None,
-    projects_dir: Path = None,
+    projects_dir: Optional[Path] = None,
     quiet: bool = True,
     include_cached: bool = False,
     skip_message_count: bool = False,
@@ -1527,7 +1577,7 @@ def _calculate_split_score(
     return score
 
 
-def find_best_split_point(messages: list, target_lines: int, minimal: bool) -> int:
+def find_best_split_point(messages: list, target_lines: int, minimal: bool) -> Optional[int]:
     """Find the optimal message index to split a conversation."""
     min_lines = int(target_lines * SPLIT_MIN_FACTOR)
     max_lines = int(target_lines * SPLIT_MAX_FACTOR)
@@ -1700,7 +1750,9 @@ def _get_agent_info(messages: list) -> tuple:
     return False, None, None
 
 
-def parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False, messages: list = None) -> str:
+def parse_jsonl_to_markdown(
+    jsonl_file: Path, minimal: bool = False, messages: Optional[list] = None
+) -> str:
     """Convert a Claude Code JSONL session file to readable Markdown."""
     if messages is None:
         messages = read_jsonl_messages(jsonl_file)
@@ -2085,7 +2137,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
     return messages, session_meta
 
 
-def codex_get_first_timestamp(jsonl_file: Path) -> str:
+def codex_get_first_timestamp(jsonl_file: Path) -> Optional[str]:
     """Get timestamp from Codex session's session_meta line.
 
     Args:
@@ -2159,7 +2211,7 @@ def codex_parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> st
     return "\n".join(md_lines)
 
 
-def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> dict:
+def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
     """Extract metrics from Codex JSONL file for stats database.
 
     Mirror of extract_metrics_from_jsonl() for Codex format.
@@ -2172,13 +2224,16 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> dict:
     """
     messages, session_meta = codex_read_jsonl_messages(jsonl_file)
 
-    metrics = {
-        "session": {
-            "id": session_meta.get("id") if session_meta else None,
-            "cwd": session_meta.get("cwd") if session_meta else None,
-            "cli_version": session_meta.get("cli_version") if session_meta else None,
-            "model": None,
-        },
+    session: SessionMetrics = {
+        "id": session_meta.get("id") if session_meta else None,
+        "cwd": session_meta.get("cwd") if session_meta else None,
+        "cli_version": session_meta.get("cli_version") if session_meta else None,
+        "model": None,
+        "startTime": None,
+        "lastUpdated": None,
+    }
+    metrics: MetricsDict = {
+        "session": session,
         "messages": [],
         "tool_uses": [],
     }
@@ -2412,7 +2467,7 @@ def _iter_date_folders(sessions_dir: Path, since_dt):
         yield from _iter_month_folders(year_dir, year, since_dt)
 
 
-def _codex_date_folders_since(sessions_dir: Path, since_date: str) -> list:
+def _codex_date_folders_since(sessions_dir: Path, since_date: Optional[str]) -> list:
     """Get list of date folders on or after since_date.
 
     Args:
@@ -2534,7 +2589,7 @@ def codex_scan_sessions(
     pattern: str = "",
     since_date=None,
     until_date=None,
-    sessions_dir: Path = None,
+    sessions_dir: Optional[Path] = None,
     skip_message_count: bool = False,
 ) -> list:
     """Scan ~/.codex/sessions/YYYY/MM/DD/ for rollout-*.jsonl files.
@@ -2620,7 +2675,7 @@ def _extract_gemini_content(content) -> str:
     return ""
 
 
-def _build_gemini_message(msg: dict, content: str) -> dict:
+def _build_gemini_message(msg: dict, content: str) -> Optional[dict]:
     """Build a normalized message dict from Gemini message data."""
     msg_type = msg.get("type", "")
     timestamp = msg.get("timestamp", "")
@@ -2750,7 +2805,7 @@ def gemini_format_thoughts(thoughts: list) -> str:
     return "\n".join(lines)
 
 
-def gemini_get_first_timestamp(json_file: Path) -> str:
+def gemini_get_first_timestamp(json_file: Path) -> Optional[str]:
     """Get startTime from Gemini session.
 
     Args:
@@ -2852,7 +2907,7 @@ def gemini_parse_json_to_markdown(json_file: Path, minimal: bool = False) -> str
     return "\n".join(md_lines)
 
 
-def gemini_extract_metrics_from_json(json_file: Path) -> dict:
+def gemini_extract_metrics_from_json(json_file: Path) -> MetricsDict:
     """Extract metrics from Gemini JSON file for stats database.
 
     Args:
@@ -2863,7 +2918,7 @@ def gemini_extract_metrics_from_json(json_file: Path) -> dict:
     """
     messages, session_meta = gemini_read_json_messages(json_file)
 
-    metrics = {
+    metrics: MetricsDict = {
         "session": {
             "id": session_meta.get("sessionId") if session_meta else None,
             "cwd": session_meta.get("projectHash")
@@ -3130,7 +3185,7 @@ def _try_add_path_to_index(
     return "added", _build_path_mapping(project_str, project_hash, "added", path_missing)
 
 
-def gemini_add_paths_to_index(paths: list[Path]) -> dict[str, Any]:
+def gemini_add_paths_to_index(paths: list[Path]) -> HashIndexCounts:
     """Add explicit paths to the Gemini hash→path index.
 
     For each path, computes its SHA-256 hash and checks if Gemini has
@@ -3152,7 +3207,7 @@ def gemini_add_paths_to_index(paths: list[Path]) -> dict[str, Any]:
     results = [_try_add_path_to_index(p, index, gemini_dir) for p in paths]
 
     # Aggregate results
-    counts = {
+    counts: HashIndexCounts = {
         "added": sum(1 for status, _ in results if status == "added"),
         "existing": sum(1 for status, _ in results if status == "existing"),
         "no_sessions": sum(1 for status, _ in results if status == "no_sessions"),
@@ -3266,7 +3321,7 @@ def gemini_scan_sessions(
     pattern: str = "",
     since_date=None,
     until_date=None,
-    sessions_dir: Path = None,
+    sessions_dir: Optional[Path] = None,
     skip_message_count: bool = False,
 ) -> list:
     """Scan ~/.gemini/tmp/*/chats/ for session-*.json files.
@@ -3505,7 +3560,7 @@ def _convert_windows_path_to_encoded(path: str) -> str:
     return f"{drive}--{rest}"
 
 
-def _get_workspaces_from_dir(projects_dir: Path) -> list:
+def _get_workspaces_from_dir(projects_dir: Optional[Path]) -> list:
     """Get native workspace names from a projects directory."""
     if not projects_dir:
         return []
@@ -3923,7 +3978,7 @@ def _is_wsl_unc_path(path: Path | None) -> bool:
     )
 
 
-def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = None) -> str:
+def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Optional[Path] = None) -> str:
     """Normalize a Unix-style encoded path (e.g., 'home-user-my-project').
 
     Args:
@@ -3966,7 +4021,9 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Path = Non
     return readable_path + partial_marker
 
 
-def _apply_windows_base_resolution(parts: list[str], base_path: Path, current_segments: list[str]):
+def _apply_windows_base_resolution(
+    parts: list[str], base_path: Optional[Path], current_segments: list[str]
+):
     """Handle Windows base paths when normalizing Unix-style encodings."""
     if not base_path or sys.platform != "win32":
         return current_segments, ""
@@ -3991,7 +4048,7 @@ def _apply_windows_base_resolution(parts: list[str], base_path: Path, current_se
 
 
 def normalize_workspace_name(
-    workspace_dir_name: str, verify_local: bool = True, base_path: Path = None
+    workspace_dir_name: str, verify_local: bool = True, base_path: Optional[Path] = None
 ) -> str:
     """Convert workspace directory name to readable path.
 
@@ -4065,7 +4122,7 @@ def check_current_workspace_exists():
     return pattern, False
 
 
-def _detect_wsl_base_path(projects_dir: Path) -> Path:
+def _detect_wsl_base_path(projects_dir: Path) -> Optional[Path]:
     """Detect WSL base path from projects directory, or None if not WSL.
 
     Handles both str and bytes forms for compatibility with tests that supply
@@ -4234,7 +4291,7 @@ def get_workspace_sessions(
     since_date=None,
     until_date=None,
     include_cached: bool = False,
-    projects_dir: Path = None,
+    projects_dir: Optional[Path] = None,
     skip_message_count: bool = False,
 ):
     """Find all Claude Code sessions in workspaces matching the pattern.
@@ -4295,7 +4352,7 @@ def is_running_in_wsl() -> bool:
         return False
 
 
-def _find_user_home_on_drives(username: str) -> Path:
+def _find_user_home_on_drives(username: str) -> Optional[Path]:
     """Find Windows user home by username across all drives."""
     mnt = Path("/mnt")
     if not mnt.exists():
@@ -4308,7 +4365,7 @@ def _find_user_home_on_drives(username: str) -> Path:
     return None
 
 
-def _get_userprofile_via_cmd() -> Path:
+def _get_userprofile_via_cmd() -> Optional[Path]:
     """Get Windows home via cmd.exe USERPROFILE variable."""
     try:
         result = subprocess.run(
@@ -4337,7 +4394,7 @@ def _get_userprofile_via_cmd() -> Path:
     return None
 
 
-def _find_claude_user_in_drive(drive: Path) -> Path:
+def _find_claude_user_in_drive(drive: Path) -> Optional[Path]:
     """Find first user with Claude installed in a drive."""
     users_dir = drive / "Users"
     if not users_dir.exists():
@@ -4349,7 +4406,7 @@ def _find_claude_user_in_drive(drive: Path) -> Path:
     return None
 
 
-def _scan_drives_for_claude_user() -> Path:
+def _scan_drives_for_claude_user() -> Optional[Path]:
     """Scan all drives for any user with Claude installed."""
     mnt = Path("/mnt")
     if not mnt.exists():
@@ -4363,7 +4420,7 @@ def _scan_drives_for_claude_user() -> Path:
     return None
 
 
-def get_windows_home_from_wsl(username: str = None) -> Optional[Path]:
+def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
     """
     Get Windows user home directory from WSL.
 
@@ -4456,7 +4513,7 @@ def is_windows_remote(remote_spec: str) -> bool:
     return remote_spec == "windows" or remote_spec.startswith("windows://")
 
 
-def get_source_tag(remote_spec: str = None) -> str:
+def get_source_tag(remote_spec: Optional[str] = None) -> str:
     """
     Generate source tag for filename/directory prefixes.
 
@@ -4579,7 +4636,7 @@ def _get_wsl_distro_names() -> list:
         return []
 
 
-def _get_wsl_distro_info(distro_name: str) -> dict:
+def _get_wsl_distro_info(distro_name: str) -> Optional[dict]:
     """Get info for a single WSL distribution. Returns None on failure."""
     try:
         user_result = subprocess.run(
@@ -4732,7 +4789,7 @@ def get_wsl_projects_dir(distro_name: str) -> Optional[Path]:
     return None
 
 
-def get_windows_projects_dir(username: str = None):
+def get_windows_projects_dir(username: Optional[str] = None):
     """Get Claude projects directory for Windows from WSL.
 
     Args:
@@ -4881,7 +4938,7 @@ def codex_get_wsl_sessions_dir(distro_name: str) -> Optional[Path]:
     return _get_wsl_agent_sessions_dir(distro_name, AGENT_CODEX, "CODEX_WSL_SESSIONS_DIR")
 
 
-def gemini_get_windows_sessions_dir(username: str = None):
+def gemini_get_windows_sessions_dir(username: Optional[str] = None):
     """Get Gemini sessions directory for Windows from WSL.
 
     Args:
@@ -4912,7 +4969,7 @@ def gemini_get_windows_sessions_dir(username: str = None):
     return sessions_dir
 
 
-def codex_get_windows_sessions_dir(username: str = None):
+def codex_get_windows_sessions_dir(username: Optional[str] = None):
     """Get Codex sessions directory for Windows from WSL.
 
     Args:
@@ -4962,7 +5019,7 @@ def get_agent_wsl_dir(distro_name: str, agent: str):
     return None
 
 
-def get_agent_windows_dir(username: str, agent: str):
+def get_agent_windows_dir(username: Optional[str], agent: str):
     """Get session directory for any agent from Windows.
 
     Args:
@@ -4991,7 +5048,7 @@ def get_agent_windows_dir(username: str, agent: str):
 # ============================================================================
 
 
-def parse_remote_host(remote_spec: str) -> tuple:
+def parse_remote_host(remote_spec: Optional[str]) -> tuple:
     """Parse remote host specification.
 
     Args:
@@ -5000,6 +5057,8 @@ def parse_remote_host(remote_spec: str) -> tuple:
     Returns:
         Tuple of (user, hostname, full_spec) or (None, hostname, hostname)
     """
+    if not remote_spec:
+        return (None, "", "")
     if "@" in remote_spec:
         user, hostname = remote_spec.split("@", 1)
         return (user, hostname, remote_spec)
@@ -5008,7 +5067,7 @@ def parse_remote_host(remote_spec: str) -> tuple:
         return (None, remote_spec, remote_spec)
 
 
-def check_ssh_connection(remote_host: str) -> bool:
+def check_ssh_connection(remote_host: Optional[str]) -> bool:
     """Check if passwordless SSH connection is possible.
 
     Args:
@@ -5021,6 +5080,9 @@ def check_ssh_connection(remote_host: str) -> bool:
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
         return False
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     try:
         # Try SSH with BatchMode (no password prompts) and short timeout
@@ -5044,7 +5106,7 @@ def check_ssh_connection(remote_host: str) -> bool:
         return False
 
 
-def get_remote_hostname(remote_host: str) -> str:
+def get_remote_hostname(remote_host: Optional[str]) -> str:
     """Extract hostname from remote spec for use in directory prefix.
 
     Args:
@@ -5058,7 +5120,7 @@ def get_remote_hostname(remote_host: str) -> str:
     return hostname.replace(".", "-")
 
 
-def get_remote_workspaces_batch(remote_host: str) -> list:
+def get_remote_workspaces_batch(remote_host: Optional[str]) -> list:
     """Get all workspace info from remote in one batch operation.
 
     Creates and runs a script on remote to gather all info efficiently.
@@ -5070,6 +5132,9 @@ def get_remote_workspaces_batch(remote_host: str) -> list:
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
         return []
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     # Create a shell script that will run on remote
     script = """#!/bin/bash
@@ -5156,7 +5221,7 @@ done
         return []
 
 
-def normalize_remote_workspace_name(remote_host: str, workspace_dir_name: str) -> str:
+def normalize_remote_workspace_name(remote_host: Optional[str], workspace_dir_name: str) -> str:
     """Convert remote workspace directory name to readable path by verifying via SSH.
 
     Args:
@@ -5175,6 +5240,9 @@ def normalize_remote_workspace_name(remote_host: str, workspace_dir_name: str) -
         return "/" + encoded.replace("-", "/")
     if not validate_workspace_name(workspace_dir_name):
         return workspace_dir_name  # Return as-is if invalid
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     # Remove leading dash
     if workspace_dir_name.startswith("-"):
@@ -5227,7 +5295,7 @@ def normalize_remote_workspace_name(remote_host: str, workspace_dir_name: str) -
     return "/" + encoded.replace("-", "/")
 
 
-def list_remote_workspaces(remote_host: str) -> list:
+def list_remote_workspaces(remote_host: Optional[str]) -> list:
     """List workspace directories on remote host.
 
     Args:
@@ -5241,6 +5309,9 @@ def list_remote_workspaces(remote_host: str) -> list:
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
         return []
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     try:
         # List directories in remote ~/.claude/projects/ (simple and fast)
@@ -5272,7 +5343,7 @@ def list_remote_workspaces(remote_host: str) -> list:
         return []
 
 
-def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
+def get_remote_session_info(remote_host: Optional[str], remote_workspace: str) -> list:
     """Get session file information from remote workspace without downloading.
 
     Args:
@@ -5289,6 +5360,9 @@ def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
     if not validate_workspace_name(remote_workspace):
         sys.stderr.write(f"Error: Invalid workspace name: {remote_workspace}\n")
         return []
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     try:
         # Get file stats from remote using find and stat
@@ -5348,7 +5422,7 @@ def get_remote_session_info(remote_host: str, remote_workspace: str) -> list:
         return []
 
 
-def _validate_fetch_inputs(remote_host: str, remote_workspace: str) -> dict:
+def _validate_fetch_inputs(remote_host: Optional[str], remote_workspace: str) -> Optional[dict]:
     """Validate inputs for fetch_workspace_files. Returns error dict or None."""
     if not validate_remote_host(remote_host):
         return {
@@ -5422,7 +5496,7 @@ def _count_rsync_files(output: str) -> int:
 
 
 def fetch_workspace_files(
-    remote_host: str, remote_workspace: str, local_projects_dir: Path, hostname: str
+    remote_host: Optional[str], remote_workspace: str, local_projects_dir: Path, hostname: str
 ) -> dict:
     """Fetch all files from a remote workspace using rsync."""
     validation_error = _validate_fetch_inputs(remote_host, remote_workspace)
@@ -5493,7 +5567,7 @@ def fetch_workspace_files(
 # ============================================================================
 
 
-def gemini_list_remote_workspaces(remote_host: str) -> list:
+def gemini_list_remote_workspaces(remote_host: Optional[str]) -> list:
     """List Gemini workspace directories (project hashes) on remote host.
 
     Args:
@@ -5505,6 +5579,9 @@ def gemini_list_remote_workspaces(remote_host: str) -> list:
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
         return []
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     try:
         # List hash directories in ~/.gemini/tmp/ that have chats/ with sessions
@@ -5531,7 +5608,9 @@ def gemini_list_remote_workspaces(remote_host: str) -> list:
         return []
 
 
-def gemini_get_remote_session_info(remote_host: str, project_hash: str = None) -> list:
+def gemini_get_remote_session_info(
+    remote_host: Optional[str], project_hash: Optional[str] = None
+) -> list:
     """Get Gemini session file information from remote without downloading.
 
     Args:
@@ -5544,6 +5623,9 @@ def gemini_get_remote_session_info(remote_host: str, project_hash: str = None) -
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
         return []
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     try:
         # Get file stats and extract cwd from session files
@@ -5622,7 +5704,10 @@ def gemini_get_remote_session_info(remote_host: str, project_hash: str = None) -
 
 
 def gemini_fetch_remote_sessions(
-    remote_host: str, local_cache_dir: Path, hostname: str, project_hash: str = None
+    remote_host: Optional[str],
+    local_cache_dir: Path,
+    hostname: str,
+    project_hash: Optional[str] = None,
 ) -> dict:
     """Fetch Gemini sessions from remote using rsync.
 
@@ -5701,7 +5786,7 @@ def gemini_fetch_remote_sessions(
         return {"success": False, "files_copied": 0, "error": "rsync not found"}
 
 
-def gemini_fetch_remote_hash_index(remote_host: str, local_cache_dir: Path) -> dict:
+def gemini_fetch_remote_hash_index(remote_host: Optional[str], local_cache_dir: Path) -> dict:
     """Fetch Gemini hash index from remote host if it exists.
 
     Args:
@@ -5713,6 +5798,9 @@ def gemini_fetch_remote_hash_index(remote_host: str, local_cache_dir: Path) -> d
     """
     if not validate_remote_host(remote_host):
         return {}
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     try:
         # Check if remote has a hash index file
@@ -5745,7 +5833,7 @@ def gemini_fetch_remote_hash_index(remote_host: str, local_cache_dir: Path) -> d
 # ============================================================================
 
 
-def codex_list_remote_workspaces(remote_host: str) -> list:
+def codex_list_remote_workspaces(remote_host: Optional[str]) -> list:
     """List unique Codex workspaces (cwds) from remote host.
 
     Args:
@@ -5757,6 +5845,9 @@ def codex_list_remote_workspaces(remote_host: str) -> list:
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
         return []
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     try:
         # Extract unique cwds from all Codex session files
@@ -5783,7 +5874,9 @@ def codex_list_remote_workspaces(remote_host: str) -> list:
         return []
 
 
-def codex_get_remote_session_info(remote_host: str, workspace_filter: str = None) -> list:
+def codex_get_remote_session_info(
+    remote_host: Optional[str], workspace_filter: Optional[str] = None
+) -> list:
     """Get Codex session file information from remote without downloading.
 
     Args:
@@ -5796,6 +5889,9 @@ def codex_get_remote_session_info(remote_host: str, workspace_filter: str = None
     if not validate_remote_host(remote_host):
         sys.stderr.write(f"Error: Invalid remote host specification: {remote_host}\n")
         return []
+
+    # After validation, remote_host is known to be a valid string
+    assert remote_host is not None
 
     try:
         # Get file stats and extract cwd from each session file
@@ -5865,7 +5961,9 @@ def codex_get_remote_session_info(remote_host: str, workspace_filter: str = None
         return []
 
 
-def codex_fetch_remote_sessions(remote_host: str, local_cache_dir: Path, hostname: str) -> dict:
+def codex_fetch_remote_sessions(
+    remote_host: Optional[str], local_cache_dir: Path, hostname: str
+) -> dict:
     """Fetch Codex sessions from remote using rsync.
 
     Args:
@@ -6057,7 +6155,7 @@ def _lock_file(file_handle, exclusive: bool = True):
     if platform.system() == "Windows":
         import msvcrt
 
-        msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)
+        msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
     else:
         import fcntl
 
@@ -6071,7 +6169,7 @@ def _unlock_file(file_handle):
         import msvcrt
 
         try:
-            msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
+            msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
         except OSError:
             pass
     else:
@@ -6275,7 +6373,7 @@ def get_alias_session_count(alias_name: str, aliases_data: dict) -> int:
     return total
 
 
-def resolve_alias_workspaces(alias_name: str, source_filter: str = None) -> list:
+def resolve_alias_workspaces(alias_name: str, source_filter: Optional[str] = None) -> list:
     """
     Resolve an alias to a list of (source_key, workspace, sessions) tuples.
     If source_filter is provided, only include matching sources.
@@ -6298,7 +6396,7 @@ def resolve_alias_workspaces(alias_name: str, source_filter: str = None) -> list
     return results
 
 
-def get_alias_for_workspace(workspace: str, source_key: str = "local") -> str:
+def get_alias_for_workspace(workspace: str, source_key: str = "local") -> Optional[str]:
     """
     Find the alias that contains a given workspace, if any.
 
@@ -7021,7 +7119,7 @@ def _export_session_file(
         stats["failed"] += 1
 
 
-def cmd_alias_export(alias_name: str, output_dir: str, args):
+def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
     """Export sessions from all workspaces in an alias."""
     aliases_data = load_aliases()
 
@@ -7067,7 +7165,7 @@ def cmd_alias_export(alias_name: str, output_dir: str, args):
         )
 
 
-def _load_import_data(import_file: str) -> dict:
+def _load_import_data(import_file: Optional[str]) -> dict:
     """Load import data from file or stdin."""
     try:
         if import_file:
@@ -7193,7 +7291,7 @@ def get_metrics_db_path() -> Path:
     return get_aliases_dir() / "metrics.db"
 
 
-def init_metrics_db(db_path: Path = None) -> sqlite3.Connection:
+def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     """Initialize the metrics database, creating tables if needed.
 
     Opens (or creates) the SQLite metrics database and ensures the schema
@@ -7580,7 +7678,9 @@ def _is_file_synced(conn: sqlite3.Connection, file_path: str, current_mtime: flo
     return row is not None and row["mtime"] >= current_mtime
 
 
-def _prepare_gemini_session(session: dict, metrics: dict, source: str, mtime: float) -> None:
+def _prepare_gemini_session(
+    session: dict[str, Any], metrics: MetricsDict, source: str, mtime: float
+) -> None:
     """Prepare Gemini session dict with required fields (modifies session in place)."""
     # Gemini stores projectHash in 'cwd' field
     project_hash = session.get("cwd", "")
@@ -7607,7 +7707,9 @@ def _prepare_gemini_session(session: dict, metrics: dict, source: str, mtime: fl
     session["end_time"] = session.get("lastUpdated")
 
 
-def _prepare_codex_session(session: dict, metrics: dict, source: str, mtime: float) -> None:
+def _prepare_codex_session(
+    session: dict[str, Any], metrics: MetricsDict, source: str, mtime: float
+) -> None:
     """Prepare Codex session dict with required fields (modifies session in place)."""
     if session.get("cwd"):
         encoded = path_to_encoded_workspace(session["cwd"])
@@ -7638,8 +7740,8 @@ def _prepare_codex_session(session: dict, metrics: dict, source: str, mtime: flo
 def _write_metrics_to_db(
     conn: sqlite3.Connection,
     file_path: str,
-    session: dict,
-    metrics: dict,
+    session: dict[str, Any],
+    metrics: dict[str, Any],
     agent: str,
     mtime: float,
 ) -> None:
@@ -7754,11 +7856,11 @@ def sync_file_to_db(
 
     if agent == AGENT_GEMINI:
         metrics = gemini_extract_metrics_from_json(jsonl_file)
-        session = metrics["session"]
+        session = cast(dict[str, Any], metrics["session"])
         _prepare_gemini_session(session, metrics, source, current_mtime)
     elif agent == AGENT_CODEX:
         metrics = codex_extract_metrics_from_jsonl(jsonl_file)
-        session = metrics["session"]
+        session = cast(dict[str, Any], metrics["session"])
         _prepare_codex_session(session, metrics, source, current_mtime)
     else:
         metrics = extract_metrics_from_jsonl(jsonl_file, source)
@@ -7770,7 +7872,8 @@ def sync_file_to_db(
 
     # Write to database with transaction
     try:
-        _write_metrics_to_db(conn, file_path, session, metrics, agent, current_mtime)
+        metrics_dict = cast(dict[str, Any], metrics)
+        _write_metrics_to_db(conn, file_path, session, metrics_dict, agent, current_mtime)
         conn.commit()
         return True
     except sqlite3.Error as e:
@@ -8324,7 +8427,7 @@ def _query_tool_stats(conn: sqlite3.Connection, where_sql: str, params: list) ->
     return cursor.fetchone()
 
 
-def _build_workspace_to_alias_map(aliases: dict = None) -> dict:
+def _build_workspace_to_alias_map(aliases: Optional[dict] = None) -> dict:
     """Build mapping from (workspace, source) to alias name."""
     if aliases is None:
         aliases_data = load_aliases()
@@ -9107,6 +9210,8 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
     workspaces_only = getattr(args, "workspaces_only", False)
 
     remote_host = getattr(args, "remote", None)
+    # remote_host should be a wsl:// URL for WSL sessions
+    assert remote_host is not None
     distro_name = remote_host[WSL_PREFIX_LEN:]
 
     all_sessions = []
@@ -9150,7 +9255,7 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
 # ============================================================================
 
 
-def _list_remote_claude_workspaces_only(remote_host: str, patterns: list):
+def _list_remote_claude_workspaces_only(remote_host: Optional[str], patterns: list):
     """List Claude workspaces only for remote host."""
     batch_workspaces = get_remote_workspaces_batch(remote_host)
     if not batch_workspaces:
@@ -9164,7 +9269,7 @@ def _list_remote_claude_workspaces_only(remote_host: str, patterns: list):
 
 
 def _collect_remote_claude_session_details(
-    remote_host: str, patterns: list, since_date, until_date
+    remote_host: Optional[str], patterns: list, since_date, until_date
 ):
     """Collect detailed Claude session info from remote workspaces."""
     remote_workspaces = list_remote_workspaces(remote_host)
@@ -9202,7 +9307,7 @@ def _collect_remote_claude_session_details(
 # ============================================================================
 
 
-def _list_remote_gemini_workspaces_only(remote_host: str, patterns: list):
+def _list_remote_gemini_workspaces_only(remote_host: Optional[str], patterns: list):
     """List Gemini workspaces (project hashes) for remote host."""
     workspaces = gemini_list_remote_workspaces(remote_host)
     if not workspaces:
@@ -9222,7 +9327,7 @@ def _list_remote_gemini_workspaces_only(remote_host: str, patterns: list):
 
 
 def _collect_remote_gemini_session_details(
-    remote_host: str, patterns: list, since_date, until_date
+    remote_host: Optional[str], patterns: list, since_date, until_date
 ):
     """Collect detailed Gemini session info from remote."""
     sessions_info = gemini_get_remote_session_info(remote_host)
@@ -9266,7 +9371,7 @@ def _collect_remote_gemini_session_details(
 # ============================================================================
 
 
-def _list_remote_codex_workspaces_only(remote_host: str, patterns: list):
+def _list_remote_codex_workspaces_only(remote_host: Optional[str], patterns: list):
     """List Codex workspaces (cwds) for remote host."""
     workspaces = codex_list_remote_workspaces(remote_host)
     if not workspaces:
@@ -9282,7 +9387,9 @@ def _list_remote_codex_workspaces_only(remote_host: str, patterns: list):
     return result
 
 
-def _collect_remote_codex_session_details(remote_host: str, patterns: list, since_date, until_date):
+def _collect_remote_codex_session_details(
+    remote_host: Optional[str], patterns: list, since_date, until_date
+):
     """Collect detailed Codex session info from remote."""
     sessions_info = codex_get_remote_session_info(remote_host)
     if not sessions_info:
@@ -9320,7 +9427,7 @@ def _collect_remote_codex_session_details(remote_host: str, patterns: list, sinc
 # ============================================================================
 
 
-def _list_remote_workspaces_only(remote_host: str, patterns: list, agent: str = "auto"):
+def _list_remote_workspaces_only(remote_host: Optional[str], patterns: list, agent: str = "auto"):
     """List workspaces for remote host, dispatching by agent type."""
     all_workspaces = []
 
@@ -9343,7 +9450,7 @@ def _list_remote_workspaces_only(remote_host: str, patterns: list, agent: str = 
 
 
 def _collect_remote_session_details(
-    remote_host: str, patterns: list, since_date, until_date, agent: str = "auto"
+    remote_host: Optional[str], patterns: list, since_date, until_date, agent: str = "auto"
 ):
     """Collect detailed session info from remote workspaces, dispatching by agent type."""
     all_sessions = []
@@ -9595,6 +9702,8 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
         List of session dictionaries.
     """
     remote_host = getattr(args, "remote", None)
+    # remote_host should be a wsl:// URL for WSL sessions
+    assert remote_host is not None
     distro_name = remote_host[WSL_PREFIX_LEN:]  # Remove 'wsl://' prefix
 
     wsl_projects_dir = get_wsl_projects_dir(distro_name)
@@ -9623,7 +9732,7 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
 
 
 def _fetch_remote_workspaces(
-    remote_host: str, workspaces: list, local_projects_dir: Path, hostname: str
+    remote_host: Optional[str], workspaces: list, local_projects_dir: Path, hostname: str
 ):
     """Fetch multiple remote workspaces to local cache."""
     for remote_workspace in workspaces:
@@ -9651,7 +9760,7 @@ def _deduplicate_sessions(sessions: list, patterns: list) -> list:
 
 
 def _get_batch_ssh_claude_sessions(
-    remote_host: str, patterns: list, since_date, until_date, hostname: str
+    remote_host: Optional[str], patterns: list, since_date, until_date, hostname: str
 ) -> list:
     """Get Claude sessions from SSH remote for batch export."""
     all_remote_workspaces = list_remote_workspaces(remote_host)
@@ -9673,7 +9782,7 @@ def _get_batch_ssh_claude_sessions(
 
 
 def _get_batch_ssh_gemini_sessions(
-    remote_host: str, patterns: list, since_date, until_date, hostname: str
+    remote_host: Optional[str], patterns: list, since_date, until_date, hostname: str
 ) -> list:
     """Get Gemini sessions from SSH remote for batch export."""
     # Fetch all Gemini sessions from remote
@@ -9746,7 +9855,7 @@ def _get_batch_ssh_gemini_sessions(
 
 
 def _get_batch_ssh_codex_sessions(
-    remote_host: str, patterns: list, since_date, until_date, hostname: str
+    remote_host: Optional[str], patterns: list, since_date, until_date, hostname: str
 ) -> list:
     """Get Codex sessions from SSH remote for batch export."""
     # Fetch all Codex sessions from remote
@@ -9861,7 +9970,7 @@ def _get_batch_local_sessions(patterns: list, since_date, until_date, agent: str
     )
 
 
-def _extract_timestamp_prefix(messages: list) -> str:
+def _extract_timestamp_prefix(messages: list) -> Optional[str]:
     """Extract timestamp prefix from first message for filename."""
     if messages and messages[0].get("timestamp"):
         try:
@@ -9873,7 +9982,11 @@ def _extract_timestamp_prefix(messages: list) -> str:
 
 
 def _get_export_output_path(
-    session: dict, ts_prefix: str, output_dir: Path, flat: bool, remote_host: str
+    session: dict,
+    ts_prefix: Optional[str],
+    output_dir: Path,
+    flat: bool,
+    remote_host: Optional[str],
 ) -> tuple:
     """Get output path and name for export file.
 
@@ -10025,7 +10138,7 @@ def _write_single_file(
     jsonl_file: Path,
     output_file: Path,
     minimal: bool,
-    messages: list = None,
+    messages: Optional[list] = None,
     agent: str = AGENT_CLAUDE,
 ):
     """Write a single markdown file.
@@ -10467,6 +10580,8 @@ def _lsh_show_wsl():
         if claude_distros:
             for distro in claude_distros:
                 projects_dir = get_wsl_projects_dir(distro["name"])
+                if projects_dir is None:
+                    continue
                 workspace_count = len(
                     [d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
                 )
@@ -10615,7 +10730,7 @@ def cmd_lsh_clear(args):
         sys.exit(1)
 
 
-def _get_reset_items(what: str, config_dir: Path) -> list:
+def _get_reset_items(what: Optional[str], config_dir: Path) -> list:
     """Get list of (description, path) tuples for reset operation."""
     items = []
     reset_all = what in (None, "all")
@@ -10907,7 +11022,7 @@ def _export_local_sessions(args, output_dir: Path, patterns: list, local_label: 
 
 def _export_windows_from_wsl(args, output_dir: Path, patterns: list) -> dict:
     """Export from Windows users when running in WSL."""
-    result = {"sessions": 0, "errors": 0, "sources": []}
+    result: dict[str, Any] = {"sessions": 0, "errors": 0, "sources": []}
     print("[Windows] Checking Windows users with Claude...")
     try:
         windows_users = get_windows_users_with_claude()
@@ -10959,7 +11074,7 @@ def _export_windows_from_wsl(args, output_dir: Path, patterns: list) -> dict:
 
 def _export_wsl_from_windows(args, output_dir: Path, patterns: list) -> dict:
     """Export from WSL distributions when running on Windows."""
-    result = {"sessions": 0, "errors": 0, "sources": []}
+    result: dict[str, Any] = {"sessions": 0, "errors": 0, "sources": []}
     print("[WSL] Checking WSL distributions...")
     try:
         wsl_distros = get_wsl_distributions()
@@ -11058,7 +11173,7 @@ def _export_remote_host(args, output_dir: Path, patterns: list, remote_host: str
 
 def _export_all_remotes(args, output_dir: Path, patterns: list) -> dict:
     """Export from all remote hosts."""
-    result = {"sessions": 0, "errors": 0, "sources": []}
+    result: dict[str, Any] = {"sessions": 0, "errors": 0, "sources": []}
     if not hasattr(args, "remotes") or not args.remotes:
         return result
 
@@ -11090,7 +11205,7 @@ def _print_export_all_summary(
     print("=" * 80)
 
 
-def _accumulate_export_results(totals: dict, result: dict, is_multi: bool = False):
+def _accumulate_export_results(totals: ExportTotals, result: dict, is_multi: bool = False):
     """Accumulate export results into totals dict."""
     if is_multi:
         totals["sources"].extend(result["sources"])
@@ -11136,7 +11251,7 @@ def cmd_export_all(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    totals = {"sources": [], "sessions": 0, "errors": 0}
+    totals: ExportTotals = {"sources": [], "sessions": 0, "errors": 0}
 
     _accumulate_export_results(
         totals, _export_local_sessions(args, output_dir, patterns, local_label)
@@ -11359,7 +11474,7 @@ def _resolve_remote_flag(args):
     return remote
 
 
-def _get_wsl_remote_for_export() -> str:
+def _get_wsl_remote_for_export() -> Optional[str]:
     """Get WSL remote string for export. Returns None if in WSL or no Claude distros."""
     if is_running_in_wsl():
         return None
@@ -12128,7 +12243,7 @@ def _get_remote_sessions_for_additive(remote: str, patterns: list, since_date, u
 
 def _collect_local_sessions_for_additive(
     patterns: list, since_date, until_date, agent: str = "auto"
-) -> tuple:
+) -> Optional[tuple]:
     """Collect local sessions for additive mode. Returns (label, sessions) or None."""
     local_label = "Local (WSL)" if is_running_in_wsl() else "Local"
     try:
@@ -12399,10 +12514,12 @@ def _get_export_output_dir(args) -> str:
     return args.output_dir
 
 
-def _build_export_config(args, output_dir: str, patterns: list, remote=None) -> ExportConfig:
+def _build_export_config(
+    args, output_dir: Union[str, Path], patterns: list, remote=None
+) -> ExportConfig:
     """Build ExportConfig from args."""
     return ExportConfig(
-        output_dir=output_dir,
+        output_dir=str(output_dir),
         patterns=patterns,
         since=args.since,
         until=args.until,
@@ -12428,7 +12545,7 @@ def _dispatch_export_single_file(args, jsonl_file: str):
     cmd_convert(convert_args)
 
 
-def _dispatch_export_additive(args, output_dir: str, patterns: list, remotes: list):
+def _dispatch_export_additive(args, output_dir: Union[str, Path], patterns: list, remotes: list):
     """Handle export with --local and -r flags (additive mode)."""
     # Export from local first
     local_label = "Local (WSL)" if is_running_in_wsl() else "Local"
@@ -12442,10 +12559,10 @@ def _dispatch_export_additive(args, output_dir: str, patterns: list, remotes: li
         cmd_batch(_build_export_config(args, output_dir, patterns, remote=remote))
 
 
-def _dispatch_export_all_homes(args, output_dir: str, patterns: list, remotes: list):
+def _dispatch_export_all_homes(args, output_dir: Union[str, Path], patterns: list, remotes: list):
     """Handle export with --all-homes flag."""
     export_config = ExportAllConfig(
-        output_dir=output_dir,
+        output_dir=str(output_dir),
         patterns=patterns,
         remotes=remotes,
         since=args.since,
@@ -12458,7 +12575,7 @@ def _dispatch_export_all_homes(args, output_dir: str, patterns: list, remotes: l
     cmd_export_all(export_config)
 
 
-def _resolve_export_targets(args, targets: list, output_dir: Path) -> tuple:
+def _resolve_export_targets(args, targets: list, output_dir: Union[str, Path]) -> tuple:
     """Resolve export targets, handling workspace detection and aliases.
 
     Returns:
@@ -12503,7 +12620,7 @@ def _resolve_export_targets(args, targets: list, output_dir: Path) -> tuple:
     return [pattern], False
 
 
-def _route_export(args, output_dir: Path, final_patterns: list, final_remotes):
+def _route_export(args, output_dir: Union[str, Path], final_patterns: list, final_remotes):
     """Route export to appropriate handler based on flags."""
     local_flag = getattr(args, "local", False)
     if local_flag and final_remotes:
