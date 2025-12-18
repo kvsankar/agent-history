@@ -17,6 +17,16 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
+  # Python type checking with ty (Astral's type checker)
+  - repo: local
+    hooks:
+      - id: ty
+        name: ty (type checker)
+        entry: uv run ty check agent-history
+        language: system
+        pass_filenames: false
+        files: ^agent-history$
+
   # Code complexity checks with radon
   - repo: local
     hooks:

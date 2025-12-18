@@ -11,4 +11,3 @@ test-unit:
 
 test-integration:
 	uv run python -m pytest -q -m integration tests/integration
-

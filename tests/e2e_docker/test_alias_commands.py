@@ -1,7 +1,6 @@
 """E2E tests for alias commands using Docker infrastructure."""
 
-import pytest
-from .helpers import get_env, run_cli, ssh_run
+from .helpers import get_env, run_cli
 
 
 class TestAliasLifecycle:
@@ -63,11 +62,16 @@ class TestAliasWithRemote:
         assert result.returncode == 0
 
         # Add workspace from remote - use '*' to match any workspace
-        result = run_cli([
-            "alias", "add", "remote-test",
-            "-r", f"{user}@{node}",
-            "*"  # pattern to match any workspace
-        ])
+        result = run_cli(
+            [
+                "alias",
+                "add",
+                "remote-test",
+                "-r",
+                f"{user}@{node}",
+                "*",  # pattern to match any workspace
+            ]
+        )
         # Should not crash - may succeed or have no matches
         assert "Traceback" not in result.stderr
 

@@ -26,10 +26,19 @@ def _in_docker_environment():
     # Check if we can reach node-alpha (only available in Docker network)
     try:
         result = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=2",
-             "alice@node-alpha", "echo", "ok"],
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=2",
+                "alice@node-alpha",
+                "echo",
+                "ok",
+            ],
             capture_output=True,
             timeout=5,
+            check=False,
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
