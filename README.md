@@ -8,13 +8,13 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 | Agent | Status | Format | Documentation |
 |-------|--------|--------|---------------|
-| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [CLAUDE-FORMAT.md](docs/CLAUDE-FORMAT.md) |
-| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [CODEX-FORMAT.md](docs/CODEX-FORMAT.md) |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [GEMINI-FORMAT.md](docs/GEMINI-FORMAT.md) |
+| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-format.md](docs/claude-format.md) |
+| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-format.md](docs/codex-format.md) |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-format.md](docs/gemini-format.md) |
 
 Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query.
 
-See [docs/AGENTS.md](docs/AGENTS.md) for a detailed comparison of storage locations, features, and behaviors.
+See [AGENTS.md](AGENTS.md) for a detailed comparison of storage locations, features, and behaviors.
 
 ## Why This Tool?
 
@@ -372,9 +372,9 @@ The directory must mirror Claude's standard layout (`<root>/<encoded-workspace>/
 
 ## Documentation
 
-- **[Command Reference](docs/USAGE.md)** - Detailed options for all commands
-- **[Cookbook](docs/COOKBOOK.md)** - Recipes and workflows
-- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - FAQ and common issues
+- **[Command Reference](docs/usage.md)** - Detailed options for all commands
+- **[Cookbook](docs/cookbook.md)** - Recipes and workflows
+- **[Troubleshooting](docs/troubleshooting.md)** - FAQ and common issues
 - **[CLAUDE.md](CLAUDE.md)** - Development guidelines
 
 ## License
