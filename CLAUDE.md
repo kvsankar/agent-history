@@ -163,9 +163,27 @@ uv run pytest tests/unit/ -v
 
 # Integration tests only
 uv run pytest -m integration tests/integration/
+```
 
-# With coverage
-uv run pytest --cov=. --cov-report=term-missing tests/unit/
+**Coverage (subprocess-aware, parallel-friendly):**
+
+```bash
+# Host coverage (uses .coveragerc + scripts/coverage_startup.py)
+make coverage           # runs pytest under coverage with subprocess tracing
+make coverage-report    # text report
+make coverage-html      # HTML in .coverage-html/
+make coverage-clean     # remove coverage artifacts
+```
+
+Notes:
+- `.coveragerc` enables branch + parallel + multiprocessing coverage with `source=.` and `[paths]` to remap Docker paths (`/app` → `.`).
+- Subprocess coverage is enabled by setting `COVERAGE_PROCESS_START=.coveragerc` and `PYTHONPATH=scripts` (handled by `make coverage`).
+
+After running host + Docker coverage, merge and report:
+
+```bash
+.venv/Scripts/python -m coverage combine --rcfile=.coveragerc .coverage-data .
+.venv/Scripts/python -m coverage report --rcfile=.coveragerc --include="*agent-history"
 ```
 
 **Docker E2E tests (real SSH connections):**
@@ -176,6 +194,14 @@ docker-compose up -d --build      # Start SSH nodes
 docker-compose run test-runner    # Run E2E tests
 docker-compose down -v            # Cleanup
 ```
+
+With coverage (from repo root, auto-teardown):
+
+```bash
+make docker-coverage              # runs E2E tests under coverage and downs the stack
+```
+
+Docker coverage is bind-mounted to `.coverage-data/` for easy merging on the host.
 
 The Docker setup creates:
 - `node-alpha`: SSH node with users alice, bob
