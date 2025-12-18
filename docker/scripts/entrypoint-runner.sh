@@ -17,14 +17,14 @@ echo "Waiting for SSH nodes to be ready..."
 wait_for_ssh() {
     local host=$1
     local user=$2
-    local max_attempts=30
+    local max_attempts=90
 
     for i in $(seq 1 $max_attempts); do
-        if ssh -o ConnectTimeout=2 "$user@$host" "echo ready" 2>/dev/null; then
+        if ssh -o ConnectTimeout=5 "$user@$host" "echo ready" 2>/dev/null; then
             echo "  $host is ready (as $user)"
             return 0
         fi
-        sleep 1
+        sleep 2
     done
 
     echo "ERROR: $host not ready after $max_attempts attempts"

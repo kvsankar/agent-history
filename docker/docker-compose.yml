@@ -40,8 +40,8 @@ services:
       - ..:/app:ro
       # Shared SSH keys for passwordless auth
       - ssh-keys:/ssh-keys:ro
-      # Writable volume for coverage data
-      - coverage-data:/coverage
+      # Writable coverage data (bind to host .coverage-data for easy merge)
+      - ../.coverage-data:/coverage
     environment:
       - NODE_ALPHA=node-alpha
       - NODE_BETA=node-beta
@@ -57,4 +57,3 @@ networks:
 
 volumes:
   ssh-keys:
-  coverage-data:

@@ -25,7 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -265,6 +265,244 @@ class TestCodexConstants:
         """Windows-style Codex paths should be detected."""
         path = Path("C:\\Users\\test\\.codex\\sessions\\rollout.jsonl")
         assert ch.detect_agent_from_path(path) == "codex"
+
+
+class TestUtilityHelpers:
+    def test_truncate_tool_output_truncates_long_values(self):
+        long_text = "x" * (ch.MAX_TOOL_OUTPUT_LEN + 5)
+        truncated = ch._truncate_tool_output(long_text)
+        assert truncated.startswith("x" * ch.MAX_TOOL_OUTPUT_LEN)
+        assert "[truncated]" in truncated
+
+    def test_truncate_tool_output_passthrough_for_short_values(self):
+        text = "ok"
+        assert ch._truncate_tool_output(text) == text
+
+    def test_truncate_tool_result_block_empty_content(self):
+        block = {"tool_use_id": "id-empty", "content": []}
+        lines = ch._format_tool_result_block(block)
+        # Empty content joins to empty string but still renders fenced block
+        assert "Tool Use ID: `id-empty`" in "\n".join(lines)
+        assert "```" in lines[2]
+
+    def test_list_command_args_parses_string_dates(self):
+        args = ch.ListCommandArgs(patterns=["ws"], since="2025-01-02", until="2025-01-03")
+        assert args.since_date == datetime(2025, 1, 2)
+        assert args.until_date == datetime(2025, 1, 3)
+
+    def test_list_command_args_accepts_datetime_and_none(self):
+        dt = datetime(2025, 2, 3)
+        args = ch.ListCommandArgs(patterns=["ws"], since=dt, until=None)
+        assert args.since_date is dt
+        assert args.until_date is None
+
+    def test_pretty_json_preserves_unicode(self):
+        payload = {"name": "工具", "count": 2}
+        result = ch.pretty_json(payload)
+        assert '"name": "工具"' in result
+        assert result.startswith("{\n")
+
+    def test_save_and_load_json_roundtrip(self, tmp_path):
+        path = tmp_path / "data.json"
+        payload = {"alpha": 1, "nested": {"value": True}}
+        ch.save_json(path, payload)
+        assert path.exists()
+        loaded = ch.load_json(path)
+        assert loaded == payload
+
+    def test_windows_home_cache_context_restores_global_cache(self):
+        original_cache = ch._get_windows_home_cache()
+        custom_cache = ch._WindowsHomeCache()
+        with ch.windows_home_cache_context(custom_cache) as active:
+            assert active is custom_cache
+            assert not active.has("alice")
+            active.set("alice", Path("/tmp/alice"))
+            assert active.get("alice") == Path("/tmp/alice")
+        assert ch._get_windows_home_cache() is original_cache
+        assert not original_cache.has("alice")
+
+    def test_windows_home_cache_set_get_clear(self):
+        cache = ch._WindowsHomeCache()
+        assert cache.get("bob") is None
+        cache.set("bob", Path("/home/bob"))
+        assert cache.has("bob") is True
+        assert cache.get("bob") == Path("/home/bob")
+        cache.clear()
+        assert cache.has("bob") is False
+
+    def test_sanitize_for_shell_quotes_spaces(self):
+        value = "path with spaces/file.txt"
+        sanitized = ch.sanitize_for_shell(value)
+        assert sanitized.startswith("'") and sanitized.endswith("'")
+
+    def test_truncate_hash_limits_length(self):
+        long_hash = "a" * 16
+        assert ch._truncate_hash(long_hash, max_len=8) == "aaaaaaaa"
+        short_hash = "abc"
+        assert ch._truncate_hash(short_hash, max_len=8) == short_hash
+
+    def test_extract_text_from_result_item_handles_dict_and_primitives(self):
+        assert ch._extract_text_from_result_item({"text": "done"}) == "done"
+        assert ch._extract_text_from_result_item(123) == "123"
+
+    def test_get_agent_info_detects_agent_sessions(self):
+        messages = [{"isSidechain": True, "sessionId": "parent", "agentId": "agent"}]
+        assert ch._get_agent_info(messages) == (True, "parent", "agent")
+        assert ch._get_agent_info([{"role": "user"}]) == (False, None, None)
+
+    def test_generate_markdown_header_includes_counts(self, tmp_path):
+        jsonl_file = tmp_path / "session.jsonl"
+        jsonl_file.write_text("", encoding="utf-8")
+        messages = [
+            {"timestamp": "2025-01-01T00:00:00Z"},
+            {"timestamp": "2025-01-01T01:00:00Z"},
+        ]
+        header = ch._generate_markdown_header(
+            jsonl_file,
+            messages,
+            is_agent=True,
+            part_num=1,
+            total_parts=2,
+            start_msg_num=1,
+            end_msg_num=2,
+        )
+        assert header[0].startswith("# Claude Conversation (Agent) - Part 1 of 2")
+        assert any("Messages in this part" in line for line in header)
+        assert any("First message" in line for line in header)
+
+    def test_truncate_thought_handles_long_and_short(self):
+        short = "thought"
+        long = "t" * (ch.MAX_THOUGHT_LEN + 10)
+        assert ch._truncate_thought(short) == short
+        truncated = ch._truncate_thought(long)
+        assert truncated.startswith("t" * ch.MAX_THOUGHT_LEN)
+        assert truncated.endswith("...")
+
+    def test_generate_agent_notice_includes_ids(self):
+        lines = ch._generate_agent_conversation_notice(parent_session_id="parent", agent_id="agent-1")
+        joined = "\n".join(lines)
+        assert "Parent Session ID" in joined
+        assert "agent-1" in joined
+
+    def test_parse_and_validate_dates_warns_on_future(self, capsys):
+        future = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+        since, _ = ch.parse_and_validate_dates(future, None)
+        captured = capsys.readouterr().err
+        assert since is not None
+        assert "future" in captured.lower()
+
+    def test_print_sessions_output_skips_missing_windows_paths(self, capsys, monkeypatch, tmp_path):
+        monkeypatch.setattr(ch.sys, "platform", "win32")
+        existing = tmp_path / "exists"
+        existing.write_text("ok", encoding="utf-8")
+        sessions = [
+            {"workspace_readable": str(existing), "workspace": str(existing)},
+            {"workspace_readable": str(tmp_path / "missing"), "workspace": str(tmp_path / "missing")},
+        ]
+        ch.print_sessions_output(sessions, "Windows", workspaces_only=True)
+        out_lines = capsys.readouterr().out.strip().splitlines()
+        assert str(existing) in out_lines
+        assert str(tmp_path / "missing") not in out_lines
+
+    def test_get_first_timestamp_logs_debug_on_io_error(self, capsys, monkeypatch, tmp_path):
+        missing = tmp_path / "absent.jsonl"
+        monkeypatch.setenv("DEBUG", "1")
+        assert ch.get_first_timestamp(missing) is None
+        err = capsys.readouterr().err
+        assert "Cannot read" in err
+
+    def test_format_tool_result_block_handles_content(self):
+        block = {"tool_use_id": "id1", "content": [{"text": "result"}]}
+        lines = ch._format_tool_result_block(block)
+        joined = "\n".join(lines)
+        assert "Tool Use ID: `id1`" in joined
+        assert "result" in joined
+
+    def test_exit_with_error_prints_suggestions(self, capsys):
+        with pytest.raises(SystemExit):
+            ch.exit_with_error("nope", suggestions=["one", "two"], exit_code=7)
+        err = capsys.readouterr().err
+        assert "nope" in err
+        assert "one" in err
+
+    def test_exit_with_date_error_exits(self):
+        with pytest.raises(SystemExit):
+            ch.exit_with_date_error("--since", "bad-date")
+
+    def test_validate_remote_host_rejects_invalid(self):
+        assert ch.validate_remote_host("") is False
+        assert ch.validate_remote_host("bad host name") is False
+        assert ch.validate_remote_host("a" * 300) is False
+
+    def test_is_safe_path_rejects_outside_base(self, tmp_path):
+        base = tmp_path / "base"
+        base.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        assert ch.is_safe_path(base, outside) is False
+
+    def test_get_command_path_caches_missing_command(self, monkeypatch):
+        monkeypatch.setattr(ch.shutil, "which", lambda cmd: None)
+        # First call caches missing command
+        result1 = ch.get_command_path("not_real_cmd")
+        result2 = ch.get_command_path("not_real_cmd")
+        assert result1 == "not_real_cmd"
+        assert result2 == "not_real_cmd"
+
+    def test_validate_workspace_name_limits_length_and_traversal(self):
+        assert ch.validate_workspace_name("..") is False
+        long_name = "x" * (ch.MAX_WORKSPACE_NAME_LENGTH + 1)
+        assert ch.validate_workspace_name(long_name) is False
+
+    def test_command_path_cache_clear(self):
+        cache = ch._CommandPathCache()
+        cache.get_path("echo")  # populate
+        assert cache._paths  # internal cache populated
+        cache.clear()
+        assert cache._paths == {}
+
+    def test_exit_with_error_no_suggestions(self, capsys):
+        with pytest.raises(SystemExit):
+            ch.exit_with_error("simple", suggestions=None, exit_code=3)
+        err = capsys.readouterr().err
+        assert "simple" in err
+
+    def test_parse_and_validate_dates_invalid_order_exits(self):
+        with pytest.raises(SystemExit):
+            ch.parse_and_validate_dates("2025-02-01", "2025-01-01")
+
+    def test_is_safe_path_handles_invalid_path(self, tmp_path, monkeypatch):
+        # Force ValueError by monkeypatching resolve
+        class BrokenPath(type(tmp_path)):
+            def resolve(self_inner):
+                raise ValueError("broken")
+
+        base = BrokenPath(tmp_path)
+        target = BrokenPath(tmp_path / "x")
+        assert ch.is_safe_path(base, target) is False
+
+class TestRsyncHelpers:
+    def test_interpret_rsync_exit_code_known(self):
+        partial, msg = ch._interpret_rsync_exit_code(24)
+        assert partial is True
+        assert "vanished" in msg.lower()
+        partial, msg = ch._interpret_rsync_exit_code(12)
+        assert partial is False
+        assert "error" in msg.lower()
+
+    def test_interpret_rsync_exit_code_unknown(self):
+        partial, msg = ch._interpret_rsync_exit_code(99)
+        assert partial is False
+        assert "99" in msg
+
+    def test_count_rsync_files_filters_control_lines(self):
+        output = """
+sending incremental file list
+file1.jsonl
+file2.jsonl
+sent 123 bytes  received 456 bytes  total size 789
+"""
+        assert ch._count_rsync_files(output) == 2
 
 
 class TestCodexContentExtraction:
