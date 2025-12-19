@@ -156,6 +156,24 @@ WSL runs (expected behavior)
 - `./agent-history stats @claude-history --source windows --no-sync`
 - `./agent-history stats @claude-history --source remote:ubuntuvm01 --no-sync`
 - `./agent-history stats @claude-history --source windows --agent codex --no-sync`
+- `./agent-history stats @claude-history --agent codex --source windows --by-workspace`
+- `./agent-history stats @claude-history --agent codex --source windows --by-workspace --no-sync`
+- `./agent-history stats @claude-history --agent codex --source remote:ubuntuvm01 --by-workspace -r sankar@ubuntuvm01`
+- `./agent-history stats @claude-history --agent codex --source remote:ubuntuvm01 --by-workspace --no-sync`
+- `./agent-history stats @claude-history --agent codex --source wsl --by-workspace`
+- `./agent-history stats @claude-history --agent gemini --source windows --by-workspace`
+- `./agent-history stats @claude-history --agent gemini --source wsl --by-workspace`
+- `./agent-history stats @claude-history --agent gemini --source remote:ubuntuvm01 --by-workspace -r sankar@ubuntuvm01`
+- `./agent-history stats @claude-history --agent gemini --source remote:ubuntuvm01 --by-workspace --no-sync`
+- `./agent-history stats @claude-history --agent codex --tools --source wsl`
+- `./agent-history stats @claude-history --agent gemini --models --source wsl`
+- `./agent-history stats @claude-history --agent codex --time --source windows --no-sync`
+- `./agent-history lsw --agent codex --ah --aw` (expected error: `--aw` not supported)
+- `./agent-history lsw --agent codex --ah`
+- `./agent-history lsw --agent gemini --ah`
+- `./agent-history lsw --agent gemini --windows`
+- `./agent-history lss @claude-history --agent gemini --local -r sankar@ubuntuvm01`
+- `./agent-history lss @claude-history --agent codex --local -r sankar@ubuntuvm01`
 - `./agent-history export --alias claude-history --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history export --alias claude-history --split 200 --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history export --alias claude-history --windows --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
@@ -165,6 +183,16 @@ WSL runs (expected behavior)
 - `./agent-history export --alias claude-history --agent codex --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (no output before fix)
 - `./agent-history export --alias claude-history --agent gemini --since 2025-12-01 --quiet -o /tmp/<temp>` (no output; no entries in range)
 - `./agent-history export --alias claude-history --agent codex --since 2025-12-18 --quiet -o /tmp/<temp>` (after fix: 5 exported)
+- `./agent-history export --agent codex --aw --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export --agent codex --ah --aw --quiet -o /tmp/<temp>` (export-all summary printed)
+- `./agent-history export --agent gemini --aw --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export --agent gemini --ah --aw --quiet -o /tmp/<temp>` (export-all summary printed)
+- `./agent-history export claude-history --agent codex --windows --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export claude-history --agent codex --wsl --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export claude-history --agent codex -r sankar@ubuntuvm01 --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export @claude-history --agent gemini --windows --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export claude-history --agent codex --split 200 --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export claude-history --agent gemini --minimal --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
