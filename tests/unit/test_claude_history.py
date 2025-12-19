@@ -11,6 +11,7 @@ These tests focus on:
 3. Data transformation and parsing logic
 """
 
+import builtins
 import importlib.machinery
 
 # Import the module under test
@@ -979,6 +980,23 @@ class TestCodexIndex:
         with open(index_file) as f:
             saved = json.load(f)
         assert saved == test_index
+
+    def test_save_index_permission_error(self, tmp_path, monkeypatch):
+        """codex_save_index should ignore write permission errors."""
+        config_dir = tmp_path / ".claude-history"
+        test_index = {
+            "version": ch.CODEX_INDEX_VERSION,
+            "last_scan_date": "2025-12-15",
+            "sessions": {"/a/b.jsonl": "-workspace"},
+        }
+
+        def _fail(*args, **kwargs):
+            raise PermissionError("nope")
+
+        monkeypatch.setattr(ch, "get_config_dir", lambda: config_dir)
+        monkeypatch.setattr(builtins, "open", _fail)
+
+        ch.codex_save_index(test_index)
 
     def test_date_folders_since_returns_all_for_none(self, tmp_path):
         """_codex_date_folders_since(None) should return all date folders."""
@@ -3490,7 +3508,7 @@ class TestJSONLReading:
     def test_read_skips_non_json_lines(self, temp_projects_dir, capsys):
         """Should skip non-JSON fragments without warning."""
         session_file = temp_projects_dir / "-home-user-myproject" / "junk.jsonl"
-        session_file.write_text("0,\"cache_creation\":{}\n", encoding="utf-8")
+        session_file.write_text('0,"cache_creation":{}\n', encoding="utf-8")
         messages = ch.read_jsonl_messages(session_file)
         assert messages == []
         captured = capsys.readouterr()
@@ -6851,6 +6869,12 @@ class TestSection3Remaining:
         assert entry["projects_dir"] is not None
         assert "wsl.localhost" in str(entry["projects_dir"]).lower()
         assert entry["remote"] is None
+
+    def test_projects_dir_from_wsl_unc_in_wsl(self, monkeypatch):
+        """UNC WSL paths should resolve to local projects dir when in WSL."""
+        monkeypatch.setattr(ch, "is_running_in_wsl", lambda: True)
+        unc = "//wsl$/Ubuntu/home/sankar/sankar/projects/claude-history"
+        assert ch._projects_dir_from_wsl_unc(unc) == Path("/home/sankar/.claude/projects")
 
     def test_wsl_lss_current(self):
         """3.3.1: lss --wsl lists sessions from WSL."""
@@ -10244,6 +10268,49 @@ class TestAliasEndToEnd:
         assert set(seen_users) == {"kvsan"}
         assert {s["agent"] for s in sessions} == {ch.AGENT_CODEX, ch.AGENT_GEMINI}
         assert all(s["source"] == "windows" for s in sessions)
+
+    def test_alias_export_uses_non_claude_sessions(self, monkeypatch, tmp_path):
+        """cmd_alias_export should export Codex/Gemini sessions when agent is non-claude."""
+        aliases_data = {"aliases": {"myalias": {"local": ["-home-user-project"]}}}
+        monkeypatch.setattr(ch, "load_aliases", lambda: aliases_data)
+
+        sessions = [
+            {
+                "file": tmp_path / "session.jsonl",
+                "workspace": "project",
+                "workspace_readable": "project",
+                "agent": ch.AGENT_CODEX,
+                "source": "local",
+                "filename": "session.jsonl",
+                "modified": datetime(2025, 1, 1),
+                "message_count": 2,
+            }
+        ]
+
+        monkeypatch.setattr(ch, "_collect_non_claude_alias_sessions", lambda *a, **k: sessions)
+
+        export_calls = []
+
+        def _export(session, ws_output_path, source_tag, opts, stats):
+            export_calls.append((session, source_tag))
+            stats["exported"] += 1
+
+        monkeypatch.setattr(ch, "_export_session_file", _export)
+
+        class MockArgs:
+            since = None
+            until = None
+            force = False
+            minimal = False
+            split = None
+            flat = True
+            quiet = True
+            agent = "codex"
+
+        ch.cmd_alias_export("myalias", tmp_path / "out", MockArgs())
+
+        assert len(export_calls) == 1
+        assert export_calls[0][1] == ""
 
 
 # ============================================================================

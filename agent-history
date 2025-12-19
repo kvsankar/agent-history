@@ -10,8 +10,8 @@ License: MIT
 """
 
 import argparse
-import errno
 import base64
+import errno
 import hashlib
 import json
 import math
@@ -1250,7 +1250,7 @@ def _iter_sessions_deduped(
                 yield session
 
 
-def collect_sessions_with_dedup(
+def collect_sessions_with_dedup(  # noqa: PLR0913
     patterns: list,
     since_date=None,
     until_date=None,
@@ -2597,9 +2597,13 @@ def codex_load_index() -> dict[str, Any]:
 def codex_save_index(index: dict) -> None:
     """Save Codex session index to file."""
     index_file = codex_get_index_file()
-    index_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(index_file, "w", encoding="utf-8") as f:
-        json.dump(index, f, indent=2)
+    try:
+        index_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(index_file, "w", encoding="utf-8") as f:
+            json.dump(index, f, indent=2)
+    except OSError as e:
+        if os.environ.get("DEBUG"):
+            sys.stderr.write(f"Cannot write Codex index {index_file}: {e}\n")
 
 
 def _codex_parse_date_folder(folder_path: Path) -> str:
@@ -3927,6 +3931,12 @@ def _extract_workspace_from_projects_path(parts: list[str]) -> tuple[str | None,
 
 def _projects_dir_from_wsl_unc(path: str) -> Path:
     """Best-effort guess of ~/.claude/projects for a WSL UNC input."""
+    if is_running_in_wsl():
+        local_path = _strip_wsl_unc_prefix(path)
+        parts = [p for p in local_path.split("/") if p]
+        if len(parts) > 1 and parts[0] == "home":
+            return Path(f"/home/{parts[1]}/.claude/projects")
+        return Path(local_path).parent
     parts = [p for p in path.split("/") if p]
     distro = parts[1] if len(parts) > 1 else None
     try:
@@ -7461,7 +7471,7 @@ def _filter_alias_config_by_flags(alias_config: dict, args) -> dict:
     return filtered
 
 
-def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912
+def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912, PLR0915
     patterns: list,
     since_date,
     until_date,
@@ -7504,32 +7514,42 @@ def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912
                         sessions_dir = get_agent_windows_dir(user_name, agent_type)
                         if not sessions_dir or not sessions_dir.exists():
                             continue
-                        sessions.extend(
-                            _scan_codex_gemini_sessions(
+                        seen_files = set()
+                        for pattern in patterns or [""]:
+                            for session in _scan_codex_gemini_sessions(
                                 agent_type,
-                                patterns,
+                                [pattern],
                                 since_date,
                                 until_date,
                                 sessions_dir,
                                 source_key,
                                 skip_message_count=False,
-                            )
-                        )
+                            ):
+                                file_key = str(session.get("file", ""))
+                                if file_key in seen_files:
+                                    continue
+                                seen_files.add(file_key)
+                                sessions.append(session)
                 else:
                     sessions_dir = get_agent_windows_dir(username, agent_type)
                     if not sessions_dir or not sessions_dir.exists():
                         continue
-                    sessions.extend(
-                        _scan_codex_gemini_sessions(
+                    seen_files = set()
+                    for pattern in patterns or [""]:
+                        for session in _scan_codex_gemini_sessions(
                             agent_type,
-                            patterns,
+                            [pattern],
                             since_date,
                             until_date,
                             sessions_dir,
                             source_key,
                             skip_message_count=False,
-                        )
-                    )
+                        ):
+                            file_key = str(session.get("file", ""))
+                            if file_key in seen_files:
+                                continue
+                            seen_files.add(file_key)
+                            sessions.append(session)
             continue
 
         if source_key.startswith("wsl:"):
@@ -7540,31 +7560,40 @@ def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912
                 sessions_dir = get_agent_wsl_dir(distro_name, agent_type)
                 if not sessions_dir or not sessions_dir.exists():
                     continue
-                sessions.extend(
-                    _scan_codex_gemini_sessions(
+                seen_files = set()
+                for pattern in patterns or [""]:
+                    for session in _scan_codex_gemini_sessions(
                         agent_type,
-                        patterns,
+                        [pattern],
                         since_date,
                         until_date,
                         sessions_dir,
                         source_key,
                         skip_message_count=False,
-                    )
-                )
+                    ):
+                        file_key = str(session.get("file", ""))
+                        if file_key in seen_files:
+                            continue
+                        seen_files.add(file_key)
+                        sessions.append(session)
             continue
 
         if source_key.startswith("remote:"):
             remote_host = source_key.split("remote:", 1)[1]
+            if not check_ssh_connection(remote_host):
+                sys.stderr.write(f"Warning: Cannot connect to remote: {remote_host}\n")
+                continue
+            hostname = get_remote_hostname(remote_host)
             if agent in ("auto", AGENT_CODEX):
-                codex_sessions = _collect_remote_codex_sessions_simple(
-                    remote_host, patterns, since_date, until_date
+                codex_sessions = _get_batch_ssh_codex_sessions(
+                    remote_host, patterns, since_date, until_date, hostname
                 )
                 for s in codex_sessions:
                     s["source"] = source_key
                 sessions.extend(codex_sessions)
             if agent in ("auto", AGENT_GEMINI):
-                gemini_sessions = _collect_remote_gemini_sessions_simple(
-                    remote_host, patterns, since_date, until_date
+                gemini_sessions = _get_batch_ssh_gemini_sessions(
+                    remote_host, patterns, since_date, until_date, hostname
                 )
                 for s in gemini_sessions:
                     s["source"] = source_key
@@ -7695,11 +7724,15 @@ def _export_session_file(
 ):
     """Export a single session file. Updates stats dict in place."""
     jsonl_file = session["file"]
+    agent_type = session.get("agent", AGENT_CLAUDE)
 
     try:
-        messages = read_jsonl_messages(jsonl_file, quiet=opts.get("quiet", False))
+        messages = _read_session_messages(jsonl_file, agent_type)
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error reading {jsonl_file}: {e}\n")
+        stats["failed"] += 1
+        return
+    if messages is None:
         stats["failed"] += 1
         return
 
@@ -7713,14 +7746,16 @@ def _export_session_file(
             return
 
     try:
-        if _write_export_parts(messages, jsonl_file, ws_output_path, output_name, opts):
-            stats["exported"] += 1
-            return
-
-        markdown = parse_jsonl_to_markdown(jsonl_file, minimal=opts["minimal"], messages=messages)
-        output_file.write_text(markdown, encoding="utf-8")
-        if not opts["quiet"]:
-            print(output_file)
+        _export_single_session(
+            jsonl_file,
+            output_file,
+            output_name,
+            agent_type,
+            messages,
+            opts["minimal"],
+            opts["split_lines"],
+            opts["quiet"],
+        )
         stats["exported"] += 1
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error exporting {jsonl_file}: {e}\n")
@@ -7742,29 +7777,40 @@ def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
 
     stats = {"exported": 0, "skipped": 0, "failed": 0}
 
-    for source_key, workspaces in alias_config.items():
-        source_tag = "" if source_key == "local" else source_key.replace(":", "_") + "_"
+    if agent_filter in ("auto", AGENT_CLAUDE):
+        for source_key, workspaces in alias_config.items():
+            source_tag = "" if source_key == "local" else source_key.replace(":", "_") + "_"
 
-        for workspace in workspaces:
-            sessions = get_sessions_for_source(
-                source_key,
-                workspace,
-                since_date=opts["since_date"],
-                until_date=opts["until_date"],
-                fetch_remote=True,
-            )
-            if not sessions:
-                continue
-
-            # Filter by agent type if specified
-            if agent_filter != "auto":
-                sessions = [s for s in sessions if s.get("agent", AGENT_CLAUDE) == agent_filter]
+            for workspace in workspaces:
+                sessions = get_sessions_for_source(
+                    source_key,
+                    workspace,
+                    since_date=opts["since_date"],
+                    until_date=opts["until_date"],
+                    fetch_remote=True,
+                )
                 if not sessions:
                     continue
 
-            ws_output_path = _get_ws_output_path(output_path, workspace, opts["flat"])
-            for session in sessions:
-                _export_session_file(session, ws_output_path, source_tag, opts, stats)
+                ws_output_path = _get_ws_output_path(output_path, workspace, opts["flat"])
+                for session in sessions:
+                    _export_session_file(session, ws_output_path, source_tag, opts, stats)
+
+    if agent_filter in ("auto", AGENT_CODEX, AGENT_GEMINI):
+        patterns = _get_alias_workspace_patterns(alias_config)
+        sessions = _collect_non_claude_alias_sessions(
+            patterns,
+            opts["since_date"],
+            opts["until_date"],
+            agent_filter,
+            source_keys=list(alias_config.keys()),
+        )
+        for session in sessions:
+            source_key = session.get("source", "local")
+            source_tag = "" if source_key == "local" else source_key.replace(":", "_") + "_"
+            workspace_name = session.get("workspace_readable") or session.get("workspace", "")
+            ws_output_path = _get_ws_output_path(output_path, workspace_name, opts["flat"])
+            _export_session_file(session, ws_output_path, source_tag, opts, stats)
 
     if stats["exported"] > 0 or stats["skipped"] > 0:
         print(
@@ -11587,18 +11633,17 @@ def cmd_list_all_homes(args):
                     patterns, since_date, until_date, agent, workspaces_only=workspaces_only
                 )
             )
-    else:
-        if not no_wsl:
-            all_results.extend(
-                _collect_wsl_sessions_from_windows(
-                    patterns,
-                    since_date,
-                    until_date,
-                    agent,
-                    workspaces_only=workspaces_only,
-                    wsl_counts=wsl_counts,
-                )
+    elif not no_wsl:
+        all_results.extend(
+            _collect_wsl_sessions_from_windows(
+                patterns,
+                since_date,
+                until_date,
+                agent,
+                workspaces_only=workspaces_only,
+                wsl_counts=wsl_counts,
             )
+        )
 
     all_results.extend(
         _collect_all_remote_sessions(remotes, patterns, since_date, until_date, agent)

@@ -138,12 +138,33 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent gemini --source wsl --this --no-sync`
 - `./agent-history lss --alias claude-history --windows --agent codex --since 2025-12-18`
 - `./agent-history stats --agent codex --source remote:ubuntuvm01 --this --no-sync`
+- `./agent-history lss //wsl$/Ubuntu/home/sankar/sankar/projects/claude-history --agent claude`
+- `./agent-history stats --alias claude-history --agent gemini --source wsl --by-day` (expected error: `--alias` not supported for stats)
+- `./agent-history stats @claude-history --agent gemini --source wsl --by-day`
+- `./agent-history stats @claude-history --agent gemini --source windows --by-day`
+- `./agent-history stats @claude-history --agent codex --source wsl --by-day`
+- `./agent-history lsw //wsl$/Ubuntu/home/sankar/sankar/projects/claude-history --agent claude`
+- `./agent-history lss @claude-history --agent codex --wsl` (no sessions found)
+- `./agent-history lss @claude-history --agent codex`
+- `./agent-history lss @claude-history --agent codex --windows`
+- `./agent-history lsw claude-history --agent codex`
+- `./agent-history lsw claude-history --agent codex --windows`
+- `./agent-history lsw claude-history --agent codex --wsl`
 - `./agent-history lss --alias claude-history --local --agent codex`
 - `./agent-history lss --alias claude-history -r sankar@ubuntuvm01 --agent codex`
 - `./agent-history stats @claude-history --source wsl --no-sync`
 - `./agent-history stats @claude-history --source windows --no-sync`
 - `./agent-history stats @claude-history --source remote:ubuntuvm01 --no-sync`
 - `./agent-history stats @claude-history --source windows --agent codex --no-sync`
+- `./agent-history export --alias claude-history --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history export --alias claude-history --split 200 --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history export --alias claude-history --windows --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history export --alias claude-history -r sankar@ubuntuvm01 --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no remote entries in range)
+- `./agent-history export --alias claude-history --wsl --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no WSL entries)
+- `./agent-history export --alias claude-history --agent codex --since 2025-12-18 --quiet -o /tmp/<temp>` (permission error on codex index; fixed later)
+- `./agent-history export --alias claude-history --agent codex --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (no output before fix)
+- `./agent-history export --alias claude-history --agent gemini --since 2025-12-01 --quiet -o /tmp/<temp>` (no output; no entries in range)
+- `./agent-history export --alias claude-history --agent codex --since 2025-12-18 --quiet -o /tmp/<temp>` (after fix: 5 exported)
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
@@ -201,6 +222,7 @@ WSL runs (expected behavior)
 Observations
 ------------
 - `python3 /home/sankar/sankar/projects/claude-history/agent-history lss --this` (from `/`) correctly errors with "Not in a Claude Code workspace."
+- `stats` does not accept `--alias`; use `stats @alias` instead.
 - WSL export emitted: `Warning: Couldn't parse line in 2c4ad1bc-7ce9-405c-9b8c-d369178c901e.jsonl: Extra data: line 1 column 2 (char 1)` (left data unchanged).
   - Root cause: file contains a stray fragment line (`0,"cache_creation":...` at line 576) following a valid JSON line.
   - Fix: suppress warnings for non-JSON fragments and honor `--quiet`.
@@ -229,6 +251,8 @@ Unexpected behavior and fixes
 - `stats --agent gemini --source remote:ubuntuvm01` returned 0 sessions because it scoped to the current workspace when no pattern was provided.
   - Fix: `stats --source` now defaults to all workspaces for that source unless `--this` is set.
   - Added unit test and doc note.
+- `uv run pytest tests/unit/test_claude_history.py -k "alias_export_uses_non_claude_sessions"` failed with `Permission denied` on `~/.cache/uv/sdists-v9/.git`.
+  - Workaround: reran with `UV_NO_CACHE=1`.
 
 - WSL distribution detection sometimes returned only `docker-desktop` when `wsl -d <distro> whoami` timed out.
   - Fix: on timeout, fallback to UNC username discovery.
@@ -283,6 +307,12 @@ WSL-specific issues and fixes
   - Fix: alias listing/export now filters alias sources by `--local`, `--wsl`, `--windows`, and `-r`.
 - `lss --alias <name> --windows --agent codex` returned zero message counts.
   - Fix: alias Codex/Gemini scans now include message counts for Windows/WSL sources.
+- `export --alias <name> --agent codex|gemini` produced no output.
+  - Fix: alias export now collects non-Claude sessions and uses agent-aware parsing during export.
+- `export --alias <name> --agent codex` failed with `Permission denied` on `~/.claude-history/codex_index.json`.
+  - Fix: Codex index writes now ignore permission errors and continue without aborting.
+- `lss //wsl$/...` in WSL tried to use a Windows UNC projects dir and errored.
+  - Fix: when running in WSL, UNC inputs now resolve to `/home/<user>/.claude/projects`.
 
 WSL-specific issues (unfixed)
 -----------------------------
@@ -318,6 +348,9 @@ Targeted tests run
 - `uv run pytest tests/unit/test_claude_history.py -k "filter_alias_config_by_flags_wsl"`
 - `uv run pytest tests/unit/test_claude_history.py -k "collect_non_claude_alias_sessions_windows_only"`
 - `uv run pytest tests/unit/test_claude_history.py -k "collect_non_claude_alias_sessions_windows_default_user"`
+- `UV_NO_CACHE=1 uv run pytest tests/unit/test_claude_history.py -k "alias_export_uses_non_claude_sessions"`
+- `UV_NO_CACHE=1 uv run pytest tests/unit/test_claude_history.py -k "save_index_permission_error"`
+- `uv run pytest tests/unit/test_claude_history.py -k "projects_dir_from_wsl_unc_in_wsl"`
 
 Full test suite attempts
 ------------------------
