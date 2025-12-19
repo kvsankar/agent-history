@@ -114,6 +114,8 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent gemini --source wsl --this --no-sync`
 - `./agent-history lss --alias claude-history --windows --agent codex --since 2025-12-18`
 - `./agent-history stats --agent codex --source remote:ubuntuvm01 --this --no-sync`
+- `./agent-history lss --alias claude-history --local --agent codex`
+- `./agent-history lss --alias claude-history -r sankar@ubuntuvm01 --agent codex`
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
