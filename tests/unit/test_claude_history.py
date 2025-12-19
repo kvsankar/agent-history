@@ -12631,6 +12631,7 @@ class TestCollectRemoteSessionDetails:
 
         assert len(result) == 1
         assert result[0]["workspace"] == "myproject"
+        assert result[0]["workspace_readable"] == "/home/user/myproject"
         assert result[0]["agent"] == "codex"
 
 

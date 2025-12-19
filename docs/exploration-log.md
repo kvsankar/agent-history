@@ -42,11 +42,14 @@ WSL runs (expected behavior)
 - `./agent-history -h`
 - `./agent-history lsh`
 - `./agent-history lsh --wsl` (shows "No WSL distributions with agent data found")
+- `./agent-history lsh --remotes` (no remotes configured)
+- `./agent-history lsh --local`
 - `./agent-history lsw` (with full permissions)
 - `./agent-history lsw --agent claude`
 - `./agent-history lsw --agent codex`
 - `./agent-history lsw --agent gemini`
 - `./agent-history lsw --wsl`
+- `./agent-history lsw --local`
 - `./agent-history lsw --windows --agent claude`
 - `./agent-history lss --agent claude`
 - `./agent-history lss --agent codex`
@@ -55,6 +58,8 @@ WSL runs (expected behavior)
 - `./agent-history lss --agent codex --since 2025-12-18`
 - `./agent-history lss --agent codex --until 2025-12-18`
 - `./agent-history lss --agent gemini --since 2025-12-04` (no sessions found as expected)
+- `./agent-history lss --aw --this`
+- `./agent-history lss --wsl --agent claude --this`
 - `./agent-history stats --agent codex --this`
 - `./agent-history stats --agent claude --this`
 - `./agent-history stats --agent claude --this --time`
@@ -63,6 +68,16 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent codex --source codex --aw`
 - `./agent-history stats --agent gemini --this`
 - `./agent-history stats --agent claude --source windows --aw`
+- `./agent-history stats --agent claude --source windows --aw --no-sync`
+- `./agent-history stats --agent claude --source remote:ubuntuvm01 --aw --no-sync`
+- `./agent-history stats --agent claude --source wsl:Ubuntu --aw --no-sync` (0 sessions, expected with no `wsl:Ubuntu` sources)
+- `./agent-history stats --agent claude --source windows:kvsan --aw --no-sync`
+- `./agent-history stats --tools --source wsl --aw --no-sync`
+- `./agent-history stats --models --source wsl --aw --no-sync`
+- `./agent-history stats --agent codex --source remote:ubuntuvm01 --aw --no-sync` (0 sessions; no remote sync yet)
+- `./agent-history stats --sync --agent codex --source remote:ubuntuvm01 --aw` (syncs local only without `-r`)
+- `./agent-history stats --sync -r sankar@ubuntuvm01 --agent codex --source remote:ubuntuvm01 --aw`
+- `./agent-history stats --agent codex --source remote:ubuntuvm01 --aw --no-sync` (after sync)
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
@@ -74,14 +89,23 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent codex --source windows --aw --sync`
 - `./agent-history lss --wsl --agent codex`
 - `./agent-history lss --wsl --agent gemini`
+- `./agent-history lss --wsl --agent codex --since 2025-12-18`
+- `./agent-history lss --wsl --agent codex --until 2025-12-18`
+- `./agent-history lss --wsl --agent gemini --until 2025-12-09`
 - `./agent-history lsh --windows --agent codex`
+- `./agent-history lsh --windows --agent gemini`
+- `./agent-history lsh --windows --agent claude`
 - `./agent-history lsw --windows --agent gemini` (hash-only paths shown)
 - `./agent-history export --windows --agent codex --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history export --windows --agent gemini --aw --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history export --windows --agent claude --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss --agent codex --ah --aw`
 - `./agent-history lss --agent gemini --ah --aw`
 - `./agent-history lss --windows --agent codex --aw`
 - `./agent-history lss --windows --agent gemini --aw`
+- `./agent-history lss --windows --this`
+- `./agent-history lss --windows --agent codex --since 2025-12-18 --aw`
+- `./agent-history lss --windows --agent codex --until 2025-12-18 --aw`
 - `./agent-history stats --agent gemini --source windows --aw --no-sync`
 - `./agent-history stats --agent gemini --source windows --aw --sync`
 - `./agent-history stats --sync --ah --agent codex --source windows --aw`
@@ -94,6 +118,12 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent claude --source wsl --aw --no-sync`
 - `./agent-history stats --sync --ah --agent codex --source wsl --aw` (initial run timed out at 10s; reran with longer timeout)
 - `./agent-history export --wsl --agent gemini --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history export --flat --wsl --agent codex --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history export --wsl --agent claude --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history lss -r sankar@ubuntuvm01 --aw`
+- `./agent-history lss -r sankar@ubuntuvm01 --aw --agent codex`
+- `./agent-history export -r sankar@ubuntuvm01 --agent codex --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history lss -r sankar@ubuntuvm01 --local --this --agent codex`
 - `uv run pytest tests/unit/test_claude_history.py -k "agent_flag_after_subcommand or windows_this_only"`
 
 Ubuntu (remote)
@@ -157,6 +187,8 @@ WSL-specific issues and fixes
   - Fix: `--source windows|wsl|remote` now matches `windows:*`/`wsl:*`/`remote:*` sources in stats filtering.
 - `stats --agent codex|gemini --source wsl --aw --no-sync` returned 0 sessions in WSL.
   - Fix: when running in WSL, `--source wsl` also includes `local`, `codex`, and `gemini` sources in stats filtering.
+- `lss -r <host> --agent codex --aw` showed Codex workspaces as basenames (for example `claude-history`) instead of full paths.
+  - Fix: remote Codex session listing now uses the full `cwd` as `workspace_readable` (matching local Codex output).
 
 WSL-specific issues (unfixed)
 -----------------------------
@@ -172,6 +204,7 @@ Temporary directories created and deleted
 - `.\\tmp-export`
 - `.\\tmp-export-remote`
 - `C:\\sankar\\projects\\claude-history\\tmp-export-matrix`
+- `/tmp/<temp>`
 
 Targeted tests run
 ------------------
@@ -184,6 +217,7 @@ Targeted tests run
 - `.\.venv\Scripts\python -m pytest tests\unit\test_claude_history.py -k "stats_outside_workspace_requires_pattern"`
 - `.\.venv\Scripts\python -m pytest -vv tests\unit\test_cli_combinatorial.py`
 - `uv run pytest tests/unit/test_claude_history.py -k "stats_source_wsl_includes_local_when_in_wsl"`
+- `uv run pytest tests/unit/test_claude_history.py -k "collect_remote_codex_with_sessions"`
 
 Full test suite attempts
 ------------------------

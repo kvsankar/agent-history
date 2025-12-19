@@ -10016,7 +10016,7 @@ def _collect_remote_codex_session_details(
             sessions.append(
                 {
                     "workspace": ws_short,
-                    "workspace_readable": ws_short,
+                    "workspace_readable": ws_full,
                     "filename": session_info["filename"],
                     "size_kb": session_info["size_kb"],
                     "modified": session_info["modified"],
@@ -11211,7 +11211,7 @@ def _collect_remote_codex_sessions_simple(remote, patterns, since_date, until_da
         if not _session_in_date_range(session_info, since_date, until_date):
             continue
 
-        session_info["workspace_readable"] = ws_short
+        session_info["workspace_readable"] = ws_full
         session_info["agent"] = AGENT_CODEX
         sessions.append(session_info)
 
