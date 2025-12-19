@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
 from typing import Any, Callable, Optional, TypedDict, Union, cast
 
 __version__ = "1.5.1"
@@ -7319,6 +7320,34 @@ def _get_alias_workspace_patterns(alias_config: dict) -> list:
     return list(patterns)
 
 
+def _filter_alias_config_by_flags(alias_config: dict, args) -> dict:
+    """Filter alias config based on source selection flags."""
+    local_flag = getattr(args, "local", False)
+    wsl_flag = getattr(args, "wsl", False)
+    windows_flag = getattr(args, "windows", False)
+    remotes = list(getattr(args, "remotes", None) or [])
+    if getattr(args, "remote", None):
+        remotes.append(args.remote)
+
+    if not (local_flag or wsl_flag or windows_flag or remotes):
+        return alias_config
+
+    filtered = {}
+    for source_key, workspaces in alias_config.items():
+        if local_flag and source_key == "local":
+            filtered[source_key] = workspaces
+        elif wsl_flag and source_key.startswith("wsl:"):
+            filtered[source_key] = workspaces
+        elif windows_flag and (source_key == "windows" or source_key.startswith("windows:")):
+            filtered[source_key] = workspaces
+        elif remotes and source_key.startswith("remote:"):
+            remote_name = source_key.split("remote:", 1)[-1]
+            if remote_name in remotes:
+                filtered[source_key] = workspaces
+
+    return filtered
+
+
 def _collect_non_claude_alias_sessions(patterns: list, since_date, until_date, agent: str) -> list:
     """Collect Codex and Gemini sessions for alias patterns."""
     sessions = []
@@ -7352,7 +7381,9 @@ def _print_alias_sessions(sessions: list):
         )
 
 
-def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str = "auto"):
+def cmd_alias_lss(
+    alias_name: str, since_date=None, until_date=None, agent: str = "auto", args=None
+):
     """List sessions across all workspaces in an alias."""
     aliases_data = load_aliases()
 
@@ -7360,7 +7391,10 @@ def cmd_alias_lss(alias_name: str, since_date=None, until_date=None, agent: str 
         sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
         sys.exit(1)
 
-    alias_config = aliases_data["aliases"][alias_name]
+    if args is None:
+        args = SimpleNamespace(local=False, wsl=False, windows=False, remotes=[], remote=None)
+
+    alias_config = _filter_alias_config_by_flags(aliases_data["aliases"][alias_name], args)
     all_sessions = []
 
     # Collect Claude sessions
@@ -7398,6 +7432,7 @@ def _get_alias_export_options(args) -> dict:
         "minimal": getattr(args, "minimal", False),
         "split_lines": getattr(args, "split", None),
         "flat": getattr(args, "flat", False),
+        "quiet": getattr(args, "quiet", False),
         "agent": getattr(args, "agent", None) or "auto",
     }
 
@@ -7445,7 +7480,8 @@ def _write_export_parts(
     for part_num, _, part_md, _, _ in parts:
         part_file = ws_output_path / f"{base_name}_part{part_num}.md"
         part_file.write_text(part_md, encoding="utf-8")
-        print(part_file)
+        if not opts["quiet"]:
+            print(part_file)
     return True
 
 
@@ -7478,7 +7514,8 @@ def _export_session_file(
 
         markdown = parse_jsonl_to_markdown(jsonl_file, minimal=opts["minimal"], messages=messages)
         output_file.write_text(markdown, encoding="utf-8")
-        print(output_file)
+        if not opts["quiet"]:
+            print(output_file)
         stats["exported"] += 1
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error exporting {jsonl_file}: {e}\n")
@@ -7492,7 +7529,7 @@ def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
     if alias_name not in aliases_data.get("aliases", {}):
         exit_with_error(f"Alias '{alias_name}' not found")
 
-    alias_config = aliases_data["aliases"][alias_name]
+    alias_config = _filter_alias_config_by_flags(aliases_data["aliases"][alias_name], args)
     opts = _get_alias_export_options(args)
     agent_filter = opts.get("agent", "auto")
     output_path = Path(output_dir)
@@ -13212,7 +13249,7 @@ def _dispatch_lss_to_alias(alias_name: str, args):
     since_date = parse_date_with_validation(args.since, "--since")
     until_date = parse_date_with_validation(args.until, "--until")
     agent = getattr(args, "agent", None) or "auto"
-    cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date, agent=agent)
+    cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date, agent=agent, args=args)
 
 
 def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):

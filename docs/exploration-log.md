@@ -87,6 +87,18 @@ WSL runs (expected behavior)
 - `./agent-history stats --by-day --source remote:ubuntuvm01 --aw --no-sync`
 - `./agent-history stats --by-workspace --source remote:ubuntuvm01 --aw --no-sync`
 - `./agent-history stats --time --source remote:ubuntuvm01 --aw --no-sync`
+- `./agent-history export --by-day --source wsl --aw --no-sync` (expected error: unsupported flags)
+- `./agent-history stats --by-day --source wsl --this --no-sync`
+- `./agent-history lss --alias claude-history`
+- `./agent-history export --alias claude-history --quiet -o /tmp/<temp>` (timed out at 20s; temp dir deleted)
+- `./agent-history export --alias claude-history --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history lss --alias claude-history --agent codex`
+- `./agent-history lsw claude-history`
+- `./agent-history stats --by-workspace --source wsl --this --no-sync`
+- `./agent-history stats --by-day --source windows --this --no-sync`
+- `./agent-history stats --by-day --source remote:ubuntuvm01 --this --no-sync`
+- `./agent-history lss --alias claude-history --wsl --agent claude` (no sessions; alias has no WSL entries)
+- `./agent-history lss --alias claude-history --windows --agent claude`
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
@@ -198,6 +210,10 @@ WSL-specific issues and fixes
   - Fix: when running in WSL, `--source wsl` also includes `local`, `codex`, and `gemini` sources in stats filtering.
 - `lss -r <host> --agent codex --aw` showed Codex workspaces as basenames (for example `claude-history`) instead of full paths.
   - Fix: remote Codex session listing now uses the full `cwd` as `workspace_readable` (matching local Codex output).
+- `export --alias <name> --quiet` still printed per-file output.
+  - Fix: alias export now honors `--quiet` and suppresses per-file output.
+- `lss --alias <name> --wsl` ignored the source flags and still listed non-WSL entries.
+  - Fix: alias listing/export now filters alias sources by `--local`, `--wsl`, `--windows`, and `-r`.
 
 WSL-specific issues (unfixed)
 -----------------------------
@@ -227,6 +243,8 @@ Targeted tests run
 - `.\.venv\Scripts\python -m pytest -vv tests\unit\test_cli_combinatorial.py`
 - `uv run pytest tests/unit/test_claude_history.py -k "stats_source_wsl_includes_local_when_in_wsl"`
 - `uv run pytest tests/unit/test_claude_history.py -k "collect_remote_codex_with_sessions"`
+- `uv run pytest tests/unit/test_claude_history.py -k "get_alias_export_options"`
+- `uv run pytest tests/unit/test_claude_history.py -k "filter_alias_config_by_flags_wsl"`
 
 Full test suite attempts
 ------------------------

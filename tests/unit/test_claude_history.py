@@ -10095,12 +10095,14 @@ class TestAliasEndToEnd:
             minimal = False
             split = None
             flat = False
+            quiet = True
             agent = "gemini"
 
         opts = ch._get_alias_export_options(MockArgs())
 
         assert "agent" in opts
         assert opts["agent"] == "gemini"
+        assert opts["quiet"] is True
 
     def test_get_alias_export_options_defaults_to_auto(self):
         """_get_alias_export_options should default agent to auto."""
@@ -10112,11 +10114,27 @@ class TestAliasEndToEnd:
             minimal = False
             split = None
             flat = False
+            quiet = False
             # No agent attribute
 
         opts = ch._get_alias_export_options(MockArgs())
 
         assert opts["agent"] == "auto"
+        assert opts["quiet"] is False
+
+    def test_filter_alias_config_by_flags_wsl(self):
+        """_filter_alias_config_by_flags should honor --wsl flag."""
+        alias_config = {
+            "local": ["-home-user-local"],
+            "wsl:Ubuntu": ["-home-user-wsl"],
+            "windows": ["C--Users-user-project"],
+            "remote:user@host": ["-home-user-remote"],
+        }
+        args = SimpleNamespace(local=False, wsl=True, windows=False, remotes=[], remote=None)
+
+        filtered = ch._filter_alias_config_by_flags(alias_config, args)
+
+        assert filtered == {"wsl:Ubuntu": ["-home-user-wsl"]}
 
 
 # ============================================================================
