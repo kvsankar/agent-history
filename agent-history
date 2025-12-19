@@ -9627,15 +9627,17 @@ def _scan_codex_gemini_sessions(
 def _show_no_sessions_error(agent: str, location: str, platform_flag: str):
     """Show error message when no sessions are found."""
     if agent == "auto":
-        sys.stderr.write(f"Error: No sessions found in {location}\n")
+        sys.stderr.write(f"Error: No matching sessions found in {location}\n")
         sys.stderr.write("\nTips:\n")
         sys.stderr.write("  • Check that Claude/Codex/Gemini is installed\n")
         sys.stderr.write(f"  • Try: agent-history lsh {platform_flag}\n")
+        sys.stderr.write("  • Try: agent-history lss --aw (all workspaces)\n")
     else:
-        sys.stderr.write(f"Error: No {agent} sessions found in {location}\n")
+        sys.stderr.write(f"Error: No matching {agent} sessions found in {location}\n")
         sys.stderr.write("\nTips:\n")
         sys.stderr.write(f"  • Check that {agent} is installed\n")
         sys.stderr.write(f"  • Try: agent-history --agent auto lss {platform_flag}\n")
+        sys.stderr.write("  • Try: agent-history lss --aw (all workspaces)\n")
     sys.exit(1)
 
 
