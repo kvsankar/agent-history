@@ -126,7 +126,10 @@ grep -r -i -B3 -A10 "cache.*implementation\|implement.*cache" /tmp/history/
 mkdir -p ~/backups/claude-$(date +%Y%m%d)
 
 # Export all workspaces from all homes
-agent-history export --ah --aw -o ~/backups/claude-$(date +%Y%m%d)
+agent-history export --ah --aw -o ~/backups/claude-$(date +%Y%m%d) --jobs 4 --quiet
+
+# If a remote is offline, skip SSH remotes
+agent-history export --ah --aw -o ~/backups/claude-$(date +%Y%m%d) --no-remote
 
 # Verify
 ls -la ~/backups/claude-$(date +%Y%m%d)/

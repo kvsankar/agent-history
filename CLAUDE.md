@@ -83,6 +83,11 @@ chmod +x agent-history
 ./agent-history export myproject --minimal       # minimal mode
 ./agent-history export myproject --split 500     # split long conversations
 ./agent-history export myproject --flat          # flat structure (no workspace subdirs)
+./agent-history export myproject --jobs 4        # parallel export
+./agent-history export myproject --quiet         # suppress per-file output
+./agent-history export --ah --no-remote          # skip SSH remotes
+./agent-history export --ah --no-wsl             # skip WSL sources
+./agent-history export --ah --no-windows         # skip Windows sources
 
 # Workspace Aliases (group workspaces across environments)
 ./agent-history alias list                       # list all aliases
@@ -123,6 +128,9 @@ chmod +x agent-history
 ./agent-history stats --sync               # sync local sessions to database
 ./agent-history stats --sync --ah          # sync from all homes (includes saved remotes)
 ./agent-history stats --sync --ah -r vm03  # sync all homes + additional remote
+./agent-history stats --sync --ah --jobs 4 # parallel remote sync
+./agent-history stats --sync --ah --no-remote  # skip SSH remotes
+./agent-history stats --sync --ah --no-wsl     # skip WSL sources
 ./agent-history stats                      # summary dashboard (current workspace)
 ./agent-history stats --aw                 # summary dashboard (all workspaces)
 ./agent-history stats myproject            # filter by workspace pattern
@@ -986,6 +994,11 @@ All commands support remote operations via the `-r/--remote` flag:
 # Export remote sessions (caches locally first, then exports)
 ./agent-history export myproject -r user@hostname
 ./agent-history export myproject ./output -r user@hostname
+
+# Skip selected sources (useful with --ah)
+./agent-history export --ah --no-remote
+./agent-history export --ah --no-wsl
+./agent-history export --ah --no-windows
 
 # Convert remote file (downloads temporarily, then converts)
 ./agent-history export /path/to/file.jsonl -r user@hostname

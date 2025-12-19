@@ -1065,3 +1065,4 @@ Scenarios covered (representative)
 CI
 - GitHub Actions runs unit and integration on `ubuntu-latest` and `windows-latest`.
 - Hosted Windows has no WSL; WSL flows are exercised via the environment overrides.
+- Full suite runtime can exceed 5 minutes on Windows; set CI timeouts accordingly.

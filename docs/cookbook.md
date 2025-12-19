@@ -38,6 +38,9 @@ agent-history export @all-projects -o ~/backups/claude-history/
 
 # Force re-export everything
 agent-history export @all-projects -o ~/backups/claude-history/ --force
+
+# Faster and quieter backups (parallel workers, less console noise)
+agent-history export @all-projects -o ~/backups/claude-history/ --jobs 4 --quiet
 ```
 
 ---
@@ -50,6 +53,9 @@ agent-history lss myproject --ah -r user@vm01
 
 # Export from all homes
 agent-history export myproject --ah -r user@vm01 -o ./exports/
+
+# Skip remote sources if a host is offline
+agent-history export myproject --ah --no-remote -o ./exports/
 ```
 
 ---
@@ -145,7 +151,7 @@ agent-history stats --time --ah     # syncs from vm01 and vm02
 
 ```bash
 # Initial sync from all homes (uses saved remotes)
-agent-history stats --sync --ah
+agent-history stats --sync --ah --jobs 4
 
 # View overall statistics (current workspace)
 agent-history stats

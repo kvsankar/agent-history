@@ -150,6 +150,11 @@ EXAMPLES:
     agent-history export myproject --minimal       # minimal mode
     agent-history export myproject --split 500     # split long conversations
     agent-history export myproject --flat          # flat structure (no subdirs)
+    agent-history export myproject --jobs 4        # parallel export
+    agent-history export myproject --quiet         # suppress per-file output
+    agent-history export --ah --no-remote          # skip SSH remotes
+    agent-history export --ah --no-wsl             # skip WSL sources
+    agent-history export --ah --no-windows         # skip Windows sources
 
   WSL access (Windows):
     agent-history lsh --wsl                        # list WSL distributions
@@ -206,6 +211,9 @@ make test-integration
 scripts\run-tests.ps1              # all
 scripts\run-tests.ps1 -Unit        # unit
 scripts\run-tests.ps1 -Integration # integration
+
+Notes:
+- Full suite runtime can exceed 5 minutes on Windows; set CI timeouts accordingly.
 ```
 
 Cross-boundary flows (optional overrides):
@@ -300,6 +308,10 @@ agent-history lss --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
 agent-history export myproject --minimal
+
+# Faster sync/export
+agent-history stats --sync --ah --jobs 4
+agent-history export myproject --jobs 4 --quiet
 
 # Time tracking
 agent-history stats --time

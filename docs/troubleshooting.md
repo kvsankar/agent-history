@@ -60,6 +60,26 @@ agent-history export myproject --since 2025-11-01
 
 ---
 
+### Export or stats sync takes a long time
+
+Large histories across multiple homes can take several minutes, especially with remotes.
+
+Tips:
+```bash
+# Parallelize work
+agent-history export --ah --jobs 4
+agent-history stats --sync --ah --jobs 4
+
+# Skip sources that are slow or offline
+agent-history export --ah --no-remote
+agent-history stats --sync --ah --no-wsl
+
+# Reduce output noise
+agent-history export --ah --quiet
+```
+
+---
+
 ### How do I access Claude Code workspaces in WSL from Windows?
 
 Use the `--wsl` flag:

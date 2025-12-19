@@ -20,6 +20,7 @@ See [AGENTS.md](AGENTS.md) for a detailed comparison of how each agent works wit
 | [USAGE.md](USAGE.md) | Command-by-command reference with flags, arguments, and examples. |
 | [COOKBOOK.md](COOKBOOK.md) | Practical recipes for aliases, backups, exports, multi-environment workflows, and reporting. |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues, error messages, and environment fixes. |
+| [DESIGN.md](DESIGN.md) | Architecture and data flow overview for the CLI. |
 
 ## Session Format Specifications
 

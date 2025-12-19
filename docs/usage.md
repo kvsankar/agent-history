@@ -189,12 +189,17 @@ agent-history export [WORKSPACE...] [OPTIONS]
 - `--wsl`: Export from WSL (auto-detects distribution)
 - `--windows`: Export from Windows (auto-detects user)
 - `-r`, `--remote HOST`: Add SSH remote source (repeatable)
+- `--no-remote`: Skip SSH remotes (useful with `--ah`)
+- `--no-wsl`: Skip WSL sources (useful with `--ah`)
+- `--no-windows`: Skip Windows sources (useful with `--ah`)
 - `--force`, `-f`: Force re-export all sessions (default: incremental)
 - `--since DATE`: Only include sessions modified on or after this date
 - `--until DATE`: Only include sessions modified on or before this date
 - `--minimal`: Export conversation content only, no metadata
 - `--split LINES`: Split long conversations into parts
 - `--flat`: Use flat directory structure (default: organized by workspace)
+- `--jobs N`: Parallel export workers (default: 1)
+- `--quiet`: Suppress per-file output (keeps summary/progress)
 
 **Orthogonal Design:**
 
@@ -233,6 +238,9 @@ agent-history export myproject --windows
 
 # With splitting and minimal mode
 agent-history export myproject --minimal --split 500
+
+# Faster export with less output
+agent-history export myproject --jobs 4 --quiet
 ```
 
 **Output:**
@@ -338,6 +346,10 @@ agent-history stats [WORKSPACE] [OPTIONS]
 **Sync Options:**
 - `--sync`: Sync JSONL files to metrics database
 - `--force`: Force re-sync all files
+- `--jobs N`: Parallel remote sync workers (default: 1)
+- `--no-remote`: Skip SSH remotes during sync
+- `--no-wsl`: Skip WSL sources during sync
+- `--no-windows`: Skip Windows sources during sync
 
 **View Options:**
 - `--time`: Show time tracking with daily breakdown (default summary already includes a time summary)
@@ -371,6 +383,9 @@ agent-history stats --by-day
 
 # Filter by date range
 agent-history stats --since 2025-11-01 --until 2025-11-30
+
+# Faster sync with selective sources
+agent-history stats --sync --ah --jobs 4 --no-remote
 ```
 
 **Metrics Available:**
