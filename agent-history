@@ -8865,7 +8865,7 @@ def _expand_alias_to_conditions(alias_name: str, aliases: dict) -> tuple:
     return conditions, params
 
 
-def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:
+def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:  # noqa: C901
     """Build WHERE clause for stats query. Returns (where_sql, params)."""
     where_clauses = []
     params = []
@@ -8888,7 +8888,10 @@ def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:
 
     source_filter = getattr(args, "source", None)
     if source_filter:
-        if source_filter in ("windows", "wsl", "remote"):
+        if source_filter == "wsl" and is_running_in_wsl():
+            where_clauses.append("(s.source = ? OR s.source LIKE ? OR s.source IN (?, ?, ?))")
+            params.extend([source_filter, f"{source_filter}:%", "local", "codex", "gemini"])
+        elif source_filter in ("windows", "wsl", "remote"):
             where_clauses.append("(s.source = ? OR s.source LIKE ?)")
             params.extend([source_filter, f"{source_filter}:%"])
         else:

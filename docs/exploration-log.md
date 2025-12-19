@@ -89,6 +89,11 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent gemini --source windows --aw --no-sync` (after fix)
 - `./agent-history lss --wsl --agent codex --this`
 - `./agent-history lss --wsl --agent gemini --this`
+- `./agent-history stats --agent codex --source wsl --aw --no-sync`
+- `./agent-history stats --agent gemini --source wsl --aw --no-sync`
+- `./agent-history stats --agent claude --source wsl --aw --no-sync`
+- `./agent-history stats --sync --ah --agent codex --source wsl --aw` (initial run timed out at 10s; reran with longer timeout)
+- `./agent-history export --wsl --agent gemini --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `uv run pytest tests/unit/test_claude_history.py -k "agent_flag_after_subcommand or windows_this_only"`
 
 Ubuntu (remote)
@@ -150,6 +155,8 @@ WSL-specific issues and fixes
   - Fix: Windows collection now scans Gemini sessions from Windows session directories (hash-based workspaces preserved).
 - `stats --agent codex|gemini --source windows --aw --sync` synced but `--no-sync` still showed 0 sessions.
   - Fix: `--source windows|wsl|remote` now matches `windows:*`/`wsl:*`/`remote:*` sources in stats filtering.
+- `stats --agent codex|gemini --source wsl --aw --no-sync` returned 0 sessions in WSL.
+  - Fix: when running in WSL, `--source wsl` also includes `local`, `codex`, and `gemini` sources in stats filtering.
 
 WSL-specific issues (unfixed)
 -----------------------------
@@ -176,6 +183,7 @@ Targeted tests run
 - `.\.venv\Scripts\python -m pytest tests\unit\test_claude_history.py -k "windows_drive_root"`
 - `.\.venv\Scripts\python -m pytest tests\unit\test_claude_history.py -k "stats_outside_workspace_requires_pattern"`
 - `.\.venv\Scripts\python -m pytest -vv tests\unit\test_cli_combinatorial.py`
+- `uv run pytest tests/unit/test_claude_history.py -k "stats_source_wsl_includes_local_when_in_wsl"`
 
 Full test suite attempts
 ------------------------

@@ -6165,6 +6165,22 @@ class TestSection11StatsCommand:
         patterns = ch._get_stats_workspace_patterns(args)
         assert patterns == []
 
+    def test_stats_source_wsl_includes_local_when_in_wsl(self, monkeypatch):
+        """stats --source wsl should include local when running in WSL."""
+        monkeypatch.setattr(ch, "is_running_in_wsl", lambda: True)
+        args = SimpleNamespace(source="wsl", agent="auto", since=None, until=None)
+        where_sql, params = ch._build_stats_where_clause(args, [])
+        assert "s.source = ?" in where_sql
+        assert "s.source IN" in where_sql
+        assert params == ["wsl", "wsl:%", "local", "codex", "gemini"]
+
+        def _fail_current_workspace():
+            raise AssertionError("Current workspace lookup should be skipped for --source.")
+
+        monkeypatch.setattr(ch, "get_current_workspace_pattern", _fail_current_workspace)
+        patterns = ch._get_stats_workspace_patterns(args)
+        assert patterns == []
+
     def test_stats_outside_workspace_requires_pattern(self, monkeypatch):
         """11.4.6: stats outside workspace requires pattern or --aw."""
         parser = ch._create_argument_parser()
