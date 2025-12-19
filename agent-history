@@ -10,6 +10,7 @@ License: MIT
 """
 
 import argparse
+import errno
 import base64
 import hashlib
 import json
@@ -14240,6 +14241,15 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except BrokenPipeError:
+        # Downstream closed the pipe (for example: `... | head`); exit cleanly.
+        sys.exit(0)
+    except OSError as e:
+        # Windows sometimes reports broken pipes as EINVAL during flush.
+        if e.errno in (errno.EPIPE, errno.EINVAL):
+            sys.exit(0)
+        sys.stderr.write(f"\nError: {e}\n")
+        sys.exit(1)
     except KeyboardInterrupt:
         sys.stderr.write("\\nInterrupted\\n")
         sys.exit(130)

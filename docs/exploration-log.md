@@ -55,6 +55,11 @@ Observations
   - `lss --windows --aw`: ~2.7s
   - `lss --wsl --aw`: ~65s (dominant contributor to `lss --ah` timeout)
   - Fix: skip WSL message counts by default on Windows (show `?` unless `--counts`/`--wsl-counts`).
+  - `lss --ah`: ~3.2s after fix (WSL counts skipped)
+  - `lss --wsl --aw`: shows `?` in `MESSAGES`
+  - `lss --wsl --aw --wsl-counts`: shows numeric message counts
+  - `lss --ah --no-wsl`: WSL rows excluded
+  - `lss --ah --no-windows`: Windows rows excluded
 
 WSL runs (expected behavior)
 ----------------------------
