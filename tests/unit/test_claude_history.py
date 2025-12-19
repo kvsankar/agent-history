@@ -6133,6 +6133,16 @@ class TestSection11StatsCommand:
         patterns = ch._get_stats_workspace_patterns(args)
         assert patterns == []
 
+    def test_stats_outside_workspace_requires_pattern(self, monkeypatch):
+        """11.4.6: stats outside workspace requires pattern or --aw."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["stats"])
+
+        monkeypatch.setattr(ch, "check_current_workspace_exists", lambda: ("", False))
+
+        with pytest.raises(SystemExit):
+            ch._get_stats_workspace_patterns(args)
+
 
 # ============================================================================
 # TESTING.md Section 12: Automatic Alias Scoping

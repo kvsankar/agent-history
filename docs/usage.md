@@ -363,7 +363,7 @@ agent-history stats [WORKSPACE] [OPTIONS]
 - `--source SOURCE`: Filter by source (local, wsl:distro, windows, remote:host)
 - `--since DATE`: Filter from this date
 - `--until DATE`: Filter until this date
-Note: `--source` defaults to all workspaces for that source unless `--this` is set.
+Note: `--source` defaults to all workspaces for that source unless `--this` is set. If you are outside a workspace, pass a pattern or use `--aw`.
 
 **Examples:**
 ```bash

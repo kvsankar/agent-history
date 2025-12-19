@@ -8743,6 +8743,17 @@ def _get_stats_workspace_patterns(args) -> list:
     if source_filter and not this_only:
         return []
 
+    pattern, exists = check_current_workspace_exists()
+    if not exists:
+        sys.stderr.write(
+            "Not in a Claude Code workspace.\n\n"
+            "To show stats, either:\n"
+            "  • Run from within a workspace directory\n"
+            "  • Specify a workspace pattern: stats <pattern>\n"
+            "  • Use --aw to include all workspaces: stats --aw\n"
+        )
+        sys.exit(1)
+
     full_pattern = get_current_workspace_pattern()
     ws_name = get_workspace_name_from_path(full_pattern)
 
