@@ -52,6 +52,7 @@ agent-history export @all-projects -o ~/backups/claude-history/ --jobs 4 --quiet
 ```bash
 # List sessions from all homes matching "myproject"
 agent-history lss myproject --ah -r user@vm01
+agent-history lss myproject --ah --no-wsl    # exclude WSL if it is slow
 
 # Export from all homes
 agent-history export myproject --ah -r user@vm01 -o ./exports/
@@ -73,6 +74,7 @@ agent-history lsw --ah | grep django
 
 # List sessions from matching workspaces
 agent-history lss django --ah
+agent-history lss django --ah --counts       # force counts on all sources
 ```
 
 ---
@@ -123,6 +125,7 @@ agent-history alias import aliases.json
 ```bash
 # Sessions from last week across all homes
 agent-history lss --ah --since 2025-11-24
+agent-history lss --ah --wsl-counts          # count WSL messages on Windows
 
 # Export recent sessions only
 agent-history export @myproject --since 2025-11-01 -o ./recent/
@@ -250,11 +253,13 @@ agent-history alias add myproject myproject
 
 # Now running from this workspace automatically uses the alias
 agent-history lss        # 📎 Using alias @myproject
+agent-history lss --counts
 agent-history export     # 📎 Using alias @myproject
 agent-history stats      # 📎 Using alias @myproject
 
 # Force current workspace only when needed
 agent-history lss --this
+agent-history lss --this --no-windows
 agent-history export --this
 agent-history stats --this
 ```

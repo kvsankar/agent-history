@@ -387,6 +387,10 @@ class ListCommandArgs:
     local_only: bool = False
     agent: str = "auto"
     projects_dir: Optional[Path] = None
+    counts: bool = False
+    wsl_counts: bool = False
+    no_wsl: bool = False
+    no_windows: bool = False
 
     @property
     def workspace(self) -> str:
@@ -1221,6 +1225,7 @@ def _iter_sessions_deduped(
     projects_dir: Optional[Path],
     quiet: bool,
     skip_message_count: bool,
+    use_cached_counts: bool,
     agent: str,
 ):
     """Generate deduplicated sessions from patterns."""
@@ -1233,6 +1238,7 @@ def _iter_sessions_deduped(
             since_date=since_date,
             until_date=until_date,
             skip_message_count=skip_message_count,
+            use_cached_counts=use_cached_counts,
             projects_dir=projects_dir,
             quiet=quiet,
         )
@@ -1251,6 +1257,7 @@ def collect_sessions_with_dedup(
     quiet: bool = True,
     include_cached: bool = False,
     skip_message_count: bool = False,
+    use_cached_counts: bool = False,
     agent: str = "auto",
 ) -> list:
     """Collect sessions from multiple patterns with automatic deduplication.
@@ -1272,7 +1279,14 @@ def collect_sessions_with_dedup(
         List of session dictionaries, deduplicated by file path.
     """
     sessions = _iter_sessions_deduped(
-        patterns, since_date, until_date, projects_dir, quiet, skip_message_count, agent
+        patterns,
+        since_date,
+        until_date,
+        projects_dir,
+        quiet,
+        skip_message_count,
+        use_cached_counts,
+        agent,
     )
 
     if include_cached:
@@ -1289,6 +1303,13 @@ def collect_sessions_with_dedup(
     return [s for s in sessions if _should_include_session(s)]
 
 
+def _format_message_count(session: dict) -> str:
+    """Format message count for output, honoring skipped counts."""
+    if session.get("message_count_skipped"):
+        return "?"
+    return str(session.get("message_count", 0))
+
+
 def format_session_line(session: dict, source_label: str) -> str:
     """Format a session as a tab-separated output line.
 
@@ -1302,7 +1323,7 @@ def format_session_line(session: dict, source_label: str) -> str:
     agent = session.get("agent", AGENT_CLAUDE)
     return (
         f"{agent}\t{source_label}\t{session['workspace_readable']}\t{session['filename']}\t"
-        f"{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
+        f"{_format_message_count(session)}\t{session['modified'].strftime('%Y-%m-%d')}"
     )
 
 
@@ -1764,7 +1785,7 @@ def _build_message_dict(
     }
 
 
-def read_jsonl_messages(jsonl_file: Path):
+def read_jsonl_messages(jsonl_file: Path, quiet: bool = False):
     """Read and parse all messages from a Claude Code JSONL session file.
 
     Parses each line of the JSONL file, extracting user and assistant
@@ -1802,10 +1823,13 @@ def read_jsonl_messages(jsonl_file: Path):
             except json.JSONDecodeError as e:
                 parsed = _iter_json_objects(line)
                 if not parsed:
-                    print(
-                        f"Warning: Couldn't parse line in {jsonl_file.name}: {e}",
-                        file=sys.stderr,
-                    )
+                    stripped = line.lstrip()
+                    if stripped.startswith("{") or stripped.startswith("["):
+                        if not quiet:
+                            print(
+                                f"Warning: Couldn't parse line in {jsonl_file.name}: {e}",
+                                file=sys.stderr,
+                            )
                     continue
                 for entry in parsed:
                     if isinstance(entry, dict):
@@ -2743,16 +2767,27 @@ def codex_ensure_index_updated(sessions_dir: Optional[Path] = None) -> dict[str,
 
 
 def _codex_build_session_dict(
-    jsonl_file: Path, workspace: str, modified: datetime, skip_message_count: bool
+    jsonl_file: Path,
+    workspace: str,
+    modified: datetime,
+    skip_message_count: bool,
+    use_cached_counts: bool = False,
 ) -> dict:
     """Build a session dictionary for a Codex session file."""
+    message_count = 0
+    if not skip_message_count:
+        cached = None
+        if use_cached_counts:
+            cached = _get_cached_message_count(jsonl_file, modified.timestamp())
+        message_count = cached if cached is not None else codex_count_messages(jsonl_file)
     return {
         "agent": AGENT_CODEX,
         "workspace": workspace,
         "workspace_readable": codex_get_workspace_readable(workspace),
         "file": jsonl_file,
         "filename": jsonl_file.name,
-        "message_count": 0 if skip_message_count else codex_count_messages(jsonl_file),
+        "message_count": message_count,
+        "message_count_skipped": skip_message_count,
         "modified": modified,
         "source": "local",
     }
@@ -2785,6 +2820,7 @@ def codex_scan_sessions(
     until_date=None,
     sessions_dir: Optional[Path] = None,
     skip_message_count: bool = False,
+    use_cached_counts: bool = False,
 ) -> list:
     """Scan ~/.codex/sessions/YYYY/MM/DD/ for rollout-*.jsonl files.
 
@@ -2826,7 +2862,13 @@ def codex_scan_sessions(
 
         if _codex_session_matches_filters(workspace, modified, pattern, since_date, until_date):
             sessions.append(
-                _codex_build_session_dict(jsonl_file, workspace, modified, skip_message_count)
+                _codex_build_session_dict(
+                    jsonl_file,
+                    workspace,
+                    modified,
+                    skip_message_count,
+                    use_cached_counts=use_cached_counts,
+                )
             )
 
     return sorted(sessions, key=lambda s: s["modified"], reverse=True)
@@ -3472,18 +3514,29 @@ def gemini_count_messages(json_file: Path) -> int:
 
 
 def _gemini_build_session_dict(
-    json_file: Path, workspace: str, modified: datetime, skip_message_count: bool
+    json_file: Path,
+    workspace: str,
+    modified: datetime,
+    skip_message_count: bool,
+    use_cached_counts: bool = False,
 ) -> dict:
     """Build a session dictionary for a Gemini session file."""
     # Use hash index to get readable workspace name if known
     workspace_readable = gemini_get_workspace_readable(workspace)
+    message_count = 0
+    if not skip_message_count:
+        cached = None
+        if use_cached_counts:
+            cached = _get_cached_message_count(json_file, modified.timestamp())
+        message_count = cached if cached is not None else gemini_count_messages(json_file)
     return {
         "agent": AGENT_GEMINI,
         "workspace": workspace,
         "workspace_readable": workspace_readable,
         "file": json_file,
         "filename": json_file.name,
-        "message_count": 0 if skip_message_count else gemini_count_messages(json_file),
+        "message_count": message_count,
+        "message_count_skipped": skip_message_count,
         "modified": modified,
         "source": "local",
     }
@@ -3517,6 +3570,7 @@ def gemini_scan_sessions(
     until_date=None,
     sessions_dir: Optional[Path] = None,
     skip_message_count: bool = False,
+    use_cached_counts: bool = False,
 ) -> list:
     """Scan ~/.gemini/tmp/*/chats/ for session-*.json files.
 
@@ -3544,7 +3598,13 @@ def gemini_scan_sessions(
 
         if _gemini_session_matches_filters(workspace, modified, pattern, since_date, until_date):
             sessions.append(
-                _gemini_build_session_dict(json_file, workspace, modified, skip_message_count)
+                _gemini_build_session_dict(
+                    json_file,
+                    workspace,
+                    modified,
+                    skip_message_count,
+                    use_cached_counts=use_cached_counts,
+                )
             )
 
     return sorted(sessions, key=lambda s: s["modified"], reverse=True)
@@ -3603,6 +3663,7 @@ def _scan_backend(
     since_date,
     until_date,
     skip_message_count: bool,
+    use_cached_counts: bool,
     **kwargs,
 ) -> list[dict[str, Any]]:
     """Scan sessions for a single backend.
@@ -3627,6 +3688,7 @@ def _scan_backend(
                 since_date=since_date,
                 until_date=until_date,
                 skip_message_count=skip_message_count,
+                use_cached_counts=use_cached_counts,
                 **kwargs,
             )
         elif backend == AGENT_CODEX:
@@ -3635,6 +3697,7 @@ def _scan_backend(
                 since_date=since_date,
                 until_date=until_date,
                 skip_message_count=skip_message_count,
+                use_cached_counts=use_cached_counts,
             )
         elif backend == AGENT_GEMINI:
             sessions = gemini_scan_sessions(
@@ -3642,6 +3705,7 @@ def _scan_backend(
                 since_date=since_date,
                 until_date=until_date,
                 skip_message_count=skip_message_count,
+                use_cached_counts=use_cached_counts,
             )
         else:
             return []
@@ -3662,6 +3726,7 @@ def get_unified_sessions(
     since_date=None,
     until_date=None,
     skip_message_count: bool = False,
+    use_cached_counts: bool = False,
     **kwargs,
 ) -> list:
     """Get sessions from specified agent backend(s).
@@ -3688,6 +3753,7 @@ def get_unified_sessions(
             since_date=since_date,
             until_date=until_date,
             skip_message_count=skip_message_count,
+            use_cached_counts=use_cached_counts,
             **kwargs,
         )
         all_sessions.extend(sessions)
@@ -4354,7 +4420,32 @@ def _should_skip_workspace(dir_name: str, include_cached: bool) -> bool:
     return False
 
 
-def _count_file_messages(jsonl_file: Path, skip_count: bool) -> int:
+def _get_cached_message_count(jsonl_file: Path, current_mtime: float) -> Optional[int]:
+    """Return cached message count from metrics DB if mtime matches."""
+    db_path = get_metrics_db_path()
+    if not db_path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=1.0)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT message_count, file_mtime FROM sessions WHERE file_path = ?",
+            (str(jsonl_file),),
+        ).fetchone()
+        conn.close()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    file_mtime = row["file_mtime"]
+    if file_mtime is None or file_mtime < current_mtime:
+        return None
+    return row["message_count"]
+
+
+def _count_file_messages(
+    jsonl_file: Path, skip_count: bool, use_cached_counts: bool = False
+) -> int:
     """Count valid messages in a JSONL file.
 
     Only counts lines that are valid JSON with type 'user' or 'assistant'
@@ -4362,6 +4453,14 @@ def _count_file_messages(jsonl_file: Path, skip_count: bool) -> int:
     """
     if skip_count:
         return 0
+    try:
+        current_mtime = jsonl_file.stat().st_mtime
+    except OSError:
+        current_mtime = None
+    if use_cached_counts and current_mtime is not None:
+        cached = _get_cached_message_count(jsonl_file, current_mtime)
+        if cached is not None:
+            return cached
     count = 0
     try:
         with open(jsonl_file, encoding="utf-8") as f:
@@ -4383,10 +4482,17 @@ def _count_file_messages(jsonl_file: Path, skip_count: bool) -> int:
 
 
 def _get_session_from_file(
-    jsonl_file: Path, workspace_dir: Path, readable_name: str, skip_message_count: bool
+    jsonl_file: Path,
+    workspace_dir: Path,
+    readable_name: str,
+    skip_message_count: bool,
+    use_cached_counts: bool = False,
 ) -> dict:
     """Build session dict from a JSONL file."""
     stat = jsonl_file.stat()
+    message_count = _count_file_messages(
+        jsonl_file, skip_message_count, use_cached_counts=use_cached_counts
+    )
     return {
         "workspace": workspace_dir.name,
         "workspace_readable": readable_name,
@@ -4394,7 +4500,8 @@ def _get_session_from_file(
         "filename": jsonl_file.name,
         "size_kb": stat.st_size / 1024,
         "modified": datetime.fromtimestamp(stat.st_mtime),
-        "message_count": _count_file_messages(jsonl_file, skip_message_count),
+        "message_count": message_count,
+        "message_count_skipped": skip_message_count,
     }
 
 
@@ -4491,6 +4598,7 @@ def get_workspace_sessions(
     include_cached: bool = False,
     projects_dir: Optional[Path] = None,
     skip_message_count: bool = False,
+    use_cached_counts: bool = False,
 ):
     """Find all Claude Code sessions in workspaces matching the pattern.
 
@@ -4526,7 +4634,11 @@ def get_workspace_sessions(
 
         for jsonl_file in workspace_dir.glob("*.jsonl"):
             session = _get_session_from_file(
-                jsonl_file, workspace_dir, readable_name, skip_message_count
+                jsonl_file,
+                workspace_dir,
+                readable_name,
+                skip_message_count,
+                use_cached_counts=use_cached_counts,
             )
             if _is_session_in_date_range(session, since_date, until_date):
                 sessions.append(session)
@@ -7584,7 +7696,7 @@ def _export_session_file(
     jsonl_file = session["file"]
 
     try:
-        messages = read_jsonl_messages(jsonl_file)
+        messages = read_jsonl_messages(jsonl_file, quiet=opts.get("quiet", False))
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error reading {jsonl_file}: {e}\n")
         stats["failed"] += 1
@@ -8155,9 +8267,10 @@ def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
                 except json.JSONDecodeError as e:
                     parsed = _iter_json_objects(line)
                     if not parsed:
-                        sys.stderr.write(
-                            f"Warning: Couldn't parse line in {jsonl_file.name}: {e}\n"
-                        )
+                        if line.lstrip().startswith(("{", "[")):
+                            sys.stderr.write(
+                                f"Warning: Couldn't parse line in {jsonl_file.name}: {e}\n"
+                            )
                         continue
                     for entry in parsed:
                         if isinstance(entry, dict):
@@ -9831,6 +9944,7 @@ def _scan_codex_gemini_sessions(
     sessions_dir: Path,
     source: str,
     skip_message_count: bool = True,
+    use_cached_counts: bool = False,
 ) -> list:
     """Scan Codex or Gemini sessions from a directory."""
     pattern_str = patterns[0] if patterns else ""
@@ -9841,6 +9955,7 @@ def _scan_codex_gemini_sessions(
             until_date=until_date,
             sessions_dir=sessions_dir,
             skip_message_count=skip_message_count,
+            use_cached_counts=use_cached_counts,
         )
     else:  # AGENT_GEMINI
         sessions = gemini_scan_sessions(
@@ -9849,6 +9964,7 @@ def _scan_codex_gemini_sessions(
             until_date=until_date,
             sessions_dir=sessions_dir,
             skip_message_count=skip_message_count,
+            use_cached_counts=use_cached_counts,
         )
     for s in sessions:
         s["source"] = source
@@ -9933,6 +10049,15 @@ def _list_wsl_claude_workspaces(sessions_dir: Path, patterns: list) -> list:
     ]
 
 
+def _should_skip_wsl_message_count(args, workspaces_only: bool) -> bool:
+    """Return True if WSL message counts should be skipped (Windows -> WSL)."""
+    if workspaces_only:
+        return True
+    if getattr(args, "counts", False) or getattr(args, "wsl_counts", False):
+        return False
+    return True
+
+
 def _list_wsl_sessions(args, patterns: list, since_date, until_date):
     """List sessions from WSL (called from Windows)."""
     agent = getattr(args, "agent", None) or "auto"
@@ -9946,6 +10071,8 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
     all_sessions = []
     agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
     source = f"wsl:{distro_name}"
+    skip_counts = _should_skip_wsl_message_count(args, workspaces_only)
+    use_cached_counts = getattr(args, "counts", False) or getattr(args, "wsl_counts", False)
 
     for scan_agent in agents_to_scan:
         sessions_dir = get_agent_wsl_dir(distro_name, scan_agent)
@@ -9961,7 +10088,8 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
                     since_date,
                     until_date,
                     projects_dir=sessions_dir,
-                    skip_message_count=workspaces_only,
+                    skip_message_count=skip_counts,
+                    use_cached_counts=use_cached_counts,
                     agent=AGENT_CLAUDE,
                 )
                 all_sessions.extend(sessions)
@@ -9974,7 +10102,8 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
                     until_date,
                     sessions_dir,
                     source,
-                    skip_message_count=workspaces_only,
+                    skip_message_count=skip_counts,
+                    use_cached_counts=use_cached_counts,
                 )
             )
 
@@ -10287,6 +10416,10 @@ def _list_local_sessions(args, patterns: list, since_date, until_date):
 def cmd_list(args):
     """List sessions for a workspace."""
     remote_host = getattr(args, "remote", None)
+    if remote_host and remote_host.startswith("wsl://") and getattr(args, "no_wsl", False):
+        exit_with_error("Conflicting flags: --no-wsl with WSL listing")
+    if remote_host == "windows" and getattr(args, "no_windows", False):
+        exit_with_error("Conflicting flags: --no-windows with Windows listing")
 
     # Parse and validate date filters
     since_str = getattr(args, "since", None)
@@ -11189,7 +11322,12 @@ def _collect_windows_sessions_from_wsl(
 
 
 def _collect_wsl_sessions_from_windows(
-    patterns, since_date, until_date, agent: str = "auto", workspaces_only: bool = False
+    patterns,
+    since_date,
+    until_date,
+    agent: str = "auto",
+    workspaces_only: bool = False,
+    wsl_counts: bool = False,
 ):
     """Collect sessions from WSL when running on Windows."""
     results = []
@@ -11198,6 +11336,7 @@ def _collect_wsl_sessions_from_windows(
         filtered_distros = _filter_wsl_distros_for_agent(wsl_distros, agent)
         agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
         unknown_agent = agent not in ("auto", AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI)
+        skip_counts = workspaces_only or not wsl_counts
         for distro in filtered_distros:
             try:
                 all_sessions = []
@@ -11212,7 +11351,8 @@ def _collect_wsl_sessions_from_windows(
                             until_date=until_date,
                             projects_dir=wsl_projects_dir,
                             include_cached=False,
-                            skip_message_count=workspaces_only,
+                            skip_message_count=skip_counts,
+                            use_cached_counts=wsl_counts,
                             agent=scan_agent,
                         )
                     else:
@@ -11226,7 +11366,8 @@ def _collect_wsl_sessions_from_windows(
                             until_date,
                             sessions_dir,
                             f"wsl:{distro['name']}",
-                            skip_message_count=workspaces_only,
+                            skip_message_count=skip_counts,
+                            use_cached_counts=wsl_counts,
                         )
                     all_sessions.extend(sessions)
                 if all_sessions:
@@ -11408,11 +11549,7 @@ def _print_all_homes_results(all_results, workspaces_only):
         print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
         for source_label, sessions in all_results:
             for session in sessions:
-                agent = session.get("agent", AGENT_CLAUDE)
-                print(
-                    f"{agent}\t{source_label}\t{session['workspace_readable']}\t{session['filename']}\t"
-                    f"{session['message_count']}\t{session['modified'].strftime('%Y-%m-%d')}"
-                )
+                print(format_session_line(session, source_label))
 
 
 def cmd_list_all_homes(args):
@@ -11420,6 +11557,9 @@ def cmd_list_all_homes(args):
     in_wsl = is_running_in_wsl()
     workspaces_only = getattr(args, "workspaces_only", False)
     agent = getattr(args, "agent", None) or "auto"
+    no_wsl = getattr(args, "no_wsl", False)
+    no_windows = getattr(args, "no_windows", False)
+    wsl_counts = getattr(args, "counts", False) or getattr(args, "wsl_counts", False)
 
     patterns = getattr(args, "patterns", None)
     if patterns is None:
@@ -11440,17 +11580,24 @@ def cmd_list_all_homes(args):
     all_results.extend(_collect_local_sessions(patterns, since_date, until_date, in_wsl, agent))
 
     if in_wsl:
-        all_results.extend(
-            _collect_windows_sessions_from_wsl(
-                patterns, since_date, until_date, agent, workspaces_only=workspaces_only
+        if not no_windows:
+            all_results.extend(
+                _collect_windows_sessions_from_wsl(
+                    patterns, since_date, until_date, agent, workspaces_only=workspaces_only
+                )
             )
-        )
     else:
-        all_results.extend(
-            _collect_wsl_sessions_from_windows(
-                patterns, since_date, until_date, agent, workspaces_only=workspaces_only
+        if not no_wsl:
+            all_results.extend(
+                _collect_wsl_sessions_from_windows(
+                    patterns,
+                    since_date,
+                    until_date,
+                    agent,
+                    workspaces_only=workspaces_only,
+                    wsl_counts=wsl_counts,
+                )
             )
-        )
 
     all_results.extend(
         _collect_all_remote_sessions(remotes, patterns, since_date, until_date, agent)
@@ -12554,6 +12701,16 @@ def _add_lss_parser(subparsers):
         help="Include local sessions (use with -r to combine local + remote)",
     )
     parser.add_argument(
+        "--no-wsl",
+        action="store_true",
+        help="Exclude WSL sessions (applies to --ah and mixed listings)",
+    )
+    parser.add_argument(
+        "--no-windows",
+        action="store_true",
+        help="Exclude Windows sessions (applies to --ah and mixed listings)",
+    )
+    parser.add_argument(
         "--since",
         metavar="DATE",
         help="Only include sessions modified on or after this date (YYYY-MM-DD)",
@@ -12581,6 +12738,16 @@ def _add_lss_parser(subparsers):
         dest="all_workspaces",
         action="store_true",
         help="Include all workspaces for the selected homes (default: current workspace only)",
+    )
+    parser.add_argument(
+        "--counts",
+        action="store_true",
+        help="Count messages (slower, required for WSL counts on Windows)",
+    )
+    parser.add_argument(
+        "--wsl-counts",
+        action="store_true",
+        help="Count messages for WSL sessions on Windows (slower)",
     )
     parser.add_argument(
         "--this",
@@ -13389,6 +13556,10 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
         until=args.until,
         remotes=lss_remotes,
         agent=agent,
+        counts=getattr(args, "counts", False),
+        wsl_counts=getattr(args, "wsl_counts", False),
+        no_wsl=getattr(args, "no_wsl", False),
+        no_windows=getattr(args, "no_windows", False),
     )
     cmd_list_all_homes(list_args)
 
@@ -13438,6 +13609,10 @@ def _dispatch_lss_local(args, workspace_list: list):
         remote=remote_value,
         projects_dir=projects_dir_override,
         agent=getattr(args, "agent", None) or "auto",
+        counts=getattr(args, "counts", False),
+        wsl_counts=getattr(args, "wsl_counts", False),
+        no_wsl=getattr(args, "no_wsl", False),
+        no_windows=getattr(args, "no_windows", False),
     )
     cmd_list(list_args)
 
@@ -13513,6 +13688,11 @@ def _dispatch_lss(args):
     workspace_list = _ensure_workspace_default_for_remote(args, workspace_list)
     _apply_wsl_unc_override(args, wsl_unc_in_input)
     args.projects_dir_override = projects_dir_override
+
+    if getattr(args, "wsl", False) and getattr(args, "no_wsl", False):
+        exit_with_error("Conflicting flags: --wsl and --no-wsl")
+    if getattr(args, "windows", False) and getattr(args, "no_windows", False):
+        exit_with_error("Conflicting flags: --windows and --no-windows")
 
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []

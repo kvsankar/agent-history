@@ -36,6 +36,25 @@ Successful runs (expected behavior)
 - `python .\agent-history lss claude-history --wsl --aw`
 - `python C:\sankar\projects\claude-history\agent-history stats --aw --no-sync` (outside workspace)
 - `python C:\sankar\projects\claude-history\agent-history stats --source remote:ubuntuvm01 --no-sync` (outside workspace)
+- `python C:\sankar\projects\claude-history\agent-history lss --aw` (from `C:\`)
+- `python C:\sankar\projects\claude-history\agent-history lsw --ah` (from `C:\`)
+- `python C:\sankar\projects\claude-history\agent-history stats --aw --no-sync` (from `C:\`)
+- `python C:\sankar\projects\claude-history\agent-history stats --source remote:ubuntuvm01 --no-sync` (from `C:\`)
+- `python C:\sankar\projects\claude-history\agent-history export --aw --no-remote --quiet -o C:\sankar\projects\claude-history\tmp-export-matrix-2` (from `C:\`)
+- `python .\agent-history stats --sync --ah --jobs 4 -r sankar@ubuntuvm01 --no-wsl`
+
+Observations
+------------
+- `python C:\sankar\projects\claude-history\agent-history lss --this` (from `C:\`) correctly errors with "Not in a Claude Code workspace."
+- `python C:\sankar\projects\claude-history\agent-history lss --ah` (from `C:\`) timed out at 30s (likely large data; no error besides timeout).
+- Cross-env sanity for `claude-history` (Windows stats, `--no-sync`):
+  - Codex: local 7 sessions, wsl:Ubuntu 4 sessions, remote:ubuntuvm01 3 sessions.
+  - Claude: local 40 sessions, wsl:Ubuntu 98 sessions, remote:ubuntuvm01 35 sessions.
+- Timing (Windows, C:\, output discarded):
+  - `lss --local --aw`: ~2.6s
+  - `lss --windows --aw`: ~2.7s
+  - `lss --wsl --aw`: ~65s (dominant contributor to `lss --ah` timeout)
+  - Fix: skip WSL message counts by default on Windows (show `?` unless `--counts`/`--wsl-counts`).
 
 WSL runs (expected behavior)
 ----------------------------
@@ -167,6 +186,19 @@ WSL runs (expected behavior)
 - `./agent-history export -r sankar@ubuntuvm01 --agent codex --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss -r sankar@ubuntuvm01 --local --this --agent codex`
 - `uv run pytest tests/unit/test_claude_history.py -k "agent_flag_after_subcommand or windows_this_only"`
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history lss --aw` (from `/`)
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history lsw --ah` (from `/`)
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history stats --source remote:ubuntuvm01 --no-sync` (from `/`)
+- `python3 ./agent-history stats --sync`
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history export --aw --no-remote --quiet -o /tmp/agent-history-export-matrix` (from `/`)
+
+Observations
+------------
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history lss --this` (from `/`) correctly errors with "Not in a Claude Code workspace."
+- WSL export emitted: `Warning: Couldn't parse line in 2c4ad1bc-7ce9-405c-9b8c-d369178c901e.jsonl: Extra data: line 1 column 2 (char 1)` (left data unchanged).
+  - Root cause: file contains a stray fragment line (`0,"cache_creation":...` at line 576) following a valid JSON line.
+  - Fix: suppress warnings for non-JSON fragments and honor `--quiet`.
 
 Ubuntu (remote)
 ---------------
@@ -177,6 +209,15 @@ Successful runs (expected behavior)
 - `python3 ./agent-history --agent codex lss --aw`
 - `python3 ./agent-history --agent gemini lss --aw`
 - `python3 /home/sankar/sankar/projects/claude-history/agent-history stats --no-sync` from `/` (expected error because no DB)
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history lss --aw` (from `/`)
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history lsw --ah` (from `/`)
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
+- `python3 ./agent-history stats --sync`
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history export --aw --no-remote --quiet -o /tmp/agent-history-export-matrix` (from `/`)
+
+Observations
+------------
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history lss --this` (from `/`) correctly errors with "Not in a Claude Code workspace."
 
 Unexpected behavior and fixes
 -----------------------------
@@ -252,6 +293,8 @@ Temporary directories created and deleted
 - `.\\tmp-export`
 - `.\\tmp-export-remote`
 - `C:\\sankar\\projects\\claude-history\\tmp-export-matrix`
+- `C:\\sankar\\projects\\claude-history\\tmp-export-matrix-2`
+- `/tmp/agent-history-export-matrix` (WSL and remote)
 - `/tmp/<temp>`
 
 Targeted tests run

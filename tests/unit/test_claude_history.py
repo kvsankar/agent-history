@@ -3091,6 +3091,20 @@ class TestOutputFormatting:
         assert parts[0] == "codex"
         assert parts[1] == "Local"
 
+    def test_output_line_skips_message_count(self):
+        """Output line should show ? when message counts are skipped."""
+        session = {
+            "agent": "claude",
+            "workspace_readable": "/home/user/project",
+            "filename": "session.jsonl",
+            "message_count": 0,
+            "message_count_skipped": True,
+            "modified": datetime(2025, 12, 8),
+        }
+        line = ch.format_session_line(session, "Local")
+        parts = line.split("\t")
+        assert parts[4] == "?"
+
 
 # ============================================================================
 # Pure Function Tests
@@ -3472,6 +3486,15 @@ class TestJSONLReading:
         )
         messages = ch.read_jsonl_messages(session_file)
         assert [m["role"] for m in messages] == ["user", "assistant"]
+
+    def test_read_skips_non_json_lines(self, temp_projects_dir, capsys):
+        """Should skip non-JSON fragments without warning."""
+        session_file = temp_projects_dir / "-home-user-myproject" / "junk.jsonl"
+        session_file.write_text("0,\"cache_creation\":{}\n", encoding="utf-8")
+        messages = ch.read_jsonl_messages(session_file)
+        assert messages == []
+        captured = capsys.readouterr()
+        assert captured.err == ""
 
 
 # ============================================================================
@@ -9264,6 +9287,26 @@ class TestLocalFlag:
         args = parser.parse_args(["lss", "--local"])
         assert hasattr(args, "local")
         assert args.local is True
+
+    def test_lss_counts_flags(self):
+        """lss parser should accept --counts and --wsl-counts flags."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lss", "--counts"])
+        assert args.command == "lss"
+        assert args.counts is True
+        args = parser.parse_args(["lss", "--wsl-counts"])
+        assert args.command == "lss"
+        assert args.wsl_counts is True
+
+    def test_lss_no_source_flags(self):
+        """lss parser should accept --no-wsl and --no-windows flags."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["lss", "--no-wsl"])
+        assert args.command == "lss"
+        assert args.no_wsl is True
+        args = parser.parse_args(["lss", "--no-windows"])
+        assert args.command == "lss"
+        assert args.no_windows is True
 
     def test_local_flag_parser_export(self):
         """export parser should accept --local flag."""

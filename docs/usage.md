@@ -129,6 +129,8 @@ agent-history lss [PATTERN] [OPTIONS]
 **Scope Options:**
 - `--this`: Use current workspace only, not its alias (if aliased)
 - `--ah`, `--all-homes`: List from all homes (local + WSL/Windows + remotes)
+- `--no-wsl`: Exclude WSL sessions (useful with `--ah`)
+- `--no-windows`: Exclude Windows sessions (useful with `--ah`)
 
 **Date Filtering:**
 - `--since DATE`: Only include sessions modified on or after this date (YYYY-MM-DD)
@@ -138,6 +140,10 @@ agent-history lss [PATTERN] [OPTIONS]
 - `--wsl`: Access WSL distribution (auto-detects)
 - `--windows`: Access Windows user (auto-detects)
 - `-r HOST`, `--remote HOST`: Access SSH remote server
+
+**Counting:**
+- `--counts`: Count messages for all sources (slower, includes remotes)
+- `--wsl-counts`: Count messages for WSL sessions on Windows (slower)
 
 **Examples:**
 ```bash
@@ -165,6 +171,7 @@ agent-history lss myproject --since 2025-11-01 --until 2025-11-30
 - List of sessions with metadata (file, messages, date)
 - Total size, message count, date range
 - Grouped by workspace
+- When WSL message counts are skipped on Windows, the `MESSAGES` column shows `?`
 
 ---
 
