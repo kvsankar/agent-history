@@ -12,7 +12,7 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 | [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-format.md](docs/codex-format.md) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-format.md](docs/gemini-format.md) |
 
-Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query.
+Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
 
 See [AGENTS.md](AGENTS.md) for a detailed comparison of storage locations, features, and behaviors.
 
@@ -150,20 +150,13 @@ EXAMPLES:
     agent-history export myproject --minimal       # minimal mode
     agent-history export myproject --split 500     # split long conversations
     agent-history export myproject --flat          # flat structure (no subdirs)
-    agent-history export myproject --jobs 4        # parallel export
-    agent-history export myproject --quiet         # suppress per-file output
-    agent-history export --ah --no-remote          # skip SSH remotes
-    agent-history export --ah --no-wsl             # skip WSL sources
-    agent-history export --ah --no-windows         # skip Windows sources
 
   WSL access (Windows):
-    agent-history lsh --wsl                        # list WSL distributions (with available agents)
+    agent-history lsh --wsl                        # list WSL distributions
     agent-history lsw --wsl                        # list WSL workspaces
     agent-history lsw --wsl Ubuntu                 # list from specific distro
     agent-history lss myproject --wsl              # list WSL sessions
     agent-history export myproject --wsl           # export from WSL
-    agent-history lss --wsl --agent codex          # list Codex WSL sessions
-    agent-history lss --wsl --agent gemini         # list Gemini WSL sessions
 
   Windows access (from WSL):
     agent-history lsh --windows                    # list Windows users with Claude

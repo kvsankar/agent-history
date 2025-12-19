@@ -42,13 +42,15 @@ def test_cli_export_with_flags(tmp_path):
         "1",
         "--force",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     stdout_path = Path(result.stdout.strip()) if result.stdout.strip() else None
     md_candidates = list(outdir.glob("*.md"))
     if stdout_path and stdout_path.exists():
         md_candidates.append(stdout_path)
-    assert md_candidates, f"no markdown output created; stdout={result.stdout} stderr={result.stderr}"
+    assert (
+        md_candidates
+    ), f"no markdown output created; stdout={result.stdout} stderr={result.stderr}"
 
 
 def test_cli_export_missing_file_returns_error(tmp_path):
@@ -61,6 +63,6 @@ def test_cli_export_missing_file_returns_error(tmp_path):
         "-o",
         str(outdir),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode != 0
     assert "not found" in (result.stderr or result.stdout).lower()

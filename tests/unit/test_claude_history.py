@@ -2175,6 +2175,22 @@ class TestCLIAgentFlag:
         args = parser.parse_args(["--agent", "auto", "lss"])
         assert args.agent == "auto"
 
+    def test_agent_flag_after_subcommand(self):
+        """Should accept --agent after subcommand and flags."""
+        agent_override, remaining = ch._extract_agent_override(
+            ["lsh", "--wsl", "--agent", "claude"]
+        )
+        assert agent_override == "claude"
+
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(remaining)
+        if agent_override is not None:
+            args.agent = agent_override
+
+        assert args.command == "lsh"
+        assert args.wsl is True
+        assert args.agent == "claude"
+
     def test_agent_flag_rejects_invalid(self):
         """Should reject invalid agent values."""
         parser = ch._create_argument_parser()
@@ -2537,7 +2553,9 @@ class TestAgentPropagation:
         ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
     @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
-    def test_collect_wsl_sessions_from_windows_passes_agent(self, monkeypatch, agent_value, tmp_path):
+    def test_collect_wsl_sessions_from_windows_passes_agent(
+        self, monkeypatch, agent_value, tmp_path
+    ):
         """_collect_wsl_sessions_from_windows should propagate agents to the right scanner."""
         captured_collect = []
         captured_scan = []
@@ -12734,6 +12752,23 @@ class TestNonClaudeDefaultPatterns:
         assert alias is None
         assert patterns[0] == "nested"
         assert patterns[1] == "repo"
+
+    def test_resolve_patterns_for_windows_this_only_uses_git_root(self, tmp_path, monkeypatch):
+        """Windows --this should use cwd and repo root when patterns are implicit."""
+        repo = tmp_path / "claude-history"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        subdir = repo / "docs"
+        subdir.mkdir()
+
+        monkeypatch.chdir(subdir)
+
+        patterns, alias = ch.resolve_patterns_for_command(
+            [], this_only=True, agent="claude", source_hint="windows"
+        )
+        assert alias is None
+        assert patterns[0] == "docs"
+        assert patterns[1] == "claude-history"
 
 
 class TestDisplayFunctions:

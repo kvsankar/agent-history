@@ -22,9 +22,9 @@ import shutil
 import sqlite3
 import stat
 import subprocess
-import threading
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import contextmanager
@@ -92,6 +92,8 @@ WINDOWS_PREFIX_LEN = 8  # Length of "windows:"
 # Display constants
 MAX_WORKSPACE_NAME_DISPLAY = 28  # Max chars for workspace name in stats display
 MAX_SHORT_PART_LEN = 10  # Max length for "short" path component heuristic
+RSYNC_PARTIAL_TRANSFER_CODE = 12
+EXPORT_PROGRESS_MIN = 10
 HASH_DISPLAY_LEN = 8  # Characters to show for truncated hash display
 MAX_THOUGHT_LEN = 200  # Max length for thought descriptions before truncating
 MAX_TOOL_OUTPUT_LEN = 2000  # Max length for tool output before truncating
@@ -167,6 +169,15 @@ class TokensMetrics(TypedDict):
     total: int
 
 
+class TokensSummary(TypedDict, total=False):
+    """Token summary for Codex sessions."""
+
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    timestamp: Optional[str]
+
+
 class MetricsDict(TypedDict, total=False):
     """Full metrics dictionary structure."""
 
@@ -174,6 +185,7 @@ class MetricsDict(TypedDict, total=False):
     messages: list[dict[str, Any]]
     tool_uses: list[dict[str, Any]]
     tokens: TokensMetrics
+    tokens_summary: TokensSummary
 
 
 class ExportTotals(TypedDict):
@@ -1127,12 +1139,38 @@ def infer_non_claude_patterns_from_cwd() -> list[str]:
     return patterns
 
 
+def _is_wsl_mnt_path(path_str: str) -> bool:
+    """Return True if path looks like a WSL /mnt/<drive>/ path."""
+    if not path_str.startswith("/mnt/") or len(path_str) <= MIN_WSL_MNT_PATH_LEN:
+        return False
+    if len(path_str) <= MIN_WSL_MNT_PATH_LEN + 1:
+        return False
+    drive_letter = path_str[5]
+    return drive_letter.isalpha() and path_str[6] == "/"
+
+
+def _infer_this_only_patterns_for_source(
+    source_hint: Optional[str], agent: str
+) -> Optional[list[str]]:
+    """Infer patterns for --this when targeting a different source."""
+    if agent not in ("auto", "claude"):
+        return None
+    if source_hint not in ("windows", "wsl"):
+        return None
+    patterns = infer_non_claude_patterns_from_cwd()
+    cwd_str = str(Path.cwd())
+    if source_hint == "windows" and _is_wsl_mnt_path(cwd_str) and cwd_str not in patterns:
+        patterns.insert(0, cwd_str)
+    return patterns
+
+
 def resolve_patterns_for_command(
     workspace_list: list,
     this_only: bool = False,
     require_workspace: bool = False,
     error_message: Optional[str] = None,
     agent: str = "auto",
+    source_hint: Optional[str] = None,
 ) -> tuple:
     """Resolve workspace patterns, optionally checking for alias membership.
 
@@ -1153,6 +1191,11 @@ def resolve_patterns_for_command(
     # For non-Claude agents, use CWD path as pattern (matches against workspace_readable)
     if agent in ("gemini", "codex"):
         return infer_non_claude_patterns_from_cwd(), None
+
+    if this_only:
+        source_patterns = _infer_this_only_patterns_for_source(source_hint, agent)
+        if source_patterns:
+            return source_patterns, None
 
     pattern, exists = check_current_workspace_exists()
     if not exists:
@@ -2322,7 +2365,7 @@ def codex_parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> st
     return "\n".join(md_lines)
 
 
-def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
+def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:  # noqa: C901
     """Extract metrics from Codex JSONL file for stats database.
 
     Mirror of extract_metrics_from_jsonl() for Codex format.
@@ -4798,9 +4841,7 @@ def _get_wsl_usernames_from_unc(distro_name: str) -> list:
         try:
             if not _path_exists_with_timeout(base, timeout=5.0):
                 continue
-            return [
-                p.name for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")
-            ]
+            return [p.name for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")]
         except (OSError, PermissionError):
             continue
     return []
@@ -5768,11 +5809,20 @@ def _run_rsync_with_wsl_fallback(
                 )
                 if wsl_result.returncode == 0:
                     return wsl_result
-            except (subprocess.SubprocessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            except (
+                subprocess.SubprocessError,
+                subprocess.TimeoutExpired,
+                FileNotFoundError,
+                OSError,
+            ):
                 pass
 
     result = subprocess.run(rsync_cmd, check=False, capture_output=True, text=True, timeout=timeout)
-    if result.returncode == 0 or os.name != "nt" or result.returncode != 12:
+    if (
+        result.returncode == 0
+        or os.name != "nt"
+        or result.returncode != RSYNC_PARTIAL_TRANSFER_CODE
+    ):
         return result
 
     wsl_path = _get_wsl_path_for_windows_path(local_dir)
@@ -7933,7 +7983,7 @@ def _update_tool_errors_from_results(entry: dict, tool_uses: list):
                     break
 
 
-def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
+def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:  # noqa: C901
     """Extract metrics data from a JSONL file.
 
     Returns a dict with session, messages, and tool_uses.
@@ -8530,7 +8580,7 @@ def _accumulate_stats(totals: dict, new_stats: dict):
     totals["errors"] += new_stats["errors"]
 
 
-def _sync_wsl_windows_to_db(
+def _sync_wsl_windows_to_db(  # noqa: C901
     conn,
     totals: dict,
     patterns: list,
@@ -8653,7 +8703,7 @@ def _sync_remote_to_db_with_new_conn(remote: str, patterns: list, force: bool) -
     return totals
 
 
-def cmd_stats_sync(args):
+def cmd_stats_sync(args):  # noqa: C901
     """Sync JSONL files to metrics database."""
     force = getattr(args, "force", False)
     all_homes = getattr(args, "all_homes", False)
@@ -10648,16 +10698,14 @@ def _export_single_session(
             if parts:
                 _write_split_parts(parts, output_name, output_file, quiet)
             else:
-                _write_single_file(
-                    jsonl_file, output_file, minimal, messages=messages, quiet=quiet
-                )
+                _write_single_file(jsonl_file, output_file, minimal, messages=messages, quiet=quiet)
         else:
             _write_single_file(jsonl_file, output_file, minimal, messages=messages, quiet=quiet)
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
 
 
-def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
+def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noqa: C901
     """Export sessions to markdown files.
 
     Args:
@@ -10679,8 +10727,8 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
 
     if not quiet and total_sessions:
         sys.stderr.write(f"Exporting {total_sessions} sessions...\n")
-        if total_sessions >= 10:
-            progress_interval = max(10, total_sessions // 20)
+        if total_sessions >= EXPORT_PROGRESS_MIN:
+            progress_interval = max(EXPORT_PROGRESS_MIN, total_sessions // 20)
 
     def export_one(session: dict) -> None:
         jsonl_file = session["file"]
@@ -10726,9 +10774,7 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
                     sys.stderr.write(f"Processed {completed}/{total_sessions} sessions\n")
 
         with ThreadPoolExecutor(max_workers=jobs) as executor:
-            futures = [
-                executor.submit(export_one_with_progress, session) for session in sessions
-            ]
+            futures = [executor.submit(export_one_with_progress, session) for session in sessions]
             for future in futures:
                 future.result()
     else:
@@ -10884,7 +10930,9 @@ def cmd_list_wsl(args):
         if distro.get("has_gemini"):
             agents.append(AGENT_GEMINI)
         agents_label = ",".join(agents) if agents else "none"
-        path_hint = distro.get("path") or distro.get("codex_path") or distro.get("gemini_path") or ""
+        path_hint = (
+            distro.get("path") or distro.get("codex_path") or distro.get("gemini_path") or ""
+        )
         print(f"{distro['name']}\t{distro['username']}\t{agents_label}\t{path_hint}")
 
 
@@ -11686,9 +11734,8 @@ def validate_export_all_homes(args, in_wsl):
     if in_wsl:
         if not no_windows:
             errors.extend(_validate_windows_from_wsl())
-    else:
-        if not no_wsl:
-            errors.extend(_validate_wsl_from_windows(getattr(args, "agent", None) or "auto"))
+    elif not no_wsl:
+        errors.extend(_validate_wsl_from_windows(getattr(args, "agent", None) or "auto"))
 
     if not no_remote:
         errors.extend(_validate_ssh_remotes(args))
@@ -11954,7 +12001,7 @@ def _get_export_all_patterns(args) -> list:
     return [ws] if ws else []
 
 
-def cmd_export_all(args):
+def cmd_export_all(args):  # noqa: C901
     """Export from all homes: local, WSL distributions (Windows), Windows (WSL), and optionally remotes."""
     in_wsl = is_running_in_wsl()
     local_label = "Local WSL" if in_wsl else "Local Windows"
@@ -12000,11 +12047,10 @@ def cmd_export_all(args):
             _accumulate_export_results(
                 totals, _export_windows_from_wsl(args, output_dir, patterns), is_multi=True
             )
-    else:
-        if not no_wsl:
-            _accumulate_export_results(
-                totals, _export_wsl_from_windows(args, output_dir, patterns), is_multi=True
-            )
+    elif not no_wsl:
+        _accumulate_export_results(
+            totals, _export_wsl_from_windows(args, output_dir, patterns), is_multi=True
+        )
 
     if not no_remote:
         _accumulate_export_results(
@@ -13116,7 +13162,8 @@ def _dispatch_lss_to_alias(alias_name: str, args):
 def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
     """Handle lss with --local and -r flags (additive mode)."""
     agent = getattr(args, "agent", None) or "auto"
-    patterns, _ = resolve_patterns_for_command(workspace_list, agent=agent)
+    source_hint = _get_source_hint_from_args(args)
+    patterns, _ = resolve_patterns_for_command(workspace_list, agent=agent, source_hint=source_hint)
 
     list_args = ListCommandArgs(
         patterns=patterns,
@@ -13137,12 +13184,15 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
     until_date = parse_date_with_validation(args.until, "--until")
     lss_remotes = getattr(args, "remotes", None) or []
     agent = getattr(args, "agent", None) or "auto"
+    source_hint = _get_source_hint_from_args(args)
 
     if all_workspaces_flag and not workspace_list:
         patterns = [""]
         alias_for_ws = None
     else:
-        patterns, alias_for_ws = resolve_patterns_for_command(workspace_list, this_only, agent=agent)
+        patterns, alias_for_ws = resolve_patterns_for_command(
+            workspace_list, this_only, agent=agent, source_hint=source_hint
+        )
     if alias_for_ws:
         sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
         cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date, agent=agent)
@@ -13176,6 +13226,7 @@ def _dispatch_lss_local(args, workspace_list: list):
         "  • Use --ah to list from all homes: lss --ah"
     )
     agent = getattr(args, "agent", None) or "auto"
+    source_hint = _get_source_hint_from_args(args)
     if all_workspaces_flag and not workspace_list:
         patterns = [""]
         alias_for_ws = None
@@ -13183,7 +13234,12 @@ def _dispatch_lss_local(args, workspace_list: list):
         require_ws = not needs_remote_scope
         err = error_msg if require_ws else None
         patterns, alias_for_ws = resolve_patterns_for_command(
-            workspace_list, this_only, require_workspace=require_ws, error_message=err, agent=agent
+            workspace_list,
+            this_only,
+            require_workspace=require_ws,
+            error_message=err,
+            agent=agent,
+            source_hint=source_hint,
         )
     if alias_for_ws:
         sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
@@ -13246,6 +13302,15 @@ def _ensure_workspace_default_for_remote(args, workspace_list: list[str]) -> lis
         return workspace_list
 
     return workspace_list
+
+
+def _get_source_hint_from_args(args) -> Optional[str]:
+    """Return source hint for workspace inference."""
+    if getattr(args, "windows", False):
+        return "windows"
+    if getattr(args, "wsl", False):
+        return "wsl"
+    return None
 
 
 def _apply_wsl_unc_override(args, saw_wsl_unc: bool):
@@ -13377,9 +13442,7 @@ def _export_remote_claude_single_file(
             tmp_path.unlink()
             sys.exit(1)
         display_file = f"{remote}:{remote_path}"
-        _write_claude_single_file(
-            tmp_path, output_file, minimal, split_lines, display_file, quiet
-        )
+        _write_claude_single_file(tmp_path, output_file, minimal, split_lines, display_file, quiet)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -13469,11 +13532,17 @@ def _resolve_export_targets(args, targets: list, output_dir: Union[str, Path]) -
 
     this_only = getattr(args, "this_only", False)
     agent = getattr(args, "agent", None) or "auto"
+    source_hint = _get_source_hint_from_args(args)
 
     # For non-Claude agents, use CWD name as pattern (matches against workspace_readable)
     if agent in ("gemini", "codex"):
         patterns, _ = resolve_patterns_for_command([], agent=agent)
         return patterns, False
+
+    if this_only:
+        source_patterns = _infer_this_only_patterns_for_source(source_hint, agent)
+        if source_patterns:
+            return source_patterns, False
 
     pattern, exists = check_current_workspace_exists()
 
@@ -13765,11 +13834,30 @@ def _dispatch_command(args):
         cmd_gemini_index(args)
 
 
+def _extract_agent_override(argv: list) -> tuple:
+    """Extract --agent from argv regardless of position.
+
+    Returns:
+        Tuple of (agent_override or None, remaining_args)
+    """
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--agent",
+        choices=["auto", "claude", "codex", "gemini"],
+        default=None,
+    )
+    args, remaining = parser.parse_known_args(argv)
+    return args.agent, remaining
+
+
 def main():
     """Main entry point."""
     _setup_windows_encoding()
+    agent_override, remaining = _extract_agent_override(sys.argv[1:])
     parser = _create_argument_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(remaining)
+    if agent_override is not None:
+        args.agent = agent_override
     if not hasattr(args, "command") or args.command is None:
         parser.print_help()
         sys.exit(0)
