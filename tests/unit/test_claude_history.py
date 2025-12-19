@@ -7295,6 +7295,18 @@ class TestSection7Remaining:
         assert pattern == "C--"
         assert exists is False
 
+    def test_err_missing_outside_root_path(self, tmp_path, monkeypatch):
+        """7.2.5c: Unix root should not count as a workspace."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        ws = projects_dir / "-home-user-myproject"
+        ws.mkdir(parents=True)
+        monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+        monkeypatch.setattr(ch, "get_current_workspace_pattern", lambda: "")
+
+        pattern, exists = ch.check_current_workspace_exists()
+        assert pattern == ""
+        assert exists is False
+
     def test_err_missing_outside_lsw(self, tmp_path):
         """7.2.6: lsw works - lists all workspaces."""
         projects_dir = tmp_path / ".claude" / "projects"

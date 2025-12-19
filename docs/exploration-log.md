@@ -11,8 +11,10 @@ Scope and rules
 - Temporary export directories were created and deleted.
 - Metrics DB was used and reset only when explicitly requested.
 
+Windows
+-------
+
 Successful runs (expected behavior)
------------------------------------
 - `python .\agent-history lsh`
 - `python .\agent-history lsh --wsl`
 - `python .\agent-history lsw --ah`
@@ -34,6 +36,29 @@ Successful runs (expected behavior)
 - `python .\agent-history lss claude-history --wsl --aw`
 - `python C:\sankar\projects\claude-history\agent-history stats --aw --no-sync` (outside workspace)
 - `python C:\sankar\projects\claude-history\agent-history stats --source remote:ubuntuvm01 --no-sync` (outside workspace)
+
+WSL
+---
+
+Successful runs (expected behavior)
+- `python3 ./agent-history lsh`
+- `python3 ./agent-history lsh --windows`
+- `python3 ./agent-history lsw --ah`
+- `python3 ./agent-history --agent codex lss --aw`
+
+Observations
+- `python3 ./agent-history lsw --ah` took longer than the default timeout on first attempt; rerun with a longer timeout succeeded.
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history stats --no-sync` from `/` returned full stats instead of erroring.
+
+Ubuntu (remote)
+---------------
+
+Successful runs (expected behavior)
+- `python3 ./agent-history lsh`
+- `python3 ./agent-history lsw --ah`
+- `python3 ./agent-history --agent codex lss --aw`
+- `python3 ./agent-history --agent gemini lss --aw`
+- `python3 /home/sankar/sankar/projects/claude-history/agent-history stats --no-sync` from `/` (expected error because no DB)
 
 Unexpected behavior and fixes
 -----------------------------
@@ -64,6 +89,9 @@ Unexpected behavior and fixes
 - `stats` from outside any workspace returned full stats silently.
   - Fix: now errors unless a pattern, `--aw`, or `--source` is provided.
   - Added unit test and doc note.
+- `stats --no-sync` from `/` inside WSL still returns full stats instead of erroring.
+  - Fix: treat empty workspace patterns (root path) as not-in-workspace.
+  - Added unit test to lock the behavior.
 
 Clarified messaging
 -------------------

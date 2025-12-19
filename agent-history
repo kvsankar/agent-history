@@ -4298,6 +4298,8 @@ def check_current_workspace_exists():
     pattern = get_current_workspace_pattern()
     projects_dir = get_claude_projects_dir()
 
+    if not pattern:
+        return pattern, False
     if not projects_dir or not projects_dir.exists():
         return pattern, False
     if sys.platform == "win32" and re.match(r"^[A-Za-z]--$", pattern):
