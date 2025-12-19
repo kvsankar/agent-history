@@ -99,6 +99,10 @@ WSL runs (expected behavior)
 - `./agent-history stats --by-day --source remote:ubuntuvm01 --this --no-sync`
 - `./agent-history lss --alias claude-history --wsl --agent claude` (no sessions; alias has no WSL entries)
 - `./agent-history lss --alias claude-history --windows --agent claude`
+- `./agent-history export --alias claude-history --windows --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history export --alias claude-history --wsl --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no WSL entries)
+- `./agent-history lss --alias claude-history --local --agent claude` (piped to `head`; BrokenPipeError on stdout flush)
+- `./agent-history stats --agent codex --source windows --aw --no-sync`
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
