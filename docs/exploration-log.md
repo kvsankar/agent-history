@@ -80,6 +80,8 @@ WSL runs (expected behavior)
 - `./agent-history lss --agent claude`
 - `./agent-history lss --agent codex`
 - `./agent-history lss --agent gemini`
+- `./agent-history --agent codex lss --wsl --aw`
+- `./agent-history --agent gemini lss --wsl --aw`
 - `./agent-history lss claude-history --wsl --aw`
 - `./agent-history lss --agent codex --aw`
 - `./agent-history lss --agent codex --since 2025-12-18`
