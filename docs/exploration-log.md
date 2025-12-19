@@ -75,9 +75,12 @@ WSL runs (expected behavior)
 - `./agent-history lsw --wsl`
 - `./agent-history lsw --local`
 - `./agent-history lsw --windows --agent claude`
+- `./agent-history lsw --ah`
+- `./agent-history lsw --local -r sankar@ubuntuvm01`
 - `./agent-history lss --agent claude`
 - `./agent-history lss --agent codex`
 - `./agent-history lss --agent gemini`
+- `./agent-history lss claude-history --wsl --aw`
 - `./agent-history lss --agent codex --aw`
 - `./agent-history lss --agent codex --since 2025-12-18`
 - `./agent-history lss --agent codex --until 2025-12-18`
@@ -96,11 +99,16 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent claude --source remote:ubuntuvm01 --aw --no-sync`
 - `./agent-history stats --agent claude --source wsl:Ubuntu --aw --no-sync` (0 sessions, expected with no `wsl:Ubuntu` sources)
 - `./agent-history stats --agent claude --source windows:kvsan --aw --no-sync`
+- `./agent-history stats --agent gemini --source remote:ubuntuvm01 --no-sync`
+- `./agent-history stats --agent codex --source wsl:Ubuntu --no-sync`
+- `./agent-history stats --tools --source remote:ubuntuvm01 --no-sync`
 - `./agent-history stats --tools --source wsl --aw --no-sync`
 - `./agent-history stats --models --source wsl --aw --no-sync`
 - `./agent-history stats --agent codex --source remote:ubuntuvm01 --aw --no-sync` (0 sessions; no remote sync yet)
 - `./agent-history stats --sync --agent codex --source remote:ubuntuvm01 --aw` (syncs local only without `-r`)
 - `./agent-history stats --sync -r sankar@ubuntuvm01 --agent codex --source remote:ubuntuvm01 --aw`
+- `./agent-history stats --sync --ah --jobs 4 -r sankar@ubuntuvm01 --no-windows`
+- `./agent-history stats --sync --ah --jobs 4 -r sankar@ubuntuvm01 --no-wsl`
 - `./agent-history stats --agent codex --source remote:ubuntuvm01 --aw --no-sync` (after sync)
 - `./agent-history stats --by-day --source wsl --aw --no-sync`
 - `./agent-history stats --by-workspace --source wsl --aw --no-sync`
@@ -192,6 +200,10 @@ WSL runs (expected behavior)
 - `./agent-history export claude-history --agent codex --windows --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent codex --wsl --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent codex -r sankar@ubuntuvm01 --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export claude-history --agent gemini -r sankar@ubuntuvm01 --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export --agent gemini --ah --aw --no-remote --quiet --jobs 4 -o /tmp/<temp>` (export-all summary printed)
+- `./agent-history export --aw --no-remote --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export --agent gemini --source remote:ubuntuvm01 --quiet -o /tmp/<temp>` (expected error: `--source` not supported for export)
 - `./agent-history export @claude-history --agent gemini --windows --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent codex --split 200 --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent gemini --minimal --quiet -o /tmp/<temp>` (no output; quiet mode)
@@ -216,6 +228,8 @@ WSL runs (expected behavior)
 - `./agent-history lss --agent gemini --counts`
 - `./agent-history stats --agent codex --source windows --aw --no-sync`
 - `./agent-history stats --agent codex --source windows --aw --sync`
+- `/home/sankar/sankar/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
+- `/home/sankar/sankar/projects/claude-history/agent-history stats --source remote:ubuntuvm01 --no-sync` (from `/`)
 - `./agent-history lss --wsl --agent codex`
 - `./agent-history lss --wsl --agent gemini`
 - `./agent-history lss --wsl --agent codex --since 2025-12-18`
@@ -265,6 +279,7 @@ Observations
 ------------
 - `python3 /home/sankar/sankar/projects/claude-history/agent-history lss --this` (from `/`) correctly errors with "Not in a Claude Code workspace."
 - `stats` does not accept `--alias`; use `stats @alias` instead.
+- `./agent-history stats --aw --no-sync` (from `/`) fails because the relative path isn't available; use the absolute path instead.
 - WSL export emitted: `Warning: Couldn't parse line in 2c4ad1bc-7ce9-405c-9b8c-d369178c901e.jsonl: Extra data: line 1 column 2 (char 1)` (left data unchanged).
   - Root cause: file contains a stray fragment line (`0,"cache_creation":...` at line 576) following a valid JSON line.
   - Fix: suppress warnings for non-JSON fragments and honor `--quiet`.
