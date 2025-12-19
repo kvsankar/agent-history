@@ -379,7 +379,9 @@ class TestUtilityHelpers:
         assert truncated.endswith("...")
 
     def test_generate_agent_notice_includes_ids(self):
-        lines = ch._generate_agent_conversation_notice(parent_session_id="parent", agent_id="agent-1")
+        lines = ch._generate_agent_conversation_notice(
+            parent_session_id="parent", agent_id="agent-1"
+        )
         joined = "\n".join(lines)
         assert "Parent Session ID" in joined
         assert "agent-1" in joined
@@ -397,7 +399,10 @@ class TestUtilityHelpers:
         existing.write_text("ok", encoding="utf-8")
         sessions = [
             {"workspace_readable": str(existing), "workspace": str(existing)},
-            {"workspace_readable": str(tmp_path / "missing"), "workspace": str(tmp_path / "missing")},
+            {
+                "workspace_readable": str(tmp_path / "missing"),
+                "workspace": str(tmp_path / "missing"),
+            },
         ]
         ch.print_sessions_output(sessions, "Windows", workspaces_only=True)
         out_lines = capsys.readouterr().out.strip().splitlines()
@@ -482,6 +487,7 @@ class TestUtilityHelpers:
         assert ch.is_safe_path(base, target) is False
 
 
+<<<<<<< HEAD
 class TestRemoteFetchErrors:
     def test_fetch_workspace_files_invalid_host(self, tmp_path):
         result = ch.fetch_workspace_files("bad host", "-home-user-ws", tmp_path, "hostname")
@@ -798,7 +804,7 @@ class TestCodexWorkspaceExtraction:
     def test_extract_workspace_from_session_meta(self, temp_codex_session_file):
         """Should extract workspace from session_meta cwd."""
         ws = ch.codex_get_workspace_from_session(temp_codex_session_file)
-        assert ws == "-home-user-project"
+        assert ws == "/home/user/project"
 
     def test_workspace_returns_unknown_for_missing_cwd(self, tmp_path):
         """Should return 'unknown' when cwd is missing."""
@@ -956,7 +962,7 @@ class TestCodexIndex:
             mapping = ch.codex_ensure_index_updated(sessions_dir)
 
             assert str(session_file) in mapping
-            assert mapping[str(session_file)] == "-home-user-project"
+            assert mapping[str(session_file)] == "/home/user/project"
 
     def test_ensure_index_updated_incremental(self, tmp_path, sample_codex_jsonl_content):
         """codex_ensure_index_updated should only scan new date folders."""
@@ -3426,6 +3432,14 @@ class TestMarkdownGeneration:
 
         assert "Hello Claude" in markdown
         assert "**Messages:** 2" in markdown
+
+    def test_display_file_overrides_header_filename(self, temp_projects_dir):
+        """display_file should override the file shown in the markdown header."""
+        session_file = temp_projects_dir / "-home-user-myproject" / "abc123-def456.jsonl"
+        markdown = ch.parse_jsonl_to_markdown(
+            session_file, display_file="remote:host:/path/file.jsonl"
+        )
+        assert "**File:** remote:host:/path/file.jsonl" in markdown
 
 
 # ============================================================================
@@ -7130,8 +7144,18 @@ class TestSection8Remaining:
         session_file.write_text("".join(messages))
 
         msgs = ch.read_jsonl_messages(session_file)
-        parts = list(ch.generate_markdown_parts(msgs, session_file, minimal=False, split_lines=50))
+        parts = list(
+            ch.generate_markdown_parts(
+                msgs,
+                session_file,
+                minimal=False,
+                split_lines=50,
+                display_file="u1:/remote/session.jsonl",
+            )
+        )
         assert len(parts) >= 1
+        # First part should show overridden file label in header
+        assert "**File:** u1:/remote/session.jsonl" in parts[0][2]
 
     def test_feat_split_short_no_split(self, tmp_path):
         """8.1.4: Short conversation with --split creates single file."""
@@ -10680,6 +10704,27 @@ class TestMultiAgentSSHDispatch:
                 ch._list_remote_workspaces_only("host", [""], "codex")
         # Should not raise
 
+    def test_list_remote_workspaces_only_auto_deduplicates(self):
+        """_list_remote_workspaces_only should deduplicate workspaces across agents in auto mode."""
+        with patch.object(
+            ch,
+            "_list_remote_claude_workspaces_only",
+            return_value=[{"decoded": "same", "agent": "claude"}],
+        ), patch.object(
+            ch,
+            "_list_remote_gemini_workspaces_only",
+            return_value=[{"decoded": "same", "agent": "gemini"}],
+        ), patch.object(
+            ch,
+            "_list_remote_codex_workspaces_only",
+            return_value=[{"decoded": "same", "agent": "codex"}],
+        ):
+            with patch("builtins.print") as mock_print:
+                ch._list_remote_workspaces_only("host", [""], "auto")
+
+        printed = [call.args[0] for call in mock_print.call_args_list if call.args]
+        assert printed.count("same") == 1
+
     def test_collect_remote_session_details_auto_scans_all_agents(self):
         """Test _collect_remote_session_details with auto agent scans all agents."""
         with patch.object(
@@ -12394,6 +12439,40 @@ class TestCmdConvert:
         ch.cmd_convert(args)
 
         assert called["remote"] is True
+
+
+class TestNonClaudeDefaultPatterns:
+    """Tests for Codex/Gemini default pattern inference."""
+
+    def test_resolve_patterns_for_gemini_uses_git_root(self, tmp_path, monkeypatch):
+        """Gemini defaults should use repo root when run from a subdirectory."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        subdir = repo / "docs"
+        subdir.mkdir()
+
+        monkeypatch.chdir(subdir)
+
+        patterns, alias = ch.resolve_patterns_for_command([], agent="gemini")
+        assert alias is None
+        assert patterns[0] == "docs"
+        assert patterns[1] == "repo"
+
+    def test_resolve_patterns_for_codex_uses_git_root(self, tmp_path, monkeypatch):
+        """Codex defaults should use repo root when run from a subdirectory."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        subdir = repo / "nested"
+        subdir.mkdir()
+
+        monkeypatch.chdir(subdir)
+
+        patterns, alias = ch.resolve_patterns_for_command([], agent="codex")
+        assert alias is None
+        assert patterns[0] == "nested"
+        assert patterns[1] == "repo"
 
 
 class TestDisplayFunctions:

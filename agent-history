@@ -973,21 +973,36 @@ def _matches_workspace_pattern(
     if not pattern:
         return True
 
-    # Direct substring match
-    if pattern in workspace:
+    readable = get_readable(workspace) if get_readable else None
+
+    # Prefer matching against readable paths first (avoids false positives due to
+    # path encoding collisions like "claude/history" -> "...-claude-history").
+    if readable and pattern in readable:
         return True
 
-    # Try readable name if available
-    if get_readable:
-        readable = get_readable(workspace)
-        if pattern in readable:
-            return True
-    else:
-        readable = workspace
+    # Match encoded IDs only when user appears to provide an encoded pattern.
+    looks_encoded = (
+        pattern.startswith("-")
+        or pattern.startswith("home-")
+        or pattern.startswith("mnt-")
+        or bool(re.match(r"^[A-Za-z]--", pattern))
+    )
+    if looks_encoded and pattern in workspace:
+        return True
 
-    # Claude-style encoded pattern match (home-user-project -> /home/user/project)
-    pattern_as_path = "/" + pattern.replace("-", "/")
-    return pattern_as_path in readable
+    # If we don't have a readable representation, fall back to matching the raw identifier.
+    if not readable and pattern in workspace:
+        return True
+
+    # Claude-style encoded pattern match (home-user-project -> /home/user/project).
+    # Only apply this heuristic when the pattern looks like a path encoding, otherwise
+    # it can create false positives for ordinary hyphenated names (e.g. "claude-history").
+    if not looks_encoded:
+        return False
+
+    normalized_pattern = pattern[1:] if pattern.startswith("-") else pattern
+    pattern_as_path = "/" + normalized_pattern.replace("-", "/")
+    return pattern_as_path in (readable or workspace)
 
 
 def _session_matches_filters(
@@ -1065,6 +1080,33 @@ def detect_alias_from_args(args, workspace_list: Optional[list] = None) -> Optio
     return None
 
 
+def _find_git_root(start: Path) -> Optional[Path]:
+    """Find nearest ancestor directory with a .git entry (directory or file)."""
+    try:
+        start_resolved = start.resolve()
+    except OSError:
+        start_resolved = start
+    for parent in [start_resolved, *start_resolved.parents]:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
+def infer_non_claude_patterns_from_cwd() -> list[str]:
+    """Infer useful workspace patterns for Codex/Gemini when none are provided.
+
+    Most users run the CLI from some subdirectory of a repo; using only
+    `cwd.name` breaks in that case (e.g. project/docs -> "docs").
+    """
+    cwd = Path.cwd()
+    root = _find_git_root(cwd) or cwd
+    patterns = [cwd.name]
+    # Add repo root name as a loose fallback when running from subdirectories.
+    if root.name and root.name not in patterns:
+        patterns.append(root.name)
+    return patterns
+
+
 def resolve_patterns_for_command(
     workspace_list: list,
     this_only: bool = False,
@@ -1090,9 +1132,7 @@ def resolve_patterns_for_command(
 
     # For non-Claude agents, use CWD path as pattern (matches against workspace_readable)
     if agent in ("gemini", "codex"):
-        cwd = Path.cwd()
-        # Use the last path component as a simple pattern
-        return [cwd.name], None
+        return infer_non_claude_patterns_from_cwd(), None
 
     pattern, exists = check_current_workspace_exists()
     if not exists:
@@ -1715,10 +1755,12 @@ def _generate_message_section(
     return lines
 
 
-def _generate_markdown_file_header(jsonl_file: Path, messages: list, is_agent: bool) -> list:
+def _generate_markdown_file_header(
+    jsonl_file: Path, messages: list, is_agent: bool, display_file: Optional[str] = None
+) -> list:
     """Generate the file header section of markdown."""
     lines = ["# Claude Conversation (Agent)" if is_agent else "# Claude Conversation", ""]
-    lines.append(f"**File:** {jsonl_file.name}")
+    lines.append(f"**File:** {display_file or jsonl_file.name}")
     lines.append(f"**Messages:** {len(messages)}")
     if messages:
         lines.append(f"**First message:** {messages[0]['timestamp']}")
@@ -1751,7 +1793,10 @@ def _get_agent_info(messages: list) -> tuple:
 
 
 def parse_jsonl_to_markdown(
-    jsonl_file: Path, minimal: bool = False, messages: Optional[list] = None
+    jsonl_file: Path,
+    minimal: bool = False,
+    messages: Optional[list] = None,
+    display_file: Optional[str] = None,
 ) -> str:
     """Convert a Claude Code JSONL session file to readable Markdown."""
     if messages is None:
@@ -1759,7 +1804,7 @@ def parse_jsonl_to_markdown(
 
     is_agent, parent_session_id, agent_id = _get_agent_info(messages)
 
-    md_lines = _generate_markdown_file_header(jsonl_file, messages, is_agent)
+    md_lines = _generate_markdown_file_header(jsonl_file, messages, is_agent, display_file)
     if is_agent:
         md_lines.extend(_generate_agent_conversation_notice(parent_session_id, agent_id))
     md_lines.extend(["", "---", ""])
@@ -1771,7 +1816,9 @@ def parse_jsonl_to_markdown(
     return "\n".join(md_lines)
 
 
-def generate_markdown_parts(messages, jsonl_file: Path, minimal: bool, split_lines: int):
+def generate_markdown_parts(
+    messages, jsonl_file: Path, minimal: bool, split_lines: int, display_file: Optional[str] = None
+):
     """Generate multiple markdown parts from messages, split at smart break points.
 
     Returns list of (part_num, total_parts, markdown_content, start_msg, end_msg) tuples.
@@ -1820,6 +1867,7 @@ def generate_markdown_parts(messages, jsonl_file: Path, minimal: bool, split_lin
             total_parts=total_parts,
             start_msg_num=start_idx + 1,
             end_msg_num=end_idx,
+            display_file=display_file,
         )
 
         parts.append((part_num + 1, total_parts, part_md, start_idx + 1, end_idx))
@@ -1828,7 +1876,14 @@ def generate_markdown_parts(messages, jsonl_file: Path, minimal: bool, split_lin
 
 
 def _generate_markdown_header(
-    jsonl_file, part_messages, is_agent, part_num, total_parts, start_msg_num, end_msg_num
+    jsonl_file,
+    part_messages,
+    is_agent,
+    part_num,
+    total_parts,
+    start_msg_num,
+    end_msg_num,
+    display_file: Optional[str] = None,
 ):
     """Generate markdown header section."""
     md_lines = []
@@ -1841,7 +1896,7 @@ def _generate_markdown_header(
         md_lines.append(f"# {title_base}")
 
     md_lines.append("")
-    md_lines.append(f"**File:** {jsonl_file.name}")
+    md_lines.append(f"**File:** {display_file or jsonl_file.name}")
 
     if part_num and total_parts:
         md_lines.append(f"**Part:** {part_num} of {total_parts}")
@@ -1992,12 +2047,20 @@ def generate_markdown_for_messages(
     total_parts=None,
     start_msg_num=1,
     end_msg_num=None,
+    display_file: Optional[str] = None,
 ):
     """Generate markdown for a subset of messages (used for splitting)."""
     is_agent, parent_session_id, agent_id = _extract_agent_metadata(part_messages)
 
     md_lines = _generate_markdown_header(
-        jsonl_file, part_messages, is_agent, part_num, total_parts, start_msg_num, end_msg_num
+        jsonl_file,
+        part_messages,
+        is_agent,
+        part_num,
+        total_parts,
+        start_msg_num,
+        end_msg_num,
+        display_file=display_file,
     )
 
     if is_agent:
@@ -2286,7 +2349,7 @@ def codex_get_workspace_from_session(jsonl_file: Path) -> str:
         jsonl_file: Path to the Codex rollout .jsonl file
 
     Returns:
-        Encoded workspace name (e.g., '-home-user-project') or 'unknown'
+        Workspace path from session_meta.cwd (e.g., '/home/user/project') or 'unknown'
     """
     try:
         with open(jsonl_file, encoding="utf-8") as f:
@@ -2295,10 +2358,20 @@ def codex_get_workspace_from_session(jsonl_file: Path) -> str:
             if entry.get("type") == "session_meta":
                 cwd = entry.get("payload", {}).get("cwd", "")
                 if cwd:
-                    return path_to_encoded_workspace(cwd)
+                    return cwd
     except (OSError, json.JSONDecodeError):
         pass
     return "unknown"
+
+
+def codex_get_workspace_readable(workspace: str) -> str:
+    """Convert a Codex workspace identifier to a readable path string."""
+    if not workspace:
+        return ""
+    # Raw paths are already readable; fall back to decoding if an encoded workspace leaks in.
+    if workspace.startswith("-") or workspace.startswith("home-") or workspace.startswith("mnt-"):
+        return normalize_workspace_name(workspace, verify_local=False)
+    return workspace
 
 
 def codex_count_messages(jsonl_file: Path) -> int:
@@ -2331,7 +2404,7 @@ def codex_count_messages(jsonl_file: Path) -> int:
 # Codex Session Index - Incremental workspace mapping
 # ============================================================================
 
-CODEX_INDEX_VERSION = 2  # Bumped to rebuild index with fixed Windows path encoding
+CODEX_INDEX_VERSION = 3  # Bumped to rebuild index with raw cwd paths (not encoded)
 
 
 def codex_get_index_file() -> Path:
@@ -2562,7 +2635,7 @@ def _codex_build_session_dict(
     return {
         "agent": AGENT_CODEX,
         "workspace": workspace,
-        "workspace_readable": normalize_workspace_name(workspace, verify_local=False),
+        "workspace_readable": codex_get_workspace_readable(workspace),
         "file": jsonl_file,
         "filename": jsonl_file.name,
         "message_count": 0 if skip_message_count else codex_count_messages(jsonl_file),
@@ -2582,7 +2655,14 @@ def _codex_session_matches_filters(
 
     Uses shared _session_matches_filters for DRY implementation.
     """
-    return _session_matches_filters(workspace, modified, pattern, since_date, until_date)
+    return _session_matches_filters(
+        workspace,
+        modified,
+        pattern,
+        since_date,
+        until_date,
+        get_readable=codex_get_workspace_readable,
+    )
 
 
 def codex_scan_sessions(
@@ -7712,6 +7792,7 @@ def _prepare_codex_session(
 ) -> None:
     """Prepare Codex session dict with required fields (modifies session in place)."""
     if session.get("cwd"):
+        # Keep stats DB workspace short and stable across machines.
         encoded = path_to_encoded_workspace(session["cwd"])
         session["workspace"] = get_workspace_name_from_path(encoded)
     else:
@@ -8593,9 +8674,7 @@ def _print_workspace_item(ws: dict):
             f" — {ws['sessions']} sessions, {ws['messages']} msgs"
         )
     else:
-        print(
-            f"      Workspace: {ws['name']}" f" — {ws['sessions']} sessions, {ws['messages']} msgs"
-        )
+        print(f"      Workspace: {ws['name']} — {ws['sessions']} sessions, {ws['messages']} msgs")
 
 
 def _print_homes_and_workspaces(sources, top_workspaces, top_limit=None):
@@ -9379,10 +9458,10 @@ def _list_remote_codex_workspaces_only(remote_host: Optional[str], patterns: lis
 
     result = []
     for ws_path in workspaces:
-        # Extract short name for display
-        short_name = ws_path.split("/")[-1] if "/" in ws_path else ws_path
-        if matches_any_pattern(ws_path, patterns) or matches_any_pattern(short_name, patterns):
-            result.append({"decoded": short_name, "agent": AGENT_CODEX})
+        # Keep full path for consistency with local Codex output, but allow matching by basename too.
+        basename = ws_path.split("/")[-1] if "/" in ws_path else ws_path
+        if matches_any_pattern(ws_path, patterns) or matches_any_pattern(basename, patterns):
+            result.append({"decoded": ws_path, "agent": AGENT_CODEX})
 
     return result
 
@@ -9445,8 +9524,15 @@ def _list_remote_workspaces_only(remote_host: Optional[str], patterns: list, age
         pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
         exit_with_error(f"No workspaces matching pattern '{pattern_str}' on {remote_host}")
 
+    # Deduplicate across agents. In auto mode, the same workspace can appear in multiple backends.
+    # Since lsw output is just workspace names (no agent column), duplicates are confusing.
+    seen = set()
     for ws_info in sorted(all_workspaces, key=lambda x: x["decoded"]):
-        print(ws_info["decoded"])
+        decoded = ws_info["decoded"]
+        if decoded in seen:
+            continue
+        seen.add(decoded)
+        print(decoded)
 
 
 def _collect_remote_session_details(
@@ -9575,6 +9661,21 @@ def _parse_file_to_markdown(jsonl_file: Path, agent_type: str) -> str:
     return parse_jsonl_to_markdown(jsonl_file)
 
 
+def _parse_file_to_markdown_with_display(
+    local_file: Path, agent_type: str, display_file: Optional[str] = None
+) -> str:
+    """Parse a file to markdown, overriding the displayed filename for Claude.
+
+    This is primarily used for remote conversions where we download to a temporary
+    path but want headers to show the original remote location.
+    """
+    if agent_type == AGENT_GEMINI:
+        return gemini_parse_json_to_markdown(local_file)
+    if agent_type == AGENT_CODEX:
+        return codex_parse_jsonl_to_markdown(local_file)
+    return parse_jsonl_to_markdown(local_file, display_file=display_file)
+
+
 def _download_remote_file(remote_host: str, remote_path: str, local_path: Path) -> bool:
     """Download a file from remote host via scp. Returns True on success."""
     result = subprocess.run(
@@ -9609,7 +9710,8 @@ def _convert_remote_file(args, remote_host: str):
         output_file = Path(args.output) if args.output else Path(filename).with_suffix(".md")
         agent_type = detect_agent_from_path(Path(args.jsonl_file))
 
-        markdown = _parse_file_to_markdown(tmp_path, agent_type)
+        display_file = f"{remote_host}:{args.jsonl_file}"
+        markdown = _parse_file_to_markdown_with_display(tmp_path, agent_type, display_file)
         output_file.write_text(markdown, encoding="utf-8")
         print(output_file)
     finally:
@@ -12533,16 +12635,108 @@ def _build_export_config(
     )
 
 
+def _prepare_single_export_output(args, jsonl_file: str) -> tuple[Path, bool]:
+    """Return output file path and whether user provided a direct file."""
+    output_target = Path(_get_export_output_dir(args)).expanduser()
+    is_output_file = output_target.suffix.lower() == ".md"
+    if not is_output_file:
+        output_target.mkdir(parents=True, exist_ok=True)
+        base_name = Path(Path(jsonl_file).name).with_suffix(".md").name
+        output_file = output_target / base_name
+    else:
+        output_file = output_target
+    return output_file, is_output_file
+
+
+def _write_claude_single_file(
+    local_jsonl: Path,
+    output_file: Path,
+    minimal: bool,
+    split_lines: int,
+    display_file: Optional[str],
+) -> None:
+    """Write Claude markdown (with optional splitting) for a single session file."""
+    messages = read_jsonl_messages(local_jsonl)
+    parts = generate_markdown_parts(
+        messages, local_jsonl, minimal, split_lines, display_file=display_file
+    )
+    if parts:
+        base_stem = output_file.stem
+        for part_num, _, part_md, _, _ in parts:
+            part_path = output_file.parent / f"{base_stem}_part{part_num}.md"
+            part_path.write_text(part_md, encoding="utf-8")
+            print(part_path)
+        return
+
+    markdown = parse_jsonl_to_markdown(
+        local_jsonl, minimal=minimal, messages=messages, display_file=display_file
+    )
+    output_file.write_text(markdown, encoding="utf-8")
+    print(output_file)
+
+
+def _export_remote_claude_single_file(
+    remote: str,
+    remote_path: str,
+    output_file: Path,
+    minimal: bool,
+    split_lines: int,
+) -> None:
+    """Download remote file, render markdown, and clean up temp file."""
+    if not check_ssh_connection(remote):
+        sys.stderr.write(f"Error: Cannot connect to {remote} via passwordless SSH\n")
+        sys.stderr.write(f"Setup: ssh-copy-id {remote}\n")
+        sys.exit(1)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        if not _download_remote_file(remote, remote_path, tmp_path):
+            tmp_path.unlink()
+            sys.exit(1)
+        display_file = f"{remote}:{remote_path}"
+        _write_claude_single_file(tmp_path, output_file, minimal, split_lines, display_file)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
 def _dispatch_export_single_file(args, jsonl_file: str):
     """Handle export of a single JSONL file."""
     final_remotes = _resolve_remote_list(args)
     final_remote = final_remotes[0] if final_remotes else None
 
-    convert_args = ConvertCommandArgs(
-        jsonl_file=jsonl_file,
-        remote=final_remote,
-    )
-    cmd_convert(convert_args)
+    output_file, is_output_file = _prepare_single_export_output(args, jsonl_file)
+    minimal = getattr(args, "minimal", False)
+    split_lines = getattr(args, "split", None)
+    agent_type = detect_agent_from_path(Path(jsonl_file))
+
+    # For Claude, support --minimal and --split in single-file export. For other agents, fall back
+    # to the existing convert path (single output file).
+    if agent_type != AGENT_CLAUDE or not split_lines:
+        convert_args = ConvertCommandArgs(
+            jsonl_file=jsonl_file,
+            output=str(output_file),
+            remote=final_remote,
+        )
+        cmd_convert(convert_args)
+        return
+
+    if is_output_file and split_lines:
+        exit_with_error("Cannot use --split when -o points to a single file; use a directory.")
+
+    if final_remote:
+        _export_remote_claude_single_file(
+            final_remote, jsonl_file, output_file, minimal, split_lines
+        )
+    else:
+        _write_claude_single_file(
+            Path(jsonl_file),
+            output_file,
+            minimal,
+            split_lines,
+            display_file=jsonl_file,
+        )
 
 
 def _dispatch_export_additive(args, output_dir: Union[str, Path], patterns: list, remotes: list):
@@ -12589,8 +12783,8 @@ def _resolve_export_targets(args, targets: list, output_dir: Union[str, Path]) -
 
     # For non-Claude agents, use CWD name as pattern (matches against workspace_readable)
     if agent in ("gemini", "codex"):
-        cwd = Path.cwd()
-        return [cwd.name], False
+        patterns, _ = resolve_patterns_for_command([], agent=agent)
+        return patterns, False
 
     pattern, exists = check_current_workspace_exists()
 
