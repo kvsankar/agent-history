@@ -2490,9 +2490,7 @@ class TestAgentPropagation:
 
         monkeypatch.setattr(ch, "_collect_remote_sessions", spy_collect)
 
-        results = ch._collect_remotes_for_additive(
-            ["user@host"], [""], None, None, agent="gemini"
-        )
+        results = ch._collect_remotes_for_additive(["user@host"], [""], None, None, agent="gemini")
 
         assert results
         assert captured == [("user@host", "gemini")]

@@ -8634,12 +8634,42 @@ def _sync_wsl_windows_to_db(  # noqa: C901
 
     if include_windows:
         try:
-            win_projects = get_windows_projects_dir()
-            if win_projects:
-                stats = _sync_source_to_db(
-                    conn, win_projects, "windows", "Windows", patterns, force, show_progress
-                )
-                _accumulate_stats(totals, stats)
+            windows_users = get_windows_users_with_claude()
+            for user in windows_users:
+                win_projects = get_windows_projects_dir(user["username"])
+                if win_projects:
+                    stats = _sync_source_to_db(
+                        conn,
+                        win_projects,
+                        f"windows:{user['username']}",
+                        f"Windows ({user['username']})",
+                        patterns,
+                        force,
+                        show_progress,
+                    )
+                    _accumulate_stats(totals, stats)
+                codex_sessions = get_agent_windows_dir(user["username"], AGENT_CODEX)
+                if codex_sessions:
+                    stats = _sync_codex_to_db(
+                        conn,
+                        patterns,
+                        force,
+                        sessions_dir=codex_sessions,
+                        source_key=f"windows:{user['username']}",
+                        source_label=f"Windows ({user['username']}) Codex sessions",
+                    )
+                    _accumulate_stats(totals, stats)
+                gemini_sessions = get_agent_windows_dir(user["username"], AGENT_GEMINI)
+                if gemini_sessions:
+                    stats = _sync_gemini_to_db(
+                        conn,
+                        patterns,
+                        force,
+                        sessions_dir=gemini_sessions,
+                        source_key=f"windows:{user['username']}",
+                        source_label=f"Windows ({user['username']}) Gemini sessions",
+                    )
+                    _accumulate_stats(totals, stats)
         except (OSError, PermissionError):
             pass
 
@@ -8858,8 +8888,12 @@ def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:
 
     source_filter = getattr(args, "source", None)
     if source_filter:
-        where_clauses.append("s.source = ?")
-        params.append(source_filter)
+        if source_filter in ("windows", "wsl", "remote"):
+            where_clauses.append("(s.source = ? OR s.source LIKE ?)")
+            params.extend([source_filter, f"{source_filter}:%"])
+        else:
+            where_clauses.append("s.source = ?")
+            params.append(source_filter)
 
     # Filter by agent backend (claude, codex, gemini)
     agent_filter = getattr(args, "agent", None) or "auto"
@@ -10984,20 +11018,37 @@ def _collect_windows_sessions_from_wsl(
     results = []
     try:
         windows_users = get_windows_users_with_claude()
+        agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
         for user in windows_users:
             try:
-                windows_projects_dir = get_windows_projects_dir(user["username"])
-                native_sessions = collect_sessions_with_dedup(
-                    patterns,
-                    since_date=since_date,
-                    until_date=until_date,
-                    projects_dir=windows_projects_dir,
-                    include_cached=False,
-                    skip_message_count=workspaces_only,
-                    agent=agent,
-                )
-                if native_sessions:
-                    results.append((f"Windows ({user['username']})", native_sessions))
+                all_sessions = []
+                for scan_agent in agents_to_scan:
+                    sessions_dir = get_agent_windows_dir(user["username"], scan_agent)
+                    if not sessions_dir or not sessions_dir.exists():
+                        continue
+                    if scan_agent == AGENT_CLAUDE:
+                        sessions = collect_sessions_with_dedup(
+                            patterns,
+                            since_date=since_date,
+                            until_date=until_date,
+                            projects_dir=sessions_dir,
+                            include_cached=False,
+                            skip_message_count=workspaces_only,
+                            agent=scan_agent,
+                        )
+                    else:
+                        sessions = _scan_codex_gemini_sessions(
+                            scan_agent,
+                            patterns,
+                            since_date,
+                            until_date,
+                            sessions_dir,
+                            "windows",
+                            skip_message_count=workspaces_only,
+                        )
+                    all_sessions.extend(sessions)
+                if all_sessions:
+                    results.append((f"Windows ({user['username']})", all_sessions))
             except (OSError, PermissionError) as e:
                 sys.stderr.write(f"Error accessing Windows ({user['username']}): {e}\n")
     except (OSError, PermissionError) as e:
@@ -11399,7 +11450,7 @@ def cmd_lsh(args):
 
     if show_local:
         _lsh_show_local()
-    if show_wsl and not in_wsl:
+    if show_wsl:
         _lsh_show_wsl()
     if show_windows and in_wsl:
         _lsh_show_windows()

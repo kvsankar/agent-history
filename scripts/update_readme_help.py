@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,12 +17,16 @@ END_MARKER = "<!-- help-snippet:end -->"
 def render_help_output() -> str:
     """Return the current `agent-history --help` output as a fenced block."""
     try:
+        env = dict(os.environ)
+        env["COLUMNS"] = "120"
+        env["LINES"] = "24"
         result = subprocess.run(
             [sys.executable, "agent-history", "--help"],
             cwd=ROOT,
             capture_output=True,
             text=True,
             check=True,
+            env=env,
         )
     except subprocess.CalledProcessError as exc:  # pragma: no cover
         raise SystemExit(
