@@ -487,7 +487,6 @@ class TestUtilityHelpers:
         assert ch.is_safe_path(base, target) is False
 
 
-<<<<<<< HEAD
 class TestRemoteFetchErrors:
     def test_fetch_workspace_files_invalid_host(self, tmp_path):
         result = ch.fetch_workspace_files("bad host", "-home-user-ws", tmp_path, "hostname")
@@ -553,6 +552,7 @@ class TestRemoteFetchErrors:
     def test_get_remote_session_info_invalid_inputs(self):
         assert ch.get_remote_session_info("bad host", "-home") == []
         assert ch.get_remote_session_info("user@host", "..") == []
+
 
 class TestRsyncHelpers:
     def test_interpret_rsync_exit_code_known(self):
