@@ -12866,7 +12866,7 @@ def _add_gemini_index_parser(subparsers):
 # ============================================================================
 
 
-def _get_remote_workspaces_for_lsw(remote: str, patterns: list) -> tuple:
+def _get_remote_workspaces_for_lsw(remote: str, patterns: list, agent: str = "auto") -> tuple:
     """Get filtered workspaces from a remote for lsw.
 
     Returns:
@@ -12877,17 +12877,54 @@ def _get_remote_workspaces_for_lsw(remote: str, patterns: list) -> tuple:
         return None, []
 
     hostname = get_remote_hostname(remote)
-    remote_workspaces = list_remote_workspaces(remote)
+    sessions = []
+    agent_key = agent or "auto"
 
-    # Filter by patterns
-    if patterns and patterns != [""]:
-        remote_workspaces = [ws for ws in remote_workspaces if matches_any_pattern(ws, patterns)]
+    if agent_key in (AGENT_CLAUDE, "auto"):
+        remote_workspaces = list_remote_workspaces(remote)
 
-    # Create session-like dicts for output
-    sessions = [
-        {"workspace": ws, "workspace_readable": normalize_workspace_name(ws)}
-        for ws in remote_workspaces
-    ]
+        # Filter by patterns
+        if patterns and patterns != [""]:
+            remote_workspaces = [
+                ws for ws in remote_workspaces if matches_any_pattern(ws, patterns)
+            ]
+
+        # Create session-like dicts for output
+        sessions.extend(
+            [
+                {
+                    "workspace": ws,
+                    "workspace_readable": normalize_workspace_name(ws),
+                    "agent": AGENT_CLAUDE,
+                }
+                for ws in remote_workspaces
+            ]
+        )
+
+    if agent_key in (AGENT_CODEX, "auto"):
+        for ws in _list_remote_codex_workspaces_only(remote, patterns):
+            decoded = ws.get("decoded")
+            if decoded:
+                sessions.append(
+                    {
+                        "workspace": decoded,
+                        "workspace_readable": decoded,
+                        "agent": AGENT_CODEX,
+                    }
+                )
+
+    if agent_key in (AGENT_GEMINI, "auto"):
+        for ws in _list_remote_gemini_workspaces_only(remote, patterns):
+            decoded = ws.get("decoded")
+            if decoded:
+                sessions.append(
+                    {
+                        "workspace": decoded,
+                        "workspace_readable": decoded,
+                        "agent": AGENT_GEMINI,
+                    }
+                )
+
     return hostname, sessions
 
 
@@ -12944,7 +12981,7 @@ def _dispatch_lsw_additive(args):
     # 2. Get from SSH remotes
     for remote in remotes:
         try:
-            hostname, sessions = _get_remote_workspaces_for_lsw(remote, patterns)
+            hostname, sessions = _get_remote_workspaces_for_lsw(remote, patterns, agent=agent)
             if hostname and sessions:
                 all_results.append((f"Remote ({hostname})", sessions))
         except (OSError, subprocess.SubprocessError) as e:
@@ -12958,37 +12995,6 @@ def _filter_sessions_by_date(sessions: list, since_date, until_date) -> list:
     if not since_date and not until_date:
         return sessions
     return [s for s in sessions if is_date_in_range(s.get("modified"), since_date, until_date)]
-
-
-def _get_remote_sessions_for_additive(remote: str, patterns: list, since_date, until_date) -> tuple:
-    """Get sessions from a single remote for additive mode.
-
-    Returns:
-        Tuple of (hostname, sessions_list) or (None, []) on error
-    """
-    if not check_ssh_connection(remote):
-        sys.stderr.write(f"Cannot connect to remote: {remote}\n")
-        return None, []
-
-    hostname = get_remote_hostname(remote)
-    remote_workspaces = list_remote_workspaces(remote)
-
-    # Filter workspaces by patterns
-    if patterns and patterns != [""]:
-        remote_workspaces = [ws for ws in remote_workspaces if matches_any_pattern(ws, patterns)]
-
-    # Get sessions for each workspace
-    all_sessions = []
-    for ws in remote_workspaces:
-        remote_sessions = get_remote_session_info(remote, ws)
-        if remote_sessions:
-            ws_readable = normalize_workspace_name(ws)
-            for session in remote_sessions:
-                session["workspace_readable"] = ws_readable
-            remote_sessions = _filter_sessions_by_date(remote_sessions, since_date, until_date)
-            all_sessions.extend(remote_sessions)
-
-    return hostname, all_sessions
 
 
 def _collect_local_sessions_for_additive(
@@ -13011,16 +13017,16 @@ def _collect_local_sessions_for_additive(
     return None
 
 
-def _collect_remotes_for_additive(remotes: list, patterns: list, since_date, until_date) -> list:
+def _collect_remotes_for_additive(
+    remotes: list, patterns: list, since_date, until_date, agent: str
+) -> list:
     """Collect sessions from SSH remotes for additive mode."""
     results = []
     for remote in remotes:
         try:
-            hostname, sessions = _get_remote_sessions_for_additive(
-                remote, patterns, since_date, until_date
-            )
-            if hostname and sessions:
-                results.append((f"Remote ({hostname})", sessions))
+            result = _collect_remote_sessions(remote, patterns, since_date, until_date, agent)
+            if result:
+                results.append(result)
         except (OSError, subprocess.SubprocessError) as e:
             sys.stderr.write(f"Error accessing remote {remote}: {e}\n")
     return results
@@ -13038,7 +13044,9 @@ def _dispatch_lss_additive(args):
     local_result = _collect_local_sessions_for_additive(patterns, since_date, until_date, agent)
     if local_result:
         all_results.append(local_result)
-    all_results.extend(_collect_remotes_for_additive(remotes, patterns, since_date, until_date))
+    all_results.extend(
+        _collect_remotes_for_additive(remotes, patterns, since_date, until_date, agent)
+    )
 
     if all_results:
         print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")

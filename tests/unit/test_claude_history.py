@@ -2464,6 +2464,42 @@ class TestAgentPropagation:
             agent_value in captured_calls
         ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
+    def test_collect_remotes_for_additive_passes_agent(self, monkeypatch):
+        """_collect_remotes_for_additive should forward agent to remote collection."""
+        captured = []
+
+        def spy_collect(remote, patterns, since_date, until_date, agent):
+            captured.append((remote, agent))
+            return ("Remote (host)", [{"agent": agent}])
+
+        monkeypatch.setattr(ch, "_collect_remote_sessions", spy_collect)
+
+        results = ch._collect_remotes_for_additive(
+            ["user@host"], [""], None, None, agent="gemini"
+        )
+
+        assert results
+        assert captured == [("user@host", "gemini")]
+
+    def test_get_remote_workspaces_for_lsw_agent_filters(self, monkeypatch):
+        """_get_remote_workspaces_for_lsw should respect agent selection."""
+        monkeypatch.setattr(ch, "check_ssh_connection", lambda _r: True)
+        monkeypatch.setattr(ch, "get_remote_hostname", lambda _r: "host")
+        monkeypatch.setattr(ch, "list_remote_workspaces", lambda _r: ["-home-user-proj"])
+        monkeypatch.setattr(
+            ch, "_list_remote_gemini_workspaces_only", lambda _r, _p: [{"decoded": "hash123"}]
+        )
+        monkeypatch.setattr(ch, "_list_remote_codex_workspaces_only", lambda _r, _p: [])
+
+        hostname, sessions = ch._get_remote_workspaces_for_lsw(
+            "user@host", [""], agent=ch.AGENT_GEMINI
+        )
+
+        assert hostname == "host"
+        assert sessions == [
+            {"workspace": "hash123", "workspace_readable": "hash123", "agent": ch.AGENT_GEMINI}
+        ]
+
     @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
     def test_collect_local_sessions_passes_agent(self, monkeypatch, agent_value):
         """_collect_local_sessions should pass any agent value to collect_sessions_with_dedup."""
