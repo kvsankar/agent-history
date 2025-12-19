@@ -112,6 +112,7 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent claude --source windows --this --no-sync`
 - `./agent-history stats --agent codex --source wsl --this --no-sync`
 - `./agent-history stats --agent gemini --source wsl --this --no-sync`
+- `./agent-history lss --alias claude-history --windows --agent codex --since 2025-12-18`
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
@@ -227,6 +228,8 @@ WSL-specific issues and fixes
   - Fix: alias export now honors `--quiet` and suppresses per-file output.
 - `lss --alias <name> --wsl` ignored the source flags and still listed non-WSL entries.
   - Fix: alias listing/export now filters alias sources by `--local`, `--wsl`, `--windows`, and `-r`.
+- `lss --alias <name> --windows --agent codex` returned zero message counts.
+  - Fix: alias Codex/Gemini scans now include message counts for Windows/WSL sources.
 
 WSL-specific issues (unfixed)
 -----------------------------
@@ -258,6 +261,8 @@ Targeted tests run
 - `uv run pytest tests/unit/test_claude_history.py -k "collect_remote_codex_with_sessions"`
 - `uv run pytest tests/unit/test_claude_history.py -k "get_alias_export_options"`
 - `uv run pytest tests/unit/test_claude_history.py -k "filter_alias_config_by_flags_wsl"`
+- `uv run pytest tests/unit/test_claude_history.py -k "collect_non_claude_alias_sessions_windows_only"`
+- `uv run pytest tests/unit/test_claude_history.py -k "collect_non_claude_alias_sessions_windows_default_user"`
 
 Full test suite attempts
 ------------------------

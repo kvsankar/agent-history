@@ -10136,6 +10136,72 @@ class TestAliasEndToEnd:
 
         assert filtered == {"wsl:Ubuntu": ["-home-user-wsl"]}
 
+    def test_collect_non_claude_alias_sessions_windows_only(self, monkeypatch, tmp_path):
+        """_collect_non_claude_alias_sessions should respect windows-only source keys."""
+        monkeypatch.setattr(ch, "codex_scan_sessions", lambda *args, **kwargs: [])
+        monkeypatch.setattr(ch, "gemini_scan_sessions", lambda *args, **kwargs: [])
+        monkeypatch.setattr(ch, "get_agent_windows_dir", lambda *_args: tmp_path)
+
+        def _scan(
+            agent_type,
+            patterns,
+            since_date,
+            until_date,
+            sessions_dir,
+            source,
+            skip_message_count=True,
+        ):
+            assert skip_message_count is False
+            return [{"agent": agent_type, "source": source}]
+
+        monkeypatch.setattr(ch, "_scan_codex_gemini_sessions", _scan)
+
+        sessions = ch._collect_non_claude_alias_sessions(
+            ["claude-history"],
+            None,
+            None,
+            "auto",
+            source_keys=["windows:kvsan"],
+        )
+
+        assert {s["agent"] for s in sessions} == {ch.AGENT_CODEX, ch.AGENT_GEMINI}
+        assert all(s["source"] == "windows:kvsan" for s in sessions)
+
+    def test_collect_non_claude_alias_sessions_windows_default_user(self, monkeypatch, tmp_path):
+        """_collect_non_claude_alias_sessions should resolve Windows users when none specified."""
+        monkeypatch.setattr(ch, "codex_scan_sessions", lambda *args, **kwargs: [])
+        monkeypatch.setattr(ch, "gemini_scan_sessions", lambda *args, **kwargs: [])
+        monkeypatch.setattr(
+            ch,
+            "get_windows_users_with_claude",
+            lambda: [{"username": "kvsan"}],
+        )
+
+        seen_users = []
+
+        def _get_agent_windows_dir(username, _agent):
+            seen_users.append(username)
+            return tmp_path
+
+        monkeypatch.setattr(ch, "get_agent_windows_dir", _get_agent_windows_dir)
+
+        def _scan(agent_type, patterns, since_date, until_date, sessions_dir, source, **kwargs):
+            return [{"agent": agent_type, "source": source}]
+
+        monkeypatch.setattr(ch, "_scan_codex_gemini_sessions", _scan)
+
+        sessions = ch._collect_non_claude_alias_sessions(
+            ["claude-history"],
+            None,
+            None,
+            "auto",
+            source_keys=["windows"],
+        )
+
+        assert set(seen_users) == {"kvsan"}
+        assert {s["agent"] for s in sessions} == {ch.AGENT_CODEX, ch.AGENT_GEMINI}
+        assert all(s["source"] == "windows" for s in sessions)
+
 
 # ============================================================================
 # Section 17: Command Combination Matrix Tests

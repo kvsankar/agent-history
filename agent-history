@@ -7348,24 +7348,114 @@ def _filter_alias_config_by_flags(alias_config: dict, args) -> dict:
     return filtered
 
 
-def _collect_non_claude_alias_sessions(patterns: list, since_date, until_date, agent: str) -> list:
+def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912
+    patterns: list,
+    since_date,
+    until_date,
+    agent: str,
+    source_keys: Optional[list] = None,
+) -> list:
     """Collect Codex and Gemini sessions for alias patterns."""
+    source_keys = source_keys or ["local"]
     sessions = []
-    for pattern in patterns:
-        if agent in ("auto", AGENT_CODEX):
-            codex_sessions = codex_scan_sessions(
-                pattern=pattern, since_date=since_date, until_date=until_date
-            )
-            for s in codex_sessions:
-                s["source"] = "local"
-            sessions.extend(codex_sessions)
-        if agent in ("auto", AGENT_GEMINI):
-            gemini_sessions = gemini_scan_sessions(
-                pattern=pattern, since_date=since_date, until_date=until_date
-            )
-            for s in gemini_sessions:
-                s["source"] = "local"
-            sessions.extend(gemini_sessions)
+    for source_key in source_keys:
+        if source_key == "local":
+            for pattern in patterns:
+                if agent in ("auto", AGENT_CODEX):
+                    codex_sessions = codex_scan_sessions(
+                        pattern=pattern, since_date=since_date, until_date=until_date
+                    )
+                    for s in codex_sessions:
+                        s["source"] = "local"
+                    sessions.extend(codex_sessions)
+                if agent in ("auto", AGENT_GEMINI):
+                    gemini_sessions = gemini_scan_sessions(
+                        pattern=pattern, since_date=since_date, until_date=until_date
+                    )
+                    for s in gemini_sessions:
+                        s["source"] = "local"
+                    sessions.extend(gemini_sessions)
+            continue
+
+        if source_key.startswith("windows"):
+            username = source_key.split(":", 1)[1] if ":" in source_key else None
+            windows_users = None
+            if username is None:
+                windows_users = get_windows_users_with_claude()
+            for agent_type in (AGENT_CODEX, AGENT_GEMINI):
+                if agent not in ("auto", agent_type):
+                    continue
+                if windows_users is not None:
+                    for user_info in windows_users:
+                        user_name = user_info.get("username") or None
+                        sessions_dir = get_agent_windows_dir(user_name, agent_type)
+                        if not sessions_dir or not sessions_dir.exists():
+                            continue
+                        sessions.extend(
+                            _scan_codex_gemini_sessions(
+                                agent_type,
+                                patterns,
+                                since_date,
+                                until_date,
+                                sessions_dir,
+                                source_key,
+                                skip_message_count=False,
+                            )
+                        )
+                else:
+                    sessions_dir = get_agent_windows_dir(username, agent_type)
+                    if not sessions_dir or not sessions_dir.exists():
+                        continue
+                    sessions.extend(
+                        _scan_codex_gemini_sessions(
+                            agent_type,
+                            patterns,
+                            since_date,
+                            until_date,
+                            sessions_dir,
+                            source_key,
+                            skip_message_count=False,
+                        )
+                    )
+            continue
+
+        if source_key.startswith("wsl:"):
+            distro_name = source_key.split(":", 1)[1]
+            for agent_type in (AGENT_CODEX, AGENT_GEMINI):
+                if agent not in ("auto", agent_type):
+                    continue
+                sessions_dir = get_agent_wsl_dir(distro_name, agent_type)
+                if not sessions_dir or not sessions_dir.exists():
+                    continue
+                sessions.extend(
+                    _scan_codex_gemini_sessions(
+                        agent_type,
+                        patterns,
+                        since_date,
+                        until_date,
+                        sessions_dir,
+                        source_key,
+                        skip_message_count=False,
+                    )
+                )
+            continue
+
+        if source_key.startswith("remote:"):
+            remote_host = source_key.split("remote:", 1)[1]
+            if agent in ("auto", AGENT_CODEX):
+                codex_sessions = _collect_remote_codex_sessions_simple(
+                    remote_host, patterns, since_date, until_date
+                )
+                for s in codex_sessions:
+                    s["source"] = source_key
+                sessions.extend(codex_sessions)
+            if agent in ("auto", AGENT_GEMINI):
+                gemini_sessions = _collect_remote_gemini_sessions_simple(
+                    remote_host, patterns, since_date, until_date
+                )
+                for s in gemini_sessions:
+                    s["source"] = source_key
+                sessions.extend(gemini_sessions)
     return sessions
 
 
@@ -7405,7 +7495,9 @@ def cmd_alias_lss(
     if agent in ("auto", AGENT_CODEX, AGENT_GEMINI):
         patterns = _get_alias_workspace_patterns(alias_config)
         all_sessions.extend(
-            _collect_non_claude_alias_sessions(patterns, since_date, until_date, agent)
+            _collect_non_claude_alias_sessions(
+                patterns, since_date, until_date, agent, source_keys=list(alias_config.keys())
+            )
         )
 
     all_sessions.sort(key=lambda s: s["modified"], reverse=True)
