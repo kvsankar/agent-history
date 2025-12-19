@@ -209,6 +209,8 @@ WSL runs (expected behavior)
 - `./agent-history lss --windows --agent claude --this` (after fix)
 - `./agent-history lss --windows --agent codex --this`
 - `./agent-history lss --windows --agent gemini --this` (no sessions found as expected)
+- `./agent-history lss --agent codex --this`
+- `./agent-history lss --agent gemini --this`
 - `./agent-history lsw --windows --agent codex`
 - `./agent-history lss --agent codex --counts`
 - `./agent-history lss --agent gemini --counts`
