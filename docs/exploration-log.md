@@ -196,10 +196,15 @@ WSL runs (expected behavior)
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
+- `./agent-history lsh --agent codex`
+- `./agent-history lsh --agent gemini`
+- `./agent-history lsh --windows`
 - `./agent-history lss --windows --agent claude --this` (after fix)
 - `./agent-history lss --windows --agent codex --this`
 - `./agent-history lss --windows --agent gemini --this` (no sessions found as expected)
 - `./agent-history lsw --windows --agent codex`
+- `./agent-history lss --agent codex --counts`
+- `./agent-history lss --agent gemini --counts`
 - `./agent-history stats --agent codex --source windows --aw --no-sync`
 - `./agent-history stats --agent codex --source windows --aw --sync`
 - `./agent-history lss --wsl --agent codex`
