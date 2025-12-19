@@ -78,6 +78,15 @@ WSL runs (expected behavior)
 - `./agent-history stats --sync --agent codex --source remote:ubuntuvm01 --aw` (syncs local only without `-r`)
 - `./agent-history stats --sync -r sankar@ubuntuvm01 --agent codex --source remote:ubuntuvm01 --aw`
 - `./agent-history stats --agent codex --source remote:ubuntuvm01 --aw --no-sync` (after sync)
+- `./agent-history stats --by-day --source wsl --aw --no-sync`
+- `./agent-history stats --by-workspace --source wsl --aw --no-sync`
+- `./agent-history stats --time --source wsl --aw --no-sync`
+- `./agent-history stats --by-day --source windows --aw --no-sync`
+- `./agent-history stats --by-workspace --source windows --aw --no-sync`
+- `./agent-history stats --time --source windows --aw --no-sync`
+- `./agent-history stats --by-day --source remote:ubuntuvm01 --aw --no-sync`
+- `./agent-history stats --by-workspace --source remote:ubuntuvm01 --aw --no-sync`
+- `./agent-history stats --time --source remote:ubuntuvm01 --aw --no-sync`
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
