@@ -2532,23 +2532,39 @@ class TestAgentPropagation:
         ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
     @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
-    def test_collect_windows_sessions_from_wsl_passes_agent(self, monkeypatch, agent_value):
+    def test_collect_windows_sessions_from_wsl_passes_agent(
+        self, monkeypatch, agent_value, tmp_path
+    ):
         """_collect_windows_sessions_from_wsl should pass any agent value through."""
-        captured_calls = []
+        captured_collect = []
+        captured_scan = []
 
         def spy_collect(*args, **kwargs):
-            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            captured_collect.append(kwargs.get("agent", "NOT_PASSED"))
             return []
 
+        def spy_scan(scan_agent, *args, **kwargs):
+            captured_scan.append(scan_agent)
+            return []
+
+        def fake_windows_dir(_username, _agent):
+            return tmp_path
+
         monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+        monkeypatch.setattr(ch, "_scan_codex_gemini_sessions", spy_scan)
         monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: [{"username": "test"}])
-        monkeypatch.setattr(ch, "get_windows_projects_dir", lambda u: Path("/fake"))
+        monkeypatch.setattr(ch, "get_agent_windows_dir", fake_windows_dir)
 
         ch._collect_windows_sessions_from_wsl(["test"], None, None, agent=agent_value)
 
-        assert (
-            agent_value in captured_calls
-        ), f"agent '{agent_value}' not propagated: {captured_calls}"
+        if agent_value != ch.AGENT_CLAUDE:
+            assert (
+                agent_value in captured_scan
+            ), f"agent '{agent_value}' not propagated: {captured_scan}"
+        else:
+            assert (
+                agent_value in captured_collect
+            ), f"agent '{agent_value}' not propagated: {captured_collect}"
 
     @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
     def test_collect_wsl_sessions_from_windows_passes_agent(
