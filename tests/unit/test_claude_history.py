@@ -7254,6 +7254,19 @@ class TestSection7Remaining:
             pattern, exists = ch.check_current_workspace_exists()
             assert exists is False or pattern is None
 
+    def test_err_missing_outside_windows_drive_root(self, tmp_path, monkeypatch):
+        """7.2.5b: Windows drive root should not count as a workspace."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        ws = projects_dir / "C--sankar-projects-claude-history"
+        ws.mkdir(parents=True)
+        monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+        monkeypatch.setattr(ch, "get_current_workspace_pattern", lambda: "C--")
+        monkeypatch.setattr(ch.sys, "platform", "win32")
+
+        pattern, exists = ch.check_current_workspace_exists()
+        assert pattern == "C--"
+        assert exists is False
+
     def test_err_missing_outside_lsw(self, tmp_path):
         """7.2.6: lsw works - lists all workspaces."""
         projects_dir = tmp_path / ".claude" / "projects"
