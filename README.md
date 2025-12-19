@@ -157,11 +157,13 @@ EXAMPLES:
     agent-history export --ah --no-windows         # skip Windows sources
 
   WSL access (Windows):
-    agent-history lsh --wsl                        # list WSL distributions
+    agent-history lsh --wsl                        # list WSL distributions (with available agents)
     agent-history lsw --wsl                        # list WSL workspaces
     agent-history lsw --wsl Ubuntu                 # list from specific distro
     agent-history lss myproject --wsl              # list WSL sessions
     agent-history export myproject --wsl           # export from WSL
+    agent-history lss --wsl --agent codex          # list Codex WSL sessions
+    agent-history lss --wsl --agent gemini         # list Gemini WSL sessions
 
   Windows access (from WSL):
     agent-history lsh --windows                    # list Windows users with Claude
@@ -182,7 +184,7 @@ EXAMPLES:
 | `lss`   | `--wsl`, `--windows`, `-r HOST`, `--ah`, `--local` | Patterns, aliases (`@name` / `--alias`), `--aw`, `--this` | Uses the current workspace (or its alias) even when you target other homes. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
 | `lsw`   | Same as `lss` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
 | `export`| `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), aliases, `--aw`, `--this` | Exports the current workspace (or alias) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
-| `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/aliases, `--aw`, `--this` | Defaults to the current workspace (or alias). Use `--aw` for every workspace in the metrics DB, or pass patterns/aliases to filter. `--source` limits results to a specific home. |
+| `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/aliases, `--aw`, `--this` | Defaults to the current workspace (or alias). Use `--aw` for every workspace in the metrics DB, or pass patterns/aliases to filter. `--source` limits results to a specific home and defaults to all workspaces for that source unless `--this` is set. |
 
 When in doubt: `--aw` means “all workspaces”; `--ah` means “all homes.” Without those switches the CLI sticks to the current workspace/alias, even if you add Windows/WSL/remote flags, so you get predictable, scoped results.
 

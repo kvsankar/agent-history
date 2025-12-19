@@ -345,6 +345,41 @@ class TestGeminiStats:
         token_found = any(r["input_tokens"] == 100 and r["output_tokens"] == 50 for r in rows)
         assert token_found, f"Token data not found in messages: {[dict(r) for r in rows]}"
 
+    def test_stats_sync_sums_token_totals(self, tmp_path: Path):
+        """stats --sync should yield non-zero token totals for Gemini sessions."""
+        messages = [
+            {
+                "type": "user",
+                "content": "Ping",
+                "timestamp": "2025-01-15T12:00:00.000Z",
+            },
+            {
+                "type": "gemini",
+                "content": "Pong",
+                "timestamp": "2025-01-15T12:00:05.000Z",
+                "model": "gemini-2.5-flash",
+                "tokens": {"input": 25, "output": 10, "total": 35},
+            },
+        ]
+        make_gemini_session(tmp_path, "hashtoken456", "token-total-test", messages)
+
+        env = setup_env(tmp_path)
+        result = run_cli(["stats", "--sync", "--aw"], env=env)
+        assert result.returncode == 0, f"Sync failed: {result.stderr}"
+
+        db_path = tmp_path / ".claude-history" / "metrics.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        totals = conn.execute(
+            "SELECT SUM(m.input_tokens) as total_input, SUM(m.output_tokens) as total_output "
+            "FROM messages m JOIN sessions s ON m.session_id = s.session_id "
+            "WHERE s.agent = 'gemini'"
+        ).fetchone()
+        conn.close()
+
+        assert totals["total_input"] > 0
+        assert totals["total_output"] > 0
+
 
 # ============================================================================
 # Mixed Agent Tests

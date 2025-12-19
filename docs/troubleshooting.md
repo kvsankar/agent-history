@@ -80,13 +80,15 @@ agent-history export --ah --quiet
 
 ---
 
-### How do I access Claude Code workspaces in WSL from Windows?
+### How do I access WSL workspaces from Windows?
 
 Use the `--wsl` flag:
 ```powershell
 python agent-history lsh --wsl              # Find WSL distributions
 python agent-history lss myproject --wsl    # List sessions
 python agent-history export myproject --wsl # Export
+python agent-history lss --wsl --agent codex
+python agent-history lss --wsl --agent gemini
 ```
 
 No SSH or rsync needed - uses direct filesystem access.
@@ -239,6 +241,17 @@ wsl python agent-history export -r user@host
 3. Log in: `claude login`
 4. Create at least one conversation
 5. Verify: `ls ~/.claude/projects/`
+
+---
+
+### WSL user lookup fails or hangs
+
+If `wsl -d <distro> whoami` fails or hangs, `agent-history` falls back to UNC home scanning (e.g., `\\wsl.localhost\<distro>\home`) to find users and session paths. If discovery still fails:
+
+**Solution:**
+1. Ensure the UNC path is accessible in File Explorer
+2. Restart WSL: `wsl --shutdown` then `wsl -d Ubuntu`
+3. Re-run `agent-history lsh --wsl`
 
 ---
 

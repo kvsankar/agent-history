@@ -144,6 +144,16 @@ Internal queue management (observed but not fully understood).
 
 ---
 
+### Supported Record Types in agent-history
+
+| Type | Status | Notes |
+|------|--------|-------|
+| `user` | ✅ Supported | User messages parsed and exported |
+| `assistant` | ✅ Supported | Assistant messages parsed and exported |
+| `summary` | ? Not handled | Compacted conversation summaries |
+| `file-history-snapshot` | ? Not handled | File state snapshots |
+| `queue-operation` | ? Not handled | Internal queue events |
+
 ## Timestamps
 
 ### Availability by Record Type

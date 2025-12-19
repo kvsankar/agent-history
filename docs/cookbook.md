@@ -2,6 +2,8 @@
 
 Common workflows and recipes for managing Claude Code conversations across environments.
 
+Tip: When targeting Codex or Gemini sessions (including in WSL), pass `--agent codex` or `--agent gemini`.
+
 ## Recipe 1: Set Up a Cross-Environment Alias
 
 Create an alias to manage a project that exists on Windows, WSL, and a remote VM:

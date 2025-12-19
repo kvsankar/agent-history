@@ -363,6 +363,7 @@ agent-history stats [WORKSPACE] [OPTIONS]
 - `--source SOURCE`: Filter by source (local, wsl:distro, windows, remote:host)
 - `--since DATE`: Filter from this date
 - `--until DATE`: Filter until this date
+Note: `--source` defaults to all workspaces for that source unless `--this` is set.
 
 **Examples:**
 ```bash
@@ -485,6 +486,8 @@ agent-history export myproject -r user@server
 python agent-history lsw --wsl
 python agent-history lss myproject --wsl
 python agent-history export myproject --wsl
+python agent-history lss --wsl --agent codex
+python agent-history lss --wsl --agent gemini
 ```
 
 ### Windows Access (from WSL)

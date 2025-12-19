@@ -148,6 +148,42 @@ Alternative types: `custom_tool_call`
 
 Alternative types: `custom_tool_call_output`
 
+### `event_msg` (Token Usage)
+
+Codex emits token usage snapshots as `event_msg` records with `payload.type: "token_count"`.
+
+```json
+{
+  "timestamp": "2025-12-19T06:33:36.601Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "token_count",
+    "info": {
+      "total_token_usage": {
+        "input_tokens": 124314,
+        "cached_input_tokens": 120960,
+        "output_tokens": 552,
+        "reasoning_output_tokens": 384,
+        "total_tokens": 124866
+      },
+      "last_token_usage": {
+        "input_tokens": 63284,
+        "cached_input_tokens": 61056,
+        "output_tokens": 380,
+        "reasoning_output_tokens": 256,
+        "total_tokens": 63664
+      },
+      "model_context_window": 258400
+    }
+  }
+}
+```
+
+Notes:
+- `total_token_usage` is cumulative for the session.
+- `cached_input_tokens` reflects cache read tokens.
+- `reasoning_output_tokens` is counted as output in stats.
+
 ---
 
 ## Message Content Structure
@@ -223,20 +259,20 @@ Content can also be a simple string in some cases:
 
 | Type | Status | Notes |
 |------|--------|-------|
-| `session_meta` | ✅ Supported | ID, cwd, cli_version, source extracted |
-| `turn_context` | ✅ Supported | Model name extracted for stats |
-| `response_item.message` | ✅ Supported | User and assistant messages |
-| `response_item.function_call` | ✅ Supported | Tool calls with arguments |
-| `response_item.function_call_output` | ✅ Supported | Tool results |
-| `response_item.custom_tool_call` | ✅ Supported | Custom/MCP tool calls |
-| `response_item.custom_tool_call_output` | ✅ Supported | Custom tool results |
-| `response_item.reasoning` | ❌ Not handled | Extended thinking summaries |
-| `response_item.local_shell_call` | ❌ Not handled | Shell command executions |
-| `response_item.web_search_call` | ❌ Not handled | Web search actions |
-| `response_item.ghost_snapshot` | ❌ Not handled | Git snapshots |
-| `compacted` | ❌ Not handled | Compacted conversation items |
-| `event_msg` | ❌ Not handled | Event messages |
-
+| `session_meta` | ? Supported | ID, cwd, cli_version, source extracted |
+| `turn_context` | ? Supported | Model name extracted for stats |
+| `response_item.message` | ? Supported | User and assistant messages |
+| `response_item.function_call` | ? Supported | Tool calls with arguments |
+| `response_item.function_call_output` | ? Supported | Tool results |
+| `response_item.custom_tool_call` | ? Supported | Custom/MCP tool calls |
+| `response_item.custom_tool_call_output` | ? Supported | Custom tool results |
+| `event_msg.token_count` | ✅ Supported | Token usage snapshots |
+| `response_item.reasoning` | ? Not handled | Extended thinking summaries |
+| `response_item.local_shell_call` | ? Not handled | Shell command executions |
+| `response_item.web_search_call` | ? Not handled | Web search actions |
+| `response_item.ghost_snapshot` | ? Not handled | Git snapshots |
+| `compacted` | ? Not handled | Compacted conversation items |
+| `event_msg` | ? Not handled | Other event messages |
 ### Session Metadata Fields
 
 | Field | Shown in Export | Used in Stats |

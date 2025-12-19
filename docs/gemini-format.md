@@ -188,6 +188,16 @@ When present, contains the model's reasoning steps:
 
 ---
 
+## Supported Record Types in agent-history
+
+| Type | Status | Notes |
+|------|--------|-------|
+| `user` | ✅ Supported | User messages parsed and exported |
+| `gemini` | ✅ Supported | Assistant messages parsed and exported |
+| `info` | ✅ Supported | System info messages |
+| `warning` | ✅ Supported | System warning messages |
+| `error` | ✅ Supported | System error messages |
+
 ## Tool Calls
 
 Tool calls are embedded in Gemini messages as a `toolCalls` array:

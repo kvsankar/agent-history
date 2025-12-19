@@ -179,6 +179,22 @@ def sample_codex_jsonl_content():
                 "content": [{"type": "output_text", "text": "You are in /home/user/project"}],
             },
         },
+        {
+            "timestamp": "2025-12-08T00:40:06.000Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 1200,
+                        "cached_input_tokens": 900,
+                        "output_tokens": 100,
+                        "reasoning_output_tokens": 50,
+                        "total_tokens": 1350,
+                    }
+                },
+            },
+        },
     ]
 
 
@@ -741,6 +757,11 @@ class TestCodexRealJSONLPatterns:
         metrics = ch.codex_extract_metrics_from_jsonl(temp_codex_session_file)
         assert "session" in metrics
         assert metrics["session"]["cwd"] == "/home/user/project"
+        tokens = metrics.get("tokens_summary")
+        assert tokens is not None
+        assert tokens["input_tokens"] == 1200
+        assert tokens["output_tokens"] == 150
+        assert tokens["cache_read_tokens"] == 900
 
     def test_metrics_extraction_tool_uses(self, temp_codex_session_file):
         """Mirror: test_metrics_extraction_tool_uses"""
@@ -752,6 +773,51 @@ class TestCodexRealJSONLPatterns:
         """Should extract model from turn_context."""
         metrics = ch.codex_extract_metrics_from_jsonl(temp_codex_session_file)
         assert metrics["session"]["model"] == "gpt-5-codex"
+
+    def test_codex_supported_record_types_match_docs(self):
+        """Documented Codex record types marked supported should be parsed."""
+        doc_lines = Path("docs/codex-format.md").read_text(encoding="utf-8").splitlines()
+        supported = {
+            "session_meta",
+            "turn_context",
+            "response_item.message",
+            "response_item.function_call",
+            "response_item.function_call_output",
+            "response_item.custom_tool_call",
+            "response_item.custom_tool_call_output",
+            "event_msg.token_count",
+        }
+        documented = {
+            line.split("`")[1]
+            for line in doc_lines
+            if "✅ Supported" in line and line.strip().startswith("| `")
+        }
+        missing = documented - supported
+        assert not missing, f"Supported in docs but not handled: {sorted(missing)}"
+
+    def test_claude_supported_record_types_match_docs(self):
+        """Documented Claude record types marked supported should be parsed."""
+        doc_lines = Path("docs/claude-format.md").read_text(encoding="utf-8").splitlines()
+        supported = {"user", "assistant"}
+        documented = {
+            line.split("`")[1]
+            for line in doc_lines
+            if "✅ Supported" in line and line.strip().startswith("| `")
+        }
+        missing = documented - supported
+        assert not missing, f"Supported in docs but not handled: {sorted(missing)}"
+
+    def test_gemini_supported_record_types_match_docs(self):
+        """Documented Gemini record types marked supported should be parsed."""
+        doc_lines = Path("docs/gemini-format.md").read_text(encoding="utf-8").splitlines()
+        supported = {"user", "gemini", "info", "warning", "error"}
+        documented = {
+            line.split("`")[1]
+            for line in doc_lines
+            if "✅ Supported" in line and line.strip().startswith("| `")
+        }
+        missing = documented - supported
+        assert not missing, f"Supported in docs but not handled: {sorted(missing)}"
 
 
 # ============================================================================
@@ -1755,6 +1821,20 @@ class TestGeminiSessionScanning:
         for i in range(len(sessions) - 1):
             assert sessions[i]["modified"] >= sessions[i + 1]["modified"]
 
+    def test_scan_codex_gemini_sessions_counts_messages(self, temp_gemini_sessions_dir):
+        """_scan_codex_gemini_sessions should compute message counts when requested."""
+        sessions = ch._scan_codex_gemini_sessions(
+            ch.AGENT_GEMINI,
+            [""],
+            None,
+            None,
+            temp_gemini_sessions_dir,
+            "wsl:Ubuntu",
+            skip_message_count=False,
+        )
+        assert sessions, "Expected Gemini sessions to be discovered"
+        assert sessions[0]["message_count"] > 0
+
 
 class TestGeminiMetricsExtraction:
     """Tests for gemini_extract_metrics_from_json."""
@@ -2421,25 +2501,44 @@ class TestAgentPropagation:
         ), f"agent '{agent_value}' not propagated: {captured_calls}"
 
     @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
-    def test_collect_wsl_sessions_from_windows_passes_agent(self, monkeypatch, agent_value):
-        """_collect_wsl_sessions_from_windows should pass any agent value through."""
-        captured_calls = []
+    def test_collect_wsl_sessions_from_windows_passes_agent(self, monkeypatch, agent_value, tmp_path):
+        """_collect_wsl_sessions_from_windows should propagate agents to the right scanner."""
+        captured_collect = []
+        captured_scan = []
 
         def spy_collect(*args, **kwargs):
-            captured_calls.append(kwargs.get("agent", "NOT_PASSED"))
+            captured_collect.append(kwargs.get("agent", "NOT_PASSED"))
+            return []
+
+        def spy_scan(scan_agent, *args, **kwargs):
+            captured_scan.append(scan_agent)
             return []
 
         monkeypatch.setattr(ch, "collect_sessions_with_dedup", spy_collect)
+        monkeypatch.setattr(ch, "_scan_codex_gemini_sessions", spy_scan)
         monkeypatch.setattr(
-            ch, "get_wsl_distributions", lambda: [{"name": "Ubuntu", "has_claude": True}]
+            ch,
+            "get_wsl_distributions",
+            lambda: [
+                {
+                    "name": "Ubuntu",
+                    "has_claude": True,
+                    "has_codex": True,
+                    "has_gemini": True,
+                }
+            ],
         )
-        monkeypatch.setattr(ch, "get_wsl_projects_dir", lambda d: Path("/fake"))
+        monkeypatch.setattr(ch, "get_wsl_projects_dir", lambda d: tmp_path)
+        monkeypatch.setattr(ch, "get_agent_wsl_dir", lambda d, a: tmp_path)
 
         ch._collect_wsl_sessions_from_windows(["test"], None, None, agent=agent_value)
 
-        assert (
-            agent_value in captured_calls
-        ), f"agent '{agent_value}' not propagated: {captured_calls}"
+        if agent_value in ("codex", "gemini"):
+            assert agent_value in captured_scan
+        else:
+            assert (
+                agent_value in captured_collect
+            ), f"agent '{agent_value}' not propagated: {captured_collect}"
 
     @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
     def test_get_batch_local_sessions_passes_agent(self, monkeypatch, agent_value):
@@ -2555,13 +2654,44 @@ class TestAgentPropagation:
             agent_value in captured_args
         ), f"agent '{agent_value}' not in LssAllArgs: {captured_args}"
 
+    def test_lss_all_homes_aw_uses_all_patterns(self, monkeypatch):
+        """--aw in lss --ah should bypass pattern resolution and use all workspaces."""
+        captured_patterns = []
+
+        def spy_cmd(args):
+            captured_patterns.append(getattr(args, "patterns", None))
+
+        def fail_resolve(*_args, **_kwargs):
+            raise AssertionError("resolve_patterns_for_command should be skipped for --aw")
+
+        monkeypatch.setattr(ch, "cmd_list_all_homes", spy_cmd)
+        monkeypatch.setattr(ch, "resolve_patterns_for_command", fail_resolve)
+
+        class MockArgs:
+            since = None
+            until = None
+            remotes = []
+            this_only = False
+            agent = "gemini"
+            all_workspaces = True
+
+        ch._dispatch_lss_all_homes(MockArgs(), [])
+
+        assert captured_patterns == [[""]]
+
     @pytest.mark.parametrize("agent_value", PROPAGATION_TEST_AGENTS)
     def test_export_all_homes_args_includes_agent(self, monkeypatch, agent_value):
         """_dispatch_export_all_homes should create ExportAllArgs with any agent value."""
         captured_args = []
 
         def spy_cmd(args):
-            captured_args.append(getattr(args, "agent", "NOT_FOUND"))
+            captured_args.append(
+                (
+                    getattr(args, "agent", "NOT_FOUND"),
+                    getattr(args, "jobs", None),
+                    getattr(args, "quiet", None),
+                )
+            )
 
         monkeypatch.setattr(ch, "cmd_export_all", spy_cmd)
 
@@ -2572,12 +2702,14 @@ class TestAgentPropagation:
             minimal = False
             split = None
             agent = agent_value
+            jobs = 3
+            quiet = True
 
         ch._dispatch_export_all_homes(MockArgs(), "/tmp", ["test"], [])
 
-        assert (
-            agent_value in captured_args
-        ), f"agent '{agent_value}' not in ExportAllArgs: {captured_args}"
+        assert captured_args == [
+            (agent_value, 3, True)
+        ], f"export all args mismatch: {captured_args}"
 
 
 # ============================================================================
@@ -3258,6 +3390,21 @@ class TestJSONLReading:
         messages = ch.read_jsonl_messages(empty_file)
         assert messages == []
 
+    def test_read_handles_concatenated_json(self, temp_projects_dir):
+        """Should parse multiple JSON objects from a single line."""
+        session_file = temp_projects_dir / "-home-user-myproject" / "concat.jsonl"
+        session_file.write_text(
+            (
+                '{"type":"user","message":{"role":"user","content":"Hi"},'
+                '"timestamp":"2025-01-01T00:00:00Z","uuid":"1","sessionId":"s1"}'
+                '{"type":"assistant","message":{"role":"assistant","content":"Hello"},'
+                '"timestamp":"2025-01-01T00:00:01Z","uuid":"2","sessionId":"s1"}\n'
+            ),
+            encoding="utf-8",
+        )
+        messages = ch.read_jsonl_messages(session_file)
+        assert [m["role"] for m in messages] == ["user", "assistant"]
+
 
 # ============================================================================
 # Workspace Session Tests
@@ -3622,12 +3769,35 @@ class TestWSLOperations:
                         assert "name" in distro
                         assert "username" in distro
                         assert "has_claude" in distro
+                        assert "has_codex" in distro
+                        assert "has_gemini" in distro
 
                     # With has_claude=False, we expect distributions to be returned
                     if result:  # If parsing succeeded
                         distro_names = [d["name"] for d in result]
                         # Check that at least one known distro is present
                         assert any(name in ["Ubuntu", "Debian"] for name in distro_names)
+
+    def test_get_wsl_distro_info_unc_fallback(self):
+        """Should fall back to UNC scanning when wsl.exe user lookup fails."""
+        mock_whoami_fail = type("Result", (), {"returncode": 1, "stdout": ""})()
+
+        with patch("subprocess.run", return_value=mock_whoami_fail):
+            with patch.object(ch, "_get_wsl_usernames_from_unc", return_value=["testuser"]):
+                with patch.object(ch, "_locate_wsl_projects_dir", return_value=Path("/fake")):
+                    with patch.object(ch, "_locate_wsl_agent_dir", return_value=None):
+                        result = ch._get_wsl_distro_info("Ubuntu")
+                        assert result is not None
+                        assert result["username"] == "testuser"
+                        assert result["has_claude"] is True
+
+    def test_get_wsl_username_unc_fallback(self):
+        """_get_wsl_username falls back to UNC usernames when whoami fails."""
+        mock_whoami_fail = type("Result", (), {"returncode": 1, "stdout": ""})()
+
+        with patch("subprocess.run", return_value=mock_whoami_fail):
+            with patch.object(ch, "_get_wsl_usernames_from_unc", return_value=["testuser"]):
+                assert ch._get_wsl_username("Ubuntu") == "testuser"
 
     def test_get_wsl_projects_dir_success(self, tmp_path):
         """Should return projects directory when WSL accessible."""
@@ -5914,6 +6084,18 @@ class TestSection11StatsCommand:
         parser = ch._create_argument_parser()
         args = parser.parse_args(["stats", "--ah", "--aw"])
         assert args.all_workspaces is True
+
+    def test_stats_source_defaults_to_all_workspaces(self, monkeypatch):
+        """11.4.5: stats --source defaults to all workspaces unless --this is set."""
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(["stats", "--source", "remote:host"])
+
+        def _fail_current_workspace():
+            raise AssertionError("Current workspace lookup should be skipped for --source.")
+
+        monkeypatch.setattr(ch, "get_current_workspace_pattern", _fail_current_workspace)
+        patterns = ch._get_stats_workspace_patterns(args)
+        assert patterns == []
 
 
 # ============================================================================
@@ -8703,6 +8885,26 @@ class TestIdempotentFlags:
                     remotes = None
                     wsl = True
                     windows = False
+
+                result = ch._resolve_remote_flag(Args())
+                assert result == "wsl://Ubuntu"
+
+    def test_wsl_flag_on_windows_returns_codex_remote(self):
+        """--wsl on Windows should return codex WSL remote when Claude is absent."""
+        with patch.object(ch, "is_running_in_wsl", return_value=False):
+            with patch.object(
+                ch,
+                "get_wsl_distributions",
+                return_value=[
+                    {"name": "Ubuntu", "has_claude": False, "has_codex": True, "has_gemini": False}
+                ],
+            ):
+
+                class Args:
+                    remotes = None
+                    wsl = True
+                    windows = False
+                    agent = "codex"
 
                 result = ch._resolve_remote_flag(Args())
                 assert result == "wsl://Ubuntu"

@@ -98,6 +98,25 @@ def make_codex_session(
             ]
         )
 
+    rows.append(
+        {
+            "timestamp": f"{date_str}T10:00:04.000Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 40,
+                        "output_tokens": 15,
+                        "reasoning_output_tokens": 5,
+                        "total_tokens": 120,
+                    }
+                },
+            },
+        }
+    )
+
     session_file = session_dir / f"rollout-{session_id}.jsonl"
     with session_file.open("w", encoding="utf-8") as f:
         for row in rows:
@@ -460,6 +479,34 @@ class TestCodexStats:
         assert any(
             "codex-project" in w for w in workspaces
         ), f"Should have workspace, got: {workspaces}"
+
+    def test_stats_codex_token_totals(self, tmp_path: Path):
+        """stats --sync should store token totals from Codex event_msg.token_count."""
+        make_codex_session(tmp_path, "2025-01-15", "token-test")
+
+        env = setup_env(tmp_path)
+        result = run_cli(["stats", "--sync", "--aw"], env=env)
+        assert result.returncode == 0, f"Sync failed: {result.stderr}"
+
+        db_path = tmp_path / ".claude-history" / "metrics.db"
+        assert db_path.exists(), "Database should exist"
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT input_tokens, output_tokens, cache_read_tokens "
+            "FROM messages WHERE type = 'token_summary'"
+        ).fetchall()
+        conn.close()
+
+        assert rows, "Should have token summary rows"
+        token_found = any(
+            row["input_tokens"] == 100
+            and row["output_tokens"] == 20
+            and row["cache_read_tokens"] == 40
+            for row in rows
+        )
+        assert token_found, f"Token summary not found in rows: {[dict(r) for r in rows]}"
 
 
 # ============================================================================

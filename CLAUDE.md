@@ -25,7 +25,7 @@ chmod +x agent-history
 # List homes (all Claude Code installations)
 ./agent-history lsh                        # all hosts (local + WSL + Windows)
 ./agent-history lsh --local                # only local
-./agent-history lsh --wsl                  # only WSL distributions
+./agent-history lsh --wsl                  # only WSL distributions (shows available agents)
 ./agent-history lsh --windows              # only Windows users
 
 # List workspaces
@@ -112,6 +112,8 @@ chmod +x agent-history
 ./agent-history lsw --wsl                  # list WSL workspaces
 ./agent-history lss myproject --wsl        # list WSL sessions
 ./agent-history export myproject --wsl     # export from WSL
+./agent-history lss --wsl --agent codex    # list Codex WSL sessions
+./agent-history lss --wsl --agent gemini   # list Gemini WSL sessions
 
 ./agent-history lsw --windows              # list Windows workspaces
 ./agent-history lss myproject --windows    # list Windows sessions
@@ -347,7 +349,7 @@ The file is organized into twelve main sections:
    - `is_wsl_remote()`: Checks if remote spec is a WSL distribution (wsl://DistroName)
    - `get_source_tag()`: Generates source tag for filename/directory prefixes (wsl_{distro}_, remote_{host}_, or empty for local)
    - `get_workspace_name_from_path()`: Extracts clean workspace name from directory name, removing source tags
-   - `get_wsl_distributions()`: Gets list of available WSL distributions with Claude workspaces
+   - `get_wsl_distributions()`: Gets list of available WSL distributions with agent data
    - `get_wsl_projects_dir()`: Gets Claude projects directory for a WSL distribution via \\wsl.localhost\ path
 
 7. **Remote Operations (SSH)**
@@ -405,7 +407,7 @@ The file is organized into twelve main sections:
    - `cmd_list()`: Shows all sessions for a workspace with stats (supports `-r` for remote/WSL)
    - `cmd_convert()`: Converts single .jsonl file to markdown (supports `-r` for remote/WSL)
    - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote/WSL, `--split` for splitting, organized export by default)
-   - `cmd_list_wsl()`: Lists WSL distributions with Claude Code workspaces
+   - `cmd_list_wsl()`: Lists WSL distributions with agent data
    - `cmd_fetch()`: Pre-caches remote sessions via SSH (one-way sync)
    - `cmd_export_all()`: Exports from all homes (local + all WSL + optional SSH remotes) in one command
    - `generate_index_manifest()`: Generates index.md summary file with per-source and per-workspace statistics

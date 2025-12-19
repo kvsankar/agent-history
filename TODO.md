@@ -20,6 +20,7 @@
 - [ ] Schema migration atomicity (race condition possible)
 - [ ] TOCTOU race (file deleted between stat and open)
 - [ ] Query limits for large databases (>100k sessions)
+- [ ] Codex cache semantics: consider per-turn vs cumulative token_count reporting
 
 ## Command Combinations
 

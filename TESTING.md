@@ -737,6 +737,8 @@ Minimal test set including new features:
 | 7 | `agent-history stats --sync` | Syncs to DB |
 | 8 | `agent-history stats` | Shows summary |
 | 9 | `agent-history stats --time` | Shows time tracking |
+| 10 | `agent-history stats --agent codex` | Tokens are non-zero for Codex sessions |
+| 11 | `agent-history stats --agent gemini` | Tokens are non-zero for Gemini sessions |
 
 **Environment-specific additions:**
 

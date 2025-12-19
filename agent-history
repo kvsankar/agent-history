@@ -468,6 +468,8 @@ class ExportAllConfig:
     minimal: bool = False
     split: Optional[int] = None
     agent: str = "auto"
+    jobs: int = 1
+    quiet: bool = False
     index: bool = True
 
     @property
@@ -1382,6 +1384,29 @@ def decode_content(encoded_str: str) -> str:
         return f"[Error decoding content: {e}]"
 
 
+def _iter_json_objects(line: str) -> Optional[list]:
+    """Parse one or more JSON objects from a line.
+
+    Returns a list of objects, or None if parsing fails.
+    """
+    decoder = json.JSONDecoder()
+    idx = 0
+    end = len(line)
+    objects = []
+    while idx < end:
+        while idx < end and line[idx].isspace():
+            idx += 1
+        if idx >= end:
+            break
+        try:
+            obj, next_idx = decoder.raw_decode(line, idx)
+        except json.JSONDecodeError:
+            return None
+        objects.append(obj)
+        idx = next_idx
+    return objects
+
+
 def _format_tool_use_block(block: dict) -> list:
     """Format a tool_use block as markdown lines."""
     tool_name = block.get("name", "unknown")
@@ -1716,26 +1741,31 @@ def read_jsonl_messages(jsonl_file: Path):
     """
     messages = []
 
+    def handle_entry(entry: dict) -> None:
+        entry_type = entry.get("type")
+        if entry_type in ("user", "assistant"):
+            message_obj = entry.get("message", {})
+            role = message_obj.get("role", entry_type)
+            timestamp = entry.get("timestamp", "")
+            content = extract_content(message_obj)
+
+            messages.append(_build_message_dict(entry, message_obj, role, content, timestamp))
+
     with open(jsonl_file, encoding="utf-8") as f:
         for line in f:
             try:
-                entry = json.loads(line)
-
-                # Look for user or assistant message types
-                entry_type = entry.get("type")
-                if entry_type in ("user", "assistant"):
-                    message_obj = entry.get("message", {})
-                    role = message_obj.get("role", entry_type)
-                    timestamp = entry.get("timestamp", "")
-                    content = extract_content(message_obj)
-
-                    messages.append(
-                        _build_message_dict(entry, message_obj, role, content, timestamp)
-                    )
-
+                handle_entry(json.loads(line))
             except json.JSONDecodeError as e:
-                print(f"Warning: Couldn't parse line: {e}", file=sys.stderr)
-                continue
+                parsed = _iter_json_objects(line)
+                if not parsed:
+                    print(
+                        f"Warning: Couldn't parse line in {jsonl_file.name}: {e}",
+                        file=sys.stderr,
+                    )
+                    continue
+                for entry in parsed:
+                    if isinstance(entry, dict):
+                        handle_entry(entry)
 
     return messages
 
@@ -2319,19 +2349,41 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
         "tool_uses": [],
     }
 
-    # Extract model from turn_context
+    # Extract model and token usage (latest total_token_usage) from event stream.
+    last_token_usage = None
+    last_token_timestamp = None
     try:
         with open(jsonl_file, encoding="utf-8") as f:
             for line in f:
                 try:
                     entry = json.loads(line)
-                    if entry.get("type") == "turn_context":
-                        metrics["session"]["model"] = entry.get("payload", {}).get("model")
-                        break
                 except json.JSONDecodeError:
                     continue
+
+                entry_type = entry.get("type")
+                payload = entry.get("payload", {})
+
+                if entry_type == "turn_context" and not metrics["session"]["model"]:
+                    metrics["session"]["model"] = payload.get("model")
+                    continue
+
+                if entry_type == "event_msg" and payload.get("type") == "token_count":
+                    info = payload.get("info") or {}
+                    total_usage = info.get("total_token_usage")
+                    if total_usage:
+                        last_token_usage = total_usage
+                        last_token_timestamp = entry.get("timestamp")
     except OSError:
         pass
+
+    if last_token_usage:
+        metrics["tokens_summary"] = {
+            "input_tokens": last_token_usage.get("input_tokens", 0),
+            "output_tokens": last_token_usage.get("output_tokens", 0)
+            + last_token_usage.get("reasoning_output_tokens", 0),
+            "cache_read_tokens": last_token_usage.get("cached_input_tokens", 0),
+            "timestamp": last_token_timestamp,
+        }
 
     for msg in messages:
         if msg.get("is_tool_call"):
@@ -4734,6 +4786,61 @@ def _get_wsl_distro_names() -> list:
         return []
 
 
+def _get_wsl_usernames_from_unc(distro_name: str) -> list:
+    """Discover WSL usernames via UNC paths when wsl.exe is unavailable."""
+    candidates = [
+        Path(f"//wsl.localhost/{distro_name}/home"),
+        Path(f"//wsl$/{distro_name}/home"),
+    ]
+    for base in candidates:
+        try:
+            if not _path_exists_with_timeout(base, timeout=5.0):
+                continue
+            return [
+                p.name for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")
+            ]
+        except (OSError, PermissionError):
+            continue
+    return []
+
+
+def _build_wsl_distro_info(distro_name: str, usernames: list) -> Optional[dict]:
+    """Build WSL distro info from one or more candidate usernames."""
+    for username in usernames:
+        claude_path = _locate_wsl_projects_dir(distro_name, username)
+        codex_path = _locate_wsl_agent_dir(distro_name, username, AGENT_CODEX)
+        gemini_path = _locate_wsl_agent_dir(distro_name, username, AGENT_GEMINI)
+        has_claude = claude_path is not None
+        has_codex = codex_path is not None
+        has_gemini = gemini_path is not None
+        if has_claude or has_codex or has_gemini:
+            return {
+                "name": distro_name,
+                "username": username,
+                "has_claude": has_claude,
+                "has_codex": has_codex,
+                "has_gemini": has_gemini,
+                "path": str(claude_path) if claude_path else None,
+                "codex_path": str(codex_path) if codex_path else None,
+                "gemini_path": str(gemini_path) if gemini_path else None,
+            }
+
+    if not usernames:
+        return None
+
+    username = usernames[0]
+    return {
+        "name": distro_name,
+        "username": username,
+        "has_claude": False,
+        "has_codex": False,
+        "has_gemini": False,
+        "path": None,
+        "codex_path": None,
+        "gemini_path": None,
+    }
+
+
 def _get_wsl_distro_info(distro_name: str) -> Optional[dict]:
     """Get info for a single WSL distribution. Returns None on failure."""
     try:
@@ -4745,27 +4852,21 @@ def _get_wsl_distro_info(distro_name: str) -> Optional[dict]:
             timeout=5,
         )
         if user_result.returncode != 0:
-            return None
+            usernames = _get_wsl_usernames_from_unc(distro_name)
+            return _build_wsl_distro_info(distro_name, usernames)
 
         username = user_result.stdout.strip()
-        claude_path = _locate_wsl_projects_dir(distro_name, username)
-        has_claude = claude_path is not None
-
-        return {
-            "name": distro_name,
-            "username": username,
-            "has_claude": has_claude,
-            "path": str(claude_path) if claude_path else None,
-        }
+        return _build_wsl_distro_info(distro_name, [username])
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None
+        usernames = _get_wsl_usernames_from_unc(distro_name)
+        return _build_wsl_distro_info(distro_name, usernames) if usernames else None
 
 
 def get_wsl_distributions() -> list:
     """Get list of available WSL distributions.
 
     Returns:
-        List of dicts with distro info: {'name': str, 'username': str, 'has_claude': bool}
+        List of dicts with distro info: {'name': str, 'username': str, 'has_claude': bool, ...}
 
     Test override:
         If environment variables are set:
@@ -4786,7 +4887,18 @@ def get_wsl_distributions() -> list:
     if test_distro and test_projects:
         p = Path(test_projects)
         if p.exists():
-            return [{"name": test_distro, "username": "test", "has_claude": True, "path": str(p)}]
+            return [
+                {
+                    "name": test_distro,
+                    "username": "test",
+                    "has_claude": True,
+                    "has_codex": False,
+                    "has_gemini": False,
+                    "path": str(p),
+                    "codex_path": None,
+                    "gemini_path": None,
+                }
+            ]
 
     if platform.system() != "Windows":
         return []
@@ -4799,6 +4911,38 @@ def get_wsl_distributions() -> list:
         if info:
             distributions.append(info)
     return distributions
+
+
+def _wsl_distro_has_agent(distro: dict, agent: str) -> bool:
+    """Check whether a WSL distro has data for the requested agent."""
+    if agent == AGENT_CLAUDE:
+        return bool(distro.get("has_claude"))
+    if agent == AGENT_CODEX:
+        return bool(distro.get("has_codex"))
+    if agent == AGENT_GEMINI:
+        return bool(distro.get("has_gemini"))
+    return bool(distro.get("has_claude") or distro.get("has_codex") or distro.get("has_gemini"))
+
+
+def _filter_wsl_distros_for_agent(wsl_distros: list, agent: Optional[str]) -> list:
+    """Filter WSL distros by agent presence (auto includes any)."""
+    agent_key = agent or "auto"
+    return [d for d in wsl_distros if _wsl_distro_has_agent(d, agent_key)]
+
+
+def _select_wsl_distro_for_agent(wsl_distros: list, agent: Optional[str]) -> Optional[dict]:
+    """Pick the first WSL distro that matches the requested agent."""
+    agent_key = agent or "auto"
+    if agent_key == "auto":
+        for flag in ("has_claude", "has_codex", "has_gemini"):
+            for distro in wsl_distros:
+                if distro.get(flag):
+                    return distro
+        return None
+    for distro in wsl_distros:
+        if _wsl_distro_has_agent(distro, agent_key):
+            return distro
+    return None
 
 
 def _get_wsl_candidate_paths(distro_name: str, username: str) -> list:
@@ -4952,7 +5096,7 @@ def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Option
 
     for candidate in candidates:
         try:
-            if candidate.exists():
+            if _path_exists_with_timeout(candidate, timeout=5.0):
                 return candidate
         except OSError:
             continue
@@ -4979,7 +5123,10 @@ def _get_wsl_username(distro_name: str) -> Optional[str]:
             timeout=5,
         )
         if result.returncode == 0:
-            return result.stdout.strip()
+            username = result.stdout.strip()
+            return username if username else None
+        usernames = _get_wsl_usernames_from_unc(distro_name)
+        return usernames[0] if usernames else None
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return None
@@ -5583,8 +5730,6 @@ def _ensure_trailing_slash(path: str) -> str:
 def _get_wsl_path_for_windows_path(path: Path) -> Optional[str]:
     """Convert a Windows path to a WSL path using wslpath."""
     wsl_cmd = get_command_path("wsl")
-    if wsl_cmd == "wsl" and shutil.which("wsl") is None:
-        return None
     try:
         win_path = str(path).replace("\\", "/")
         result = subprocess.run(
@@ -5603,7 +5748,27 @@ def _get_wsl_path_for_windows_path(path: Path) -> Optional[str]:
 def _run_rsync_with_wsl_fallback(
     rsync_cmd: list[str], local_dir: Path, timeout: int
 ) -> subprocess.CompletedProcess:
-    """Run rsync, falling back to WSL rsync on Windows for protocol errors."""
+    """Run rsync, preferring WSL rsync on Windows and falling back as needed."""
+    if os.name == "nt":
+        wsl_path = _get_wsl_path_for_windows_path(local_dir)
+        if wsl_path:
+            remote_path = rsync_cmd[-2]
+            wsl_cmd = [
+                get_command_path("wsl"),
+                "rsync",
+                *rsync_cmd[1:-2],
+                remote_path,
+                _ensure_trailing_slash(wsl_path),
+            ]
+            try:
+                wsl_result = subprocess.run(
+                    wsl_cmd, check=False, capture_output=True, text=True, timeout=timeout
+                )
+                if wsl_result.returncode == 0:
+                    return wsl_result
+            except (subprocess.SubprocessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                pass
+
     result = subprocess.run(rsync_cmd, check=False, capture_output=True, text=True, timeout=timeout)
     if result.returncode == 0 or os.name != "nt" or result.returncode != 12:
         return result
@@ -7776,6 +7941,25 @@ def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
     tool_uses = []
     all_timestamps = []
 
+    def handle_entry(entry: dict) -> None:
+        entry_type = entry.get("type")
+        if entry_type not in ("user", "assistant"):
+            return
+
+        timestamp = entry.get("timestamp", "")
+        _update_session_from_entry(session_info, entry)
+
+        if timestamp:
+            all_timestamps.append(timestamp)
+        session_info["message_count"] += 1
+
+        messages.append(_extract_message_record(entry, entry_type, timestamp))
+
+        if entry_type == "assistant":
+            tool_uses.extend(_extract_tool_uses_from_content(entry, timestamp))
+        elif entry_type == "user":
+            _update_tool_errors_from_results(entry, tool_uses)
+
     try:
         with open(jsonl_file, encoding="utf-8") as f:
             for raw_line in f:
@@ -7784,27 +7968,17 @@ def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
                     continue
 
                 try:
-                    entry = json.loads(line)
-                    entry_type = entry.get("type")
-                    if entry_type not in ("user", "assistant"):
+                    handle_entry(json.loads(line))
+                except json.JSONDecodeError as e:
+                    parsed = _iter_json_objects(line)
+                    if not parsed:
+                        sys.stderr.write(
+                            f"Warning: Couldn't parse line in {jsonl_file.name}: {e}\n"
+                        )
                         continue
-
-                    timestamp = entry.get("timestamp", "")
-                    _update_session_from_entry(session_info, entry)
-
-                    if timestamp:
-                        all_timestamps.append(timestamp)
-                    session_info["message_count"] += 1
-
-                    messages.append(_extract_message_record(entry, entry_type, timestamp))
-
-                    if entry_type == "assistant":
-                        tool_uses.extend(_extract_tool_uses_from_content(entry, timestamp))
-                    elif entry_type == "user":
-                        _update_tool_errors_from_results(entry, tool_uses)
-
-                except json.JSONDecodeError:
-                    continue
+                    for entry in parsed:
+                        if isinstance(entry, dict):
+                            handle_entry(entry)
     except OSError as e:
         sys.stderr.write(f"Warning: Error reading {jsonl_file}: {e}\n")
 
@@ -7956,6 +8130,32 @@ def _write_metrics_to_db(
             ),
         )
 
+    tokens_summary = metrics.get("tokens_summary")
+    if agent == AGENT_CODEX and tokens_summary:
+        conn.execute(
+            """
+            INSERT INTO messages (
+                uuid, file_path, session_id, parent_uuid, type, timestamp,
+                model, stop_reason, input_tokens, output_tokens,
+                cache_creation_tokens, cache_read_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                None,
+                file_path,
+                session_id,
+                None,
+                "token_summary",
+                tokens_summary.get("timestamp") or session.get("end_time"),
+                None,
+                None,
+                tokens_summary.get("input_tokens", 0),
+                tokens_summary.get("output_tokens", 0),
+                0,
+                tokens_summary.get("cache_read_tokens", 0),
+            ),
+        )
+
     # Insert tool uses
     for tu in metrics["tool_uses"]:
         conn.execute(
@@ -8088,18 +8288,26 @@ def _sync_workspace_files_to_db(conn, local_dir: Path, source_key: str, stats: d
             stats["errors"] += 1
 
 
-def _sync_codex_to_db(conn, patterns: list, force: bool) -> dict:
+def _sync_codex_to_db(
+    conn,
+    patterns: list,
+    force: bool,
+    sessions_dir: Optional[Path] = None,
+    source_key: str = "codex",
+    source_label: Optional[str] = None,
+) -> dict:
     """Sync Codex sessions from ~/.codex/sessions/ to database.
 
     Codex stores sessions in ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
     """
     stats = {"synced": 0, "skipped": 0, "errors": 0}
-    sessions_dir = codex_get_home_dir()
+    sessions_dir = sessions_dir or codex_get_home_dir()
 
     if not sessions_dir.exists():
         return stats
 
-    print("Scanning Codex sessions...")
+    label = source_label or "Codex sessions"
+    print(f"Scanning {label}...")
 
     # Walk through YYYY/MM/DD structure
     for jsonl_file in sessions_dir.glob("*/*/*/rollout-*.jsonl"):
@@ -8110,7 +8318,7 @@ def _sync_codex_to_db(conn, patterns: list, force: bool) -> dict:
                 continue
 
         try:
-            if sync_file_to_db(conn, jsonl_file, "codex", force):
+            if sync_file_to_db(conn, jsonl_file, source_key, force):
                 stats["synced"] += 1
             else:
                 stats["skipped"] += 1
@@ -8121,18 +8329,26 @@ def _sync_codex_to_db(conn, patterns: list, force: bool) -> dict:
     return stats
 
 
-def _sync_gemini_to_db(conn, patterns: list, force: bool) -> dict:
+def _sync_gemini_to_db(
+    conn,
+    patterns: list,
+    force: bool,
+    sessions_dir: Optional[Path] = None,
+    source_key: str = "gemini",
+    source_label: Optional[str] = None,
+) -> dict:
     """Sync Gemini sessions from ~/.gemini/tmp/*/chats/ to database.
 
     Gemini stores sessions in ~/.gemini/tmp/<project_hash>/chats/session-*.json
     """
     stats = {"synced": 0, "skipped": 0, "errors": 0}
-    sessions_dir = gemini_get_home_dir()
+    sessions_dir = sessions_dir or gemini_get_home_dir()
 
     if not sessions_dir.exists():
         return stats
 
-    print("Scanning Gemini sessions...")
+    label = source_label or "Gemini sessions"
+    print(f"Scanning {label}...")
 
     # Walk through <hash>/chats/ structure
     for json_file in sessions_dir.glob("*/chats/session-*.json"):
@@ -8143,7 +8359,7 @@ def _sync_gemini_to_db(conn, patterns: list, force: bool) -> dict:
                 continue
 
         try:
-            if sync_file_to_db(conn, json_file, "gemini", force):
+            if sync_file_to_db(conn, json_file, source_key, force):
                 stats["synced"] += 1
             else:
                 stats["skipped"] += 1
@@ -8337,6 +8553,30 @@ def _sync_wsl_windows_to_db(
                         show_progress=show_progress,
                     )
                     _accumulate_stats(totals, stats)
+            if distro.get("has_codex"):
+                codex_sessions = get_agent_wsl_dir(distro["name"], AGENT_CODEX)
+                if codex_sessions:
+                    stats = _sync_codex_to_db(
+                        conn,
+                        patterns,
+                        force,
+                        sessions_dir=codex_sessions,
+                        source_key=f"wsl:{distro['name']}",
+                        source_label=f"WSL ({distro['name']}) Codex sessions",
+                    )
+                    _accumulate_stats(totals, stats)
+            if distro.get("has_gemini"):
+                gemini_sessions = get_agent_wsl_dir(distro["name"], AGENT_GEMINI)
+                if gemini_sessions:
+                    stats = _sync_gemini_to_db(
+                        conn,
+                        patterns,
+                        force,
+                        sessions_dir=gemini_sessions,
+                        source_key=f"wsl:{distro['name']}",
+                        source_label=f"WSL ({distro['name']}) Gemini sessions",
+                    )
+                    _accumulate_stats(totals, stats)
 
     if include_windows:
         try:
@@ -8358,6 +8598,28 @@ def _sync_remote_to_db(conn, remote: str, totals: dict, patterns: list, force: b
         if wsl_projects:
             stats = _sync_source_to_db(
                 conn, wsl_projects, f"wsl:{distro}", f"WSL ({distro})", patterns, force
+            )
+            _accumulate_stats(totals, stats)
+        codex_sessions = get_agent_wsl_dir(distro, AGENT_CODEX)
+        if codex_sessions:
+            stats = _sync_codex_to_db(
+                conn,
+                patterns,
+                force,
+                sessions_dir=codex_sessions,
+                source_key=f"wsl:{distro}",
+                source_label=f"WSL ({distro}) Codex sessions",
+            )
+            _accumulate_stats(totals, stats)
+        gemini_sessions = get_agent_wsl_dir(distro, AGENT_GEMINI)
+        if gemini_sessions:
+            stats = _sync_gemini_to_db(
+                conn,
+                patterns,
+                force,
+                sessions_dir=gemini_sessions,
+                source_key=f"wsl:{distro}",
+                source_label=f"WSL ({distro}) Gemini sessions",
             )
             _accumulate_stats(totals, stats)
     elif remote == "windows" or remote.startswith("windows:"):
@@ -8470,9 +8732,14 @@ def _get_stats_workspace_patterns(args) -> list:
     all_workspaces = getattr(args, "all_workspaces", False)
     this_only = getattr(args, "this_only", False)
     agent = getattr(args, "agent", None) or "auto"
+    source_filter = getattr(args, "source", None)
 
     if workspace_patterns or all_workspaces:
         return workspace_patterns
+
+    # If filtering by source, default to all workspaces for that source unless --this is set.
+    if source_filter and not this_only:
+        return []
 
     full_pattern = get_current_workspace_pattern()
     ws_name = get_workspace_name_from_path(full_pattern)
@@ -9326,7 +9593,13 @@ def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
 
 
 def _scan_codex_gemini_sessions(
-    scan_agent: str, patterns: list, since_date, until_date, sessions_dir: Path, source: str
+    scan_agent: str,
+    patterns: list,
+    since_date,
+    until_date,
+    sessions_dir: Path,
+    source: str,
+    skip_message_count: bool = True,
 ) -> list:
     """Scan Codex or Gemini sessions from a directory."""
     pattern_str = patterns[0] if patterns else ""
@@ -9336,7 +9609,7 @@ def _scan_codex_gemini_sessions(
             since_date=since_date,
             until_date=until_date,
             sessions_dir=sessions_dir,
-            skip_message_count=True,
+            skip_message_count=skip_message_count,
         )
     else:  # AGENT_GEMINI
         sessions = gemini_scan_sessions(
@@ -9344,7 +9617,7 @@ def _scan_codex_gemini_sessions(
             since_date=since_date,
             until_date=until_date,
             sessions_dir=sessions_dir,
-            skip_message_count=True,
+            skip_message_count=skip_message_count,
         )
     for s in sessions:
         s["source"] = source
@@ -9388,14 +9661,20 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
                 since_date,
                 until_date,
                 projects_dir=sessions_dir,
-                skip_message_count=True,
+                skip_message_count=workspaces_only,
                 agent=AGENT_CLAUDE,
             )
             all_sessions.extend(sessions)
         else:
             all_sessions.extend(
                 _scan_codex_gemini_sessions(
-                    scan_agent, patterns, since_date, until_date, sessions_dir, "windows"
+                    scan_agent,
+                    patterns,
+                    since_date,
+                    until_date,
+                    sessions_dir,
+                    "windows",
+                    skip_message_count=workspaces_only,
                 )
             )
 
@@ -9449,14 +9728,20 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
                     since_date,
                     until_date,
                     projects_dir=sessions_dir,
-                    skip_message_count=True,
+                    skip_message_count=workspaces_only,
                     agent=AGENT_CLAUDE,
                 )
                 all_sessions.extend(sessions)
         else:
             all_sessions.extend(
                 _scan_codex_gemini_sessions(
-                    scan_agent, patterns, since_date, until_date, sessions_dir, source
+                    scan_agent,
+                    patterns,
+                    since_date,
+                    until_date,
+                    sessions_dir,
+                    source,
+                    skip_message_count=workspaces_only,
                 )
             )
 
@@ -9948,26 +10233,56 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
     assert remote_host is not None
     distro_name = remote_host[WSL_PREFIX_LEN:]  # Remove 'wsl://' prefix
 
-    wsl_projects_dir = get_wsl_projects_dir(distro_name)
-    if not wsl_projects_dir:
-        sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
-        sys.stderr.write("\nTips:\n")
-        sys.stderr.write("  • Make sure Claude Code is installed in WSL\n")
-        sys.stderr.write("  • Try: agent-history lsh --wsl\n")
-        sys.exit(1)
-
     agent = getattr(args, "agent", None) or "auto"
-    sessions = collect_sessions_with_dedup(
-        patterns,
-        since_date,
-        until_date,
-        projects_dir=wsl_projects_dir,
-        skip_message_count=True,  # Slow over Windows/WSL boundary
-        agent=agent,
-    )
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+
+    sessions = []
+    for scan_agent in agents_to_scan:
+        if scan_agent == AGENT_CLAUDE:
+            wsl_projects_dir = get_wsl_projects_dir(distro_name)
+            if not wsl_projects_dir:
+                if agent == AGENT_CLAUDE:
+                    sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
+                    sys.stderr.write("\nTips:\n")
+                    sys.stderr.write("  • Make sure Claude Code is installed in WSL\n")
+                    sys.stderr.write("  • Try: agent-history lsh --wsl\n")
+                    sys.exit(1)
+                continue
+            sessions.extend(
+                collect_sessions_with_dedup(
+                    patterns,
+                    since_date,
+                    until_date,
+                    projects_dir=wsl_projects_dir,
+                    skip_message_count=True,  # Slow over Windows/WSL boundary
+                    agent=AGENT_CLAUDE,
+                )
+            )
+            continue
+
+        sessions_dir = get_agent_wsl_dir(distro_name, scan_agent)
+        if not sessions_dir or not sessions_dir.exists():
+            if agent == scan_agent:
+                sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
+                sys.stderr.write("\nTips:\n")
+                sys.stderr.write(f"  • Make sure {scan_agent} is installed in WSL\n")
+                sys.stderr.write("  • Try: agent-history lsh --wsl\n")
+                sys.exit(1)
+            continue
+
+        sessions.extend(
+            _scan_codex_gemini_sessions(
+                scan_agent,
+                patterns,
+                since_date,
+                until_date,
+                sessions_dir,
+                f"wsl:{distro_name}",
+            )
+        )
 
     if not sessions:
-        sys.stderr.write(f"Error: No native sessions found in WSL '{distro_name}'\n")
+        sys.stderr.write(f"Error: No sessions found in WSL '{distro_name}'\n")
         sys.exit(1)
 
     return sessions
@@ -10528,7 +10843,7 @@ def cmd_version(args):
 
 
 def cmd_list_wsl(args):
-    """List available WSL distributions with Claude Code workspaces."""
+    """List available WSL distributions with agent workspaces."""
     distributions = get_wsl_distributions()
 
     if not distributions:
@@ -10536,17 +10851,26 @@ def cmd_list_wsl(args):
         sys.stderr.write("Make sure WSL is installed on Windows.\n")
         sys.exit(1)
 
-    # Filter to only distributions with Claude Code
-    claude_distros = [d for d in distributions if d["has_claude"]]
+    # Filter to only distributions with agent data
+    active_distros = _filter_wsl_distros_for_agent(distributions, "auto")
 
-    if not claude_distros:
-        sys.stderr.write("No WSL distributions with Claude Code workspaces found.\n")
+    if not active_distros:
+        sys.stderr.write("No WSL distributions with agent data found.\n")
         sys.exit(1)
 
     # Print tab-separated output
-    print("DISTRO\tUSERNAME\tPATH")
-    for distro in claude_distros:
-        print(f"{distro['name']}\t{distro['username']}\t{distro['path']}")
+    print("DISTRO\tUSERNAME\tAGENTS\tPATH")
+    for distro in active_distros:
+        agents = []
+        if distro.get("has_claude"):
+            agents.append(AGENT_CLAUDE)
+        if distro.get("has_codex"):
+            agents.append(AGENT_CODEX)
+        if distro.get("has_gemini"):
+            agents.append(AGENT_GEMINI)
+        agents_label = ",".join(agents) if agents else "none"
+        path_hint = distro.get("path") or distro.get("codex_path") or distro.get("gemini_path") or ""
+        print(f"{distro['name']}\t{distro['username']}\t{agents_label}\t{path_hint}")
 
 
 def cmd_list_windows(args):
@@ -10588,7 +10912,9 @@ def _collect_local_sessions(patterns, since_date, until_date, in_wsl, agent: str
     return results
 
 
-def _collect_windows_sessions_from_wsl(patterns, since_date, until_date, agent: str = "auto"):
+def _collect_windows_sessions_from_wsl(
+    patterns, since_date, until_date, agent: str = "auto", workspaces_only: bool = False
+):
     """Collect sessions from Windows when running in WSL."""
     results = []
     try:
@@ -10602,7 +10928,7 @@ def _collect_windows_sessions_from_wsl(patterns, since_date, until_date, agent: 
                     until_date=until_date,
                     projects_dir=windows_projects_dir,
                     include_cached=False,
-                    skip_message_count=True,
+                    skip_message_count=workspaces_only,
                     agent=agent,
                 )
                 if native_sessions:
@@ -10614,26 +10940,49 @@ def _collect_windows_sessions_from_wsl(patterns, since_date, until_date, agent: 
     return results
 
 
-def _collect_wsl_sessions_from_windows(patterns, since_date, until_date, agent: str = "auto"):
+def _collect_wsl_sessions_from_windows(
+    patterns, since_date, until_date, agent: str = "auto", workspaces_only: bool = False
+):
     """Collect sessions from WSL when running on Windows."""
     results = []
     try:
         wsl_distros = get_wsl_distributions()
-        claude_distros = [d for d in wsl_distros if d["has_claude"]]
-        for distro in claude_distros:
+        filtered_distros = _filter_wsl_distros_for_agent(wsl_distros, agent)
+        agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+        unknown_agent = agent not in ("auto", AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI)
+        for distro in filtered_distros:
             try:
-                wsl_projects_dir = get_wsl_projects_dir(distro["name"])
-                native_sessions = collect_sessions_with_dedup(
-                    patterns,
-                    since_date=since_date,
-                    until_date=until_date,
-                    projects_dir=wsl_projects_dir,
-                    include_cached=False,
-                    skip_message_count=True,
-                    agent=agent,
-                )
-                if native_sessions:
-                    results.append((f"WSL ({distro['name']})", native_sessions))
+                all_sessions = []
+                for scan_agent in agents_to_scan:
+                    if scan_agent == AGENT_CLAUDE or unknown_agent:
+                        wsl_projects_dir = get_wsl_projects_dir(distro["name"])
+                        if not wsl_projects_dir:
+                            continue
+                        sessions = collect_sessions_with_dedup(
+                            patterns,
+                            since_date=since_date,
+                            until_date=until_date,
+                            projects_dir=wsl_projects_dir,
+                            include_cached=False,
+                            skip_message_count=workspaces_only,
+                            agent=scan_agent,
+                        )
+                    else:
+                        sessions_dir = get_agent_wsl_dir(distro["name"], scan_agent)
+                        if not sessions_dir or not sessions_dir.exists():
+                            continue
+                        sessions = _scan_codex_gemini_sessions(
+                            scan_agent,
+                            patterns,
+                            since_date,
+                            until_date,
+                            sessions_dir,
+                            f"wsl:{distro['name']}",
+                            skip_message_count=workspaces_only,
+                        )
+                    all_sessions.extend(sessions)
+                if all_sessions:
+                    results.append((f"WSL ({distro['name']})", all_sessions))
             except (OSError, PermissionError) as e:
                 sys.stderr.write(f"Error accessing WSL ({distro['name']}): {e}\n")
     except (OSError, subprocess.SubprocessError) as e:
@@ -10844,11 +11193,15 @@ def cmd_list_all_homes(args):
 
     if in_wsl:
         all_results.extend(
-            _collect_windows_sessions_from_wsl(patterns, since_date, until_date, agent)
+            _collect_windows_sessions_from_wsl(
+                patterns, since_date, until_date, agent, workspaces_only=workspaces_only
+            )
         )
     else:
         all_results.extend(
-            _collect_wsl_sessions_from_windows(patterns, since_date, until_date, agent)
+            _collect_wsl_sessions_from_windows(
+                patterns, since_date, until_date, agent, workspaces_only=workspaces_only
+            )
         )
 
     all_results.extend(
@@ -10877,22 +11230,42 @@ def _lsh_show_wsl():
     """Show WSL distributions (when on Windows)."""
     print("WSL Distributions:")
     try:
-        wsl_distros = get_wsl_distributions()
-        claude_distros = [d for d in wsl_distros if d["has_claude"]]
+        wsl_distros = _filter_wsl_distros_for_agent(get_wsl_distributions(), "auto")
 
-        if claude_distros:
-            for distro in claude_distros:
-                projects_dir = get_wsl_projects_dir(distro["name"])
-                if projects_dir is None:
-                    continue
-                workspace_count = len(
-                    [d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        if wsl_distros:
+            for distro in wsl_distros:
+                agents = []
+                if distro.get("has_claude"):
+                    agents.append(AGENT_CLAUDE)
+                if distro.get("has_codex"):
+                    agents.append(AGENT_CODEX)
+                if distro.get("has_gemini"):
+                    agents.append(AGENT_GEMINI)
+                agents_label = ",".join(agents) if agents else "none"
+
+                workspace_count = "n/a"
+                projects_dir = None
+                if distro.get("has_claude"):
+                    projects_dir = get_wsl_projects_dir(distro["name"])
+                    if projects_dir:
+                        workspace_count = len(
+                            [
+                                d
+                                for d in projects_dir.iterdir()
+                                if d.is_dir() and not d.name.startswith(".")
+                            ]
+                        )
+                path_hint = (
+                    str(projects_dir)
+                    if projects_dir
+                    else (distro.get("codex_path") or distro.get("gemini_path") or "")
                 )
                 print(
-                    f"  {distro['name']}\t{distro['username']}\t{workspace_count} workspaces\t{projects_dir}"
+                    f"  {distro['name']}\t{distro['username']}\t{agents_label}\t"
+                    f"{workspace_count} workspaces\t{path_hint}"
                 )
         else:
-            print("  No WSL distributions with Claude Code found")
+            print("  No WSL distributions with agent data found")
         print()
     except (OSError, subprocess.SubprocessError) as e:
         sys.stderr.write(f"Error accessing WSL: {e}\n")
@@ -11245,17 +11618,25 @@ def _validate_windows_from_wsl() -> list:
     return errors
 
 
-def _validate_wsl_from_windows() -> list:
+def _validate_wsl_from_windows(agent: Optional[str] = None) -> list:
     """Validate WSL access from Windows. Returns list of errors."""
     errors = []
     try:
-        for distro in get_wsl_distributions():
-            if not distro["has_claude"]:
-                continue
+        wsl_distros = _filter_wsl_distros_for_agent(get_wsl_distributions(), agent or "auto")
+        for distro in wsl_distros:
             try:
-                projects_dir = get_wsl_projects_dir(distro["name"])
-                if not projects_dir or not projects_dir.exists():
-                    errors.append(f"WSL ({distro['name']}): Projects directory not accessible")
+                if agent in (None, "auto", AGENT_CLAUDE) and distro.get("has_claude"):
+                    projects_dir = get_wsl_projects_dir(distro["name"])
+                    if not projects_dir or not projects_dir.exists():
+                        errors.append(f"WSL ({distro['name']}): Claude projects not accessible")
+                if agent in (None, "auto", AGENT_CODEX) and distro.get("has_codex"):
+                    codex_dir = get_agent_wsl_dir(distro["name"], AGENT_CODEX)
+                    if not codex_dir or not codex_dir.exists():
+                        errors.append(f"WSL ({distro['name']}): Codex sessions not accessible")
+                if agent in (None, "auto", AGENT_GEMINI) and distro.get("has_gemini"):
+                    gemini_dir = get_agent_wsl_dir(distro["name"], AGENT_GEMINI)
+                    if not gemini_dir or not gemini_dir.exists():
+                        errors.append(f"WSL ({distro['name']}): Gemini sessions not accessible")
             except (OSError, PermissionError) as e:
                 errors.append(f"WSL ({distro['name']}): {e}")
     except (OSError, subprocess.SubprocessError) as e:
@@ -11292,7 +11673,7 @@ def validate_export_all_homes(args, in_wsl):
             errors.extend(_validate_windows_from_wsl())
     else:
         if not no_wsl:
-            errors.extend(_validate_wsl_from_windows())
+            errors.extend(_validate_wsl_from_windows(getattr(args, "agent", None) or "auto"))
 
     if not no_remote:
         errors.extend(_validate_ssh_remotes(args))
@@ -11388,25 +11769,49 @@ def _export_wsl_from_windows(args, output_dir: Path, patterns: list) -> dict:
     print("[WSL] Checking WSL distributions...")
     try:
         wsl_distros = get_wsl_distributions()
-        claude_distros = [d for d in wsl_distros if d["has_claude"]]
+        agent = getattr(args, "agent", None) or "auto"
+        filtered_distros = _filter_wsl_distros_for_agent(wsl_distros, agent)
 
-        if claude_distros:
-            for distro in claude_distros:
+        if filtered_distros:
+            for distro in filtered_distros:
                 print(f"  Exporting from WSL: {distro['name']}...")
                 try:
                     distro_name = distro["name"]
-
-                    # Count sessions first
-                    wsl_projects_dir = get_wsl_projects_dir(distro["name"])
-                    agent = getattr(args, "agent", None) or "auto"
-                    wsl_sessions = collect_sessions_with_dedup(
-                        patterns,
-                        projects_dir=wsl_projects_dir,
-                        include_cached=False,
-                        agent=agent,
+                    agents_to_scan = (
+                        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
                     )
-                    session_count = len(wsl_sessions)
 
+                    wsl_sessions = []
+                    for scan_agent in agents_to_scan:
+                        if scan_agent == AGENT_CLAUDE:
+                            wsl_projects_dir = get_wsl_projects_dir(distro_name)
+                            if not wsl_projects_dir:
+                                continue
+                            wsl_sessions.extend(
+                                collect_sessions_with_dedup(
+                                    patterns,
+                                    projects_dir=wsl_projects_dir,
+                                    include_cached=False,
+                                    skip_message_count=True,
+                                    agent=AGENT_CLAUDE,
+                                )
+                            )
+                        else:
+                            sessions_dir = get_agent_wsl_dir(distro_name, scan_agent)
+                            if not sessions_dir or not sessions_dir.exists():
+                                continue
+                            wsl_sessions.extend(
+                                _scan_codex_gemini_sessions(
+                                    scan_agent,
+                                    patterns,
+                                    None,
+                                    None,
+                                    sessions_dir,
+                                    f"wsl:{distro_name}",
+                                )
+                            )
+
+                    session_count = len(wsl_sessions)
                     if session_count > 0:
                         config = ExportConfig.from_args(
                             args,
@@ -11429,7 +11834,7 @@ def _export_wsl_from_windows(args, output_dir: Path, patterns: list) -> dict:
                     result["errors"] += 1
             print()
         else:
-            print("  No WSL distributions with Claude Code found\n")
+            print("  No WSL distributions with matching agent data found\n")
     except (OSError, subprocess.SubprocessError) as e:
         print(f"[ERROR] WSL export failed: {e}\n")
     return result
@@ -11778,12 +12183,13 @@ def _resolve_remote_flag(args):
         # If already in WSL, --wsl is a no-op (use local)
         if is_running_in_wsl():
             return None
+        agent = getattr(args, "agent", None) or "auto"
         wsl_distros = get_wsl_distributions()
         if wsl_distros:
-            claude_distros = [d for d in wsl_distros if d["has_claude"]]
-            if claude_distros:
-                return f"wsl://{claude_distros[0]['name']}"
-        sys.stderr.write("Error: No WSL distributions with Claude Code found\n")
+            selected = _select_wsl_distro_for_agent(wsl_distros, agent)
+            if selected:
+                return f"wsl://{selected['name']}"
+        sys.stderr.write("Error: No WSL distributions with matching agent data found\n")
         sys.exit(1)
 
     if windows_flag:
@@ -11795,14 +12201,14 @@ def _resolve_remote_flag(args):
     return remote
 
 
-def _get_wsl_remote_for_export() -> Optional[str]:
-    """Get WSL remote string for export. Returns None if in WSL or no Claude distros."""
+def _get_wsl_remote_for_export(agent: Optional[str] = None) -> Optional[str]:
+    """Get WSL remote string for export. Returns None if in WSL or no matching distros."""
     if is_running_in_wsl():
         return None
     wsl_distros = get_wsl_distributions()
-    claude_distros = [d for d in wsl_distros if d.get("has_claude")]
-    if claude_distros:
-        return f"wsl://{claude_distros[0]['name']}"
+    selected = _select_wsl_distro_for_agent(wsl_distros, agent or "auto")
+    if selected:
+        return f"wsl://{selected['name']}"
     return None
 
 
@@ -11813,7 +12219,7 @@ def _resolve_remote_list(args):
     remotes = list(getattr(args, "remotes", None) or [])
 
     if getattr(args, "wsl", False):
-        wsl_remote = _get_wsl_remote_for_export()
+        wsl_remote = _get_wsl_remote_for_export(getattr(args, "agent", None) or "auto")
         if wsl_remote:
             remotes.append(wsl_remote)
 
@@ -12703,12 +13109,17 @@ def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
 def _dispatch_lss_all_homes(args, workspace_list: list):
     """Handle lss with --all-homes flag."""
     this_only = getattr(args, "this_only", False)
+    all_workspaces_flag = getattr(args, "all_workspaces", False)
     since_date = parse_date_with_validation(args.since, "--since")
     until_date = parse_date_with_validation(args.until, "--until")
     lss_remotes = getattr(args, "remotes", None) or []
     agent = getattr(args, "agent", None) or "auto"
 
-    patterns, alias_for_ws = resolve_patterns_for_command(workspace_list, this_only, agent=agent)
+    if all_workspaces_flag and not workspace_list:
+        patterns = [""]
+        alias_for_ws = None
+    else:
+        patterns, alias_for_ws = resolve_patterns_for_command(workspace_list, this_only, agent=agent)
     if alias_for_ws:
         sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
         cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date, agent=agent)
@@ -13018,6 +13429,8 @@ def _dispatch_export_all_homes(args, output_dir: Union[str, Path], patterns: lis
         minimal=args.minimal,
         split=args.split,
         agent=getattr(args, "agent", None) or "auto",
+        jobs=getattr(args, "jobs", 1),
+        quiet=getattr(args, "quiet", False),
     )
     cmd_export_all(export_config)
 
