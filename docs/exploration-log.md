@@ -185,6 +185,8 @@ WSL runs (expected behavior)
 - `./agent-history export --alias claude-history --agent codex --since 2025-12-18 --quiet -o /tmp/<temp>` (after fix: 5 exported)
 - `./agent-history export --agent codex --aw --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export --agent codex --ah --aw --quiet -o /tmp/<temp>` (export-all summary printed)
+- `./agent-history export --agent codex --ah --aw --no-wsl --quiet -o /tmp/<temp>` (unexpected: Windows still included; fixed later)
+- `./agent-history export --agent codex --ah --aw --no-windows --quiet -o /tmp/<temp>` (unexpected: Windows still included; fixed later)
 - `./agent-history export --agent gemini --aw --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export --agent gemini --ah --aw --quiet -o /tmp/<temp>` (export-all summary printed)
 - `./agent-history export claude-history --agent codex --windows --quiet -o /tmp/<temp>` (no output; quiet mode)
@@ -193,6 +195,7 @@ WSL runs (expected behavior)
 - `./agent-history export @claude-history --agent gemini --windows --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent codex --split 200 --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent gemini --minimal --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export --agent codex --ah --aw --no-windows --quiet -o /tmp/<temp>` (after fix: Windows skipped)
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history lss` (auto agent mode)
 - `./agent-history lsh --wsl --agent claude` (after fix)
@@ -346,6 +349,9 @@ WSL-specific issues and fixes
   - Fix: Codex index writes now ignore permission errors and continue without aborting.
 - `lss //wsl$/...` in WSL tried to use a Windows UNC projects dir and errored.
   - Fix: when running in WSL, UNC inputs now resolve to `/home/<user>/.claude/projects`.
+- `export --ah --aw --no-windows` still exported Windows sessions.
+  - Root cause: `_dispatch_export_all_homes` dropped `--no-wsl/--no-windows/--no-remote` flags from `ExportAllConfig`.
+  - Fix: propagate those flags into `ExportAllConfig` so `cmd_export_all` respects them.
 
 WSL-specific issues (unfixed)
 -----------------------------
@@ -384,6 +390,7 @@ Targeted tests run
 - `UV_NO_CACHE=1 uv run pytest tests/unit/test_claude_history.py -k "alias_export_uses_non_claude_sessions"`
 - `UV_NO_CACHE=1 uv run pytest tests/unit/test_claude_history.py -k "save_index_permission_error"`
 - `uv run pytest tests/unit/test_claude_history.py -k "projects_dir_from_wsl_unc_in_wsl"`
+- `uv run pytest tests/unit/test_claude_history.py -k "export_all_homes_args_includes_agent"`
 
 Full test suite attempts
 ------------------------

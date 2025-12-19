@@ -2776,6 +2776,9 @@ class TestAgentPropagation:
                     getattr(args, "agent", "NOT_FOUND"),
                     getattr(args, "jobs", None),
                     getattr(args, "quiet", None),
+                    getattr(args, "no_wsl", None),
+                    getattr(args, "no_windows", None),
+                    getattr(args, "no_remote", None),
                 )
             )
 
@@ -2790,11 +2793,14 @@ class TestAgentPropagation:
             agent = agent_value
             jobs = 3
             quiet = True
+            no_wsl = True
+            no_windows = False
+            no_remote = True
 
         ch._dispatch_export_all_homes(MockArgs(), "/tmp", ["test"], [])
 
         assert captured_args == [
-            (agent_value, 3, True)
+            (agent_value, 3, True, True, False, True)
         ], f"export all args mismatch: {captured_args}"
 
 

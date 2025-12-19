@@ -489,6 +489,9 @@ class ExportAllConfig:
     jobs: int = 1
     quiet: bool = False
     index: bool = True
+    no_wsl: bool = False
+    no_windows: bool = False
+    no_remote: bool = False
 
     @property
     def workspace(self) -> str:
@@ -13928,6 +13931,9 @@ def _dispatch_export_all_homes(args, output_dir: Union[str, Path], patterns: lis
         agent=getattr(args, "agent", None) or "auto",
         jobs=getattr(args, "jobs", 1),
         quiet=getattr(args, "quiet", False),
+        no_wsl=getattr(args, "no_wsl", False),
+        no_windows=getattr(args, "no_windows", False),
+        no_remote=getattr(args, "no_remote", False),
     )
     cmd_export_all(export_config)
 
