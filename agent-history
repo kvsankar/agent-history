@@ -2550,7 +2550,7 @@ CODEX_INDEX_VERSION = 3  # Bumped to rebuild index with raw cwd paths (not encod
 
 
 def codex_get_index_file() -> Path:
-    """Get path to Codex session index file (~/.claude-history/codex_index.json)."""
+    """Get path to Codex session index file (~/.agent-history/codex_index.json)."""
     return get_config_dir() / "codex_index.json"
 
 
@@ -3234,7 +3234,7 @@ GEMINI_HASH_INDEX_VERSION = 1
 
 
 def gemini_get_hash_index_file() -> Path:
-    """Get path to Gemini hash index file (~/.claude-history/gemini_hash_index.json)."""
+    """Get path to Gemini hash index file (~/.agent-history/gemini_hash_index.json)."""
     return get_config_dir() / "gemini_hash_index.json"
 
 
@@ -6298,8 +6298,14 @@ def gemini_fetch_remote_hash_index(remote_host: Optional[str], local_cache_dir: 
     assert remote_host is not None
 
     try:
-        # Check if remote has a hash index file
-        check_cmd = "[ -f ~/.claude-history/gemini_hash_index.json ] && cat ~/.claude-history/gemini_hash_index.json"
+        # Check if remote has a hash index file (prefer new path, fall back to legacy)
+        check_cmd = (
+            "if [ -f ~/.agent-history/gemini_hash_index.json ]; then "
+            "cat ~/.agent-history/gemini_hash_index.json; "
+            "elif [ -f ~/.claude-history/gemini_hash_index.json ]; then "
+            "cat ~/.claude-history/gemini_hash_index.json; "
+            "fi"
+        )
 
         result = subprocess.run(
             [get_command_path("ssh"), remote_host, check_cmd],
@@ -6528,13 +6534,54 @@ def codex_fetch_remote_sessions(
 # ============================================================================
 
 
+CONFIG_DIR_NAME = ".agent-history"
+LEGACY_CONFIG_DIR_NAME = ".claude-history"
+
+
+def _get_config_dirs() -> tuple[Path, Path]:
+    """Return (new_config_dir, legacy_config_dir) under HOME."""
+    home = Path.home()
+    return home / CONFIG_DIR_NAME, home / LEGACY_CONFIG_DIR_NAME
+
+
+def _migrate_legacy_config_dir(new_dir: Path, legacy_dir: Path) -> Path:
+    """Migrate legacy ~/.claude-history to ~/.agent-history if needed."""
+    if new_dir.exists():
+        if legacy_dir.exists():
+            try:
+                shutil.copytree(legacy_dir, new_dir, dirs_exist_ok=True)
+                shutil.rmtree(legacy_dir, ignore_errors=True)
+            except OSError as e:
+                sys.stderr.write(
+                    f"Warning: Could not clean up legacy config dir {legacy_dir}: {e}\n"
+                )
+        return new_dir
+    if not legacy_dir.exists():
+        return new_dir
+
+    try:
+        legacy_dir.rename(new_dir)
+        return new_dir
+    except OSError:
+        try:
+            shutil.copytree(legacy_dir, new_dir, dirs_exist_ok=True)
+            shutil.rmtree(legacy_dir, ignore_errors=True)
+            return new_dir
+        except OSError as e:
+            sys.stderr.write(
+                f"Warning: Could not migrate legacy config dir {legacy_dir} -> {new_dir}: {e}\n"
+            )
+            return legacy_dir
+
+
 def get_config_dir() -> Path:
-    """Get the config storage directory (~/.claude-history/)."""
-    return Path.home() / ".claude-history"
+    """Get the config storage directory (~/.agent-history/, migrates legacy on first use)."""
+    new_dir, legacy_dir = _get_config_dirs()
+    return _migrate_legacy_config_dir(new_dir, legacy_dir)
 
 
 def get_aliases_dir() -> Path:
-    """Get the aliases storage directory (~/.claude-history/)."""
+    """Get the aliases storage directory (~/.agent-history/)."""
     return get_config_dir()
 
 
@@ -6577,8 +6624,8 @@ def save_config(data: dict) -> bool:
         True on success, False on failure (error printed to stderr)
 
     Side Effects:
-        - Creates ~/.claude-history/ directory with mode 0o700 if missing
-        - Writes to ~/.claude-history/config.json with mode 0o600
+        - Creates ~/.agent-history/ directory with mode 0o700 if missing
+        - Writes to ~/.agent-history/config.json with mode 0o600
     """
     config_dir = get_config_dir()
     config_file = get_config_file()
@@ -6681,8 +6728,8 @@ def save_aliases(data: dict) -> bool:
         True on success, False on failure (error printed to stderr)
 
     Side Effects:
-        - Creates ~/.claude-history/ directory with mode 0o700 if missing
-        - Writes to ~/.claude-history/aliases.json
+        - Creates ~/.agent-history/ directory with mode 0o700 if missing
+        - Writes to ~/.agent-history/aliases.json
         - Uses file locking to prevent race conditions
     """
     aliases_dir = get_aliases_dir()
@@ -7955,13 +8002,13 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     is up to date. Handles migrations from older schema versions.
 
     Args:
-        db_path: Path to database file. Defaults to ~/.claude-history/metrics.db
+        db_path: Path to database file. Defaults to ~/.agent-history/metrics.db
 
     Returns:
         Open sqlite3.Connection with row_factory set to sqlite3.Row
 
     Side Effects:
-        - Creates parent directory (~/.claude-history/) with mode 0o700 if missing
+        - Creates parent directory (~/.agent-history/) with mode 0o700 if missing
         - Creates database file with mode 0o600 if missing
         - Runs schema migrations if database version is outdated
     """

@@ -361,8 +361,8 @@ The file is organized into many sections (36+), grouped into these high-level ca
    - `fetch_workspace_files()`: Fetches files from one remote workspace using rsync
 
 8. **Workspace Aliases**
-   - `get_aliases_dir()`: Returns `~/.claude-history/` directory
-   - `get_aliases_file()`: Returns `~/.claude-history/aliases.json` path
+   - `get_aliases_dir()`: Returns `~/.agent-history/` directory
+   - `get_aliases_file()`: Returns `~/.agent-history/aliases.json` path
    - `load_aliases()`: Loads aliases from JSON file (returns empty dict if not found)
    - `save_aliases()`: Saves aliases to JSON file
    - `path_to_encoded_workspace()`: Converts absolute path to Claude's encoded workspace name
@@ -379,7 +379,7 @@ The file is organized into many sections (36+), grouped into these high-level ca
    - `cmd_alias_export()`: Exports sessions from all workspaces in an alias
 
 9. **Configuration and Saved Sources**
-   - `get_config_file()`: Returns `~/.claude-history/config.json` path
+   - `get_config_file()`: Returns `~/.agent-history/config.json` path
    - `load_config()`: Loads configuration from JSON file
    - `save_config()`: Saves configuration to JSON file
    - `get_saved_sources()`: Returns list of saved SSH remotes
@@ -389,7 +389,7 @@ The file is organized into many sections (36+), grouped into these high-level ca
    - `cmd_sources_clear()`: Clears all saved sources
 
 10. **Metrics Database (SQLite)**
-   - `get_metrics_db_path()`: Returns `~/.claude-history/metrics.db` path
+   - `get_metrics_db_path()`: Returns `~/.agent-history/metrics.db` path
    - `init_metrics_db()`: Creates/opens database, initializes schema
    - `extract_metrics_from_jsonl()`: Extracts session, message, and tool use metrics from JSONL
    - `sync_file_to_db()`: Syncs a single JSONL file to database (incremental)
@@ -891,8 +891,8 @@ Workspace pattern matching is substring-based:
 Aliases group related workspaces across different sources for unified access.
 
 **Storage Location:**
-- Config directory: `~/.claude-history/`
-- Alias file: `~/.claude-history/aliases.json`
+- Config directory: `~/.agent-history/`
+- Alias file: `~/.agent-history/aliases.json`
 
 **JSON Structure:**
 ```json
@@ -1060,7 +1060,7 @@ The `--ah` and `--aw` flags are designed to be orthogonal (independent):
 - `--ah` for `stats --time` triggers auto-sync before display
 - WSL and Windows are auto-detected by `--ah` (no configuration needed)
 - Only SSH remotes need to be saved via `lsh add`
-- Saved sources are stored in `~/.claude-history/config.json`
+- Saved sources are stored in `~/.agent-history/config.json`
 
 ### Mutually Exclusive Flags
 

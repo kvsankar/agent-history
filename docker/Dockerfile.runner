@@ -20,9 +20,9 @@ RUN useradd -m -s /bin/bash tester
 RUN mkdir -p /home/tester/.claude/projects \
     && mkdir -p /home/tester/.codex/sessions \
     && mkdir -p /home/tester/.gemini/tmp \
-    && mkdir -p /home/tester/.claude-history \
+    && mkdir -p /home/tester/.agent-history \
     && mkdir -p /coverage \
-    && chown -R tester:tester /home/tester/.claude /home/tester/.codex /home/tester/.gemini /home/tester/.claude-history /coverage
+    && chown -R tester:tester /home/tester/.claude /home/tester/.codex /home/tester/.gemini /home/tester/.agent-history /coverage
 
 # Copy SSH setup script and coverage script
 # Note: sed removes Windows CRLF line endings in case files were checked out on Windows

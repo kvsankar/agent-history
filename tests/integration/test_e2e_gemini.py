@@ -130,8 +130,8 @@ def setup_env(tmp_path: Path):
     codex_dir.mkdir(parents=True, exist_ok=True)
     gemini_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create .claude-history for metrics DB
-    history_dir = tmp_path / ".claude-history"
+    # Create .agent-history for metrics DB
+    history_dir = tmp_path / ".agent-history"
     history_dir.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
@@ -139,7 +139,7 @@ def setup_env(tmp_path: Path):
     env["CLAUDE_PROJECTS_DIR"] = str(claude_dir)
     env["CODEX_SESSIONS_DIR"] = str(codex_dir)
     env["GEMINI_SESSIONS_DIR"] = str(gemini_dir)
-    # Set HOME for the metrics DB location (~/.claude-history/)
+    # Set HOME for the metrics DB location (~/.agent-history/)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
     else:
@@ -296,7 +296,7 @@ class TestGeminiStats:
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
         # Verify sessions are in database
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         assert db_path.exists(), "Metrics DB should be created"
 
         conn = sqlite3.connect(str(db_path))
@@ -332,7 +332,7 @@ class TestGeminiStats:
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
         # Verify token data is in messages table
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -367,7 +367,7 @@ class TestGeminiStats:
         result = run_cli(["stats", "--sync", "--aw"], env=env)
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         totals = conn.execute(
@@ -412,7 +412,7 @@ class TestMixedAgentsGemini:
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
         # Verify both agents are in database
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT DISTINCT agent FROM sessions").fetchall()
@@ -465,7 +465,7 @@ class TestGeminiWorkspaceConsistency:
 
     def _create_hash_index(self, tmp_path: Path, hashes: dict) -> None:
         """Create a Gemini hash index file."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True, exist_ok=True)
         index_file = config_dir / "gemini_hash_index.json"
         index_file.write_text(json.dumps({"version": 1, "hashes": hashes}))

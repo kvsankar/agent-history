@@ -36,7 +36,7 @@ def run_cli_in_temp(args: list, timeout: int = None) -> subprocess.CompletedProc
 
         # Create required directories
         (tmp_path / ".claude" / "projects").mkdir(parents=True)
-        (tmp_path / ".claude-history").mkdir(parents=True)
+        (tmp_path / ".agent-history").mkdir(parents=True)
         (tmp_path / ".codex" / "sessions").mkdir(parents=True)
         (tmp_path / ".gemini").mkdir(parents=True)
 
@@ -220,7 +220,7 @@ class TestExportCombinations:
             env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
-            (tmp_path / ".claude-history").mkdir(parents=True)
+            (tmp_path / ".agent-history").mkdir(parents=True)
             (tmp_path / ".codex" / "sessions").mkdir(parents=True)
             (tmp_path / ".gemini").mkdir(parents=True)
             output_dir = tmp_path / "output"
@@ -275,7 +275,7 @@ class TestExportCombinations:
             env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
-            (tmp_path / ".claude-history").mkdir(parents=True)
+            (tmp_path / ".agent-history").mkdir(parents=True)
             output_dir = tmp_path / "output"
 
             args = ["export", "*", "-o", str(output_dir)]
@@ -388,7 +388,7 @@ class TestAliasCombinations:
             env.pop("COVERAGE_PROCESS_START", None)
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
-            (tmp_path / ".claude-history").mkdir(parents=True)
+            (tmp_path / ".agent-history").mkdir(parents=True)
 
             # Create
             cmd = [sys.executable, str(CLI_PATH), "alias", "create", alias_name]
@@ -448,7 +448,7 @@ class TestCrossCommandConsistency:
             env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
-            (tmp_path / ".claude-history").mkdir(parents=True)
+            (tmp_path / ".agent-history").mkdir(parents=True)
             (tmp_path / ".codex" / "sessions").mkdir(parents=True)
             (tmp_path / ".gemini").mkdir(parents=True)
             output_dir = tmp_path / "output"
@@ -494,7 +494,7 @@ class TestCrossCommandConsistency:
             env["CLAUDE_SKIP_WSL_SCAN"] = "1"
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
-            (tmp_path / ".claude-history").mkdir(parents=True)
+            (tmp_path / ".agent-history").mkdir(parents=True)
             output_dir = tmp_path / "output"
 
             if command == "lss":

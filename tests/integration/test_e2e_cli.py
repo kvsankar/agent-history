@@ -276,7 +276,7 @@ def test_e2e_all_homes_windows(tmp_path: Path):
 def test_e2e_stats_top_ws_limit(tmp_path: Path):
     """stats --top-ws should limit workspaces per home."""
     home_dir = tmp_path / "home"
-    config_dir = home_dir / ".claude-history"
+    config_dir = home_dir / ".agent-history"
     projects = tmp_path / "projects"
     config_dir.mkdir(parents=True, exist_ok=True)
     projects.mkdir(parents=True, exist_ok=True)

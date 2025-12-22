@@ -134,7 +134,7 @@ def isolated_home(tmp_path):
     (tmp_path / ".claude" / "projects").mkdir(parents=True)
     (tmp_path / ".codex" / "sessions").mkdir(parents=True)
     (tmp_path / ".gemini" / "sessions").mkdir(parents=True)
-    (tmp_path / ".claude-history").mkdir(parents=True)
+    (tmp_path / ".agent-history").mkdir(parents=True)
 
     return {
         "path": tmp_path,

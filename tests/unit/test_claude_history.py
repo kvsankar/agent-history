@@ -116,7 +116,7 @@ def temp_projects_dir(sample_jsonl_content):
 def temp_config_dir():
     """Create a temporary config directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        config_dir = Path(tmpdir) / ".claude-history"
+        config_dir = Path(tmpdir) / ".agent-history"
         config_dir.mkdir(parents=True)
         yield config_dir
 
@@ -916,15 +916,15 @@ class TestCodexIndex:
 
     def test_get_index_file_returns_expected_path(self, tmp_path):
         """codex_get_index_file should return path in config dir."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         with patch.object(ch, "get_config_dir", return_value=config_dir):
             index_file = ch.codex_get_index_file()
             assert index_file.name == "codex_index.json"
-            assert ".claude-history" in str(index_file)
+            assert ".agent-history" in str(index_file)
 
     def test_load_index_returns_empty_for_missing_file(self, tmp_path):
         """codex_load_index should return empty structure if file doesn't exist."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         with patch.object(ch, "get_config_dir", return_value=config_dir):
             index = ch.codex_load_index()
             assert index["version"] == ch.CODEX_INDEX_VERSION
@@ -933,7 +933,7 @@ class TestCodexIndex:
 
     def test_load_index_reads_existing_file(self, tmp_path):
         """codex_load_index should load existing index file."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "codex_index.json"
         test_data = {
@@ -951,7 +951,7 @@ class TestCodexIndex:
 
     def test_load_index_ignores_old_version(self, tmp_path):
         """codex_load_index should return empty for old version files."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "codex_index.json"
         old_data = {"version": 0, "sessions": {"old": "data"}}
@@ -965,7 +965,7 @@ class TestCodexIndex:
 
     def test_save_index_creates_file(self, tmp_path):
         """codex_save_index should create index file."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         test_index = {
             "version": ch.CODEX_INDEX_VERSION,
             "last_scan_date": "2025-12-15",
@@ -983,7 +983,7 @@ class TestCodexIndex:
 
     def test_save_index_permission_error(self, tmp_path, monkeypatch):
         """codex_save_index should ignore write permission errors."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         test_index = {
             "version": ch.CODEX_INDEX_VERSION,
             "last_scan_date": "2025-12-15",
@@ -1033,7 +1033,7 @@ class TestCodexIndex:
 
     def test_ensure_index_updated_builds_initial_index(self, tmp_path, sample_codex_jsonl_content):
         """codex_ensure_index_updated should build full index on first run."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         sessions_dir = tmp_path / "codex_sessions"
         day_dir = sessions_dir / "2025" / "12" / "08"
         day_dir.mkdir(parents=True)
@@ -1050,7 +1050,7 @@ class TestCodexIndex:
 
     def test_ensure_index_updated_incremental(self, tmp_path, sample_codex_jsonl_content):
         """codex_ensure_index_updated should only scan new date folders."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         sessions_dir = tmp_path / "codex_sessions"
 
         # Create initial session
@@ -1084,7 +1084,7 @@ class TestCodexIndex:
 
     def test_ensure_index_updated_cleans_stale_entries(self, tmp_path, sample_codex_jsonl_content):
         """codex_ensure_index_updated should remove entries for deleted files."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         sessions_dir = tmp_path / "codex_sessions"
         day_dir = sessions_dir / "2025" / "12" / "08"
         day_dir.mkdir(parents=True)
@@ -1495,15 +1495,15 @@ class TestGeminiHashIndex:
 
     def test_get_hash_index_file_returns_expected_path(self, tmp_path):
         """gemini_get_hash_index_file should return path in config dir."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         with patch.object(ch, "get_config_dir", return_value=config_dir):
             index_file = ch.gemini_get_hash_index_file()
             assert index_file.name == "gemini_hash_index.json"
-            assert ".claude-history" in str(index_file)
+            assert ".agent-history" in str(index_file)
 
     def test_load_hash_index_returns_empty_for_missing_file(self, tmp_path):
         """gemini_load_hash_index should return empty structure if file doesn't exist."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         with patch.object(ch, "get_config_dir", return_value=config_dir):
             index = ch.gemini_load_hash_index()
             assert index["version"] == ch.GEMINI_HASH_INDEX_VERSION
@@ -1511,7 +1511,7 @@ class TestGeminiHashIndex:
 
     def test_load_hash_index_reads_existing_file(self, tmp_path):
         """gemini_load_hash_index should load existing index file."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "gemini_hash_index.json"
         test_data = {
@@ -1527,7 +1527,7 @@ class TestGeminiHashIndex:
 
     def test_save_hash_index_creates_file(self, tmp_path):
         """gemini_save_hash_index should create index file."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         test_index = {
             "version": ch.GEMINI_HASH_INDEX_VERSION,
             "hashes": {"hash123": "/path/to/project"},
@@ -1570,14 +1570,14 @@ class TestGeminiHashIndex:
 
     def test_get_path_for_hash_returns_none_when_unknown(self, tmp_path):
         """gemini_get_path_for_hash should return None for unknown hashes."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         with patch.object(ch, "get_config_dir", return_value=config_dir):
             result = ch.gemini_get_path_for_hash("unknown_hash_123")
             assert result is None
 
     def test_get_path_for_hash_returns_path_when_known(self, tmp_path):
         """gemini_get_path_for_hash should return path for known hashes."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "gemini_hash_index.json"
         test_data = {
@@ -1593,7 +1593,7 @@ class TestGeminiHashIndex:
 
     def test_get_workspace_readable_uses_hash_index(self, tmp_path):
         """gemini_get_workspace_readable should use index for known hashes."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         index_file = config_dir / "gemini_hash_index.json"
         test_data = {
@@ -1611,7 +1611,7 @@ class TestGeminiHashIndex:
 
     def test_get_workspace_readable_falls_back_to_hash(self, tmp_path):
         """gemini_get_workspace_readable should fall back to hash display."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         with patch.object(ch, "get_config_dir", return_value=config_dir):
             result = ch.gemini_get_workspace_readable("unknown_hash_very_long_string")
             assert "[hash:" in result
@@ -1656,7 +1656,7 @@ class TestGeminiIndexCommand:
         self, monkeypatch, tmp_path, sample_gemini_session
     ):
         """gemini_add_paths_to_index should add new hash→path mappings."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
 
         # Create a project directory
         project_dir = tmp_path / "my_project"
@@ -1686,7 +1686,7 @@ class TestGeminiIndexCommand:
 
     def test_add_paths_to_index_multiple_paths(self, monkeypatch, tmp_path, sample_gemini_session):
         """gemini_add_paths_to_index should handle multiple paths."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
 
         # Create two project directories
         project1 = tmp_path / "project1"
@@ -1715,7 +1715,7 @@ class TestGeminiIndexCommand:
 
     def test_add_paths_to_index_skips_existing(self, monkeypatch, tmp_path, sample_gemini_session):
         """gemini_add_paths_to_index should skip already indexed paths."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
 
         # Create a project
         project_dir = tmp_path / "existing_project"
@@ -1751,7 +1751,7 @@ class TestGeminiIndexCommand:
 
     def test_add_paths_to_index_skips_no_sessions(self, monkeypatch, tmp_path):
         """gemini_add_paths_to_index should skip projects without Gemini sessions."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
 
         # Create project without any sessions
         project_dir = tmp_path / "no_sessions_project"
@@ -1768,7 +1768,7 @@ class TestGeminiIndexCommand:
 
     def test_add_paths_to_index_empty_list(self, tmp_path):
         """gemini_add_paths_to_index should handle empty list."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
 
         with patch.object(ch, "get_config_dir", return_value=config_dir):
             result = ch.gemini_add_paths_to_index([])
@@ -3761,6 +3761,20 @@ class TestConfigStorage:
                 loaded = ch.load_config()
                 assert loaded["sources"] == ["user@host1", "user@host2"]
 
+    def test_get_config_dir_migrates_legacy(self, monkeypatch, tmp_path):
+        """get_config_dir should migrate legacy ~/.claude-history to ~/.agent-history."""
+        legacy_dir = tmp_path / ".claude-history"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "config.json").write_text("{}", encoding="utf-8")
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        config_dir = ch.get_config_dir()
+        assert config_dir == tmp_path / ".agent-history"
+        assert config_dir.exists()
+        assert (config_dir / "config.json").exists()
+        assert not legacy_dir.exists()
+
 
 # ============================================================================
 # Security Validation Tests
@@ -4583,7 +4597,7 @@ class TestCLICommands:
         )
 
         # Config directory
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
 
         return {"projects_dir": projects_dir, "config_dir": config_dir, "tmp_path": tmp_path}
@@ -4741,7 +4755,7 @@ class TestHomeDirMocking:
 
     def test_config_persistence_with_mocked_paths(self, tmp_path):
         """Should save and load config correctly with mocked config paths."""
-        fake_config_dir = tmp_path / ".claude-history"
+        fake_config_dir = tmp_path / ".agent-history"
         fake_config_dir.mkdir()
         config_file = fake_config_dir / "config.json"
 
@@ -4765,7 +4779,7 @@ class TestHomeDirMocking:
 
     def test_aliases_persistence_with_mocked_paths(self, tmp_path):
         """Should save and load aliases correctly with mocked alias paths."""
-        fake_aliases_dir = tmp_path / ".claude-history"
+        fake_aliases_dir = tmp_path / ".agent-history"
         fake_aliases_dir.mkdir()
         aliases_file = fake_aliases_dir / "aliases.json"
 
@@ -5069,7 +5083,7 @@ class TestSection2LocalOperations:
         os.utime(session4, (mtime4, mtime4))
 
         # Config directory
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
 
         return {
@@ -5720,7 +5734,7 @@ class TestSection9AliasOperations:
     @pytest.fixture
     def alias_env(self, tmp_path):
         """Create environment for alias testing."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
 
         projects_dir = tmp_path / ".claude" / "projects"
@@ -5930,7 +5944,7 @@ class TestSection10SSHRemoteManagement:
     @pytest.fixture
     def ssh_config_env(self, tmp_path):
         """Create environment for SSH config testing."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.json"
         return {"config_dir": config_dir, "config_file": config_file}
@@ -6381,7 +6395,7 @@ class TestSection14ResetCommand:
     @pytest.fixture
     def reset_env(self, tmp_path):
         """Create environment for reset testing."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
 
         # Create all files
@@ -7582,7 +7596,7 @@ class TestSection9Remaining:
 
     @pytest.fixture
     def alias_test_env(self, tmp_path):
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         return {"config_dir": config_dir, "aliases_file": config_dir / "aliases.json"}
 
@@ -7907,7 +7921,7 @@ class TestSection10Remaining:
 
     @pytest.fixture
     def config_test_env(self, tmp_path):
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         return {"config_dir": config_dir, "config_file": config_dir / "config.json"}
 
@@ -8237,7 +8251,7 @@ class TestSection12Full:
 
     def test_scope_edge_multi_alias(self, tmp_path):
         """12.4.1: Workspace in multiple aliases uses first matching."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         aliases_file = config_dir / "aliases.json"
 
@@ -8258,7 +8272,7 @@ class TestSection12Full:
 
     def test_scope_edge_empty(self, tmp_path):
         """12.4.2: Empty alias shows empty/no sessions message."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         aliases_file = config_dir / "aliases.json"
 
@@ -8272,7 +8286,7 @@ class TestSection12Full:
 
     def test_scope_edge_remote_only(self, tmp_path):
         """12.4.3: Alias with only remote workspaces."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         aliases_file = config_dir / "aliases.json"
 
@@ -8289,7 +8303,7 @@ class TestSection12Full:
 
     def test_scope_edge_deleted(self, tmp_path):
         """12.4.4: Delete alias, then run lss uses current workspace."""
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
         aliases_file = config_dir / "aliases.json"
 
@@ -8506,7 +8520,7 @@ class TestSection14Remaining:
 
     @pytest.fixture
     def reset_test_env(self, tmp_path):
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
 
         db_file = config_dir / "metrics.db"
@@ -9743,7 +9757,7 @@ class TestStatsAggregation:
         )
 
         # Create and populate database
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = ch.init_metrics_db(db_path)
 
@@ -9940,7 +9954,7 @@ class TestStatsAndExportEndToEnd:
         )
 
         db_path = tmp_path / "metrics.db"
-        aliases_file = tmp_path / ".claude-history" / "aliases.json"
+        aliases_file = tmp_path / ".agent-history" / "aliases.json"
         aliases_file.parent.mkdir(parents=True, exist_ok=True)
         aliases_file.write_text(json.dumps({"version": 1, "aliases": {}}))
 
@@ -10016,7 +10030,7 @@ class TestAliasEndToEnd:
         os.utime(session2, (jan21_ts, jan21_ts))
 
         # Create config directory and alias file
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True, exist_ok=True)
         aliases_file = config_dir / "aliases.json"
 
@@ -12328,7 +12342,7 @@ class TestCriticalFixesAliases:
 
     def test_corrupted_aliases_creates_backup(self, tmp_path, monkeypatch):
         """Verify that corrupted aliases.json creates a backup file."""
-        aliases_dir = tmp_path / ".claude-history"
+        aliases_dir = tmp_path / ".agent-history"
         aliases_dir.mkdir()
         aliases_file = aliases_dir / "aliases.json"
 
@@ -12363,7 +12377,7 @@ class TestCriticalFixesAliases:
 
     def test_alias_import_replace_creates_backup(self, tmp_path, monkeypatch):
         """Verify that alias import with --replace creates a backup first."""
-        aliases_dir = tmp_path / ".claude-history"
+        aliases_dir = tmp_path / ".agent-history"
         aliases_dir.mkdir()
         aliases_file = aliases_dir / "aliases.json"
 

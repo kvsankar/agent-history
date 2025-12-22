@@ -405,7 +405,7 @@ agent-history stats --sync --ah --jobs 4 --no-remote
 - **Workspaces**: Top workspaces by activity (alias-aware)
 - **Daily trends**: Session and token usage over time
 
-**Database Location:** `~/.claude-history/metrics.db` (SQLite)
+**Database Location:** `~/.agent-history/metrics.db` (SQLite)
 
 ---
 
@@ -539,9 +539,10 @@ agent-history reset db -y
 ```
 
 **Files affected:**
-- `~/.claude-history/metrics.db` - Metrics database (stats, time tracking)
-- `~/.claude-history/config.json` - Settings (SSH remotes)
-- `~/.claude-history/aliases.json` - Workspace aliases
+- `~/.agent-history/metrics.db` - Metrics database (stats, time tracking)
+- `~/.agent-history/config.json` - Settings (SSH remotes)
+- `~/.agent-history/aliases.json` - Workspace aliases
+- On first run, any legacy `~/.claude-history/` directory is migrated here and cleaned up.
 
 ---
 
@@ -622,7 +623,7 @@ Hash Index Mappings (5 entries):
 The hash index also learns progressively when you run any `agent-history` command from a Gemini project directory. The explicit `gemini-index` command is useful for adding multiple projects at once.
 
 **Index location:**
-- `~/.claude-history/gemini_hash_index.json`
+- `~/.agent-history/gemini_hash_index.json`
 
 ---
 

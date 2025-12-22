@@ -92,11 +92,12 @@ Concurrency:
 
 ## Configuration and Storage
 
-User config lives under `~/.claude-history/`:
+User config lives under `~/.agent-history/`:
 - `metrics.db`: SQLite database for stats and time tracking.
 - `config.json`: saved SSH remotes and settings.
 - `aliases.json`: workspace alias definitions.
 - `gemini_hash_index.json`: hash to path mappings for Gemini.
+- On first run, any legacy `~/.claude-history/` directory is migrated to this location and cleaned up.
 
 ## Error Handling and Resilience
 

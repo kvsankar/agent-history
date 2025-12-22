@@ -294,10 +294,11 @@ When syncing between machines (P1 ↔ P2), the tool automatically filters out ca
 
 ### Where does agent-history store its data?
 
-All data is stored in `~/.claude-history/`:
+All data is stored in `~/.agent-history/`:
 - `metrics.db` - SQLite database for stats and time tracking
 - `config.json` - Settings (saved SSH remotes)
 - `aliases.json` - Workspace alias definitions
+- On first run, any legacy `~/.claude-history/` directory is migrated here and removed.
 
 ### How do I start fresh?
 

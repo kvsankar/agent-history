@@ -368,7 +368,7 @@ WSL-specific issues and fixes
   - Fix: alias Codex/Gemini scans now include message counts for Windows/WSL sources.
 - `export --alias <name> --agent codex|gemini` produced no output.
   - Fix: alias export now collects non-Claude sessions and uses agent-aware parsing during export.
-- `export --alias <name> --agent codex` failed with `Permission denied` on `~/.claude-history/codex_index.json`.
+- `export --alias <name> --agent codex` failed with `Permission denied` on `~/.agent-history/codex_index.json`.
   - Fix: Codex index writes now ignore permission errors and continue without aborting.
 - `lss //wsl$/...` in WSL tried to use a Windows UNC projects dir and errored.
   - Fix: when running in WSL, UNC inputs now resolve to `/home/<user>/.claude/projects`.

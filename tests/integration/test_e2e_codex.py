@@ -176,15 +176,15 @@ def setup_env(tmp_path: Path):
     claude_dir.mkdir(parents=True, exist_ok=True)
     codex_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create .claude-history for metrics DB
-    history_dir = tmp_path / ".claude-history"
+    # Create .agent-history for metrics DB
+    history_dir = tmp_path / ".agent-history"
     history_dir.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
     # Use environment variable overrides for both agent types
     env["CLAUDE_PROJECTS_DIR"] = str(claude_dir)
     env["CODEX_SESSIONS_DIR"] = str(codex_dir)
-    # Set HOME for the metrics DB location (~/.claude-history/)
+    # Set HOME for the metrics DB location (~/.agent-history/)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
     else:
@@ -391,7 +391,7 @@ class TestCodexStats:
         assert result.returncode == 0, f"Stats sync failed: {result.stderr}"
 
         # Database must exist after sync
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         assert db_path.exists(), f"Database should exist at {db_path}"
 
         # Verify Codex sessions are in database
@@ -432,7 +432,7 @@ class TestCodexStats:
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
         # Database must exist
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         assert db_path.exists(), "Database should exist"
 
         conn = sqlite3.connect(db_path)
@@ -465,7 +465,7 @@ class TestCodexStats:
         result = run_cli(["stats", "--sync", "--aw"], env=env)
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         assert db_path.exists(), "Database should exist"
 
         conn = sqlite3.connect(db_path)
@@ -488,7 +488,7 @@ class TestCodexStats:
         result = run_cli(["stats", "--sync", "--aw"], env=env)
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         assert db_path.exists(), "Database should exist"
 
         conn = sqlite3.connect(db_path)
@@ -542,7 +542,7 @@ class TestMixedAgents:
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
         # Database must exist
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         assert db_path.exists(), "Database should exist"
 
         # Check both agents in database
@@ -631,7 +631,7 @@ class TestCodexWorkspaces:
         assert result.returncode == 0, f"Sync failed: {result.stderr}"
 
         # Database must exist
-        db_path = tmp_path / ".claude-history" / "metrics.db"
+        db_path = tmp_path / ".agent-history" / "metrics.db"
         assert db_path.exists(), "Database should exist"
 
         conn = sqlite3.connect(db_path)
@@ -670,7 +670,7 @@ class TestCodexIndexFallback:
         Args:
             sessions: Dict mapping file paths to workspace names
         """
-        config_dir = tmp_path / ".claude-history"
+        config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True, exist_ok=True)
         index_file = config_dir / "codex_session_index.json"
         index_file.write_text(
