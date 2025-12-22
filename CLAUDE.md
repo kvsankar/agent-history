@@ -317,7 +317,7 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ### Code Structure
 
-The file is organized into twelve main sections:
+The file is organized into many sections (36+), grouped into these high-level categories:
 
 1. **Date Parsing**
    - `parse_date_string()`: Parses ISO 8601 date strings (YYYY-MM-DD format) into datetime objects
@@ -700,12 +700,12 @@ uv run radon cc agent-history -a -s    # Cyclomatic complexity
 uv run radon mi agent-history -s       # Maintainability index
 ```
 
-**Current metrics (~485 functions):**
-- Grade A (1-5): 288 functions (61%)
-- Grade B (6-10): 166 functions (35%)
-- Grade C (11-20): 18 functions (4%)
+**Current metrics (~540 functions):**
+- Grade A (1-5): 339 functions (63%)
+- Grade B (6-10): 157 functions (29%)
+- Grade C (11-20): 41 functions (8%)
 - Grade D/E/F (21+): 0 functions
-- Average complexity: B (5.0)
+- Average complexity: B (5.1)
 
 **Dataclasses for configuration:**
 - `ListCommandArgs`, `SyncCommandArgs`, `StatsCommandArgs`, `ConvertCommandArgs`
