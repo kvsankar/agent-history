@@ -35,7 +35,7 @@ scripts/coverage.config
 Thumbs.db
 
 # Output directories (user-generated)
-claude-conversations/
+ai-chats/
 
 # Test directories
 temptest-*/

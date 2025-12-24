@@ -192,7 +192,7 @@ agent-history export [WORKSPACE...] [OPTIONS]
 - `WORKSPACE`: One or more workspace patterns (default: current workspace or its alias)
 
 **Options:**
-- `-o`, `--output DIR`: Output directory (default: `./claude-conversations`)
+- `-o`, `--output DIR`: Output directory (default: `./ai-chats`)
 - `--wsl`: Export from WSL (auto-detects distribution)
 - `--windows`: Export from Windows (auto-detects user)
 - `-r`, `--remote HOST`: Add SSH remote source (repeatable)

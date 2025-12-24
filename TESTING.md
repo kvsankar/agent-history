@@ -301,8 +301,8 @@ ver  # Windows command prompt/PowerShell
 
 | Test ID | Command | Expected Directory Structure | Status |
 |---------|---------|----------------------------|--------|
-| multi_struct_workspace_dir | `agent-history export <workspace>` | `./claude-conversations/<workspace>/files.md` | ⬜ |
-| multi_struct_flat | `agent-history export --flat` | `./claude-conversations/files.md` (flat) | ⬜ |
+| multi_struct_workspace_dir | `agent-history export <workspace>` | `./ai-chats/<workspace>/files.md` | ⬜ |
+| multi_struct_flat | `agent-history export --flat` | `./ai-chats/files.md` (flat) | ⬜ |
 | multi_struct_all_sources | `agent-history export --ah` | Source-tagged files in workspace subdirs | ⬜ |
 
 ### 6.6 Multiple Workspace Patterns

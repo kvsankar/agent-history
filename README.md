@@ -52,7 +52,7 @@ cd /path/to/project
 # Export to markdown
 /path/to/agent-history export
 
-# Output goes to ./claude-conversations/
+# Output goes to ./ai-chats/
 ```
 
 **Windows:**

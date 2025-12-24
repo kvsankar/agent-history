@@ -12912,8 +12912,8 @@ def _add_export_parser(subparsers):
     parser.add_argument(
         "output_dir",
         nargs="?",
-        default="./claude-conversations",
-        help="Output directory (default: ./claude-conversations)",
+        default="./ai-chats",
+        help="Output directory (default: ./ai-chats)",
     )
     parser.add_argument(
         "-o",

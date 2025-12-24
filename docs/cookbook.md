@@ -297,7 +297,7 @@ Review problem-solving approaches across sessions:
 agent-history export ml-pipeline
 
 # Analyze patterns
-grep -r "Error:" claude-conversations/
+grep -r "Error:" ai-chats/
 ```
 
 ### Archival

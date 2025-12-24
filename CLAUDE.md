@@ -60,7 +60,7 @@ chmod +x agent-history
 ./agent-history export proj1 proj2         # multiple workspaces (deduplicated)
 ./agent-history export myproject --ah      # specific workspace, all homes
 ./agent-history export proj1 proj2 --ah    # multiple workspaces, all homes (lenient)
-./agent-history export file.jsonl         # export single file (defaults to ./claude-conversations/)
+./agent-history export file.jsonl         # export single file (defaults to ./ai-chats/)
 ./agent-history export file.jsonl -o ./out  # export single file to directory
 
 ./agent-history export -o /tmp/backup      # current workspace, custom output
