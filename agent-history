@@ -6540,7 +6540,8 @@ LEGACY_CONFIG_DIR_NAME = ".claude-history"
 
 def _get_config_dirs() -> tuple[Path, Path]:
     """Return (new_config_dir, legacy_config_dir) under HOME."""
-    home = Path.home()
+    home_env = os.environ.get("HOME")
+    home = Path(home_env) if home_env else Path.home()
     return home / CONFIG_DIR_NAME, home / LEGACY_CONFIG_DIR_NAME
 
 

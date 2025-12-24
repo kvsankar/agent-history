@@ -36,6 +36,7 @@ Thumbs.db
 
 # Output directories (user-generated)
 ai-chats/
+claude-conversations/
 
 # Test directories
 temptest-*/
