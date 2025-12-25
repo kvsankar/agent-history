@@ -9165,7 +9165,7 @@ def _get_stats_workspace_patterns(args) -> list:
     if source_filter and not this_only:
         return []
 
-    pattern, exists = check_current_workspace_exists()
+    _, exists = check_current_workspace_exists()
     if not exists:
         sys.stderr.write(
             "Not in a Claude Code workspace.\n\n"
