@@ -3637,16 +3637,17 @@ def _get_claude_projects_path() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
-def get_active_backends(agent: str) -> list:
+def get_active_backends(agent: str, projects_dir: Optional[Path] = None) -> list:
     """Return list of active backends based on agent flag.
 
     Args:
         agent: Agent selection - 'auto', 'claude', 'codex', or 'gemini'
+        projects_dir: Optional override for Claude projects directory (for testing)
 
     Returns:
         List of backend identifiers (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI) that exist
     """
-    claude_projects = _get_claude_projects_path()
+    claude_projects = projects_dir if projects_dir else _get_claude_projects_path()
 
     if agent == AGENT_CLAUDE:
         return [AGENT_CLAUDE] if claude_projects.exists() else []
@@ -3746,12 +3747,14 @@ def get_unified_sessions(
         until_date: Filter to sessions modified on or before this date
         skip_message_count: If True, skip counting messages
         **kwargs: Additional arguments passed to backend functions
+            projects_dir: Optional override for Claude projects directory
 
     Returns:
         List of session dicts from all active backends, sorted by modified (newest first)
     """
     all_sessions = []
-    backends = get_active_backends(agent)
+    projects_dir = kwargs.get("projects_dir")
+    backends = get_active_backends(agent, projects_dir=projects_dir)
 
     # M6: Use consolidated backend dispatch
     for backend in backends:

@@ -2311,7 +2311,7 @@ class TestAgentFiltering:
         )
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
 
-        backends = ch.get_active_backends("claude")
+        backends = ch.get_active_backends("claude", projects_dir=mixed_agent_env["claude_projects"])
         assert backends == ["claude"]
 
     def test_get_active_backends_codex_only(self, mixed_agent_env, monkeypatch):
@@ -2321,7 +2321,7 @@ class TestAgentFiltering:
         )
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
 
-        backends = ch.get_active_backends("codex")
+        backends = ch.get_active_backends("codex", projects_dir=mixed_agent_env["claude_projects"])
         assert backends == ["codex"]
 
     def test_get_active_backends_auto_returns_both(self, mixed_agent_env, monkeypatch):
@@ -2331,7 +2331,7 @@ class TestAgentFiltering:
         )
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
 
-        backends = ch.get_active_backends("auto")
+        backends = ch.get_active_backends("auto", projects_dir=mixed_agent_env["claude_projects"])
         assert "claude" in backends
         assert "codex" in backends
 
