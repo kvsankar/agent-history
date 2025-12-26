@@ -12112,6 +12112,8 @@ class TestMultiAgentWorkflowIntegration:
         """Test get_unified_sessions returns sessions from all agents."""
         with patch.object(
             ch, "get_claude_projects_dir", return_value=multi_agent_env["claude_dir"]
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=multi_agent_env["claude_dir"]
         ):
             with patch.object(ch, "codex_get_home_dir", return_value=multi_agent_env["codex_dir"]):
                 with patch.object(
@@ -12129,6 +12131,8 @@ class TestMultiAgentWorkflowIntegration:
         """Test get_unified_sessions filters by specific agent."""
         with patch.object(
             ch, "get_claude_projects_dir", return_value=multi_agent_env["claude_dir"]
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=multi_agent_env["claude_dir"]
         ):
             sessions = ch.get_unified_sessions(agent="claude", pattern="")
 
@@ -12140,6 +12144,8 @@ class TestMultiAgentWorkflowIntegration:
         """Test collect_sessions_with_dedup handles all agents."""
         with patch.object(
             ch, "get_claude_projects_dir", return_value=multi_agent_env["claude_dir"]
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=multi_agent_env["claude_dir"]
         ):
             with patch.object(ch, "codex_get_home_dir", return_value=multi_agent_env["codex_dir"]):
                 with patch.object(
@@ -12161,6 +12167,8 @@ class TestMultiAgentWorkflowIntegration:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=multi_agent_env["claude_dir"]
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=multi_agent_env["claude_dir"]
         ):
             with patch.object(ch, "codex_get_home_dir", return_value=multi_agent_env["codex_dir"]):
                 with patch.object(
