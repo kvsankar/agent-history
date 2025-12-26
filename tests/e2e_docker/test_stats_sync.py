@@ -25,8 +25,8 @@ class TestStatsSyncRemote:
         sync_result = run_cli(["stats", "--sync", "-r", charlie], env=isolated_home["env"])
         assert sync_result.returncode == 0, f"sync stderr: {sync_result.stderr}"
 
-        # Then view stats
-        stats_result = run_cli(["stats"], env=isolated_home["env"])
+        # Then view stats (--aw required when not in a workspace)
+        stats_result = run_cli(["stats", "--aw"], env=isolated_home["env"])
         assert stats_result.returncode == 0, f"stats stderr: {stats_result.stderr}"
 
     def test_stats_sync_with_agent_filter(self, charlie, verify_ssh_connectivity):
@@ -43,8 +43,8 @@ class TestStatsDisplayRemote:
         # Sync first
         run_cli(["stats", "--sync", "-r", charlie], env=isolated_home["env"])
 
-        # Then view tool stats
-        result = run_cli(["stats", "--tools"], env=isolated_home["env"])
+        # Then view tool stats (--aw required when not in a workspace)
+        result = run_cli(["stats", "--tools", "--aw"], env=isolated_home["env"])
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
     def test_stats_models_remote(self, charlie, isolated_home, verify_ssh_connectivity):
@@ -52,8 +52,8 @@ class TestStatsDisplayRemote:
         # Sync first
         run_cli(["stats", "--sync", "-r", charlie], env=isolated_home["env"])
 
-        # Then view model stats
-        result = run_cli(["stats", "--models"], env=isolated_home["env"])
+        # Then view model stats (--aw required when not in a workspace)
+        result = run_cli(["stats", "--models", "--aw"], env=isolated_home["env"])
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
     def test_stats_by_workspace_remote(self, charlie, isolated_home, verify_ssh_connectivity):
@@ -61,8 +61,8 @@ class TestStatsDisplayRemote:
         # Sync first
         run_cli(["stats", "--sync", "-r", charlie], env=isolated_home["env"])
 
-        # Then view workspace stats
-        result = run_cli(["stats", "--by-workspace"], env=isolated_home["env"])
+        # Then view workspace stats (--aw required when not in a workspace)
+        result = run_cli(["stats", "--by-workspace", "--aw"], env=isolated_home["env"])
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
 
@@ -79,6 +79,6 @@ class TestStatsSyncMultipleRemotes:
         charlie_result = run_cli(["stats", "--sync", "-r", charlie], env=isolated_home["env"])
         assert charlie_result.returncode == 0, f"charlie stderr: {charlie_result.stderr}"
 
-        # View combined stats
-        stats_result = run_cli(["stats"], env=isolated_home["env"])
+        # View combined stats (--aw required when not in a workspace)
+        stats_result = run_cli(["stats", "--aw"], env=isolated_home["env"])
         assert stats_result.returncode == 0, f"stats stderr: {stats_result.stderr}"

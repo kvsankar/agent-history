@@ -3069,7 +3069,7 @@ def gemini_get_first_timestamp(json_file: Path) -> Optional[str]:
 
 def _gemini_format_session_metadata(session_meta: dict) -> list:
     """Format Gemini session metadata as markdown lines."""
-    project_hash = session_meta.get("projectHash", "unknown")
+    project_hash = session_meta.get("projectHash") or "unknown"
     short_hash = _truncate_hash(project_hash)
     lines = [
         "## Session Metadata",
@@ -14353,8 +14353,8 @@ if __name__ == "__main__":
         sys.stderr.write(f"\nError: {e}\n")
         sys.exit(1)
     except KeyboardInterrupt:
-        sys.stderr.write("\\nInterrupted\\n")
+        sys.stderr.write("\nInterrupted\n")
         sys.exit(130)
     except Exception as e:
-        sys.stderr.write(f"\\nError: {e}\\n")
+        sys.stderr.write(f"\nError: {e}\n")
         sys.exit(1)
