@@ -2254,7 +2254,9 @@ class TestAgentFiltering:
         )
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
 
-        sessions = ch.collect_sessions_with_dedup([""], agent="claude")
+        sessions = ch.collect_sessions_with_dedup(
+            [""], agent="claude", projects_dir=mixed_agent_env["claude_projects"]
+        )
 
         assert len(sessions) > 0
         agents = {s.get("agent") for s in sessions}
@@ -2267,7 +2269,9 @@ class TestAgentFiltering:
         )
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
 
-        sessions = ch.collect_sessions_with_dedup([""], agent="codex")
+        sessions = ch.collect_sessions_with_dedup(
+            [""], agent="codex", projects_dir=mixed_agent_env["claude_projects"]
+        )
 
         assert len(sessions) > 0
         agents = {s.get("agent") for s in sessions}
@@ -2280,7 +2284,9 @@ class TestAgentFiltering:
         )
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
 
-        sessions = ch.collect_sessions_with_dedup([""], agent="auto")
+        sessions = ch.collect_sessions_with_dedup(
+            [""], agent="auto", projects_dir=mixed_agent_env["claude_projects"]
+        )
 
         assert len(sessions) > 0
         agents = {s.get("agent") for s in sessions}
@@ -2295,12 +2301,16 @@ class TestAgentFiltering:
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: mixed_agent_env["codex_sessions"])
 
         # Test claude only
-        claude_sessions = ch.get_unified_sessions(agent="claude", pattern="")
+        claude_sessions = ch.get_unified_sessions(
+            agent="claude", pattern="", projects_dir=mixed_agent_env["claude_projects"]
+        )
         claude_agents = {s.get("agent") for s in claude_sessions}
         assert claude_agents == {"claude"} or len(claude_sessions) == 0
 
         # Test codex only
-        codex_sessions = ch.get_unified_sessions(agent="codex", pattern="")
+        codex_sessions = ch.get_unified_sessions(
+            agent="codex", pattern="", projects_dir=mixed_agent_env["claude_projects"]
+        )
         codex_agents = {s.get("agent") for s in codex_sessions}
         assert codex_agents == {"codex"} or len(codex_sessions) == 0
 
@@ -9407,7 +9417,9 @@ class TestLocalFlagBehavior:
             remotes = []
             workspaces_only = True
 
-        with patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir):
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "_get_claude_projects_path", return_value=temp_projects_dir):
             ch._dispatch_lsw_additive(Args)
 
         captured = capsys.readouterr()
@@ -9428,6 +9440,8 @@ class TestLocalFlagBehavior:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=temp_projects_dir
         ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
             ch, "list_remote_workspaces", return_value=mock_remote_workspaces
         ), patch.object(ch, "get_remote_hostname", return_value="testhost"):
@@ -9453,6 +9467,8 @@ class TestLocalFlagBehavior:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=temp_projects_dir
         ), patch.object(ch, "check_ssh_connection", return_value=False):
             ch._dispatch_lsw_additive(Args)
 
@@ -9474,6 +9490,8 @@ class TestLocalFlagBehavior:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=temp_projects_dir
         ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
             ch, "list_remote_workspaces", return_value=mock_remote_workspaces
         ), patch.object(ch, "get_remote_hostname", return_value="testhost"):
@@ -9494,7 +9512,9 @@ class TestLocalFlagBehavior:
             since_date = None
             until_date = None
 
-        with patch.object(ch, "get_claude_projects_dir", return_value=temp_projects_dir):
+        with patch.object(
+            ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(ch, "_get_claude_projects_path", return_value=temp_projects_dir):
             ch._dispatch_lss_additive(Args)
 
         captured = capsys.readouterr()
@@ -9528,6 +9548,8 @@ class TestLocalFlagBehavior:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=temp_projects_dir
         ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
             ch, "list_remote_workspaces", return_value=mock_remote_workspaces
         ), patch.object(ch, "get_remote_hostname", return_value="testhost"), patch.object(
@@ -9579,6 +9601,8 @@ class TestLocalFlagBehavior:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=temp_projects_dir
         ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
             ch, "list_remote_workspaces", return_value=mock_remote_workspaces
         ), patch.object(ch, "get_remote_hostname", return_value="testhost"), patch.object(
