@@ -11,6 +11,9 @@ shift 2>/dev/null || true
 echo "=== Running Tests with Coverage ==="
 echo "Test path: $TEST_PATH"
 
+# Set COVERAGE_DATA_FILE to enable coverage in CLI subprocess calls (via helpers.py)
+export COVERAGE_DATA_FILE=/coverage/.coverage
+
 # Run pytest with coverage
 # Unit tests run directly with coverage, E2E tests use subprocess coverage via helpers.py
 coverage run --rcfile=/app/.coveragerc --data-file=/coverage/.coverage.main \

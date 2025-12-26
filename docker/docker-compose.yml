@@ -47,9 +47,9 @@ services:
       - NODE_BETA=node-beta
       - ALPHA_USERS=alice,bob
       - BETA_USERS=charlie,dave
-      # Enable coverage subprocess tracking
-      - COVERAGE_PROCESS_START=/app/.coveragerc
-      - COVERAGE_DATA_FILE=/coverage/.coverage
+      # Note: For coverage collection, run with:
+      #   COVERAGE_PROCESS_START=/app/.coveragerc COVERAGE_DATA_FILE=/coverage/.coverage \
+      #   docker compose run --rm test-runner pytest --cov=. tests/e2e_docker/
 
 networks:
   agent-history-net:

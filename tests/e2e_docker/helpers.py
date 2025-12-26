@@ -26,10 +26,14 @@ def get_env():
 
 
 def get_coverage_env():
-    """Get environment variables for coverage subprocess tracking."""
+    """Get environment variables for coverage subprocess tracking.
+
+    Coverage is only enabled if COVERAGE_DATA_FILE is set in the environment,
+    indicating that we're running in coverage collection mode.
+    """
     coverage_env = {}
-    # Enable coverage in subprocess if .coveragerc exists
-    if COVERAGE_RC.exists():
+    # Only enable coverage if explicitly requested via COVERAGE_DATA_FILE
+    if COVERAGE_RC.exists() and os.environ.get("COVERAGE_DATA_FILE"):
         coverage_env["COVERAGE_PROCESS_START"] = str(COVERAGE_RC)
     return coverage_env
 
