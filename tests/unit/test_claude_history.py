@@ -10563,6 +10563,7 @@ class TestExportIncremental:
 
         output_dir = tmp_path / "exports"
         monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+        monkeypatch.setattr(ch, "_get_claude_projects_path", lambda: projects_dir)
 
         args = SimpleNamespace(
             output_dir=str(output_dir),
