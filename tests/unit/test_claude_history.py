@@ -9628,6 +9628,8 @@ class TestLocalFlagBehavior:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=temp_projects_dir
         ), patch.object(ch, "check_ssh_connection", return_value=False):
             ch._dispatch_lss_additive(Args)
 
@@ -9664,6 +9666,8 @@ class TestLocalFlagBehavior:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=temp_projects_dir
         ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
             ch, "list_remote_workspaces", return_value=["-home-user-project"]
         ), patch.object(ch, "get_remote_hostname", side_effect=mock_hostname), patch.object(
@@ -9687,6 +9691,8 @@ class TestLocalFlagBehavior:
 
         with patch.object(
             ch, "get_claude_projects_dir", return_value=temp_projects_dir
+        ), patch.object(
+            ch, "_get_claude_projects_path", return_value=temp_projects_dir
         ), patch.object(ch, "check_ssh_connection", return_value=True), patch.object(
             ch, "list_remote_workspaces", return_value=[]
         ), patch.object(ch, "get_remote_hostname", return_value="testhost"):
@@ -9934,6 +9940,7 @@ class TestStatsAndExportEndToEnd:
 
         monkeypatch.setattr(ch, "is_running_in_wsl", lambda: True)
         monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: local_projects)
+        monkeypatch.setattr(ch, "_get_claude_projects_path", lambda: local_projects)
         monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: [{"username": "winuser"}])
         monkeypatch.setattr(ch, "get_windows_projects_dir", lambda username=None: windows_projects)
         monkeypatch.setattr(ch, "get_saved_sources", lambda: [])
