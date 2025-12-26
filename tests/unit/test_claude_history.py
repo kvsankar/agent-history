@@ -10460,6 +10460,7 @@ class TestCommandCombinationMatrix:
         env = command_matrix_env
         projects_dir = env["projects_dir"]
         monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+        monkeypatch.setattr(ch, "_get_claude_projects_path", lambda: projects_dir)
         monkeypatch.setattr(
             ch, "get_windows_projects_dir", lambda username=None: env["windows_projects"]
         )
