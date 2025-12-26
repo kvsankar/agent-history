@@ -140,10 +140,10 @@ def setup_env(tmp_path: Path):
     env["CODEX_SESSIONS_DIR"] = str(codex_dir)
     env["GEMINI_SESSIONS_DIR"] = str(gemini_dir)
     # Set HOME for the metrics DB location (~/.agent-history/)
+    # Note: Set HOME on all platforms since _get_config_dirs() checks HOME first
+    env["HOME"] = str(tmp_path)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
-    else:
-        env["HOME"] = str(tmp_path)
 
     return env
 

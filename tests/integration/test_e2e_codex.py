@@ -185,10 +185,10 @@ def setup_env(tmp_path: Path):
     env["CLAUDE_PROJECTS_DIR"] = str(claude_dir)
     env["CODEX_SESSIONS_DIR"] = str(codex_dir)
     # Set HOME for the metrics DB location (~/.agent-history/)
+    # Note: Set HOME on all platforms since _get_config_dirs() checks HOME first
+    env["HOME"] = str(tmp_path)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
-    else:
-        env["HOME"] = str(tmp_path)
 
     return env
 
