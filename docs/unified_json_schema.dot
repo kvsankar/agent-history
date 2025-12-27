@@ -27,9 +27,9 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#e8f4e8";
 
-        header [label="{Header (line 1)|type: \"header\"\lschema_version: \"1.0\"\lexport_timestamp: ISO8601\lagent_types: [\"claude-code\", ...]\lhomes: [\"local\", \"wsl_ubuntu\", ...]\lsession_count: int\l}"];
+        header [label="{Header (line 1)|type: header\lschema_version: string\lexport_timestamp: ISO8601\lagent_types: array\lhomes: array\lsession_count: int\l}"];
 
-        session [label="{Session (lines 2+)|type: \"session\"\lsession: \{...\}\lmessages: [...]\l}"];
+        session [label="{Session (lines 2+)|type: session\lsession: object\lmessages: array\l}"];
     }
 
     // Session object
@@ -38,7 +38,7 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#e8e8f4";
 
-        session_obj [label="{session|id: string\lagent: string (claude-code/codex/gemini)\lworkspace: string\lworkspace_encoded: string\lstarted_at: ISO8601\lended_at: ISO8601\lsource: \{type, host, path\}\lis_agent_session: bool\lparent_session_id: string?\lagent_id: string?\l}"];
+        session_obj [label="{session|id: string\lagent: string\lworkspace: string\lworkspace_encoded: string\lstarted_at: ISO8601\lended_at: ISO8601\lsource: object\lis_agent_session: bool\lparent_session_id: string?\lagent_id: string?\l}"];
     }
 
     // Message object
@@ -47,7 +47,7 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#f4e8e8";
 
-        message [label="{message|index: int\luuid: string?\lparent_uuid: string?\lrole: string (user/assistant/system)\ltimestamp: ISO8601?\lcontent: [ContentBlock, ...]\lmetadata: \{...\}?\l}"];
+        message [label="{message|index: int\luuid: string?\lparent_uuid: string?\lrole: string\ltimestamp: ISO8601?\lcontent: array\lmetadata: object?\l}"];
     }
 
     // Content blocks
@@ -56,11 +56,11 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#f4f4e8";
 
-        text_block [label="{TextBlock|type: \"text\"\ltext: string\l}"];
+        text_block [label="{TextBlock|type: text\ltext: string\l}"];
 
-        tool_use [label="{ToolUseBlock|type: \"tool_use\"\ltool_id: string\ltool_name: string\linput: object\l}"];
+        tool_use [label="{ToolUseBlock|type: tool_use\ltool_id: string\ltool_name: string\linput: object\l}"];
 
-        tool_result [label="{ToolResultBlock|type: \"tool_result\"\ltool_id: string\ltool_name: string\loutput: string\lis_error: bool\l}"];
+        tool_result [label="{ToolResultBlock|type: tool_result\ltool_id: string\ltool_name: string\loutput: string\lis_error: bool\l}"];
     }
 
     // Metadata
@@ -69,7 +69,7 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#f0e8f4";
 
-        metadata [label="{metadata|cwd: string?\lgit_branch: string?\lagent_version: string?\luser_type: string?\lis_meta: bool?\lmodel: \{name, stop_reason\}?\ltoken_usage: \{in, out, cache\}?\lrequest_id: string?\l}"];
+        metadata [label="{metadata|cwd: string?\lgit_branch: string?\lagent_version: string?\luser_type: string?\lis_meta: bool?\lmodel: object?\ltoken_usage: object?\lrequest_id: string?\l}"];
     }
 
     // Graph info (optional)
@@ -78,7 +78,7 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#e8f0f4";
 
-        graph_info [label="{graph|is_linear: bool\lfork_points: [\{uuid, branches\}, ...]\lactive_path: [uuid, ...]\l}"];
+        graph_info [label="{graph|is_linear: bool\lfork_points: array\lactive_path: array\l}"];
     }
 
     // Relationships
