@@ -83,6 +83,7 @@ chmod +x agent-history
 ./agent-history export myproject --minimal       # minimal mode
 ./agent-history export myproject --split 500     # split long conversations
 ./agent-history export myproject --flat          # flat structure (no workspace subdirs)
+./agent-history export myproject --source        # include raw source files
 ./agent-history export myproject --jobs 4        # parallel export
 ./agent-history export myproject --quiet         # suppress per-file output
 ./agent-history export --ah --no-remote          # skip SSH remotes
@@ -125,6 +126,13 @@ chmod +x agent-history
 ./agent-history lsh add user@vm02     # add another remote
 ./agent-history lsh remove user@vm01  # remove a source
 ./agent-history lsh clear             # remove all saved sources
+
+# Web Sessions (Claude.ai)
+./agent-history web list                   # list web sessions (auto-auth on macOS)
+./agent-history web export                 # export all web sessions
+./agent-history web export <session-id>    # export specific session
+./agent-history web export --source        # include raw source file
+./agent-history web list --token <token> --org-uuid <uuid>  # manual auth
 
 # Usage Statistics and Metrics (orthogonal --ah/--aw flags)
 ./agent-history stats --sync               # sync local sessions to database

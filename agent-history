@@ -324,6 +324,7 @@ class ExportConfig:
     agent: str = "auto"
     jobs: int = 1
     quiet: bool = False
+    include_source: bool = False
 
     @property
     def workspace(self) -> str:
@@ -1781,6 +1782,7 @@ def _build_message_dict(
         "version": entry.get("version", ""),
         "gitBranch": entry.get("gitBranch"),
         "isSidechain": entry.get("isSidechain"),
+        "isMeta": entry.get("isMeta"),
         "userType": entry.get("userType"),
         "model": message_obj.get("model"),
         "usage": message_obj.get("usage"),
@@ -1840,6 +1842,190 @@ def read_jsonl_messages(jsonl_file: Path, quiet: bool = False):
                         handle_entry(entry)
 
     return messages
+
+
+# ============================================================================
+# Conversation Graph Analysis
+# ============================================================================
+
+
+@dataclass
+class ConversationGraph:
+    """Represents the structure of a conversation with potential forks."""
+
+    messages: list
+    uuid_to_msg: dict
+    uuid_to_children: dict
+    fork_points: list  # List of UUIDs that have multiple children
+    branches: list  # List of branch descriptions
+    is_linear: bool  # True if no forks
+
+
+def analyze_conversation_graph(messages: list) -> ConversationGraph:
+    """Analyze conversation structure to detect forks and branches.
+
+    Args:
+        messages: List of message dicts with uuid and parentUuid fields
+
+    Returns:
+        ConversationGraph with fork analysis
+    """
+    from collections import defaultdict
+
+    uuid_to_msg = {msg["uuid"]: msg for msg in messages if msg.get("uuid")}
+    uuid_to_children = defaultdict(list)
+
+    # Build parent-child relationships
+    for msg in messages:
+        parent = msg.get("parentUuid")
+        if parent:
+            uuid_to_children[parent].append(msg["uuid"])
+
+    # Find fork points (parents with multiple children)
+    fork_points = [parent for parent, children in uuid_to_children.items() if len(children) > 1]
+
+    # Analyze branches
+    branches = []
+    for fork_uuid in fork_points:
+        parent_msg = uuid_to_msg.get(fork_uuid)
+        children = uuid_to_children[fork_uuid]
+
+        branch_info = {
+            "fork_uuid": fork_uuid,
+            "fork_timestamp": parent_msg.get("timestamp") if parent_msg else None,
+            "fork_type": parent_msg.get("role") if parent_msg else None,
+            "branches": [],
+        }
+
+        for child_uuid in children:
+            child_msg = uuid_to_msg.get(child_uuid)
+            if child_msg:
+                branch_info["branches"].append(
+                    {
+                        "uuid": child_uuid,
+                        "timestamp": child_msg.get("timestamp"),
+                        "type": child_msg.get("role"),
+                    }
+                )
+
+        branches.append(branch_info)
+
+    return ConversationGraph(
+        messages=messages,
+        uuid_to_msg=uuid_to_msg,
+        uuid_to_children=dict(uuid_to_children),
+        fork_points=fork_points,
+        branches=branches,
+        is_linear=len(fork_points) == 0,
+    )
+
+
+def generate_graph_summary(graph: ConversationGraph) -> list:
+    """Generate markdown summary of conversation graph structure.
+
+    Args:
+        graph: ConversationGraph from analyze_conversation_graph
+
+    Returns:
+        List of markdown lines describing the graph structure
+    """
+    if graph.is_linear:
+        return []
+
+    lines = ["", "### Conversation Structure", ""]
+    lines.append(
+        f"This conversation has **{len(graph.fork_points)} fork point(s)** "
+        f"where the conversation branched into multiple paths."
+    )
+    lines.append("")
+
+    for i, branch_info in enumerate(graph.branches, 1):
+        fork_uuid = branch_info["fork_uuid"]
+        fork_ts = branch_info["fork_timestamp"]
+        fork_type = branch_info["fork_type"]
+
+        lines.append(f"**Fork {i}** at {fork_type or 'message'} `{fork_uuid[:8]}...`")
+        if fork_ts:
+            lines.append(f"- Fork time: {fork_ts}")
+        lines.append(f"- Branches: {len(branch_info['branches'])}")
+
+        for j, branch in enumerate(branch_info["branches"], 1):
+            branch_uuid = branch["uuid"]
+            branch_ts = branch["timestamp"]
+            branch_type = branch["type"]
+            # Create link if uuid exists
+            lines.append(
+                f"  - Branch {j}: [{branch_type} `{branch_uuid[:8]}...`](#msg-{branch_uuid}) "
+                f"({branch_ts})"
+            )
+        lines.append("")
+
+    return lines
+
+
+def generate_mermaid_graph(graph: ConversationGraph, max_nodes: int = 50) -> list:  # noqa: C901
+    """Generate Mermaid diagram of conversation graph.
+
+    Args:
+        graph: ConversationGraph from analyze_conversation_graph
+        max_nodes: Maximum number of nodes to include (truncates large graphs)
+
+    Returns:
+        List of markdown lines with Mermaid diagram
+    """
+    if graph.is_linear or not graph.fork_points:
+        return []
+
+    lines = ["", "### Conversation Graph", ""]
+    lines.append("```mermaid")
+    lines.append("graph TD")
+
+    # Only include nodes near fork points to keep diagram readable
+    relevant_uuids = set()
+    for fork_uuid in graph.fork_points:
+        relevant_uuids.add(fork_uuid)
+        for child_uuid in graph.uuid_to_children.get(fork_uuid, []):
+            relevant_uuids.add(child_uuid)
+            # Also add children of children (one more level)
+            for grandchild in graph.uuid_to_children.get(child_uuid, [])[:2]:
+                relevant_uuids.add(grandchild)
+
+    # Limit nodes
+    relevant_uuids = list(relevant_uuids)[:max_nodes]
+
+    # Generate node definitions
+    for uuid in relevant_uuids:
+        msg = graph.uuid_to_msg.get(uuid)
+        if msg:
+            role = msg.get("role", "?")[0].upper()  # U or A
+            short_id = uuid[:6]
+            lines.append(f'    {short_id}["{role}: {short_id}"]')
+
+    # Generate edges
+    for uuid in relevant_uuids:
+        msg = graph.uuid_to_msg.get(uuid)
+        if msg and msg.get("parentUuid"):
+            parent = msg["parentUuid"]
+            if parent in [u[:6] for u in relevant_uuids] or any(
+                u.startswith(parent[:6]) for u in relevant_uuids
+            ):
+                # Find matching parent
+                parent_short = None
+                for u in relevant_uuids:
+                    if u == parent or u.startswith(parent[:6]):
+                        parent_short = u[:6]
+                        break
+                if parent_short:
+                    lines.append(f"    {parent_short} --> {uuid[:6]}")
+
+    # Highlight fork points
+    for fork_uuid in graph.fork_points:
+        if fork_uuid in relevant_uuids or any(u.startswith(fork_uuid[:6]) for u in relevant_uuids):
+            lines.append(f"    style {fork_uuid[:6]} fill:#ff9,stroke:#f66")
+
+    lines.append("```")
+    lines.append("")
+    return lines
 
 
 def _generate_message_section(
@@ -1917,8 +2103,17 @@ def parse_jsonl_to_markdown(
     minimal: bool = False,
     messages: Optional[list] = None,
     display_file: Optional[str] = None,
+    show_graph: bool = True,
 ) -> str:
-    """Convert a Claude Code JSONL session file to readable Markdown."""
+    """Convert a Claude Code JSONL session file to readable Markdown.
+
+    Args:
+        jsonl_file: Path to the JSONL file
+        minimal: If True, omit metadata
+        messages: Pre-parsed messages (optional)
+        display_file: File name to display in header
+        show_graph: If True, include conversation graph analysis for forked conversations
+    """
     if messages is None:
         messages = read_jsonl_messages(jsonl_file)
 
@@ -1927,6 +2122,13 @@ def parse_jsonl_to_markdown(
     md_lines = _generate_markdown_file_header(jsonl_file, messages, is_agent, display_file)
     if is_agent:
         md_lines.extend(_generate_agent_conversation_notice(parent_session_id, agent_id))
+
+    # Add conversation graph analysis if there are forks (skip in minimal mode)
+    if show_graph and not minimal and len(messages) > 1:
+        graph = analyze_conversation_graph(messages)
+        if not graph.is_linear:
+            md_lines.extend(generate_graph_summary(graph))
+
     md_lines.extend(["", "---", ""])
 
     uuid_to_index = {msg["uuid"]: i for i, msg in enumerate(messages, 1) if msg.get("uuid")}
@@ -2091,6 +2293,9 @@ def _generate_message_metadata(msg: dict, uuid_to_index: dict) -> list[str]:
 
     if msg.get("isSidechain") is not None:
         md_lines.append(f"- **Is Sidechain:** `{msg['isSidechain']}`")
+
+    if msg.get("isMeta") is not None:
+        md_lines.append(f"- **Is Meta:** `{msg['isMeta']}`")
 
     _add_metadata_field(md_lines, msg, "model", "Model")
     _add_metadata_field(md_lines, msg, "stop_reason", "Stop Reason")
@@ -6656,6 +6861,207 @@ def get_saved_sources() -> list:
     return config.get("sources", [])
 
 
+# ============================================================================
+# Web Sessions API (Claude.ai)
+# ============================================================================
+
+WEB_API_BASE_URL = "https://api.anthropic.com/v1"
+WEB_API_VERSION = "2023-06-01"
+WEB_DISPLAY_TITLE_MAX_LEN = 50
+
+
+class WebSessionsError(Exception):
+    """Error accessing web sessions API."""
+
+    pass
+
+
+def get_access_token_from_keychain() -> Optional[str]:
+    """Get access token from macOS keychain.
+
+    Returns:
+        Access token string or None if not found/not macOS.
+    """
+    if sys.platform != "darwin":
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                "security",
+                "find-generic-password",
+                "-a",
+                os.environ.get("USER", ""),
+                "-s",
+                "Claude Code-credentials",
+                "-w",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+
+        # Parse the JSON to get the access token
+        creds = json.loads(result.stdout.strip())
+        return creds.get("claudeAiOauth", {}).get("accessToken")
+    except (json.JSONDecodeError, subprocess.SubprocessError, FileNotFoundError):
+        return None
+
+
+def get_org_uuid_from_claude_config() -> Optional[str]:
+    """Get organization UUID from ~/.claude.json.
+
+    Returns:
+        Organization UUID string or None if not found.
+    """
+    config_path = Path.home() / ".claude.json"
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+        return config.get("oauthAccount", {}).get("organizationUuid")
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _make_web_api_request(endpoint: str, token: str, org_uuid: str, timeout: int = 30) -> dict:
+    """Make a request to the Claude web API.
+
+    Args:
+        endpoint: API endpoint (e.g., '/sessions')
+        token: Access token
+        org_uuid: Organization UUID
+        timeout: Request timeout in seconds
+
+    Returns:
+        JSON response as dict
+
+    Raises:
+        WebSessionsError: On network or API errors
+    """
+    import urllib.error
+    import urllib.request
+
+    url = f"{WEB_API_BASE_URL}{endpoint}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "anthropic-version": WEB_API_VERSION,
+        "Content-Type": "application/json",
+        "x-organization-uuid": org_uuid,
+    }
+
+    req = urllib.request.Request(url, headers=headers)
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise WebSessionsError(f"API error {e.code}: {e.reason}") from e
+    except urllib.error.URLError as e:
+        raise WebSessionsError(f"Network error: {e.reason}") from e
+    except json.JSONDecodeError as e:
+        raise WebSessionsError(f"Invalid JSON response: {e}") from e
+
+
+def fetch_web_sessions(token: str, org_uuid: str) -> list:
+    """Fetch list of web sessions from the Claude API.
+
+    Args:
+        token: Access token
+        org_uuid: Organization UUID
+
+    Returns:
+        List of session dictionaries with 'id', 'title', 'created_at', etc.
+
+    Raises:
+        WebSessionsError: On API errors
+    """
+    data = _make_web_api_request("/sessions", token, org_uuid)
+    return data.get("data", [])
+
+
+def fetch_web_session(token: str, org_uuid: str, session_id: str) -> dict:
+    """Fetch a specific web session from the Claude API.
+
+    Args:
+        token: Access token
+        org_uuid: Organization UUID
+        session_id: Session ID to fetch
+
+    Returns:
+        Session data dictionary with 'loglines', etc.
+
+    Raises:
+        WebSessionsError: On API errors
+    """
+    return _make_web_api_request(
+        f"/session_ingress/session/{session_id}", token, org_uuid, timeout=60
+    )
+
+
+def web_session_to_jsonl(session_data: dict) -> str:
+    """Convert web session data to JSONL format.
+
+    Args:
+        session_data: Session data from fetch_web_session
+
+    Returns:
+        JSONL string (one JSON object per line)
+    """
+    lines = []
+    for entry in session_data.get("loglines", []):
+        entry_type = entry.get("type")
+        if entry_type not in ("user", "assistant"):
+            continue
+        lines.append(json.dumps(entry, ensure_ascii=False))
+    return "\n".join(lines)
+
+
+def resolve_web_credentials(
+    token: Optional[str] = None, org_uuid: Optional[str] = None
+) -> tuple[str, str]:
+    """Resolve web API credentials from arguments or auto-detect.
+
+    Args:
+        token: Optional access token (uses keychain if None on macOS)
+        org_uuid: Optional org UUID (uses ~/.claude.json if None)
+
+    Returns:
+        Tuple of (token, org_uuid)
+
+    Raises:
+        WebSessionsError: If credentials cannot be resolved
+    """
+    # Get token
+    if token is None:
+        token = get_access_token_from_keychain()
+        if token is None:
+            if sys.platform == "darwin":
+                raise WebSessionsError(
+                    "Could not retrieve access token from macOS keychain. "
+                    "Make sure you are logged into Claude Code, or provide --token."
+                )
+            else:
+                raise WebSessionsError(
+                    "On non-macOS platforms, you must provide --token with your access token."
+                )
+
+    # Get org UUID
+    if org_uuid is None:
+        org_uuid = get_org_uuid_from_claude_config()
+        if org_uuid is None:
+            raise WebSessionsError(
+                "Could not find organization UUID in ~/.claude.json. "
+                "Provide --org-uuid with your organization UUID."
+            )
+
+    return token, org_uuid
+
+
 def load_aliases() -> dict:
     """Load aliases from storage file. Returns empty structure if not found."""
     aliases_file = get_aliases_file()
@@ -11073,7 +11479,7 @@ def _is_export_up_to_date(output_file: Path, jsonl_file: Path, force: bool) -> b
     return output_file.stat().st_mtime >= jsonl_file.stat().st_mtime
 
 
-def _export_single_session(
+def _export_single_session(  # noqa: PLR0913
     jsonl_file: Path,
     output_file: Path,
     output_name: str,
@@ -11082,8 +11488,21 @@ def _export_single_session(
     minimal: bool,
     split_lines: Optional[int],
     quiet: bool,
+    include_source: bool = False,
 ):
-    """Export a single session to markdown file(s)."""
+    """Export a single session to markdown file(s).
+
+    Args:
+        jsonl_file: Source JSON/JSONL file path
+        output_file: Destination markdown file path
+        output_name: Name of the output file
+        agent_type: Agent type (claude, codex, gemini)
+        messages: Pre-read messages
+        minimal: If True, produce minimal output without metadata
+        split_lines: Line threshold for splitting (None to disable)
+        quiet: If True, suppress per-file output
+        include_source: If True, copy source JSON/JSONL alongside markdown
+    """
     try:
         # Codex/Gemini files don't support splitting yet; use direct export
         if agent_type in (AGENT_CODEX, AGENT_GEMINI):
@@ -11103,8 +11522,37 @@ def _export_single_session(
                 _write_single_file(jsonl_file, output_file, minimal, messages=messages, quiet=quiet)
         else:
             _write_single_file(jsonl_file, output_file, minimal, messages=messages, quiet=quiet)
+
+        # Copy source JSON/JSONL if requested
+        if include_source:
+            _copy_source_json(jsonl_file, output_file, output_name, quiet)
+
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
+
+
+def _copy_source_json(jsonl_file: Path, output_file: Path, output_name: str, quiet: bool) -> None:
+    """Copy the source JSON/JSONL file alongside the markdown export.
+
+    Args:
+        jsonl_file: Source JSON/JSONL file path
+        output_file: Destination markdown file path (used to determine output dir)
+        output_name: Base name for output file
+        quiet: If True, suppress output
+    """
+    import shutil
+
+    # Determine output path: same directory as markdown, same base name + source extension
+    base_name = output_name.rsplit(".md", 1)[0]
+    json_output = output_file.parent / f"{base_name}{jsonl_file.suffix}"
+
+    try:
+        shutil.copy2(jsonl_file, json_output)
+        if not quiet:
+            size_kb = json_output.stat().st_size / 1024
+            print(f"{json_output} ({size_kb:.1f} KB)")
+    except (OSError, shutil.Error) as e:
+        sys.stderr.write(f"Error copying {jsonl_file.name}: {e}\n")
 
 
 def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noqa: C901
@@ -11112,7 +11560,7 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noq
 
     Args:
         sessions: List of session dictionaries
-        args: Parsed arguments (for force, flat, minimal, split, remote)
+        args: Parsed arguments (for force, flat, minimal, split, remote, include_source)
         output_dir: Output directory path
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -11123,6 +11571,7 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noq
     minimal = getattr(args, "minimal", False)
     split_lines = getattr(args, "split", None)
     quiet = getattr(args, "quiet", False)
+    include_source = getattr(args, "include_source", False)
     jobs = max(1, int(getattr(args, "jobs", 1) or 1))
     total_sessions = len(sessions)
     progress_interval = 0
@@ -11157,6 +11606,7 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noq
             minimal,
             split_lines,
             quiet,
+            include_source,
         )
 
     if jobs > 1 and len(sessions) > 1:
@@ -11937,6 +12387,127 @@ def _confirm_reset(items: list, yes: bool) -> bool:
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled.")
         return False
+
+
+# ============================================================================
+# Web Sessions Commands
+# ============================================================================
+
+
+def cmd_web_list(args):
+    """List web sessions from Claude.ai."""
+    token = getattr(args, "token", None)
+    org_uuid = getattr(args, "org_uuid", None)
+
+    try:
+        token, org_uuid = resolve_web_credentials(token, org_uuid)
+        sessions = fetch_web_sessions(token, org_uuid)
+
+        if not sessions:
+            print("No web sessions found.")
+            return
+
+        # Print header
+        print("ID\tTITLE\tCREATED\tMESSAGES")
+
+        for session in sessions:
+            session_id = session.get("uuid", session.get("id", "unknown"))
+            title = session.get("name", session.get("title", "(untitled)"))
+            # Truncate title for display
+            if len(title) > WEB_DISPLAY_TITLE_MAX_LEN:
+                title = title[: WEB_DISPLAY_TITLE_MAX_LEN - 3] + "..."
+            created = session.get("created_at", session.get("createdAt", "unknown"))
+            # Parse and format date if possible
+            if created and created != "unknown":
+                try:
+                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    created = dt.strftime("%Y-%m-%d")
+                except (ValueError, AttributeError):
+                    pass
+            msg_count = session.get("message_count", "?")
+            print(f"{session_id}\t{title}\t{created}\t{msg_count}")
+
+    except WebSessionsError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+
+
+def cmd_web_export(args):  # noqa: C901
+    """Export web sessions from Claude.ai."""
+    token = getattr(args, "token", None)
+    org_uuid = getattr(args, "org_uuid", None)
+    session_id = getattr(args, "session_id", None)
+    output_dir = Path(getattr(args, "output_dir", "./ai-chats")).expanduser()
+    minimal = getattr(args, "minimal", False)
+    include_source = getattr(args, "include_source", False)
+    quiet = getattr(args, "quiet", False)
+
+    try:
+        token, org_uuid = resolve_web_credentials(token, org_uuid)
+
+        # Determine which sessions to export
+        if session_id:
+            # Export a single session
+            session_ids = [session_id]
+        else:
+            # Export all sessions
+            sessions = fetch_web_sessions(token, org_uuid)
+            session_ids = [
+                s.get("uuid", s.get("id")) for s in sessions if s.get("uuid") or s.get("id")
+            ]
+
+        if not session_ids:
+            print("No sessions to export.")
+            return
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        web_subdir = output_dir / "web"
+        web_subdir.mkdir(exist_ok=True)
+
+        if not quiet:
+            sys.stderr.write(f"Exporting {len(session_ids)} web sessions...\n")
+
+        for sid in session_ids:
+            try:
+                session_data = fetch_web_session(token, org_uuid, sid)
+
+                # Generate JSONL from session
+                jsonl_content = web_session_to_jsonl(session_data)
+                if not jsonl_content.strip():
+                    if not quiet:
+                        sys.stderr.write(f"Skipping empty session: {sid}\n")
+                    continue
+
+                # Create temp file for conversion
+                temp_jsonl = web_subdir / f"{sid}.jsonl"
+                temp_jsonl.write_text(jsonl_content, encoding="utf-8")
+
+                # Convert to markdown
+                try:
+                    markdown = parse_jsonl_to_markdown(temp_jsonl, minimal=minimal)
+                    md_file = web_subdir / f"{sid}.md"
+                    md_file.write_text(markdown, encoding="utf-8")
+                    if not quiet:
+                        print(md_file)
+
+                    # Keep JSONL if requested, otherwise delete
+                    if include_source:
+                        if not quiet:
+                            size_kb = temp_jsonl.stat().st_size / 1024
+                            print(f"{temp_jsonl} ({size_kb:.1f} KB)")
+                    else:
+                        temp_jsonl.unlink()
+
+                except Exception as e:
+                    sys.stderr.write(f"Error converting {sid}: {e}\n")
+                    temp_jsonl.unlink(missing_ok=True)
+
+            except WebSessionsError as e:
+                sys.stderr.write(f"Error fetching {sid}: {e}\n")
+
+    except WebSessionsError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
 
 
 def cmd_reset(args):
@@ -13005,6 +13576,12 @@ def _add_export_parser(subparsers):
         help="Use flat directory structure (default: organized by workspace with source tags)",
     )
     parser.add_argument(
+        "--source",
+        action="store_true",
+        dest="include_source",
+        help="Include raw source file alongside markdown export",
+    )
+    parser.add_argument(
         "--alias", metavar="NAME", help="Export using alias (alternative to @name syntax)"
     )
     parser.add_argument(
@@ -13251,6 +13828,82 @@ def _add_reset_parser(subparsers):
     return parser
 
 
+def _add_web_parser(subparsers):
+    """Add web subparser for Claude.ai web sessions."""
+    parser = subparsers.add_parser(
+        "web",
+        help="Access Claude.ai web sessions",
+        description="List and export conversations from Claude.ai (requires authentication).",
+    )
+
+    web_subparsers = parser.add_subparsers(dest="web_command", help="Web subcommand")
+
+    # web list
+    list_parser = web_subparsers.add_parser(
+        "list",
+        aliases=["ls"],
+        help="List web sessions",
+        description="List all conversations from Claude.ai.",
+    )
+    list_parser.add_argument(
+        "--token",
+        metavar="TOKEN",
+        help="Access token (auto-detected from macOS keychain if not provided)",
+    )
+    list_parser.add_argument(
+        "--org-uuid",
+        metavar="UUID",
+        help="Organization UUID (auto-detected from ~/.claude.json if not provided)",
+    )
+
+    # web export
+    export_parser = web_subparsers.add_parser(
+        "export",
+        help="Export web sessions",
+        description="Export conversations from Claude.ai to markdown.",
+    )
+    export_parser.add_argument(
+        "session_id",
+        nargs="?",
+        help="Specific session ID to export (default: all sessions)",
+    )
+    export_parser.add_argument(
+        "-o",
+        "--output",
+        dest="output_dir",
+        default="./ai-chats",
+        help="Output directory (default: ./ai-chats)",
+    )
+    export_parser.add_argument(
+        "--token",
+        metavar="TOKEN",
+        help="Access token (auto-detected from macOS keychain if not provided)",
+    )
+    export_parser.add_argument(
+        "--org-uuid",
+        metavar="UUID",
+        help="Organization UUID (auto-detected from ~/.claude.json if not provided)",
+    )
+    export_parser.add_argument(
+        "--minimal",
+        action="store_true",
+        help="Minimal export: omit metadata, keep only conversation content",
+    )
+    export_parser.add_argument(
+        "--source",
+        action="store_true",
+        dest="include_source",
+        help="Include raw source file alongside markdown export",
+    )
+    export_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-file output",
+    )
+
+    return parser
+
+
 def _create_argument_parser():
     """Create and configure the argument parser.
 
@@ -13285,6 +13938,7 @@ def _create_argument_parser():
     _add_alias_parser(subparsers)
     _add_stats_parser(subparsers)
     _add_reset_parser(subparsers)
+    _add_web_parser(subparsers)
     _add_install_parser(subparsers)
     _add_gemini_index_parser(subparsers)
 
@@ -13840,6 +14494,7 @@ def _build_export_config(
         agent=getattr(args, "agent", None) or "auto",
         jobs=getattr(args, "jobs", 1),
         quiet=getattr(args, "quiet", False),
+        include_source=getattr(args, "include_source", False),
     )
 
 
@@ -13923,6 +14578,7 @@ def _dispatch_export_single_file(args, jsonl_file: str):
     split_lines = getattr(args, "split", None)
     agent_type = detect_agent_from_path(Path(jsonl_file))
     quiet = getattr(args, "quiet", False)
+    include_source = getattr(args, "include_source", False)
 
     # For Claude, support --minimal and --split in single-file export. For other agents, fall back
     # to the existing convert path (single output file).
@@ -13934,6 +14590,9 @@ def _dispatch_export_single_file(args, jsonl_file: str):
             quiet=quiet,
         )
         cmd_convert(convert_args)
+        # Copy source JSONL if requested (for local files only)
+        if include_source and not final_remote:
+            _copy_source_json(Path(jsonl_file), output_file, output_file.name, quiet)
         return
 
     if is_output_file and split_lines:
@@ -13952,6 +14611,9 @@ def _dispatch_export_single_file(args, jsonl_file: str):
             display_file=jsonl_file,
             quiet=quiet,
         )
+        # Copy source JSONL if requested
+        if include_source:
+            _copy_source_json(Path(jsonl_file), output_file, output_file.name, quiet)
 
 
 def _dispatch_export_additive(args, output_dir: Union[str, Path], patterns: list, remotes: list):
@@ -14097,6 +14759,20 @@ def _dispatch_alias(args):
         cmd_alias_config_export(args)
     elif alias_cmd == "import":
         cmd_alias_config_import(args)
+
+
+def _dispatch_web(args):
+    """Dispatch web command."""
+    web_cmd = getattr(args, "web_command", None)
+
+    if web_cmd in ("list", "ls") or web_cmd is None:
+        cmd_web_list(args)
+    elif web_cmd == "export":
+        cmd_web_export(args)
+    else:
+        sys.stderr.write(f"Unknown web subcommand: {web_cmd}\n")
+        sys.stderr.write("Usage: agent-history web [list|export]\n")
+        sys.exit(1)
 
 
 def _get_stats_remotes(args) -> list:
@@ -14276,7 +14952,7 @@ def _dispatch_install(args):
         print("No files were installed.")
 
 
-def _dispatch_command(args):
+def _dispatch_command(args):  # noqa: C901
     """Dispatch parsed arguments to appropriate command handler.
 
     Args:
@@ -14296,6 +14972,8 @@ def _dispatch_command(args):
         _dispatch_stats(args)
     elif args.command == "reset":
         cmd_reset(args)
+    elif args.command == "web":
+        _dispatch_web(args)
     elif args.command == "install":
         _dispatch_install(args)
     elif args.command == "gemini-index":
