@@ -160,8 +160,26 @@ This document describes the normalized NDJSON format used by `--json` export, pr
     "agent_id": null
   },
   "messages": [
-    {"index": 1, "uuid": "msg-020", "parent_uuid": null, "role": "user", "content": [{"type": "text", "text": "Fix bug"}]},
-    {"index": 2, "uuid": "msg-021", "parent_uuid": "msg-020", "role": "assistant", "content": [{"type": "text", "text": "Fixed."}]}
+    {
+      "index": 1,
+      "uuid": "msg-020",
+      "parent_uuid": null,
+      "role": "user",
+      "timestamp": "2025-12-27T08:00:00Z",
+      "content": [
+        {"type": "text", "text": "Fix bug"}
+      ]
+    },
+    {
+      "index": 2,
+      "uuid": "msg-021",
+      "parent_uuid": "msg-020",
+      "role": "assistant",
+      "timestamp": "2025-12-27T08:05:00Z",
+      "content": [
+        {"type": "text", "text": "Fixed."}
+      ]
+    }
   ]
 }
 ```
@@ -184,16 +202,68 @@ This document describes the normalized NDJSON format used by `--json` export, pr
     "agent_id": null
   },
   "messages": [
-    {"index": 1, "uuid": "msg-030", "parent_uuid": null, "role": "user", "content": [{"type": "text", "text": "Hello"}]},
-    {"index": 2, "uuid": "msg-031", "parent_uuid": "msg-030", "role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
-    {"index": 3, "uuid": "msg-032a", "parent_uuid": "msg-031", "role": "user", "content": [{"type": "text", "text": "Option A"}]},
-    {"index": 4, "uuid": "msg-032b", "parent_uuid": "msg-031", "role": "user", "content": [{"type": "text", "text": "Option B"}]},
-    {"index": 5, "uuid": "msg-033", "parent_uuid": "msg-032b", "role": "assistant", "content": [{"type": "text", "text": "Chose B"}]}
+    {
+      "index": 1,
+      "uuid": "msg-030",
+      "parent_uuid": null,
+      "role": "user",
+      "timestamp": "2025-12-27T10:00:00Z",
+      "content": [
+        {"type": "text", "text": "Hello"}
+      ]
+    },
+    {
+      "index": 2,
+      "uuid": "msg-031",
+      "parent_uuid": "msg-030",
+      "role": "assistant",
+      "timestamp": "2025-12-27T10:01:00Z",
+      "content": [
+        {"type": "text", "text": "Hi"}
+      ]
+    },
+    {
+      "index": 3,
+      "uuid": "msg-032a",
+      "parent_uuid": "msg-031",
+      "role": "user",
+      "timestamp": "2025-12-27T10:02:00Z",
+      "content": [
+        {"type": "text", "text": "Option A"}
+      ]
+    },
+    {
+      "index": 4,
+      "uuid": "msg-032b",
+      "parent_uuid": "msg-031",
+      "role": "user",
+      "timestamp": "2025-12-27T10:03:00Z",
+      "content": [
+        {"type": "text", "text": "Option B"}
+      ]
+    },
+    {
+      "index": 5,
+      "uuid": "msg-033",
+      "parent_uuid": "msg-032b",
+      "role": "assistant",
+      "timestamp": "2025-12-27T10:04:00Z",
+      "content": [
+        {"type": "text", "text": "Chose B"}
+      ]
+    }
   ],
   "graph": {
     "is_linear": false,
     "fork_points": [
-      {"uuid": "msg-031", "index": 2, "branches": [{"uuid": "msg-032a", "index": 3}, {"uuid": "msg-032b", "index": 4}]}
+      {
+        "uuid": "msg-031",
+        "index": 2,
+        "branches": [
+          {"uuid": "msg-032a", "index": 3},
+          {"uuid": "msg-032b", "index": 4}
+        ]
+      }
     ],
     "active_path": ["msg-030", "msg-031", "msg-032b", "msg-033"]
   }
