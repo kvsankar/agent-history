@@ -1,0 +1,94 @@
+// Unified JSON Schema for Agent History
+// Render with: dot -Tpng unified_json_schema.dot -o unified_json_schema.png
+
+digraph UnifiedSchema {
+    rankdir=TB;
+    node [shape=record, fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9];
+
+    // Title
+    labelloc="t";
+    label="Agent History - Unified NDJSON Schema\n(Streamable Multi-Session Export)";
+    fontsize=14;
+    fontname="Helvetica-Bold";
+
+    // File structure
+    subgraph cluster_file {
+        label="NDJSON File Structure";
+        style=rounded;
+        bgcolor="#f0f0f0";
+
+        file [shape=note, label="export.ndjson\n(one JSON object per line)"];
+    }
+
+    // Line types
+    subgraph cluster_lines {
+        label="Line Types";
+        style=rounded;
+        bgcolor="#e8f4e8";
+
+        header [label="{Header (line 1)|type: \"header\"\lschema_version: \"1.0\"\lexport_timestamp: ISO8601\lagent_types: [\"claude-code\", ...]\lhomes: [\"local\", \"wsl_ubuntu\", ...]\lsession_count: int\l}"];
+
+        session [label="{Session (lines 2+)|type: \"session\"\lsession: \{...\}\lmessages: [...]\l}"];
+    }
+
+    // Session object
+    subgraph cluster_session {
+        label="Session Object";
+        style=rounded;
+        bgcolor="#e8e8f4";
+
+        session_obj [label="{session|id: string\lagent: \"claude-code\" | \"codex\" | \"gemini\"\lworkspace: string\lworkspace_encoded: string\lstarted_at: ISO8601\lended_at: ISO8601\lsource: \{type, host, path\}\lis_agent_session: bool\lparent_session_id: string?\lagent_id: string?\l}"];
+    }
+
+    // Message object
+    subgraph cluster_message {
+        label="Message Object";
+        style=rounded;
+        bgcolor="#f4e8e8";
+
+        message [label="{message|index: int\luuid: string?\lparent_uuid: string?\lrole: \"user\" | \"assistant\" | \"system\"\ltimestamp: ISO8601?\lcontent: [ContentBlock, ...]\lmetadata: \{...\}?\l}"];
+    }
+
+    // Content blocks
+    subgraph cluster_content {
+        label="Content Blocks";
+        style=rounded;
+        bgcolor="#f4f4e8";
+
+        text_block [label="{TextBlock|type: \"text\"\ltext: string\l}"];
+
+        tool_use [label="{ToolUseBlock|type: \"tool_use\"\ltool_id: string\ltool_name: string\linput: object\l}"];
+
+        tool_result [label="{ToolResultBlock|type: \"tool_result\"\ltool_id: string\ltool_name: string\loutput: string\lis_error: bool\l}"];
+    }
+
+    // Metadata
+    subgraph cluster_metadata {
+        label="Message Metadata";
+        style=rounded;
+        bgcolor="#f0e8f4";
+
+        metadata [label="{metadata|cwd: string?\lgit_branch: string?\lagent_version: string?\luser_type: string?\lis_meta: bool?\lmodel: \{name, stop_reason\}?\ltoken_usage: \{in, out, cache\}?\lrequest_id: string?\l}"];
+    }
+
+    // Graph info (optional)
+    subgraph cluster_graph {
+        label="Graph Info (if forked)";
+        style=rounded;
+        bgcolor="#e8f0f4";
+
+        graph_info [label="{graph|is_linear: bool\lfork_points: [\{uuid, branches\}, ...]\lactive_path: [uuid, ...]\l}"];
+    }
+
+    // Relationships
+    file -> header [label="line 1"];
+    file -> session [label="lines 2-N"];
+    session -> session_obj [label="contains"];
+    session -> message [label="contains array"];
+    message -> text_block [label="content[]"];
+    message -> tool_use [label="content[]"];
+    message -> tool_result [label="content[]"];
+    message -> metadata [label="optional"];
+    session -> graph_info [label="optional\n(forked only)"];
+}
