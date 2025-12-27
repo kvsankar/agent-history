@@ -36,8 +36,7 @@ This document describes the normalized NDJSON format used by `--json` export, pr
     "ended_at": "2025-12-27T09:05:00Z",
     "source": {"type": "local", "host": null, "path": "~/.claude/projects/.../sess-001.jsonl"},
     "is_agent_session": false,
-    "parent_session_id": null,
-    "agent_id": null
+    "parent_session_id": null
   },
   "messages": [
     {
@@ -116,8 +115,7 @@ This document describes the normalized NDJSON format used by `--json` export, pr
     "ended_at": "2025-12-27T09:02:00Z",
     "source": {"type": "local", "host": null, "path": "~/.claude/projects/.../agent-002.jsonl"},
     "is_agent_session": true,
-    "parent_session_id": "sess-001",
-    "agent_id": "agent-002"
+    "parent_session_id": "sess-001"
   },
   "messages": [
     {
@@ -156,8 +154,7 @@ This document describes the normalized NDJSON format used by `--json` export, pr
     "ended_at": "2025-12-27T08:10:00Z",
     "source": {"type": "wsl", "host": "ubuntu", "path": "~/.codex/sessions/sess-003.jsonl"},
     "is_agent_session": false,
-    "parent_session_id": null,
-    "agent_id": null
+    "parent_session_id": null
   },
   "messages": [
     {
@@ -198,8 +195,7 @@ This document describes the normalized NDJSON format used by `--json` export, pr
     "ended_at": "2025-12-27T10:30:00Z",
     "source": {"type": "remote", "host": "vm01", "path": "~/.claude/projects/.../sess-004.jsonl"},
     "is_agent_session": false,
-    "parent_session_id": null,
-    "agent_id": null
+    "parent_session_id": null
   },
   "messages": [
     {
@@ -382,8 +378,7 @@ Every line has a `type` field:
     "path": "/home/user/.claude/projects/-home-user-myproject/abc123.jsonl"
   },
   "is_agent_session": false,
-  "parent_session_id": null,
-  "agent_id": null
+  "parent_session_id": null
 }
 ```
 
@@ -400,7 +395,6 @@ Every line has a `type` field:
 | `source.path` | string | Yes | Original file path |
 | `is_agent_session` | bool | Yes | True if this is a sub-agent task |
 | `parent_session_id` | string | No | Parent session for agent tasks |
-| `agent_id` | string | No | Agent ID for agent tasks |
 
 ## Message Object
 
@@ -584,7 +578,6 @@ Only included when `is_linear` is false.
 | `uuid` | `messages[].uuid` |
 | `parentUuid` | `messages[].parent_uuid` |
 | `sessionId` | `session.id` |
-| `agentId` | `session.agent_id` |
 | `isSidechain` | `session.is_agent_session` |
 | `isMeta` | `messages[].metadata.is_meta` |
 | `cwd` | `messages[].metadata.cwd` |
@@ -613,8 +606,8 @@ Only included when `is_linear` is false.
 
 ```ndjson
 {"type":"header","schema_version":"1.0","export_timestamp":"2025-12-27T10:30:00Z","agent_types":["claude-code"],"homes":["local","wsl_ubuntu"],"workspaces":["myproject"],"session_count":2}
-{"type":"session","session":{"id":"c7e6fbcb","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T09:00:00Z","ended_at":"2025-12-27T09:15:00Z","source":{"type":"local","host":null,"path":"/home/user/.claude/projects/-home-user-myproject/c7e6fbcb.jsonl"},"is_agent_session":false,"parent_session_id":null,"agent_id":null},"messages":[{"index":1,"uuid":"msg-001","parent_uuid":null,"role":"user","timestamp":"2025-12-27T09:00:00Z","content":[{"type":"text","text":"List files"}],"metadata":{"cwd":"/home/user/myproject"}},{"index":2,"uuid":"msg-002","parent_uuid":"msg-001","role":"assistant","timestamp":"2025-12-27T09:00:05Z","content":[{"type":"text","text":"I'll list the files."},{"type":"tool_use","tool_id":"tool_001","tool_name":"Bash","input":{"command":"ls -la"}}],"metadata":{"model":{"name":"claude-sonnet-4-5-20250929","stop_reason":"tool_use"}}}]}
-{"type":"session","session":{"id":"d8f7ghij","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T10:00:00Z","ended_at":"2025-12-27T10:30:00Z","source":{"type":"wsl","host":"ubuntu","path":"/home/user/.claude/projects/-home-user-myproject/d8f7ghij.jsonl"},"is_agent_session":false,"parent_session_id":null,"agent_id":null},"messages":[{"index":1,"uuid":"msg-003","parent_uuid":null,"role":"user","timestamp":"2025-12-27T10:00:00Z","content":[{"type":"text","text":"Hello"}]}]}
+{"type":"session","session":{"id":"c7e6fbcb","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T09:00:00Z","ended_at":"2025-12-27T09:15:00Z","source":{"type":"local","host":null,"path":"/home/user/.claude/projects/-home-user-myproject/c7e6fbcb.jsonl"},"is_agent_session":false,"parent_session_id":null},"messages":[{"index":1,"uuid":"msg-001","parent_uuid":null,"role":"user","timestamp":"2025-12-27T09:00:00Z","content":[{"type":"text","text":"List files"}],"metadata":{"cwd":"/home/user/myproject"}},{"index":2,"uuid":"msg-002","parent_uuid":"msg-001","role":"assistant","timestamp":"2025-12-27T09:00:05Z","content":[{"type":"text","text":"I'll list the files."},{"type":"tool_use","tool_id":"tool_001","tool_name":"Bash","input":{"command":"ls -la"}}],"metadata":{"model":{"name":"claude-sonnet-4-5-20250929","stop_reason":"tool_use"}}}]}
+{"type":"session","session":{"id":"d8f7ghij","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T10:00:00Z","ended_at":"2025-12-27T10:30:00Z","source":{"type":"wsl","host":"ubuntu","path":"/home/user/.claude/projects/-home-user-myproject/d8f7ghij.jsonl"},"is_agent_session":false,"parent_session_id":null},"messages":[{"index":1,"uuid":"msg-003","parent_uuid":null,"role":"user","timestamp":"2025-12-27T10:00:00Z","content":[{"type":"text","text":"Hello"}]}]}
 ```
 
 **Formatted for readability** (actual file has one JSON per line):

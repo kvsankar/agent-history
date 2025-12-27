@@ -38,7 +38,7 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#e8e8f4";
 
-        session_obj [label="{session|id: string\lagent: string\lworkspace: string\lworkspace_encoded: string\lstarted_at: ISO8601\lended_at: ISO8601\lsource: object\lis_agent_session: bool\lparent_session_id: string?\lagent_id: string?\l}"];
+        session_obj [label="{session|id: string\lagent: string\lworkspace: string\lworkspace_encoded: string\lstarted_at: ISO8601\lended_at: ISO8601\lsource: object\lis_agent_session: bool\lparent_session_id: string?\l}"];
     }
 
     // Message object
