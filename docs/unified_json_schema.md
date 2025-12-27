@@ -7,9 +7,9 @@ This document describes the normalized NDJSON format used by `--json` export, pr
 ## Sample Export (Comprehensive)
 
 ```json
-{"type":"header","schema_version":"1.0","export_timestamp":"2025-12-27T10:00:00Z","agent_types":["claude-code","codex","gemini"],"homes":["local","wsl_ubuntu","remote_vm01"],"workspaces":["myproject","api-server"],"session_count":4}
-{"type":"session","session":{"id":"sess-001","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T09:00:00Z","ended_at":"2025-12-27T09:05:00Z","source":{"type":"local","host":null,"path":"~/.claude/projects/-home-user-myproject/sess-001.jsonl"},"is_agent_session":false,"parent_session_id":null,"agent_id":null},"messages":[{"index":1,"uuid":"msg-001","parent_uuid":null,"role":"user","timestamp":"2025-12-27T09:00:00Z","content":[{"type":"text","text":"List files"}],"metadata":{"cwd":"/home/user/myproject","git_branch":"main"}},{"index":2,"uuid":"msg-002","parent_uuid":"msg-001","role":"assistant","timestamp":"2025-12-27T09:00:05Z","content":[{"type":"text","text":"Running ls."},{"type":"tool_use","tool_id":"tool-001","tool_name":"Bash","input":{"command":"ls"}}],"metadata":{"model":{"name":"claude-sonnet-4-5","stop_reason":"tool_use"},"token_usage":{"input_tokens":100,"output_tokens":25,"cache_read_tokens":80}}},{"index":3,"uuid":"msg-003","parent_uuid":"msg-002","role":"user","timestamp":"2025-12-27T09:00:06Z","content":[{"type":"tool_result","tool_id":"tool-001","tool_name":"Bash","output":"README.md\nsrc/","is_error":false}]}]}
-{"type":"session","session":{"id":"agent-002","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T09:01:00Z","ended_at":"2025-12-27T09:02:00Z","source":{"type":"local","host":null,"path":"~/.claude/projects/-home-user-myproject/agent-002.jsonl"},"is_agent_session":true,"parent_session_id":"sess-001","agent_id":"agent-002"},"messages":[{"index":1,"uuid":"msg-010","parent_uuid":null,"role":"user","timestamp":"2025-12-27T09:01:00Z","content":[{"type":"text","text":"Subtask: read config"}],"metadata":{"is_meta":true}},{"index":2,"uuid":"msg-011","parent_uuid":"msg-010","role":"assistant","timestamp":"2025-12-27T09:01:30Z","content":[{"type":"text","text":"Done."}],"metadata":{"model":{"name":"claude-haiku-3","stop_reason":"end_turn"}}}]}
+{"type":"header","schema_version":"1.0","export_timestamp":"2025-12-27T10:00:00Z","agent_types":["claude-code","codex","gemini"],"homes":["local","wsl_ubuntu","remote_vm01"],"workspaces":["myproject","api-server"],"session_count":5}
+{"type":"session","session":{"id":"sess-001","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T09:00:00Z","ended_at":"2025-12-27T09:05:00Z","source":{"type":"local","host":null,"path":"~/.claude/projects/-home-user-myproject/sess-001.jsonl"},"is_agent_session":false,"parent_session_id":null,"agent_id":null},"messages":[{"index":1,"uuid":"msg-001","parent_uuid":null,"role":"user","timestamp":"2025-12-27T09:00:00Z","content":[{"type":"text","text":"List files"}],"metadata":{"cwd":"/home/user/myproject","git_branch":"main"}},{"index":2,"uuid":"msg-002","parent_uuid":"msg-001","role":"assistant","timestamp":"2025-12-27T09:00:05Z","content":[{"type":"thinking","text":"User wants directory listing."},{"type":"text","text":"Running ls."},{"type":"tool_use","tool_id":"tool-001","tool_name":"Bash","input":{"command":"ls"}}],"metadata":{"model":{"name":"claude-sonnet-4-5","stop_reason":"tool_use"},"token_usage":{"input_tokens":100,"output_tokens":25,"cache_read_tokens":80}}},{"index":3,"uuid":"msg-003","parent_uuid":"msg-002","role":"user","timestamp":"2025-12-27T09:00:06Z","content":[{"type":"tool_result","tool_id":"tool-001","tool_name":"Bash","output":"README.md\nsrc/","is_error":false}]},{"index":4,"uuid":"msg-004","parent_uuid":"msg-003","role":"assistant","timestamp":"2025-12-27T09:00:10Z","content":[{"type":"text","text":"Spawning agent."},{"type":"agent_spawn","agent_session_id":"agent-002","prompt":"Read config","agent_type":"Explore"}]},{"index":5,"uuid":"msg-005","parent_uuid":"msg-004","role":"user","timestamp":"2025-12-27T09:02:00Z","content":[{"type":"agent_result","agent_session_id":"agent-002","summary":"Config parsed","is_error":false}]}]}
+{"type":"session","session":{"id":"agent-002","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T09:01:00Z","ended_at":"2025-12-27T09:02:00Z","source":{"type":"local","host":null,"path":"~/.claude/projects/-home-user-myproject/agent-002.jsonl"},"is_agent_session":true,"parent_session_id":"sess-001","agent_id":"agent-002"},"messages":[{"index":1,"uuid":"msg-010","parent_uuid":null,"role":"user","timestamp":"2025-12-27T09:01:00Z","content":[{"type":"text","text":"Read config"}],"metadata":{"is_meta":true}},{"index":2,"uuid":"msg-011","parent_uuid":"msg-010","role":"assistant","timestamp":"2025-12-27T09:01:30Z","content":[{"type":"text","text":"Config parsed."}],"metadata":{"model":{"name":"claude-haiku-3","stop_reason":"end_turn"}}}]}
 {"type":"session","session":{"id":"sess-003","agent":"codex","workspace":"/home/user/api-server","workspace_encoded":"-home-user-api-server","started_at":"2025-12-27T08:00:00Z","ended_at":"2025-12-27T08:10:00Z","source":{"type":"wsl","host":"ubuntu","path":"~/.codex/sessions/sess-003.jsonl"},"is_agent_session":false,"parent_session_id":null,"agent_id":null},"messages":[{"index":1,"uuid":"msg-020","parent_uuid":null,"role":"user","timestamp":"2025-12-27T08:00:00Z","content":[{"type":"text","text":"Fix bug"}]},{"index":2,"uuid":"msg-021","parent_uuid":"msg-020","role":"assistant","timestamp":"2025-12-27T08:05:00Z","content":[{"type":"text","text":"Fixed."}]}]}
 {"type":"session","session":{"id":"sess-004","agent":"claude-code","workspace":"/home/user/myproject","workspace_encoded":"-home-user-myproject","started_at":"2025-12-27T10:00:00Z","ended_at":"2025-12-27T10:30:00Z","source":{"type":"remote","host":"vm01","path":"~/.claude/projects/-home-user-myproject/sess-004.jsonl"},"is_agent_session":false,"parent_session_id":null,"agent_id":null},"messages":[{"index":1,"uuid":"msg-030","parent_uuid":null,"role":"user","timestamp":"2025-12-27T10:00:00Z","content":[{"type":"text","text":"Hello"}]},{"index":2,"uuid":"msg-031","parent_uuid":"msg-030","role":"assistant","timestamp":"2025-12-27T10:01:00Z","content":[{"type":"text","text":"Hi"}]},{"index":3,"uuid":"msg-032a","parent_uuid":"msg-031","role":"user","timestamp":"2025-12-27T10:02:00Z","content":[{"type":"text","text":"Option A"}]},{"index":4,"uuid":"msg-032b","parent_uuid":"msg-031","role":"user","timestamp":"2025-12-27T10:03:00Z","content":[{"type":"text","text":"Option B"}]},{"index":5,"uuid":"msg-033","parent_uuid":"msg-032b","role":"assistant","timestamp":"2025-12-27T10:04:00Z","content":[{"type":"text","text":"Chose B"}]}],"graph":{"is_linear":false,"fork_points":[{"uuid":"msg-031","index":2,"branches":[{"uuid":"msg-032a","index":3},{"uuid":"msg-032b","index":4}]}],"active_path":["msg-030","msg-031","msg-032b","msg-033"]}}
 ```
@@ -18,9 +18,9 @@ This document describes the normalized NDJSON format used by `--json` export, pr
 
 | Line | Description |
 |------|-------------|
-| 1 | Header: 3 agent types, 3 homes, 2 workspaces, 4 sessions |
-| 2 | Claude Code session with text + tool_use + tool_result, token usage |
-| 3 | Agent sub-session (is_agent_session=true, has parent_session_id) |
+| 1 | Header: 3 agent types, 3 homes, 2 workspaces, 5 sessions |
+| 2 | Claude Code: thinking + text + tool_use + tool_result + agent_spawn + agent_result |
+| 3 | Sub-agent session (is_agent_session=true, parent_session_id links to line 2) |
 | 4 | Codex session from WSL source |
 | 5 | Session with fork (graph.is_linear=false, shows branch point) |
 
@@ -172,7 +172,7 @@ Every line has a `type` field:
 
 ## Content Blocks
 
-Content is an array of typed blocks, supporting mixed content (text + tools):
+Content is an array of typed blocks, supporting mixed content (text + thinking + tools):
 
 ### Text Block
 
@@ -182,6 +182,19 @@ Content is an array of typed blocks, supporting mixed content (text + tools):
   "text": "Hello, how can I help?"
 }
 ```
+
+### Thinking Block (Reasoning trace, may not be shown to user)
+
+```json
+{
+  "type": "thinking",
+  "text": "Let me analyze this step by step..."
+}
+```
+
+Thinking blocks capture the LLM's reasoning/chain-of-thought that may be separate from the visible response. Different agents expose this differently:
+- **Claude**: Extended thinking blocks
+- **Codex/Gemini**: May have similar reasoning traces (TBD)
 
 ### Tool Use Block (Assistant requesting tool)
 
@@ -197,6 +210,21 @@ Content is an array of typed blocks, supporting mixed content (text + tools):
 }
 ```
 
+### Agent Spawn Block (Spawns sub-agent session)
+
+```json
+{
+  "type": "agent_spawn",
+  "agent_session_id": "agent-002",
+  "prompt": "Research the API documentation",
+  "agent_type": "Explore"
+}
+```
+
+Agent spawn blocks are distinct from tool use. They indicate that a sub-agent session was created. The `agent_session_id` links to a session record in the same export where `is_agent_session=true` and `parent_session_id` points back.
+
+This is agent-agnostic - different LLM agents may spawn sub-agents through different mechanisms, but the unified schema normalizes them to this block type.
+
 ### Tool Result Block (Result of tool execution)
 
 ```json
@@ -208,6 +236,30 @@ Content is an array of typed blocks, supporting mixed content (text + tools):
   "is_error": false
 }
 ```
+
+### Agent Result Block (Result from sub-agent)
+
+```json
+{
+  "type": "agent_result",
+  "agent_session_id": "agent-002",
+  "summary": "Found 3 relevant API endpoints",
+  "is_error": false
+}
+```
+
+Agent result blocks capture the outcome when a sub-agent session completes. The full sub-agent conversation is in the linked session record.
+
+## Content Block Summary
+
+| Type | Description | Paired with |
+|------|-------------|-------------|
+| `text` | Regular text output | - |
+| `thinking` | Reasoning trace (may be hidden) | - |
+| `tool_use` | Request to execute a tool | `tool_result` |
+| `tool_result` | Output from tool execution | `tool_use` |
+| `agent_spawn` | Create sub-agent session | `agent_result` |
+| `agent_result` | Output from sub-agent | `agent_spawn` |
 
 ## Message Metadata
 

@@ -58,9 +58,15 @@ digraph UnifiedSchema {
 
         text_block [label="{TextBlock|type: text\ltext: string\l}"];
 
+        thinking_block [label="{ThinkingBlock|type: thinking\ltext: string\l}"];
+
         tool_use [label="{ToolUseBlock|type: tool_use\ltool_id: string\ltool_name: string\linput: object\l}"];
 
         tool_result [label="{ToolResultBlock|type: tool_result\ltool_id: string\ltool_name: string\loutput: string\lis_error: bool\l}"];
+
+        agent_spawn [label="{AgentSpawnBlock|type: agent_spawn\lagent_session_id: string\lprompt: string\lagent_type: string?\l}"];
+
+        agent_result [label="{AgentResultBlock|type: agent_result\lagent_session_id: string\lsummary: string\lis_error: bool\l}"];
     }
 
     // Metadata
@@ -87,8 +93,11 @@ digraph UnifiedSchema {
     session -> session_obj [label="contains"];
     session -> message [label="contains array"];
     message -> text_block [label="content[]"];
+    message -> thinking_block [label="content[]"];
     message -> tool_use [label="content[]"];
     message -> tool_result [label="content[]"];
+    message -> agent_spawn [label="content[]"];
+    message -> agent_result [label="content[]"];
     message -> metadata [label="optional"];
     session -> graph_info [label="optional\n(forked only)"];
 }
