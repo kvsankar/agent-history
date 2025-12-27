@@ -38,7 +38,7 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#e8e8f4";
 
-        session_obj [label="{session|id: string\lagent: \"claude-code\" | \"codex\" | \"gemini\"\lworkspace: string\lworkspace_encoded: string\lstarted_at: ISO8601\lended_at: ISO8601\lsource: \{type, host, path\}\lis_agent_session: bool\lparent_session_id: string?\lagent_id: string?\l}"];
+        session_obj [label="{session|id: string\lagent: string (claude-code/codex/gemini)\lworkspace: string\lworkspace_encoded: string\lstarted_at: ISO8601\lended_at: ISO8601\lsource: \{type, host, path\}\lis_agent_session: bool\lparent_session_id: string?\lagent_id: string?\l}"];
     }
 
     // Message object
@@ -47,7 +47,7 @@ digraph UnifiedSchema {
         style=rounded;
         bgcolor="#f4e8e8";
 
-        message [label="{message|index: int\luuid: string?\lparent_uuid: string?\lrole: \"user\" | \"assistant\" | \"system\"\ltimestamp: ISO8601?\lcontent: [ContentBlock, ...]\lmetadata: \{...\}?\l}"];
+        message [label="{message|index: int\luuid: string?\lparent_uuid: string?\lrole: string (user/assistant/system)\ltimestamp: ISO8601?\lcontent: [ContentBlock, ...]\lmetadata: \{...\}?\l}"];
     }
 
     // Content blocks
