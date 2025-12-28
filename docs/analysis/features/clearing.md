@@ -8,7 +8,7 @@ How Claude Code, Codex CLI, and Gemini CLI handle explicit context clearing (`/c
 |-------|----------------|--------------|----------------|
 | Claude Code | Yes (`/clear`) | No (same sessionId) | `~/.claude/history.jsonl` only |
 | Codex CLI | Yes (`/clear`) | No (same session) | `~/.codex/history.jsonl` only |
-| Gemini CLI | Unknown | N/A | No telemetry file found |
+| Gemini CLI | Yes (`/clear`) | Yes (new sessionId) | `~/.gemini/tmp/<hash>/logs.json` |
 
 **Critical Finding:** `/clear` commands are **NOT recorded in session files**. They only appear in telemetry/history files, making context clearing invisible when analyzing session data alone.
 
@@ -64,21 +64,49 @@ Context clearing is fundamentally different from compaction:
 
 ---
 
-## Gemini CLI - No Clear Mechanism Found
+## Gemini CLI - Per-Project Logs
 
-- No `history.jsonl` equivalent discovered
-- No `/clear` command pattern found
-- May use different UX for context management
+**How it works:** Gemini stores logs in a per-project `logs.json` file. Unlike Claude/Codex, `/clear` creates a new session.
+
+**Location:** `~/.gemini/tmp/<project-hash>/logs.json`
+
+**Format:**
+```json
+[
+  {
+    "sessionId": "fecfd795-48f8-4ce2-8a6d-1edf31fdb480",
+    "messageId": 5,
+    "type": "user",
+    "message": "/clear",
+    "timestamp": "2025-11-07T11:34:04.247Z"
+  },
+  {
+    "sessionId": "8733670b-84da-48f9-8a1b-55fe0f31b6f4",
+    "messageId": 0,
+    "type": "user",
+    "message": "Starting with README.md...",
+    "timestamp": "2025-11-07T12:24:30.962Z"
+  }
+]
+```
+
+**Key Differences from Claude/Codex:**
+- `/clear` creates a **new sessionId** (not same session)
+- Logs are per-project (in project hash directory), not global
+- `messageId` provides direct message indexing
+- Next message after `/clear` has `messageId: 0` (new session)
 
 ---
 
 ## Distinguishing Clear vs. New Session
 
-| Scenario | Session ID | How to Detect |
-|----------|------------|---------------|
-| User closes terminal, reopens | New ID | Different session file |
-| User runs `/clear` | Same ID | Only via `history.jsonl` cross-reference |
-| Auto-compaction | Same ID | `compact_boundary` marker in session file |
+| Scenario | Claude/Codex | Gemini | How to Detect |
+|----------|--------------|--------|---------------|
+| User closes terminal, reopens | New session ID | New session ID | Different session file |
+| User runs `/clear` | Same session ID | **New session ID** | Claude/Codex: `history.jsonl`; Gemini: `logs.json` |
+| Auto-compaction | Same session ID | N/A | `compact_boundary` marker (Claude only) |
+
+**Note:** Gemini differs from Claude/Codex - `/clear` creates a completely new session rather than continuing the same session.
 
 ---
 
@@ -127,12 +155,12 @@ Per [GitHub issues](https://github.com/anthropics/claude-code/issues/2538):
 
 ### Field Mapping
 
-| Unified Field | Claude Code | Codex CLI |
-|---------------|-------------|-----------|
-| `after_message_index` | Derived by matching `history.jsonl` timestamp to session messages | Same approach |
-| `timestamp` | From `history.jsonl` entry | From `history.jsonl` entry |
+| Unified Field | Claude Code | Codex CLI | Gemini CLI |
+|---------------|-------------|-----------|------------|
+| `after_message_index` | Derived by matching `history.jsonl` timestamp to session messages | Same approach | From `logs.json` messageId |
+| `timestamp` | From `history.jsonl` entry | From `history.jsonl` entry | From `logs.json` timestamp |
 
-**Note:** Context clearing requires cross-referencing telemetry files (`history.jsonl`) with session files. This is optional enrichment - session data is complete without it.
+**Note:** Context clearing requires cross-referencing telemetry files with session files. This is optional enrichment - session data is complete without it.
 
 ---
 
@@ -141,7 +169,7 @@ Per [GitHub issues](https://github.com/anthropics/claude-code/issues/2538):
 1. **Should we include context clears in unified export?**
    - Pro: Complete picture of session flow
    - Con: Requires parsing additional telemetry files
-   - Con: Not available for all agents
+   - All three agents now have telemetry files identified
 
 2. **How to represent "invisible" clears?**
    - Session files have no markers
@@ -168,5 +196,5 @@ Codex CLI:
 
 Gemini CLI:
   Session files:     ~/.gemini/tmp/<project-hash>/chats/session-*.json
-  Telemetry/history: (not found)
+  Telemetry/history: ~/.gemini/tmp/<project-hash>/logs.json  (contains /clear commands)
 ```

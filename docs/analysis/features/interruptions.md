@@ -7,7 +7,7 @@ How Claude Code, Codex CLI, and Gemini CLI record user and system interruptions.
 | Agent | How Recorded | Field/Marker | In Session File? |
 |-------|--------------|--------------|------------------|
 | Claude Code | User message | `[Request interrupted by user]` | Yes |
-| Codex CLI | Content text | "aborted", "cancelled" in text | Yes |
+| Codex CLI | Event message | `type: "turn_aborted"`, `reason: "interrupted"` | Yes |
 | Gemini CLI | Info message | `type: "info"`, `content: "Request cancelled."` | Yes |
 
 **Key Finding:** Unlike context clearing, interruptions ARE recorded in session files. Each agent uses a different approach.
@@ -69,35 +69,31 @@ How Claude Code, Codex CLI, and Gemini CLI record user and system interruptions.
 
 ---
 
-## Codex CLI - Embedded in Content
+## Codex CLI - Dedicated Event Message
 
-**How it works:** Codex embeds interruption information in message content text.
+**How it works:** Codex uses a dedicated `turn_aborted` event type for interruptions.
 
-**Example:**
+**Format:**
 ```json
 {
-  "type": "response_item",
+  "timestamp": "2025-12-03T15:24:46.622Z",
+  "type": "event_msg",
   "payload": {
-    "type": "message",
-    "role": "assistant",
-    "content": [{
-      "type": "output_text",
-      "text": "Because we hit rate limiting and the transfer aborted, the rename never happened..."
-    }]
+    "type": "turn_aborted",
+    "reason": "interrupted"
   }
 }
 ```
 
 **Key Characteristics:**
-- No dedicated interruption field
-- Information embedded in content text ("aborted", "cancelled")
-- Partial downloads preserved with `.download` suffix (rsync `--partial`)
-- Must parse content text to detect interruptions
+- Dedicated `event_msg` with `payload.type: "turn_aborted"`
+- `reason` field indicates cause (`"interrupted"` for user interruption)
+- Clean, structured representation
+- No need to parse content text - explicit message type
 
-**Indicators Found:**
-- "aborted" - Transfer/operation stopped
-- "rate limiting" - API limits hit
-- `.download` temporary files - Incomplete transfers
+**Detection:**
+- Look for `type: "event_msg"` with `payload.type: "turn_aborted"`
+- `reason: "interrupted"` indicates user-initiated interruption
 
 ---
 
@@ -135,13 +131,13 @@ How Claude Code, Codex CLI, and Gemini CLI record user and system interruptions.
 
 | Aspect | Claude Code | Codex CLI | Gemini CLI |
 |--------|-------------|-----------|------------|
-| **Recording Method** | User message | Content text | Info message type |
-| **Explicit Field** | No | No | Yes (`type: info`) |
-| **Marker Text** | `[Request interrupted by user]` | "aborted", "cancelled" | `Request cancelled.` |
+| **Recording Method** | User message | Event message | Info message type |
+| **Explicit Field** | No | Yes (`turn_aborted`) | Yes (`type: info`) |
+| **Marker Text** | `[Request interrupted by user]` | `reason: "interrupted"` | `Request cancelled.` |
 | **Parent Link** | Yes (`parentUuid`) | No | No |
-| **Reason Recorded** | No (always "by user") | Inferred from context | No |
-| **Partial State** | File-history snapshots | `.download` temp files | Not observed |
-| **Structured** | Semi (special text) | No (parse content) | Yes (dedicated type) |
+| **Reason Recorded** | No (always "by user") | Yes (`reason` field) | No |
+| **Partial State** | File-history snapshots | Not observed | Not observed |
+| **Structured** | Semi (special text) | Yes (dedicated event) | Yes (dedicated type) |
 
 ---
 
@@ -163,12 +159,16 @@ def is_interruption(msg):
 
 ```python
 def is_interruption(msg):
-    content = msg.get('payload', {}).get('message', {}).get('content', [])
-    for block in content:
-        text = block.get('text', '').lower()
-        if 'aborted' in text or 'cancelled' in text:
+    if msg.get('type') == 'event_msg':
+        payload = msg.get('payload', {})
+        if payload.get('type') == 'turn_aborted':
             return True
     return False
+
+def get_interruption_reason(msg):
+    if is_interruption(msg):
+        return msg.get('payload', {}).get('reason', 'unknown')
+    return None
 ```
 
 ### Gemini CLI
@@ -204,10 +204,10 @@ def is_interruption(msg):
 
 | Unified Field | Claude Code | Codex CLI | Gemini CLI |
 |---------------|-------------|-----------|------------|
-| `message_index` | Index of interruption message | Index of message with "aborted" | Index of `type: info` message |
-| `interrupted_message_index` | Derived from `parentUuid` | Previous assistant message | Previous gemini message |
-| `timestamp` | From interruption message | From message timestamp | From info message |
-| `type` | Always `"user"` | Inferred (`"user"`, `"system"`) | Always `"user"` |
+| `message_index` | Index of interruption message | Index of `turn_aborted` event | Index of `type: info` message |
+| `interrupted_message_index` | Derived from `parentUuid` | Previous response item | Previous gemini message |
+| `timestamp` | From interruption message | From event timestamp | From info message |
+| `type` | Always `"user"` | From `payload.reason` | Always `"user"` |
 
 **Note:** Interruptions are recorded in session files, unlike context clears. Detection methods vary by agent (see detection code above).
 
@@ -216,9 +216,9 @@ def is_interruption(msg):
 ## Open Questions
 
 1. **Should we normalize interruption representation?**
-   - Claude uses special text in user message
-   - Codex embeds in content (requires parsing)
-   - Gemini has dedicated message type
+   - Claude uses special text in user message (`[Request interrupted by user]`)
+   - Codex uses dedicated event type (`turn_aborted`)
+   - Gemini uses dedicated info message type
    - Unified schema could use dedicated `interruption` content block type
 
 2. **How to handle partial tool results?**
@@ -242,7 +242,7 @@ Claude Code:
 
 Codex CLI:
   Session files:     ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
-  (Interruptions embedded in content text)
+  (Interruptions as type: "event_msg" with payload.type: "turn_aborted")
 
 Gemini CLI:
   Session files:     ~/.gemini/tmp/<project-hash>/chats/session-*.json

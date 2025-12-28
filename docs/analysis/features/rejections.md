@@ -7,10 +7,13 @@ How Claude Code, Codex CLI, and Gemini CLI record user rejections of edits, tool
 | Agent | How Recorded | Key Field | User Reason Captured? |
 |-------|--------------|-----------|----------------------|
 | Claude Code | tool_result with `is_error: true` | Content contains "user doesn't want to proceed" | Yes |
-| Codex CLI | Unknown | Not found in samples | Unknown |
-| Gemini CLI | Unknown | No explicit rejection field | Unknown |
+| Codex CLI | **Not recorded** | Escalation request recorded, rejection not | No |
+| Gemini CLI | Tool error status | `status: "error"` + `error` field | No (tool errors only) |
 
-**Key Finding:** Claude Code explicitly captures rejections with distinguishable markers. User's stated reason is preserved in full.
+**Key Findings:**
+- Claude Code explicitly captures rejections with distinguishable markers. User's stated reason is preserved in full.
+- Codex CLI records escalation requests (`sandbox_permissions: "require_escalated"`) but NOT user rejection responses.
+- Gemini CLI captures tool errors but not explicit user rejections.
 
 ---
 
@@ -97,27 +100,59 @@ Both use `is_error: true`, but content differs:
 
 ---
 
-## Codex CLI - Limited Evidence
+## Codex CLI - Not Explicitly Recorded
 
-**Observations:**
-- Main history.jsonl contains only user queries
-- Session rollout files may contain rejection data
-- No explicit rejection field found in samples
+> **Status**: Verified via pexpect testing (December 2025)
 
-**Possible indicators:**
-- Response text mentioning user declining
-- Status fields in tool results
+**Key Finding:** User rejections are NOT explicitly recorded in session files. Only the escalation request is recorded, not the user's response.
+
+**Escalation Request Format (recorded):**
+```json
+{
+  "type": "response_item",
+  "payload": {
+    "type": "function_call",
+    "name": "shell_command",
+    "arguments": {
+      "command": "printf 'Goodbye World\\n' > test.txt",
+      "sandbox_permissions": "require_escalated",
+      "justification": "Need to write to test.txt but current sandbox is read-only; require escalated permissions to modify file content."
+    },
+    "call_id": "call_Mbwbrl6SUkeltbseyJcEhV3S"
+  }
+}
+```
+
+**What Happens on User Rejection:**
+- The `function_call` with `sandbox_permissions: "require_escalated"` IS recorded
+- If user rejects: NO `function_call_output` is recorded for that call_id
+- The session ends or model adjusts behavior
+- No explicit "rejected" or "denied" record type
+
+**Contrast with Interruptions:**
+Interruptions (Ctrl+C) ARE explicitly recorded:
+```json
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "turn_aborted",
+    "reason": "interrupted"
+  }
+}
+```
+
+**Implications:**
+- Cannot detect user rejections by looking for specific record types
+- Must infer rejection by: `function_call` with `require_escalated` followed by no matching `function_call_output`
+- User's rejection reason is never captured
 
 ---
 
-## Gemini CLI - No Explicit Rejection Field
+## Gemini CLI - Tool Error Status
 
-**Observations:**
-- Tool calls include `result` field
-- No `is_error` equivalent found
-- May use `status` field (needs more investigation)
+**How it works:** Gemini records tool errors using a `status` field in tool call results.
 
-**Structure:**
+**Format:**
 ```json
 {
   "type": "gemini",
@@ -125,11 +160,24 @@ Both use `is_error: true`, but content differs:
     {
       "name": "edit_file",
       "args": {...},
-      "result": [...]
+      "result": [...],
+      "status": "error",
+      "error": "Failed to edit, 0 occurrences found for old_string (...). Original old_string was (...) in /path/to/file. No edits made. The exact text in old_string was not found."
     }
   ]
 }
 ```
+
+**Key Characteristics:**
+- `status: "error"` marks failed tool execution
+- `error` field contains detailed error message
+- User rejections may not be distinguishable from tool failures
+- More investigation needed to find explicit user rejection markers
+
+**Observations:**
+- Tool calls include `result` field
+- `status` field indicates success/error
+- `error` field provides detailed error message for failures
 
 ---
 
@@ -137,11 +185,12 @@ Both use `is_error: true`, but content differs:
 
 | Aspect | Claude Code | Codex CLI | Gemini CLI |
 |--------|-------------|-----------|------------|
-| **Explicit rejection** | Yes | Unknown | Unknown |
-| **Rejection field** | `is_error: true` + phrase | Not found | Not found |
-| **User reason** | Full text captured | Unknown | Unknown |
-| **Tool ID link** | Yes (`tool_use_id`) | Unknown | Yes (in toolCalls) |
-| **Distinguishable** | Yes (phrase-based) | Unknown | Unknown |
+| **Explicit rejection** | Yes | **No** | Partial (errors only) |
+| **Rejection field** | `is_error: true` + phrase | None (not recorded) | `status: "error"` |
+| **User reason** | Full text captured | Not captured | No (error message only) |
+| **Tool ID link** | Yes (`tool_use_id`) | N/A | Yes (in toolCalls) |
+| **Distinguishable** | Yes (phrase-based) | N/A | No (tool errors vs rejections) |
+| **Escalation request** | N/A | Yes (`require_escalated`) | N/A |
 
 ---
 
@@ -195,6 +244,28 @@ def is_tool_error(content_text):
     )
 ```
 
+### Gemini CLI
+
+```python
+def is_tool_error(msg):
+    """Check if a Gemini message contains a tool error."""
+    if msg.get('type') != 'gemini':
+        return False
+    for tool_call in msg.get('toolCalls', []):
+        if tool_call.get('status') == 'error':
+            return True
+    return False
+
+def get_tool_error(msg):
+    """Get the error message from a failed tool call."""
+    for tool_call in msg.get('toolCalls', []):
+        if tool_call.get('status') == 'error':
+            return tool_call.get('error', '')
+    return None
+```
+
+**Note:** Gemini's `status: "error"` captures tool execution failures, but explicit user rejections (like declining an edit) may not be distinguishable from tool errors.
+
 ---
 
 ## Schema Implications
@@ -222,13 +293,13 @@ def is_tool_error(content_text):
 
 | Unified Field | Claude Code | Codex CLI | Gemini CLI |
 |---------------|-------------|-----------|------------|
-| `message_index` | Index of rejection message | Unknown | Unknown |
+| `message_index` | Index of rejection message | Unknown | Index of message with error |
 | `tool_use_id` | From `tool_result.tool_use_id` | Unknown | From `toolCalls[].id` |
 | `tool_name` | Lookup from original tool_use | Unknown | From `toolCalls[].name` |
-| `reason` | Parsed from content after "the user said:" | Unknown | Unknown |
-| `timestamp` | From rejection message | Unknown | Unknown |
+| `reason` | Parsed from content after "the user said:" | Unknown | From `error` field (tool error only) |
+| `timestamp` | From rejection message | Unknown | From message timestamp |
 
-**Note:** Claude Code is the only agent with explicit, parseable rejection recording. Reconstructing the rejected action requires linking `tool_use_id` back to the original assistant message.
+**Note:** Claude Code is the only agent with explicit, parseable user rejection recording. Gemini captures tool errors but not explicit user rejections. Reconstructing the rejected action requires linking `tool_use_id` back to the original assistant message.
 
 ---
 
@@ -250,8 +321,9 @@ def is_tool_error(content_text):
    - Enables "what-if" analysis and rejection review
 
 4. **How to handle Codex/Gemini rejections?**
-   - Limited evidence of explicit rejection recording
-   - May need to infer from response patterns
+   - Codex: Limited evidence of explicit rejection recording
+   - Gemini: Records tool errors (`status: "error"`) but not explicit user rejections
+   - May need to infer user rejections from response patterns
    - Should unified schema have optional/nullable rejection fields?
 
 ---
@@ -269,5 +341,5 @@ Codex CLI:
 
 Gemini CLI:
   Session files:     ~/.gemini/tmp/<project-hash>/chats/session-*.json
-  (No explicit rejection recording found)
+  (Tool errors recorded with status: "error" and error field)
 ```

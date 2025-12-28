@@ -49,3 +49,13 @@ docs/reviews/
 
 # Local review files
 reviews/
+
+# Test output files
+codex_rejection_session.jsonl
+
+# External data
+simonw-claude-code-transcripts/
+
+# PoC exploratory scripts
+poc/
+scripts/poc/
