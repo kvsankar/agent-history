@@ -44,7 +44,6 @@ test-*/
 
 # Claude Code session data
 .claude/
-docs/analysis/
 docs/learning/
 docs/reviews/
 
