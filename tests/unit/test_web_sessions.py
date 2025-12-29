@@ -599,3 +599,65 @@ class TestWorkspaceURI:
         assert parsed.location == "wsl"
         assert parsed.host == "Ubuntu"
         assert parsed.path == "/home/user/project"
+
+
+class TestWorkspaceURIFromSource:
+    """Tests for workspace_uri_from_source function."""
+
+    def test_local_source(self):
+        """Test URI generation for local source."""
+        uri = agent_history.workspace_uri_from_source("Local", "/home/user/project")
+        assert uri == "/home/user/project"
+
+    def test_local_wsl_source(self):
+        """Test URI generation for local WSL source."""
+        uri = agent_history.workspace_uri_from_source("Local (WSL)", "/home/user/project")
+        assert uri == "/home/user/project"
+
+    def test_windows_source(self):
+        """Test URI generation for Windows source."""
+        uri = agent_history.workspace_uri_from_source(
+            "Windows (kvsan)", "C:\\Users\\kvsan\\project"
+        )
+        assert uri == "windows:kvsan:C:\\Users\\kvsan\\project"
+
+    def test_windows_source_mnt_path(self):
+        """Test URI generation for Windows source with /mnt/c path."""
+        uri = agent_history.workspace_uri_from_source(
+            "Windows (kvsan)", "/mnt/c/Users/kvsan/project"
+        )
+        assert uri == "windows:kvsan:/mnt/c/Users/kvsan/project"
+
+    def test_wsl_source(self):
+        """Test URI generation for WSL source."""
+        uri = agent_history.workspace_uri_from_source("WSL (Ubuntu)", "/home/user/project")
+        assert uri == "wsl:Ubuntu:/home/user/project"
+
+    def test_remote_source_colon(self):
+        """Test URI generation for remote source with colon format."""
+        uri = agent_history.workspace_uri_from_source("Remote: vm01", "/home/user/project")
+        assert uri == "vm01:/home/user/project"
+
+    def test_remote_source_parens(self):
+        """Test URI generation for remote source with parentheses."""
+        uri = agent_history.workspace_uri_from_source("Remote (vm01)", "/home/user/project")
+        assert uri == "vm01:/home/user/project"
+
+    def test_gemini_hash(self):
+        """Test URI generation for Gemini hash workspace."""
+        uri = agent_history.workspace_uri_from_source("Local", "[hash:321784d9]")
+        assert uri == "urn:gemini:321784d9"
+
+    def test_web_source(self):
+        """Test URI generation for web source."""
+        uri = agent_history.workspace_uri_from_source(
+            "Web", "session_abc", github_repo="owner/repo"
+        )
+        assert uri == "claude.ai/session/session_abc@github.com/owner/repo"
+
+    def test_with_github_repo(self):
+        """Test URI generation with GitHub repo correlation."""
+        uri = agent_history.workspace_uri_from_source(
+            "Local", "/home/user/project", github_repo="owner/repo"
+        )
+        assert uri == "/home/user/project@github.com/owner/repo"

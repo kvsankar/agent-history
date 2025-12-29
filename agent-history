@@ -7410,6 +7410,97 @@ def parse_workspace_uri(uri: str) -> WorkspaceURI:
     )
 
 
+def workspace_uri_from_source(
+    source_label: str,
+    workspace_readable: str,
+    github_repo: Optional[str] = None,
+    gemini_hash: Optional[str] = None,
+) -> str:
+    """Generate a workspace URI from source label and workspace path.
+
+    Args:
+        source_label: Source label like "Local", "Local (WSL)", "Windows (kvsan)",
+                     "WSL (Ubuntu)", "Remote: hostname"
+        workspace_readable: The readable workspace path
+        github_repo: Optional GitHub repo for correlation
+        gemini_hash: Optional Gemini hash
+
+    Returns:
+        Workspace URI string
+    """
+    # Check for Gemini hash in workspace_readable (e.g., "[hash:321784d9]")
+    if workspace_readable.startswith("[hash:") and workspace_readable.endswith("]"):
+        hash_val = workspace_readable[6:-1]  # Extract hash from [hash:xxx]
+        return make_workspace_uri(location="gemini", gemini_hash=hash_val)
+
+    # Parse source label to determine location type and host
+    label_lower = source_label.lower()
+
+    if label_lower.startswith("local"):
+        return make_workspace_uri(
+            location="local",
+            path=workspace_readable,
+            github_repo=github_repo,
+            gemini_hash=gemini_hash,
+        )
+
+    if label_lower.startswith("windows"):
+        # Extract username from "Windows (username)"
+        host = None
+        if "(" in source_label and ")" in source_label:
+            host = source_label.split("(")[1].split(")")[0]
+        return make_workspace_uri(
+            location="windows",
+            host=host,
+            path=workspace_readable,
+            github_repo=github_repo,
+            gemini_hash=gemini_hash,
+        )
+
+    if label_lower.startswith("wsl"):
+        # Extract distro from "WSL (Ubuntu)" or similar
+        host = None
+        if "(" in source_label and ")" in source_label:
+            host = source_label.split("(")[1].split(")")[0]
+        return make_workspace_uri(
+            location="wsl",
+            host=host,
+            path=workspace_readable,
+            github_repo=github_repo,
+            gemini_hash=gemini_hash,
+        )
+
+    if label_lower.startswith("remote"):
+        # Extract hostname from "Remote: hostname" or "Remote (hostname)"
+        host = None
+        if ":" in source_label:
+            host = source_label.split(":", 1)[1].strip()
+        elif "(" in source_label and ")" in source_label:
+            host = source_label.split("(")[1].split(")")[0]
+        return make_workspace_uri(
+            location="remote",
+            host=host,
+            path=workspace_readable,
+            github_repo=github_repo,
+            gemini_hash=gemini_hash,
+        )
+
+    if label_lower.startswith("web"):
+        return make_workspace_uri(
+            location="web",
+            session_id=workspace_readable,
+            github_repo=github_repo,
+        )
+
+    # Fallback: treat as local
+    return make_workspace_uri(
+        location="local",
+        path=workspace_readable,
+        github_repo=github_repo,
+        gemini_hash=gemini_hash,
+    )
+
+
 def fetch_web_session(token: str, org_uuid: str, session_id: str) -> dict:
     """Fetch a specific web session from the Claude API.
 
@@ -12509,8 +12600,14 @@ def _collect_all_remote_sessions(remotes, patterns, since_date, until_date, agen
     return results
 
 
-def _print_all_homes_results(all_results, workspaces_only):
-    """Print results from all homes listing."""
+def _print_all_homes_results(all_results, workspaces_only, use_uris: bool = True):
+    """Print results from all homes listing.
+
+    Args:
+        all_results: List of (source_label, sessions) tuples
+        workspaces_only: If True, only show unique workspaces
+        use_uris: If True, show workspace URIs (default). If False, show legacy format.
+    """
     if not all_results:
         msg = "No workspaces found.\n" if workspaces_only else "No sessions found.\n"
         sys.stderr.write(msg)
@@ -12521,7 +12618,11 @@ def _print_all_homes_results(all_results, workspaces_only):
             print(f"# {source_label}")
             workspaces = sorted({s["workspace_readable"] for s in sessions})
             for ws in workspaces:
-                print(f"  {ws}")
+                if use_uris:
+                    uri = workspace_uri_from_source(source_label, ws)
+                    print(f"  {uri}")
+                else:
+                    print(f"  {ws}")
             print()
     else:
         print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
@@ -14545,7 +14646,7 @@ def _dispatch_lsw(args):
 
 
 def _dispatch_lsw_web():
-    """List web workspaces (unique repos from sessions, resolved to local paths)."""
+    """List web workspaces as URIs (unique repos from sessions)."""
     try:
         token, org_uuid = resolve_web_credentials()
         sessions = fetch_web_sessions(token, org_uuid)
@@ -14553,20 +14654,26 @@ def _dispatch_lsw_web():
         if not sessions:
             return
 
-        # Build map of GitHub repos to local workspace paths
-        projects_dir = get_claude_projects_dir()
-        github_map = build_github_to_workspace_map(projects_dir) if projects_dir else {}
+        print("# Web (claude.ai)")
 
-        # Collect unique workspaces
-        workspaces = set()
+        # Collect unique workspaces with their GitHub repos
+        workspace_uris = set()
         for session in sessions:
-            workspace = get_web_session_workspace(session, github_map)
-            if workspace:
-                workspaces.add(workspace)
+            github_repo = get_web_session_github_repo(session)
+            if github_repo:
+                # Web session with GitHub repo: claude.ai@github.com/owner/repo
+                uri = make_workspace_uri(location="web", github_repo=github_repo)
+                workspace_uris.add(uri)
+            else:
+                # Web session without GitHub repo - show session ID
+                session_id = session.get("uuid", "unknown")
+                uri = make_workspace_uri(location="web", session_id=session_id)
+                workspace_uris.add(uri)
 
-        # Print unique workspaces
-        for workspace in sorted(workspaces):
-            print(workspace)
+        # Print unique workspace URIs
+        for uri in sorted(workspace_uris):
+            print(f"  {uri}")
+        print()
 
     except WebSessionsError:
         # Silently skip if web auth not available
