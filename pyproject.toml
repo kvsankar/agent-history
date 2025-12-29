@@ -38,6 +38,7 @@ ignore = [
 "test_*.py" = ["PLR2004", "PLR0913", "PLR0915", "N802", "N803", "RUF012"]
 # Main script has some complexity that's baselined
 "claude-history" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
+"agent-history" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
 # Scripts use magic values and have some complexity
 "scripts/*.py" = ["PLR2004", "PLW1510", "C901", "PLR0915"]
 

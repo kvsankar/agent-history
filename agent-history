@@ -1254,7 +1254,7 @@ def _iter_sessions_deduped(
                 yield session
 
 
-def collect_sessions_with_dedup(  # noqa: PLR0913
+def collect_sessions_with_dedup(
     patterns: list,
     since_date=None,
     until_date=None,
@@ -1963,7 +1963,7 @@ def generate_graph_summary(graph: ConversationGraph) -> list:
     return lines
 
 
-def generate_mermaid_graph(graph: ConversationGraph, max_nodes: int = 50) -> list:  # noqa: C901
+def generate_mermaid_graph(graph: ConversationGraph, max_nodes: int = 50) -> list:
     """Generate Mermaid diagram of conversation graph.
 
     Args:
@@ -2599,7 +2599,7 @@ def codex_parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> st
     return "\n".join(md_lines)
 
 
-def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:  # noqa: C901
+def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
     """Extract metrics from Codex JSONL file for stats database.
 
     Mirror of extract_metrics_from_jsonl() for Codex format.
@@ -6369,7 +6369,7 @@ def gemini_get_remote_session_info(
                 continue
 
             parts = line.split("|")
-            if len(parts) != 4:  # noqa: PLR2004
+            if len(parts) != 4:
                 continue
 
             filepath, size_bytes, mtime_epoch, msg_count = parts
@@ -6631,7 +6631,7 @@ def codex_get_remote_session_info(
                 continue
 
             parts = line.split("|")
-            if len(parts) != 5:  # noqa: PLR2004
+            if len(parts) != 5:
                 continue
 
             filepath, size_bytes, mtime_epoch, line_count, cwd = parts
@@ -7021,6 +7021,393 @@ def fetch_web_sessions(token: str, org_uuid: str) -> list:
     """
     data = _make_web_api_request("/sessions", token, org_uuid)
     return data.get("data", [])
+
+
+# ============================================================================
+# Workspace URI Scheme
+# ============================================================================
+#
+# Workspace URIs uniquely identify workspaces across different sources using
+# familiar, existing formats. The general pattern is:
+#
+#   primary_identifier[@github.com/owner/repo]
+#
+# Where primary_identifier uses context-appropriate familiar formats:
+#
+# LOCAL PATHS (filesystem path):
+#   /home/user/project
+#   /home/user/project@github.com/owner/repo      # with GitHub correlation
+#
+# REMOTE (SSH format):
+#   user@host:/path/to/project
+#   user@host:/path@github.com/owner/repo
+#
+# WSL (simplified UNC-like):
+#   wsl:Ubuntu:/home/user/project
+#   wsl:Ubuntu:/home/user/project@github.com/owner/repo
+#
+# WINDOWS (native path format):
+#   C:\Users\name\project
+#   windows:username:C:\Users\name\project        # when accessed from WSL
+#
+# WEB SESSIONS (URL format):
+#   claude.ai/session/session_011CUvz9KgREyL4RPDmtxkJW
+#   claude.ai/session/session_xyz@github.com/owner/repo
+#
+# GEMINI (URN format for unmapped hashes):
+#   urn:gemini:321784d9
+#   /home/user/project@gemini:321784d9            # mapped to path
+#
+# The @suffix provides correlation to GitHub repos, enabling:
+# - Matching web sessions to local workspaces
+# - Identifying the same project across different machines
+# - Linking sessions from different sources
+#
+# ============================================================================
+
+
+def extract_github_repo_from_git_url(url: str) -> Optional[str]:
+    """Extract owner/repo from various git URL formats.
+
+    Supports:
+    - https://github.com/owner/repo
+    - https://github.com/owner/repo.git
+    - git@github.com:owner/repo.git
+    - github-alias:owner/repo.git (SSH alias)
+    - git@github-alias:owner/repo.git
+
+    Args:
+        url: Git remote URL
+
+    Returns:
+        Repository in 'owner/repo' format, or None if not GitHub
+    """
+    if not url:
+        return None
+
+    # HTTPS format: https://github.com/owner/repo(.git)?
+    if "github.com/" in url:
+        repo = url.split("github.com/")[-1]
+        return repo.rstrip("/").removesuffix(".git")
+
+    # SSH format: git@github.com:owner/repo.git or git@github-alias:owner/repo.git
+    # Also: github-alias:owner/repo.git (without git@)
+    if ":" in url and "/" in url.split(":")[-1]:
+        # Check if it looks like a GitHub SSH URL (contains 'github' in host part)
+        host_part = url.split(":")[0]
+        if "github" in host_part.lower():
+            repo_part = url.split(":")[-1]
+            return repo_part.removesuffix(".git")
+
+    return None
+
+
+def get_web_session_github_repo(session: dict) -> Optional[str]:
+    """Extract GitHub repo (owner/repo) from a web session.
+
+    Args:
+        session: Session dictionary from fetch_web_sessions
+
+    Returns:
+        GitHub repo in 'owner/repo' format, or None if not found
+    """
+    ctx = session.get("session_context", {})
+    if isinstance(ctx, str):
+        try:
+            ctx = json.loads(ctx)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    # Check sources for git repo URL
+    sources = ctx.get("sources", [])
+    for src in sources:
+        if src.get("type") == "git_repository":
+            url = src.get("url", "")
+            repo = extract_github_repo_from_git_url(url)
+            if repo:
+                return repo
+
+    # Fallback: check outcomes for git_info.repo (already in owner/repo format)
+    outcomes = ctx.get("outcomes", [])
+    for out in outcomes:
+        git_info = out.get("git_info", {})
+        if git_info.get("repo"):
+            return git_info.get("repo")
+
+    return None
+
+
+def build_github_to_workspace_map(projects_dir: Path) -> dict:
+    """Build a map of GitHub repos to local workspace paths.
+
+    Scans local workspaces for git remotes and extracts GitHub repos.
+
+    Args:
+        projects_dir: Path to Claude projects directory
+
+    Returns:
+        Dict mapping 'owner/repo' to local workspace path
+    """
+    repo_map: dict = {}
+
+    if not projects_dir.exists():
+        return repo_map
+
+    for workspace_dir in projects_dir.iterdir():
+        if not workspace_dir.is_dir():
+            continue
+        # Skip cached remote/WSL workspaces
+        if workspace_dir.name.startswith(("remote_", "wsl_")):
+            continue
+
+        # Convert workspace dir name to actual path
+        workspace_path = normalize_workspace_name(workspace_dir.name)
+
+        # Check if this path has a .git directory
+        actual_path = Path("/") / workspace_path
+        git_dir = actual_path / ".git"
+        if not git_dir.exists():
+            continue
+
+        # Get origin remote URL
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(actual_path), "remote", "get-url", "origin"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if result.returncode == 0:
+                remote_url = result.stdout.strip()
+                repo = extract_github_repo_from_git_url(remote_url)
+                if repo:
+                    repo_map[repo] = workspace_path
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+
+    return repo_map
+
+
+def get_web_session_workspace(session: dict, github_map: Optional[dict] = None) -> Optional[str]:
+    """Extract workspace identifier from a web session.
+
+    If a github_map is provided, attempts to resolve GitHub repo to local path.
+
+    Args:
+        session: Session dictionary from fetch_web_sessions
+        github_map: Optional dict mapping 'owner/repo' to local workspace path
+
+    Returns:
+        Local workspace path if matched, otherwise GitHub repo, or None
+    """
+    github_repo = get_web_session_github_repo(session)
+
+    if github_repo:
+        # Try to resolve to local workspace path
+        if github_map and github_repo in github_map:
+            return github_map[github_repo]
+        return github_repo
+
+    # Fallback: cwd if available
+    ctx = session.get("session_context", {})
+    if isinstance(ctx, str):
+        try:
+            ctx = json.loads(ctx)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    cwd = ctx.get("cwd")
+    if cwd:
+        return cwd
+
+    return None
+
+
+# --- Workspace URI Functions ---
+
+
+@dataclass
+class WorkspaceURI:
+    """Parsed workspace URI components."""
+
+    location: str  # local, remote, wsl, windows, web, gemini
+    host: Optional[str] = None  # hostname for remote, distro for wsl, user for windows
+    path: Optional[str] = None  # filesystem path
+    session_id: Optional[str] = None  # web session ID
+    github_repo: Optional[str] = None  # owner/repo correlation
+    gemini_hash: Optional[str] = None  # Gemini workspace hash
+
+
+def make_workspace_uri(
+    location: str,
+    path: Optional[str] = None,
+    host: Optional[str] = None,
+    session_id: Optional[str] = None,
+    github_repo: Optional[str] = None,
+    gemini_hash: Optional[str] = None,
+) -> str:
+    """Generate a workspace URI string.
+
+    Args:
+        location: One of 'local', 'remote', 'wsl', 'windows', 'web', 'gemini'
+        path: Filesystem path (for local, remote, wsl, windows)
+        host: Hostname (remote), distro (wsl), or username (windows)
+        session_id: Web session ID
+        github_repo: GitHub owner/repo for correlation
+        gemini_hash: Gemini workspace hash
+
+    Returns:
+        Workspace URI string in familiar format
+    """
+    uri = ""
+
+    if location == "local":
+        # /home/user/project[@github.com/owner/repo]
+        uri = path or ""
+    elif location == "remote":
+        # user@host:/path[@github.com/owner/repo]
+        if host and path:
+            uri = f"{host}:{path}"
+        elif path:
+            uri = path
+    elif location == "wsl":
+        # wsl:Ubuntu:/home/user/project
+        if host and path:
+            uri = f"wsl:{host}:{path}"
+        elif path:
+            uri = f"wsl:{path}"
+    elif location == "windows":
+        # windows:username:C:\Users\...  or just C:\...
+        if host and path:
+            uri = f"windows:{host}:{path}"
+        elif path:
+            uri = path
+    elif location == "web":
+        # claude.ai/session/session_id
+        if session_id:
+            uri = f"claude.ai/session/{session_id}"
+        else:
+            uri = "claude.ai"
+    elif location == "gemini":
+        # urn:gemini:hash or path@gemini:hash
+        if path:
+            uri = path
+        elif gemini_hash:
+            uri = f"urn:gemini:{gemini_hash}"
+
+    # Add GitHub correlation suffix
+    if github_repo:
+        uri = f"{uri}@github.com/{github_repo}"
+
+    # Add Gemini hash suffix (if path is primary)
+    if gemini_hash and path:
+        uri = f"{uri}@gemini:{gemini_hash}"
+
+    return uri
+
+
+def parse_workspace_uri(uri: str) -> WorkspaceURI:
+    """Parse a workspace URI string into components.
+
+    Args:
+        uri: Workspace URI string
+
+    Returns:
+        WorkspaceURI with parsed components
+    """
+    github_repo = None
+    gemini_hash = None
+
+    # Extract @github.com/owner/repo suffix
+    if "@github.com/" in uri:
+        uri, github_part = uri.rsplit("@github.com/", 1)
+        # Handle @gemini: suffix that may come after github repo
+        if "@gemini:" in github_part:
+            github_repo, gemini_hash = github_part.split("@gemini:", 1)
+        else:
+            github_repo = github_part.split("@")[0]  # In case there are other suffixes
+
+    # Extract @gemini:hash suffix (if not already extracted from github_part)
+    if gemini_hash is None and "@gemini:" in uri:
+        uri, gemini_hash = uri.rsplit("@gemini:", 1)
+
+    # Determine location from URI format
+    if uri.startswith("claude.ai/session/"):
+        session_id = uri.replace("claude.ai/session/", "")
+        return WorkspaceURI(
+            location="web",
+            session_id=session_id,
+            github_repo=github_repo,
+            gemini_hash=gemini_hash,
+        )
+
+    if uri.startswith("urn:gemini:"):
+        gemini_hash = uri.replace("urn:gemini:", "")
+        return WorkspaceURI(location="gemini", gemini_hash=gemini_hash, github_repo=github_repo)
+
+    if uri.startswith("wsl:"):
+        # wsl:Ubuntu:/path or wsl:/path
+        parts = uri[4:].split(":", 1)
+        if len(parts) == 2:
+            return WorkspaceURI(
+                location="wsl",
+                host=parts[0],
+                path=parts[1],
+                github_repo=github_repo,
+                gemini_hash=gemini_hash,
+            )
+        return WorkspaceURI(
+            location="wsl",
+            path=parts[0],
+            github_repo=github_repo,
+            gemini_hash=gemini_hash,
+        )
+
+    if uri.startswith("windows:"):
+        # windows:user:C:\path
+        parts = uri[8:].split(":", 1)
+        if len(parts) == 2:
+            return WorkspaceURI(
+                location="windows",
+                host=parts[0],
+                path=parts[1],
+                github_repo=github_repo,
+                gemini_hash=gemini_hash,
+            )
+        return WorkspaceURI(
+            location="windows",
+            path=parts[0],
+            github_repo=github_repo,
+            gemini_hash=gemini_hash,
+        )
+
+    # Check for remote SSH format: user@host:/path or host:/path
+    if ":" in uri and not uri.startswith("/"):
+        # Could be remote SSH format
+        host_part, path_part = uri.split(":", 1)
+        if path_part.startswith("/"):
+            return WorkspaceURI(
+                location="remote",
+                host=host_part,
+                path=path_part,
+                github_repo=github_repo,
+                gemini_hash=gemini_hash,
+            )
+
+    # Check for Windows path (C:\...)
+    if len(uri) >= 2 and uri[1] == ":" and uri[0].isalpha():
+        return WorkspaceURI(
+            location="windows",
+            path=uri,
+            github_repo=github_repo,
+            gemini_hash=gemini_hash,
+        )
+
+    # Default: local path
+    return WorkspaceURI(
+        location="local", path=uri, github_repo=github_repo, gemini_hash=gemini_hash
+    )
 
 
 def fetch_web_session(token: str, org_uuid: str, session_id: str) -> dict:
@@ -7971,7 +8358,7 @@ def _filter_alias_config_by_flags(alias_config: dict, args) -> dict:
     return filtered
 
 
-def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912, PLR0915
+def _collect_non_claude_alias_sessions(
     patterns: list,
     since_date,
     until_date,
@@ -8773,7 +9160,7 @@ def _update_tool_errors_from_results(entry: dict, tool_uses: list):
                     break
 
 
-def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:  # noqa: C901
+def extract_metrics_from_jsonl(jsonl_file: Path, source: str = "local") -> dict:
     """Extract metrics data from a JSONL file.
 
     Returns a dict with session, messages, and tool_uses.
@@ -9371,7 +9758,7 @@ def _accumulate_stats(totals: dict, new_stats: dict):
     totals["errors"] += new_stats["errors"]
 
 
-def _sync_wsl_windows_to_db(  # noqa: C901
+def _sync_wsl_windows_to_db(
     conn,
     totals: dict,
     patterns: list,
@@ -9524,7 +9911,7 @@ def _sync_remote_to_db_with_new_conn(remote: str, patterns: list, force: bool) -
     return totals
 
 
-def cmd_stats_sync(args):  # noqa: C901
+def cmd_stats_sync(args):
     """Sync JSONL files to metrics database."""
     force = getattr(args, "force", False)
     all_homes = getattr(args, "all_homes", False)
@@ -9654,7 +10041,7 @@ def _expand_alias_to_conditions(alias_name: str, aliases: dict) -> tuple:
     return conditions, params
 
 
-def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:  # noqa: C901
+def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:
     """Build WHERE clause for stats query. Returns (where_sql, params)."""
     where_clauses = []
     params = []
@@ -11519,7 +11906,7 @@ def _is_export_up_to_date(output_file: Path, jsonl_file: Path, force: bool) -> b
     return output_file.stat().st_mtime >= jsonl_file.stat().st_mtime
 
 
-def _export_single_session(  # noqa: PLR0913
+def _export_single_session(
     jsonl_file: Path,
     output_file: Path,
     output_name: str,
@@ -11595,7 +11982,7 @@ def _copy_source_json(jsonl_file: Path, output_file: Path, output_name: str, qui
         sys.stderr.write(f"Error copying {jsonl_file.name}: {e}\n")
 
 
-def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noqa: C901
+def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
     """Export sessions to markdown files.
 
     Args:
@@ -12952,7 +13339,7 @@ def _get_export_all_patterns(args) -> list:
     return [ws] if ws else []
 
 
-def cmd_export_all(args):  # noqa: C901
+def cmd_export_all(args):
     """Export from all homes: local, WSL distributions (Windows), Windows (WSL), and optionally remotes."""
     in_wsl = is_running_in_wsl()
     local_label = "Local WSL" if in_wsl else "Local Windows"
@@ -14158,7 +14545,7 @@ def _dispatch_lsw(args):
 
 
 def _dispatch_lsw_web():
-    """List web sessions as workspaces (by title)."""
+    """List web workspaces (unique repos from sessions, resolved to local paths)."""
     try:
         token, org_uuid = resolve_web_credentials()
         sessions = fetch_web_sessions(token, org_uuid)
@@ -14166,9 +14553,20 @@ def _dispatch_lsw_web():
         if not sessions:
             return
 
+        # Build map of GitHub repos to local workspace paths
+        projects_dir = get_claude_projects_dir()
+        github_map = build_github_to_workspace_map(projects_dir) if projects_dir else {}
+
+        # Collect unique workspaces
+        workspaces = set()
         for session in sessions:
-            title = session.get("name", session.get("title", "(untitled)"))
-            print(title)
+            workspace = get_web_session_workspace(session, github_map)
+            if workspace:
+                workspaces.add(workspace)
+
+        # Print unique workspaces
+        for workspace in sorted(workspaces):
+            print(workspace)
 
     except WebSessionsError:
         # Silently skip if web auth not available
@@ -14403,7 +14801,7 @@ def _dispatch_lss(args):
 
 
 def _dispatch_lss_web(args):
-    """List web sessions from Claude.ai."""
+    """List web sessions from Claude.ai (resolved to local paths when possible)."""
     try:
         token, org_uuid = resolve_web_credentials()
         sessions = fetch_web_sessions(token, org_uuid)
@@ -14411,9 +14809,13 @@ def _dispatch_lss_web(args):
         if not sessions:
             return
 
+        # Build map of GitHub repos to local workspace paths
+        projects_dir = get_claude_projects_dir()
+        github_map = build_github_to_workspace_map(projects_dir) if projects_dir else {}
+
         for session in sessions:
             session_id = session.get("uuid", session.get("id", "unknown"))
-            title = session.get("name", session.get("title", "(untitled)"))
+            workspace = get_web_session_workspace(session, github_map) or "(no repo)"
             created = session.get("created_at", session.get("createdAt", ""))
             msg_count = session.get("message_count", "?")
 
@@ -14426,8 +14828,8 @@ def _dispatch_lss_web(args):
                     pass
 
             # Print in same format: AGENT HOME WORKSPACE FILE MESSAGES DATE
-            # For web: agent=web, home=web, workspace=title, file=session_id
-            print(f"web\tweb\t{title}\t{session_id}\t{msg_count}\t{created}")
+            # For web: agent=web, home=web, workspace=local path or repo
+            print(f"web\tweb\t{workspace}\t{session_id}\t{msg_count}\t{created}")
 
     except WebSessionsError:
         # Silently skip if web auth not available (e.g., not on macOS)
