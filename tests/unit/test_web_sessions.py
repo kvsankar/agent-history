@@ -135,6 +135,113 @@ class TestWebCredentials:
         assert token == "my-token"
         assert org_uuid == "my-org"
 
+    def test_get_web_session_workspace_from_sources(self):
+        """Test workspace extraction from session_context.sources."""
+        session = {
+            "session_context": {
+                "sources": [{"type": "git_repository", "url": "https://github.com/owner/repo"}]
+            }
+        }
+        result = agent_history.get_web_session_workspace(session)
+        assert result == "owner/repo"
+
+    def test_get_web_session_workspace_from_outcomes(self):
+        """Test workspace extraction from session_context.outcomes."""
+        session = {
+            "session_context": {
+                "outcomes": [{"git_info": {"repo": "owner/repo", "type": "github"}}]
+            }
+        }
+        result = agent_history.get_web_session_workspace(session)
+        assert result == "owner/repo"
+
+    def test_get_web_session_workspace_from_cwd(self):
+        """Test workspace extraction falls back to cwd."""
+        session = {"session_context": {"cwd": "/home/user/project"}}
+        result = agent_history.get_web_session_workspace(session)
+        assert result == "/home/user/project"
+
+    def test_get_web_session_workspace_empty(self):
+        """Test workspace extraction returns None when no context."""
+        session = {}
+        result = agent_history.get_web_session_workspace(session)
+        assert result is None
+
+    def test_get_web_session_workspace_json_string(self):
+        """Test workspace extraction handles JSON string context."""
+        import json
+
+        session = {
+            "session_context": json.dumps(
+                {"sources": [{"type": "git_repository", "url": "https://github.com/a/b"}]}
+            )
+        }
+        result = agent_history.get_web_session_workspace(session)
+        assert result == "a/b"
+
+    def test_get_web_session_workspace_with_github_map(self):
+        """Test workspace resolves to local path when github_map provided."""
+        session = {
+            "session_context": {
+                "sources": [{"type": "git_repository", "url": "https://github.com/owner/repo"}]
+            }
+        }
+        github_map = {"owner/repo": "home/user/projects/repo"}
+        result = agent_history.get_web_session_workspace(session, github_map)
+        assert result == "home/user/projects/repo"
+
+    def test_get_web_session_workspace_no_match_in_map(self):
+        """Test workspace returns repo when no match in github_map."""
+        session = {
+            "session_context": {
+                "sources": [{"type": "git_repository", "url": "https://github.com/owner/repo"}]
+            }
+        }
+        github_map = {"other/repo": "home/user/other"}
+        result = agent_history.get_web_session_workspace(session, github_map)
+        assert result == "owner/repo"
+
+    def test_extract_github_repo_https(self):
+        """Test extraction from HTTPS URL."""
+        assert (
+            agent_history.extract_github_repo_from_git_url("https://github.com/owner/repo")
+            == "owner/repo"
+        )
+        assert (
+            agent_history.extract_github_repo_from_git_url("https://github.com/owner/repo.git")
+            == "owner/repo"
+        )
+
+    def test_extract_github_repo_ssh(self):
+        """Test extraction from SSH URL."""
+        assert (
+            agent_history.extract_github_repo_from_git_url("git@github.com:owner/repo.git")
+            == "owner/repo"
+        )
+
+    def test_extract_github_repo_ssh_alias(self):
+        """Test extraction from SSH alias URL."""
+        assert (
+            agent_history.extract_github_repo_from_git_url("github-alias:owner/repo.git")
+            == "owner/repo"
+        )
+        assert (
+            agent_history.extract_github_repo_from_git_url(
+                "git@github-kvsankar:kvsankar/skyfield-ts.git"
+            )
+            == "kvsankar/skyfield-ts"
+        )
+
+    def test_extract_github_repo_non_github(self):
+        """Test returns None for non-GitHub URLs."""
+        assert (
+            agent_history.extract_github_repo_from_git_url("git@gitlab.com:owner/repo.git") is None
+        )
+        assert (
+            agent_history.extract_github_repo_from_git_url("git@essence:Essence-10/BP-v1.git")
+            is None
+        )
+
 
 class TestWebSessionConversion:
     """Tests for web session data conversion."""
@@ -264,3 +371,231 @@ class TestFetchWebSessions:
 
         assert result["uuid"] == "abc123"
         assert len(result["loglines"]) == 1
+
+
+class TestWorkspaceURI:
+    """Tests for workspace URI generation and parsing."""
+
+    # ==================== make_workspace_uri tests ====================
+
+    def test_make_workspace_uri_local_path(self):
+        """Test local path URI generation."""
+        result = agent_history.make_workspace_uri(location="local", path="/home/user/project")
+        assert result == "/home/user/project"
+
+    def test_make_workspace_uri_local_with_github(self):
+        """Test local path with GitHub correlation."""
+        result = agent_history.make_workspace_uri(
+            location="local", path="/home/user/project", github_repo="owner/repo"
+        )
+        assert result == "/home/user/project@github.com/owner/repo"
+
+    def test_make_workspace_uri_remote(self):
+        """Test remote SSH URI generation."""
+        result = agent_history.make_workspace_uri(
+            location="remote", host="user@vm01", path="/home/user/project"
+        )
+        assert result == "user@vm01:/home/user/project"
+
+    def test_make_workspace_uri_remote_with_github(self):
+        """Test remote SSH URI with GitHub correlation."""
+        result = agent_history.make_workspace_uri(
+            location="remote",
+            host="user@vm01",
+            path="/home/user/project",
+            github_repo="owner/repo",
+        )
+        assert result == "user@vm01:/home/user/project@github.com/owner/repo"
+
+    def test_make_workspace_uri_wsl(self):
+        """Test WSL URI generation."""
+        result = agent_history.make_workspace_uri(
+            location="wsl", host="Ubuntu", path="/home/user/project"
+        )
+        assert result == "wsl:Ubuntu:/home/user/project"
+
+    def test_make_workspace_uri_wsl_without_host(self):
+        """Test WSL URI without distro name."""
+        result = agent_history.make_workspace_uri(location="wsl", path="/home/user/project")
+        assert result == "wsl:/home/user/project"
+
+    def test_make_workspace_uri_windows(self):
+        """Test Windows URI generation with username."""
+        result = agent_history.make_workspace_uri(
+            location="windows", host="alice", path="C:\\Users\\alice\\project"
+        )
+        assert result == "windows:alice:C:\\Users\\alice\\project"
+
+    def test_make_workspace_uri_windows_path_only(self):
+        """Test Windows URI with path only."""
+        result = agent_history.make_workspace_uri(
+            location="windows", path="C:\\Users\\alice\\project"
+        )
+        assert result == "C:\\Users\\alice\\project"
+
+    def test_make_workspace_uri_web_session(self):
+        """Test web session URI generation."""
+        result = agent_history.make_workspace_uri(location="web", session_id="session_xyz")
+        assert result == "claude.ai/session/session_xyz"
+
+    def test_make_workspace_uri_web_with_github(self):
+        """Test web session URI with GitHub correlation."""
+        result = agent_history.make_workspace_uri(
+            location="web", session_id="session_xyz", github_repo="owner/repo"
+        )
+        assert result == "claude.ai/session/session_xyz@github.com/owner/repo"
+
+    def test_make_workspace_uri_web_no_session(self):
+        """Test web session URI without session ID."""
+        result = agent_history.make_workspace_uri(location="web")
+        assert result == "claude.ai"
+
+    def test_make_workspace_uri_gemini_unmapped(self):
+        """Test Gemini unmapped hash URI generation."""
+        result = agent_history.make_workspace_uri(location="gemini", gemini_hash="321784d9")
+        assert result == "urn:gemini:321784d9"
+
+    def test_make_workspace_uri_gemini_with_path(self):
+        """Test Gemini URI with mapped path."""
+        result = agent_history.make_workspace_uri(
+            location="gemini", path="/home/user/project", gemini_hash="321784d9"
+        )
+        assert result == "/home/user/project@gemini:321784d9"
+
+    # ==================== parse_workspace_uri tests ====================
+
+    def test_parse_workspace_uri_local_path(self):
+        """Test parsing local path URI."""
+        result = agent_history.parse_workspace_uri("/home/user/project")
+        assert result.location == "local"
+        assert result.path == "/home/user/project"
+        assert result.github_repo is None
+
+    def test_parse_workspace_uri_local_with_github(self):
+        """Test parsing local path with GitHub suffix."""
+        result = agent_history.parse_workspace_uri("/home/user/project@github.com/owner/repo")
+        assert result.location == "local"
+        assert result.path == "/home/user/project"
+        assert result.github_repo == "owner/repo"
+
+    def test_parse_workspace_uri_remote_ssh(self):
+        """Test parsing remote SSH format."""
+        result = agent_history.parse_workspace_uri("user@vm01:/home/user/project")
+        assert result.location == "remote"
+        assert result.host == "user@vm01"
+        assert result.path == "/home/user/project"
+
+    def test_parse_workspace_uri_remote_with_github(self):
+        """Test parsing remote SSH with GitHub suffix."""
+        result = agent_history.parse_workspace_uri(
+            "user@vm01:/home/user/project@github.com/owner/repo"
+        )
+        assert result.location == "remote"
+        assert result.host == "user@vm01"
+        assert result.path == "/home/user/project"
+        assert result.github_repo == "owner/repo"
+
+    def test_parse_workspace_uri_wsl(self):
+        """Test parsing WSL URI."""
+        result = agent_history.parse_workspace_uri("wsl:Ubuntu:/home/user/project")
+        assert result.location == "wsl"
+        assert result.host == "Ubuntu"
+        assert result.path == "/home/user/project"
+
+    def test_parse_workspace_uri_wsl_without_host(self):
+        """Test parsing WSL URI without distro."""
+        result = agent_history.parse_workspace_uri("wsl:/home/user/project")
+        assert result.location == "wsl"
+        assert result.host is None
+        assert result.path == "/home/user/project"
+
+    def test_parse_workspace_uri_windows_prefixed(self):
+        """Test parsing Windows prefixed URI."""
+        result = agent_history.parse_workspace_uri("windows:alice:C:\\Users\\alice\\project")
+        assert result.location == "windows"
+        assert result.host == "alice"
+        assert result.path == "C:\\Users\\alice\\project"
+
+    def test_parse_workspace_uri_windows_drive_path(self):
+        """Test parsing Windows drive path directly."""
+        result = agent_history.parse_workspace_uri("C:\\Users\\alice\\project")
+        assert result.location == "windows"
+        assert result.path == "C:\\Users\\alice\\project"
+        assert result.host is None
+
+    def test_parse_workspace_uri_web_session(self):
+        """Test parsing web session URI."""
+        result = agent_history.parse_workspace_uri("claude.ai/session/session_xyz")
+        assert result.location == "web"
+        assert result.session_id == "session_xyz"
+
+    def test_parse_workspace_uri_web_with_github(self):
+        """Test parsing web session with GitHub suffix."""
+        result = agent_history.parse_workspace_uri(
+            "claude.ai/session/session_xyz@github.com/owner/repo"
+        )
+        assert result.location == "web"
+        assert result.session_id == "session_xyz"
+        assert result.github_repo == "owner/repo"
+
+    def test_parse_workspace_uri_gemini_urn(self):
+        """Test parsing Gemini URN format."""
+        result = agent_history.parse_workspace_uri("urn:gemini:321784d9")
+        assert result.location == "gemini"
+        assert result.gemini_hash == "321784d9"
+
+    def test_parse_workspace_uri_gemini_with_path(self):
+        """Test parsing path with Gemini hash suffix."""
+        result = agent_history.parse_workspace_uri("/home/user/project@gemini:321784d9")
+        assert result.location == "local"
+        assert result.path == "/home/user/project"
+        assert result.gemini_hash == "321784d9"
+
+    def test_parse_workspace_uri_combined_suffixes(self):
+        """Test parsing URI with both GitHub and Gemini suffixes."""
+        result = agent_history.parse_workspace_uri(
+            "/home/user/project@github.com/owner/repo@gemini:321784d9"
+        )
+        assert result.location == "local"
+        assert result.path == "/home/user/project"
+        assert result.github_repo == "owner/repo"
+        assert result.gemini_hash == "321784d9"
+
+    # ==================== Round-trip tests ====================
+
+    def test_roundtrip_local(self):
+        """Test round-trip for local path."""
+        original = agent_history.make_workspace_uri(location="local", path="/home/user/project")
+        parsed = agent_history.parse_workspace_uri(original)
+        assert parsed.location == "local"
+        assert parsed.path == "/home/user/project"
+
+    def test_roundtrip_remote(self):
+        """Test round-trip for remote SSH."""
+        original = agent_history.make_workspace_uri(
+            location="remote", host="user@vm01", path="/home/user/project"
+        )
+        parsed = agent_history.parse_workspace_uri(original)
+        assert parsed.location == "remote"
+        assert parsed.host == "user@vm01"
+        assert parsed.path == "/home/user/project"
+
+    def test_roundtrip_web_with_github(self):
+        """Test round-trip for web session with GitHub."""
+        original = agent_history.make_workspace_uri(
+            location="web", session_id="abc123", github_repo="owner/repo"
+        )
+        parsed = agent_history.parse_workspace_uri(original)
+        assert parsed.location == "web"
+        assert parsed.session_id == "abc123"
+        assert parsed.github_repo == "owner/repo"
+
+    def test_roundtrip_wsl(self):
+        """Test round-trip for WSL path."""
+        original = agent_history.make_workspace_uri(
+            location="wsl", host="Ubuntu", path="/home/user/project"
+        )
+        parsed = agent_history.parse_workspace_uri(original)
+        assert parsed.location == "wsl"
+        assert parsed.host == "Ubuntu"
+        assert parsed.path == "/home/user/project"
