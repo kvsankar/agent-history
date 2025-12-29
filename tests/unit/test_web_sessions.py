@@ -59,15 +59,64 @@ class TestWebCredentials:
         result = agent_history.get_access_token_from_keychain()
         assert result is None
 
-    def test_resolve_web_credentials_missing_token_non_macos(self, monkeypatch):
+    def test_get_access_token_from_credentials_file_exists(self, tmp_path):
+        """Test token retrieval from credentials file."""
+        # Create credentials file
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        creds_file = claude_dir / ".credentials.json"
+        creds_file.write_text('{"claudeAiOauth": {"accessToken": "test-token-123"}}')
+
+        with patch.object(Path, "home", return_value=tmp_path):
+            result = agent_history.get_access_token_from_credentials_file()
+
+        assert result == "test-token-123"
+
+    def test_get_access_token_from_credentials_file_missing(self, tmp_path):
+        """Test returns None when credentials file doesn't exist."""
+        with patch.object(Path, "home", return_value=tmp_path):
+            result = agent_history.get_access_token_from_credentials_file()
+
+        assert result is None
+
+    def test_get_access_token_from_credentials_file_invalid_json(self, tmp_path):
+        """Test returns None for invalid JSON in credentials file."""
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        creds_file = claude_dir / ".credentials.json"
+        creds_file.write_text("not valid json")
+
+        with patch.object(Path, "home", return_value=tmp_path):
+            result = agent_history.get_access_token_from_credentials_file()
+
+        assert result is None
+
+    def test_get_access_token_uses_both_sources(self, tmp_path, monkeypatch):
+        """Test get_access_token checks both keychain and credentials file."""
+        monkeypatch.setattr(sys, "platform", "linux")  # Keychain won't work
+
+        # Create credentials file with token
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        creds_file = claude_dir / ".credentials.json"
+        creds_file.write_text('{"claudeAiOauth": {"accessToken": "file-token"}}')
+
+        with patch.object(Path, "home", return_value=tmp_path):
+            result = agent_history.get_access_token()
+
+        assert result == "file-token"
+
+    def test_resolve_web_credentials_missing_token_non_macos(self, tmp_path, monkeypatch):
         """Test that missing token on non-macOS raises appropriate error."""
         monkeypatch.setattr(sys, "platform", "linux")
 
-        with pytest.raises(agent_history.WebSessionsError) as exc_info:
-            agent_history.resolve_web_credentials(token=None, org_uuid="some-uuid")
+        # Ensure no credentials file exists
+        with patch.object(Path, "home", return_value=tmp_path):
+            with pytest.raises(agent_history.WebSessionsError) as exc_info:
+                agent_history.resolve_web_credentials(token=None, org_uuid="some-uuid")
 
-        assert "non-macOS" in str(exc_info.value)
-        assert "--token" in str(exc_info.value)
+        assert "access token" in str(exc_info.value).lower()
+        assert ".credentials.json" in str(exc_info.value)
 
     def test_resolve_web_credentials_missing_org_uuid(self, tmp_path, monkeypatch):
         """Test that missing org UUID raises appropriate error."""

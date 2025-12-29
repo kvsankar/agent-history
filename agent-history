@@ -6910,6 +6910,45 @@ def get_access_token_from_keychain() -> Optional[str]:
         return None
 
 
+def get_access_token_from_credentials_file() -> Optional[str]:
+    """Get access token from ~/.claude/.credentials.json.
+
+    This is the file-based credential storage used by Claude Code on Linux/Windows.
+
+    Returns:
+        Access token string or None if not found.
+    """
+    creds_path = Path.home() / ".claude" / ".credentials.json"
+    if not creds_path.exists():
+        return None
+
+    try:
+        with open(creds_path, encoding="utf-8") as f:
+            creds = json.load(f)
+        return creds.get("claudeAiOauth", {}).get("accessToken")
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def get_access_token() -> Optional[str]:
+    """Get access token from available sources.
+
+    Checks in order:
+    1. macOS keychain (if on macOS)
+    2. ~/.claude/.credentials.json (file-based, all platforms)
+
+    Returns:
+        Access token string or None if not found.
+    """
+    # Try macOS keychain first
+    token = get_access_token_from_keychain()
+    if token:
+        return token
+
+    # Fall back to file-based credentials
+    return get_access_token_from_credentials_file()
+
+
 def get_org_uuid_from_claude_config() -> Optional[str]:
     """Get organization UUID from ~/.claude.json.
 
@@ -7026,8 +7065,14 @@ def resolve_web_credentials(
 ) -> tuple[str, str]:
     """Resolve web API credentials from arguments or auto-detect.
 
+    Checks for credentials in order:
+    1. Explicit token/org_uuid arguments
+    2. macOS keychain (if on macOS)
+    3. ~/.claude/.credentials.json (file-based, all platforms)
+    4. ~/.claude.json for org UUID
+
     Args:
-        token: Optional access token (uses keychain if None on macOS)
+        token: Optional access token (auto-detected if None)
         org_uuid: Optional org UUID (uses ~/.claude.json if None)
 
     Returns:
@@ -7038,17 +7083,12 @@ def resolve_web_credentials(
     """
     # Get token
     if token is None:
-        token = get_access_token_from_keychain()
+        token = get_access_token()
         if token is None:
-            if sys.platform == "darwin":
-                raise WebSessionsError(
-                    "Could not retrieve access token from macOS keychain. "
-                    "Make sure you are logged into Claude Code, or provide --token."
-                )
-            else:
-                raise WebSessionsError(
-                    "On non-macOS platforms, you must provide --token with your access token."
-                )
+            raise WebSessionsError(
+                "Could not find access token. "
+                "Make sure you are logged into Claude Code (check ~/.claude/.credentials.json)."
+            )
 
     # Get org UUID
     if org_uuid is None:
@@ -12244,18 +12284,45 @@ def _lsh_show_remotes():
     print()
 
 
+def _lsh_show_web():
+    """Show Claude.ai web session status."""
+    print("Web (Claude.ai):")
+    # Check if we can authenticate
+    token = get_access_token()
+    org_uuid = get_org_uuid_from_claude_config()
+
+    if token and org_uuid:
+        try:
+            sessions = fetch_web_sessions(token, org_uuid)
+            print(f"  authenticated ({len(sessions)} sessions)")
+        except WebSessionsError as e:
+            print(f"  error: {e}")
+    elif not token:
+        print("  not authenticated (no token in ~/.claude/.credentials.json)")
+    elif not org_uuid:
+        print("  not authenticated (no org UUID in ~/.claude.json)")
+    print()
+
+
 def _get_lsh_display_flags(args) -> tuple:
     """Get flags for what to display in lsh command.
 
     Returns:
-        Tuple of (show_local, show_wsl, show_windows, show_remotes)
+        Tuple of (show_local, show_wsl, show_windows, show_web, show_remotes)
     """
-    no_filters = not args.wsl and not args.windows and not getattr(args, "remotes", False)
+    show_web_flag = getattr(args, "web", False)
+    no_filters = (
+        not args.wsl
+        and not args.windows
+        and not show_web_flag
+        and not getattr(args, "remotes", False)
+    )
     show_local = args.local or (no_filters and not args.local)
     show_remotes = getattr(args, "remotes", False) or (
-        not args.local and not args.wsl and not args.windows
+        not args.local and not args.wsl and not args.windows and not show_web_flag
     )
-    return show_local, args.wsl, args.windows, show_remotes
+    show_web = show_web_flag or no_filters
+    return show_local, args.wsl, args.windows, show_web, show_remotes
 
 
 def cmd_lsh(args):
@@ -12275,7 +12342,7 @@ def cmd_lsh(args):
 
     # Default: list all hosts
     in_wsl = is_running_in_wsl()
-    show_local, show_wsl, show_windows, show_remotes = _get_lsh_display_flags(args)
+    show_local, show_wsl, show_windows, show_web, show_remotes = _get_lsh_display_flags(args)
 
     if show_local:
         _lsh_show_local()
@@ -12283,6 +12350,8 @@ def cmd_lsh(args):
         _lsh_show_wsl()
     if show_windows and in_wsl:
         _lsh_show_windows()
+    if show_web:
+        _lsh_show_web()
     if show_remotes:
         _lsh_show_remotes()
 
@@ -12387,127 +12456,6 @@ def _confirm_reset(items: list, yes: bool) -> bool:
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled.")
         return False
-
-
-# ============================================================================
-# Web Sessions Commands
-# ============================================================================
-
-
-def cmd_web_list(args):
-    """List web sessions from Claude.ai."""
-    token = getattr(args, "token", None)
-    org_uuid = getattr(args, "org_uuid", None)
-
-    try:
-        token, org_uuid = resolve_web_credentials(token, org_uuid)
-        sessions = fetch_web_sessions(token, org_uuid)
-
-        if not sessions:
-            print("No web sessions found.")
-            return
-
-        # Print header
-        print("ID\tTITLE\tCREATED\tMESSAGES")
-
-        for session in sessions:
-            session_id = session.get("uuid", session.get("id", "unknown"))
-            title = session.get("name", session.get("title", "(untitled)"))
-            # Truncate title for display
-            if len(title) > WEB_DISPLAY_TITLE_MAX_LEN:
-                title = title[: WEB_DISPLAY_TITLE_MAX_LEN - 3] + "..."
-            created = session.get("created_at", session.get("createdAt", "unknown"))
-            # Parse and format date if possible
-            if created and created != "unknown":
-                try:
-                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                    created = dt.strftime("%Y-%m-%d")
-                except (ValueError, AttributeError):
-                    pass
-            msg_count = session.get("message_count", "?")
-            print(f"{session_id}\t{title}\t{created}\t{msg_count}")
-
-    except WebSessionsError as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
-
-
-def cmd_web_export(args):  # noqa: C901
-    """Export web sessions from Claude.ai."""
-    token = getattr(args, "token", None)
-    org_uuid = getattr(args, "org_uuid", None)
-    session_id = getattr(args, "session_id", None)
-    output_dir = Path(getattr(args, "output_dir", "./ai-chats")).expanduser()
-    minimal = getattr(args, "minimal", False)
-    include_source = getattr(args, "include_source", False)
-    quiet = getattr(args, "quiet", False)
-
-    try:
-        token, org_uuid = resolve_web_credentials(token, org_uuid)
-
-        # Determine which sessions to export
-        if session_id:
-            # Export a single session
-            session_ids = [session_id]
-        else:
-            # Export all sessions
-            sessions = fetch_web_sessions(token, org_uuid)
-            session_ids = [
-                s.get("uuid", s.get("id")) for s in sessions if s.get("uuid") or s.get("id")
-            ]
-
-        if not session_ids:
-            print("No sessions to export.")
-            return
-
-        output_dir.mkdir(parents=True, exist_ok=True)
-        web_subdir = output_dir / "web"
-        web_subdir.mkdir(exist_ok=True)
-
-        if not quiet:
-            sys.stderr.write(f"Exporting {len(session_ids)} web sessions...\n")
-
-        for sid in session_ids:
-            try:
-                session_data = fetch_web_session(token, org_uuid, sid)
-
-                # Generate JSONL from session
-                jsonl_content = web_session_to_jsonl(session_data)
-                if not jsonl_content.strip():
-                    if not quiet:
-                        sys.stderr.write(f"Skipping empty session: {sid}\n")
-                    continue
-
-                # Create temp file for conversion
-                temp_jsonl = web_subdir / f"{sid}.jsonl"
-                temp_jsonl.write_text(jsonl_content, encoding="utf-8")
-
-                # Convert to markdown
-                try:
-                    markdown = parse_jsonl_to_markdown(temp_jsonl, minimal=minimal)
-                    md_file = web_subdir / f"{sid}.md"
-                    md_file.write_text(markdown, encoding="utf-8")
-                    if not quiet:
-                        print(md_file)
-
-                    # Keep JSONL if requested, otherwise delete
-                    if include_source:
-                        if not quiet:
-                            size_kb = temp_jsonl.stat().st_size / 1024
-                            print(f"{temp_jsonl} ({size_kb:.1f} KB)")
-                    else:
-                        temp_jsonl.unlink()
-
-                except Exception as e:
-                    sys.stderr.write(f"Error converting {sid}: {e}\n")
-                    temp_jsonl.unlink(missing_ok=True)
-
-            except WebSessionsError as e:
-                sys.stderr.write(f"Error fetching {sid}: {e}\n")
-
-    except WebSessionsError as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
 
 
 def cmd_reset(args):
@@ -13319,6 +13267,11 @@ def _add_lsw_parser(subparsers):
         "--windows", action="store_true", help="List workspaces from Windows (auto-detects user)"
     )
     parser.add_argument(
+        "--web",
+        action="store_true",
+        help="List sessions from Claude.ai web (requires authentication)",
+    )
+    parser.add_argument(
         "--local",
         action="store_true",
         help="Include local workspaces (use with -r to combine local + remote)",
@@ -13328,7 +13281,7 @@ def _add_lsw_parser(subparsers):
         "--all-homes",
         dest="all_homes",
         action="store_true",
-        help="List workspaces from all homes (local + WSL/Windows + remotes)",
+        help="List workspaces from all homes (local + WSL/Windows + web + remotes)",
     )
     parser.add_argument(
         "--agent",
@@ -13367,6 +13320,11 @@ def _add_lss_parser(subparsers):
         "--windows", action="store_true", help="List sessions from Windows (auto-detects user)"
     )
     parser.add_argument(
+        "--web",
+        action="store_true",
+        help="List sessions from Claude.ai web (requires authentication)",
+    )
+    parser.add_argument(
         "--local",
         action="store_true",
         help="Include local sessions (use with -r to combine local + remote)",
@@ -13380,6 +13338,11 @@ def _add_lss_parser(subparsers):
         "--no-windows",
         action="store_true",
         help="Exclude Windows sessions (applies to --ah and mixed listings)",
+    )
+    parser.add_argument(
+        "--no-web",
+        action="store_true",
+        help="Exclude web sessions (applies to --ah)",
     )
     parser.add_argument(
         "--since",
@@ -13396,7 +13359,7 @@ def _add_lss_parser(subparsers):
         "--all-homes",
         dest="all_homes",
         action="store_true",
-        help="List sessions from all homes (local + WSL/Windows + remotes)",
+        help="List sessions from all homes (local + WSL/Windows + web + remotes)",
     )
     parser.add_argument(
         "--alias",
@@ -13440,7 +13403,7 @@ def _add_lsh_parser(subparsers):
     parser = subparsers.add_parser(
         "lsh",
         help="List homes and manage SSH remotes",
-        description="List all Claude Code installations (local, WSL, Windows, SSH remotes)",
+        description="List all Claude Code installations (local, WSL, Windows, web, SSH remotes)",
     )
 
     lsh_subparsers = parser.add_subparsers(dest="lsh_action")
@@ -13465,6 +13428,7 @@ def _add_lsh_parser(subparsers):
     # Filter flags for listing (default action)
     parser.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
     parser.add_argument("--windows", action="store_true", help="Show Windows users only")
+    parser.add_argument("--web", action="store_true", help="Show web (Claude.ai) status only")
     parser.add_argument("--local", action="store_true", help="Show local home folder only")
     parser.add_argument("--remotes", action="store_true", help="Show SSH remotes only")
     return parser
@@ -13511,7 +13475,7 @@ def _add_export_parser(subparsers):
         "--all-homes",
         action="store_true",
         dest="all_homes",
-        help="Export from all homes: local + WSL + Windows + remotes (default: local only)",
+        help="Export from all homes: local + WSL + Windows + web + remotes (default: local only)",
     )
     parser.add_argument(
         "-r",
@@ -13527,9 +13491,13 @@ def _add_export_parser(subparsers):
     parser.add_argument(
         "--windows", action="store_true", help="Export from Windows (auto-detects user)"
     )
+    parser.add_argument(
+        "--web", action="store_true", help="Export from Claude.ai web (requires authentication)"
+    )
     parser.add_argument("--no-remote", action="store_true", help="Skip SSH remotes")
     parser.add_argument("--no-wsl", action="store_true", help="Skip WSL sources")
     parser.add_argument("--no-windows", action="store_true", help="Skip Windows sources")
+    parser.add_argument("--no-web", action="store_true", help="Skip web sessions")
     parser.add_argument(
         "--local",
         action="store_true",
@@ -13828,82 +13796,6 @@ def _add_reset_parser(subparsers):
     return parser
 
 
-def _add_web_parser(subparsers):
-    """Add web subparser for Claude.ai web sessions."""
-    parser = subparsers.add_parser(
-        "web",
-        help="Access Claude.ai web sessions",
-        description="List and export conversations from Claude.ai (requires authentication).",
-    )
-
-    web_subparsers = parser.add_subparsers(dest="web_command", help="Web subcommand")
-
-    # web list
-    list_parser = web_subparsers.add_parser(
-        "list",
-        aliases=["ls"],
-        help="List web sessions",
-        description="List all conversations from Claude.ai.",
-    )
-    list_parser.add_argument(
-        "--token",
-        metavar="TOKEN",
-        help="Access token (auto-detected from macOS keychain if not provided)",
-    )
-    list_parser.add_argument(
-        "--org-uuid",
-        metavar="UUID",
-        help="Organization UUID (auto-detected from ~/.claude.json if not provided)",
-    )
-
-    # web export
-    export_parser = web_subparsers.add_parser(
-        "export",
-        help="Export web sessions",
-        description="Export conversations from Claude.ai to markdown.",
-    )
-    export_parser.add_argument(
-        "session_id",
-        nargs="?",
-        help="Specific session ID to export (default: all sessions)",
-    )
-    export_parser.add_argument(
-        "-o",
-        "--output",
-        dest="output_dir",
-        default="./ai-chats",
-        help="Output directory (default: ./ai-chats)",
-    )
-    export_parser.add_argument(
-        "--token",
-        metavar="TOKEN",
-        help="Access token (auto-detected from macOS keychain if not provided)",
-    )
-    export_parser.add_argument(
-        "--org-uuid",
-        metavar="UUID",
-        help="Organization UUID (auto-detected from ~/.claude.json if not provided)",
-    )
-    export_parser.add_argument(
-        "--minimal",
-        action="store_true",
-        help="Minimal export: omit metadata, keep only conversation content",
-    )
-    export_parser.add_argument(
-        "--source",
-        action="store_true",
-        dest="include_source",
-        help="Include raw source file alongside markdown export",
-    )
-    export_parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress per-file output",
-    )
-
-    return parser
-
-
 def _create_argument_parser():
     """Create and configure the argument parser.
 
@@ -13938,7 +13830,6 @@ def _create_argument_parser():
     _add_alias_parser(subparsers)
     _add_stats_parser(subparsers)
     _add_reset_parser(subparsers)
-    _add_web_parser(subparsers)
     _add_install_parser(subparsers)
     _add_gemini_index_parser(subparsers)
 
@@ -14256,6 +14147,24 @@ def _dispatch_lsw(args):
         )
         cmd_list(list_args)
 
+    # Handle --web (explicit flag or included in --all-homes)
+    show_web = getattr(args, "web", False)
+    all_homes = getattr(args, "all_homes", False)
+    if show_web or all_homes:
+        _dispatch_lsw_web()
+
+
+def _dispatch_lsw_web():
+    """List web as a pseudo-workspace."""
+    try:
+        token, org_uuid = resolve_web_credentials()
+        sessions = fetch_web_sessions(token, org_uuid)
+        # Print "web" as a workspace with session count
+        print(f"web\t{len(sessions)} sessions")
+    except WebSessionsError:
+        # Silently skip if web auth not available
+        pass
+
 
 def _dispatch_lss_to_alias(alias_name: str, args):
     """Handle lss dispatch to alias command."""
@@ -14447,6 +14356,8 @@ def _dispatch_lss(args):
         exit_with_error("Conflicting flags: --wsl and --no-wsl")
     if getattr(args, "windows", False) and getattr(args, "no_windows", False):
         exit_with_error("Conflicting flags: --windows and --no-windows")
+    if getattr(args, "web", False) and getattr(args, "no_web", False):
+        exit_with_error("Conflicting flags: --web and --no-web")
 
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []
@@ -14467,6 +14378,45 @@ def _dispatch_lss(args):
         _dispatch_lss_all_homes(args, workspace_list)
     else:
         _dispatch_lss_local(args, workspace_list)
+
+    # Handle --web (explicit flag or included in --all-homes)
+    show_web = getattr(args, "web", False)
+    no_web = getattr(args, "no_web", False)
+    all_homes = getattr(args, "all_homes", False)
+    if show_web or (all_homes and not no_web):
+        _dispatch_lss_web(args)
+
+
+def _dispatch_lss_web(args):
+    """List web sessions from Claude.ai."""
+    try:
+        token, org_uuid = resolve_web_credentials()
+        sessions = fetch_web_sessions(token, org_uuid)
+
+        if not sessions:
+            return
+
+        for session in sessions:
+            session_id = session.get("uuid", session.get("id", "unknown"))
+            title = session.get("name", session.get("title", "(untitled)"))
+            created = session.get("created_at", session.get("createdAt", ""))
+            msg_count = session.get("message_count", "?")
+
+            # Format timestamp
+            if created:
+                try:
+                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    created = dt.strftime("%Y-%m-%d %H:%M")
+                except (ValueError, AttributeError):
+                    pass
+
+            # Print in same format: AGENT HOME WORKSPACE FILE MESSAGES DATE
+            # For web: agent=web, home=web, workspace=title, file=session_id
+            print(f"web\tweb\t{title}\t{session_id}\t{msg_count}\t{created}")
+
+    except WebSessionsError:
+        # Silently skip if web auth not available (e.g., not on macOS)
+        pass
 
 
 def _get_export_output_dir(args) -> str:
@@ -14714,6 +14664,81 @@ def _route_export(args, output_dir: Union[str, Path], final_patterns: list, fina
         if not cmd_batch(_build_export_config(args, output_dir, final_patterns, final_remote)):
             sys.exit(1)
 
+    # Handle --web (explicit flag or included in --all-homes)
+    show_web = getattr(args, "web", False)
+    no_web = getattr(args, "no_web", False)
+    all_homes = getattr(args, "all_homes", False)
+    if show_web or (all_homes and not no_web):
+        _dispatch_export_web(args, output_dir)
+
+
+def _export_single_web_session(
+    token: str,
+    org_uuid: str,
+    session_id: str,
+    web_subdir: Path,
+    minimal: bool,
+    quiet: bool,
+    include_source: bool,
+) -> bool:
+    """Export a single web session. Returns True on success."""
+    try:
+        session_data = fetch_web_session(token, org_uuid, session_id)
+        jsonl_content = web_session_to_jsonl(session_data)
+        if not jsonl_content.strip():
+            return False
+
+        temp_jsonl = web_subdir / f"{session_id}.jsonl"
+        temp_jsonl.write_text(jsonl_content, encoding="utf-8")
+
+        markdown = parse_jsonl_to_markdown(temp_jsonl, minimal=minimal)
+        md_file = web_subdir / f"{session_id}.md"
+        md_file.write_text(markdown, encoding="utf-8")
+        if not quiet:
+            print(md_file)
+
+        if not include_source:
+            temp_jsonl.unlink()
+        return True
+
+    except WebSessionsError as e:
+        if not quiet:
+            sys.stderr.write(f"Error fetching {session_id}: {e}\n")
+    except Exception as e:
+        if not quiet:
+            sys.stderr.write(f"Error converting {session_id}: {e}\n")
+    return False
+
+
+def _dispatch_export_web(args, output_dir: Union[str, Path]):
+    """Export web sessions from Claude.ai."""
+    try:
+        token, org_uuid = resolve_web_credentials()
+        sessions = fetch_web_sessions(token, org_uuid)
+        if not sessions:
+            return
+
+        output_path = Path(output_dir)
+        web_subdir = output_path / "web"
+        web_subdir.mkdir(parents=True, exist_ok=True)
+
+        minimal = getattr(args, "minimal", False)
+        quiet = getattr(args, "quiet", False)
+        include_source = getattr(args, "include_source", False)
+
+        if not quiet:
+            sys.stderr.write(f"Exporting {len(sessions)} web sessions...\n")
+
+        for session in sessions:
+            session_id = session.get("uuid", session.get("id"))
+            if session_id:
+                _export_single_web_session(
+                    token, org_uuid, session_id, web_subdir, minimal, quiet, include_source
+                )
+
+    except WebSessionsError:
+        pass
+
 
 def _dispatch_export(args):
     """Dispatch export command."""
@@ -14759,20 +14784,6 @@ def _dispatch_alias(args):
         cmd_alias_config_export(args)
     elif alias_cmd == "import":
         cmd_alias_config_import(args)
-
-
-def _dispatch_web(args):
-    """Dispatch web command."""
-    web_cmd = getattr(args, "web_command", None)
-
-    if web_cmd in ("list", "ls") or web_cmd is None:
-        cmd_web_list(args)
-    elif web_cmd == "export":
-        cmd_web_export(args)
-    else:
-        sys.stderr.write(f"Unknown web subcommand: {web_cmd}\n")
-        sys.stderr.write("Usage: agent-history web [list|export]\n")
-        sys.exit(1)
 
 
 def _get_stats_remotes(args) -> list:
@@ -14952,7 +14963,7 @@ def _dispatch_install(args):
         print("No files were installed.")
 
 
-def _dispatch_command(args):  # noqa: C901
+def _dispatch_command(args):
     """Dispatch parsed arguments to appropriate command handler.
 
     Args:
@@ -14972,8 +14983,6 @@ def _dispatch_command(args):  # noqa: C901
         _dispatch_stats(args)
     elif args.command == "reset":
         cmd_reset(args)
-    elif args.command == "web":
-        _dispatch_web(args)
     elif args.command == "install":
         _dispatch_install(args)
     elif args.command == "gemini-index":

@@ -10498,6 +10498,12 @@ class TestCommandCombinationMatrix:
                 }
             ],
         )
+        # Mock web credentials to prevent real web sessions from appearing in tests
+        monkeypatch.setattr(
+            ch,
+            "resolve_web_credentials",
+            lambda t=None, o=None: (_ for _ in ()).throw(ch.WebSessionsError("mocked")),
+        )
 
         if in_workspace:
             monkeypatch.setattr(
