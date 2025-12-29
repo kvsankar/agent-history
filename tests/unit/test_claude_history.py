@@ -6903,8 +6903,8 @@ class TestSection3Remaining:
     def test_projects_dir_from_wsl_unc_in_wsl(self, monkeypatch):
         """UNC WSL paths should resolve to local projects dir when in WSL."""
         monkeypatch.setattr(ch, "is_running_in_wsl", lambda: True)
-        unc = "//wsl$/Ubuntu/home/sankar/sankar/projects/claude-history"
-        assert ch._projects_dir_from_wsl_unc(unc) == Path("/home/sankar/.claude/projects")
+        unc = "//wsl$/Ubuntu/home/alex/alex/projects/claude-history"
+        assert ch._projects_dir_from_wsl_unc(unc) == Path("/home/alex/.claude/projects")
 
     def test_wsl_lss_current(self):
         """3.3.1: lss --wsl lists sessions from WSL."""
@@ -7392,7 +7392,7 @@ class TestSection7Remaining:
     def test_err_missing_outside_windows_drive_root(self, tmp_path, monkeypatch):
         """7.2.5b: Windows drive root should not count as a workspace."""
         projects_dir = tmp_path / ".claude" / "projects"
-        ws = projects_dir / "C--sankar-projects-claude-history"
+        ws = projects_dir / "C--alex-projects-claude-history"
         ws.mkdir(parents=True)
         monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
         monkeypatch.setattr(ch, "get_current_workspace_pattern", lambda: "C--")
@@ -10279,11 +10279,11 @@ class TestAliasEndToEnd:
             None,
             None,
             "auto",
-            source_keys=["windows:kvsan"],
+            source_keys=["windows:alex"],
         )
 
         assert {s["agent"] for s in sessions} == {ch.AGENT_CODEX, ch.AGENT_GEMINI}
-        assert all(s["source"] == "windows:kvsan" for s in sessions)
+        assert all(s["source"] == "windows:alex" for s in sessions)
 
     def test_collect_non_claude_alias_sessions_windows_default_user(self, monkeypatch, tmp_path):
         """_collect_non_claude_alias_sessions should resolve Windows users when none specified."""
@@ -10292,7 +10292,7 @@ class TestAliasEndToEnd:
         monkeypatch.setattr(
             ch,
             "get_windows_users_with_claude",
-            lambda: [{"username": "kvsan"}],
+            lambda: [{"username": "alex"}],
         )
 
         seen_users = []
@@ -10316,7 +10316,7 @@ class TestAliasEndToEnd:
             source_keys=["windows"],
         )
 
-        assert set(seen_users) == {"kvsan"}
+        assert set(seen_users) == {"alex"}
         assert {s["agent"] for s in sessions} == {ch.AGENT_CODEX, ch.AGENT_GEMINI}
         assert all(s["source"] == "windows" for s in sessions)
 
@@ -10497,6 +10497,12 @@ class TestCommandCombinationMatrix:
                     "message_count": 2,
                 }
             ],
+        )
+        # Mock web credentials to prevent real web sessions from appearing in tests
+        monkeypatch.setattr(
+            ch,
+            "resolve_web_credentials",
+            lambda t=None, o=None: (_ for _ in ()).throw(ch.WebSessionsError("mocked")),
         )
 
         if in_workspace:
