@@ -14119,8 +14119,15 @@ def _dispatch_lsw(args):
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []
     agent = getattr(args, "agent", None) or "auto"
+    show_web = getattr(args, "web", False)
+    all_homes = getattr(args, "all_homes", False)
 
-    if getattr(args, "all_homes", False):
+    # If --web alone (without --all-homes), only show web sessions
+    if show_web and not all_homes:
+        _dispatch_lsw_web()
+        return
+
+    if all_homes:
         list_args = ListCommandArgs(
             patterns=patterns,
             workspaces_only=True,
@@ -14128,6 +14135,8 @@ def _dispatch_lsw(args):
             agent=agent,
         )
         cmd_list_all_homes(list_args)
+        # Also include web sessions with --all-homes
+        _dispatch_lsw_web()
     elif local_flag and remotes:
         # --local with -r: show both local and remotes (additive)
         list_args = ListCommandArgs(
@@ -14147,20 +14156,20 @@ def _dispatch_lsw(args):
         )
         cmd_list(list_args)
 
-    # Handle --web (explicit flag or included in --all-homes)
-    show_web = getattr(args, "web", False)
-    all_homes = getattr(args, "all_homes", False)
-    if show_web or all_homes:
-        _dispatch_lsw_web()
-
 
 def _dispatch_lsw_web():
-    """List web as a pseudo-workspace."""
+    """List web sessions as workspaces (by title)."""
     try:
         token, org_uuid = resolve_web_credentials()
         sessions = fetch_web_sessions(token, org_uuid)
-        # Print "web" as a workspace with session count
-        print(f"web\t{len(sessions)} sessions")
+
+        if not sessions:
+            return
+
+        for session in sessions:
+            title = session.get("name", session.get("title", "(untitled)"))
+            print(title)
+
     except WebSessionsError:
         # Silently skip if web auth not available
         pass
@@ -14373,18 +14382,24 @@ def _dispatch_lss(args):
         _dispatch_lss_local_additive(args, workspace_list, remotes)
         return
 
-    # Handle --all-homes
-    if getattr(args, "all_homes", False):
-        _dispatch_lss_all_homes(args, workspace_list)
-    else:
-        _dispatch_lss_local(args, workspace_list)
-
-    # Handle --web (explicit flag or included in --all-homes)
     show_web = getattr(args, "web", False)
     no_web = getattr(args, "no_web", False)
     all_homes = getattr(args, "all_homes", False)
-    if show_web or (all_homes and not no_web):
+
+    # If --web alone (without --all-homes), only show web sessions
+    if show_web and not all_homes:
+        print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
         _dispatch_lss_web(args)
+        return
+
+    # Handle --all-homes
+    if all_homes:
+        _dispatch_lss_all_homes(args, workspace_list)
+        # Also include web sessions with --all-homes (unless --no-web)
+        if not no_web:
+            _dispatch_lss_web(args)
+    else:
+        _dispatch_lss_local(args, workspace_list)
 
 
 def _dispatch_lss_web(args):
@@ -14654,22 +14669,27 @@ def _resolve_export_targets(args, targets: list, output_dir: Union[str, Path]) -
 
 def _route_export(args, output_dir: Union[str, Path], final_patterns: list, final_remotes):
     """Route export to appropriate handler based on flags."""
+    show_web = getattr(args, "web", False)
+    no_web = getattr(args, "no_web", False)
+    all_homes = getattr(args, "all_homes", False)
+
+    # If --web alone (without --all-homes), only export web sessions
+    if show_web and not all_homes:
+        _dispatch_export_web(args, output_dir)
+        return
+
     local_flag = getattr(args, "local", False)
     if local_flag and final_remotes:
         _dispatch_export_additive(args, output_dir, final_patterns, final_remotes)
-    elif args.all_homes:
+    elif all_homes:
         _dispatch_export_all_homes(args, output_dir, final_patterns, final_remotes)
+        # Also include web sessions with --all-homes (unless --no-web)
+        if not no_web:
+            _dispatch_export_web(args, output_dir)
     else:
         final_remote = final_remotes[0] if final_remotes else None
         if not cmd_batch(_build_export_config(args, output_dir, final_patterns, final_remote)):
             sys.exit(1)
-
-    # Handle --web (explicit flag or included in --all-homes)
-    show_web = getattr(args, "web", False)
-    no_web = getattr(args, "no_web", False)
-    all_homes = getattr(args, "all_homes", False)
-    if show_web or (all_homes and not no_web):
-        _dispatch_export_web(args, output_dir)
 
 
 def _export_single_web_session(
