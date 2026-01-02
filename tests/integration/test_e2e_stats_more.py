@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +8,9 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.integration
+
+# Check if WSL is available (for Windows-specific tests)
+HAS_WSL = sys.platform == "win32" and shutil.which("wsl") is not None
 
 
 def run_cli(args, env=None, timeout=25):
@@ -113,9 +117,8 @@ def test_stats_models_tools_by_day(tmp_path: Path):
     assert "DATE" in r_time.stdout
 
 
+@pytest.mark.skipif(not HAS_WSL, reason="Requires WSL on Windows")
 def test_all_homes_sessions_windows(tmp_path: Path):
-    if sys.platform != "win32":
-        return
     # Local and WSL synthetic roots
     local = tmp_path / "local"
     wsl = tmp_path / "wsl"

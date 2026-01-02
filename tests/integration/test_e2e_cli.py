@@ -1,6 +1,7 @@
 import importlib.machinery
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -8,6 +9,9 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.integration
+
+# Check if WSL is available (for Windows-specific tests)
+HAS_WSL = sys.platform == "win32" and shutil.which("wsl") is not None
 
 # Use agent-history (new name), fall back to claude-history for backward compat
 _CLI_SCRIPT = Path(__file__).resolve().parents[2] / "agent-history"
@@ -242,9 +246,8 @@ def test_e2e_lss_absolute_path_target(tmp_path: Path):
     assert "session-0.jsonl" in r.stdout
 
 
+@pytest.mark.skipif(not HAS_WSL, reason="Requires WSL on Windows")
 def test_e2e_all_homes_windows(tmp_path: Path):
-    if sys.platform != "win32":
-        return
     local = tmp_path / "local"
     wsl = tmp_path / "wsl"
     local.mkdir(parents=True, exist_ok=True)
