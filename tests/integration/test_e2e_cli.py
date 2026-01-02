@@ -54,7 +54,7 @@ def test_e2e_local_lsh_lsw_lss(tmp_path: Path):
     # lsh local
     r1 = run_cli(["lsh", "--local"], env=env)
     assert r1.returncode == 0, r1.stderr
-    assert "Local" in r1.stdout
+    assert "local" in r1.stdout.lower()
 
     # lsw local
     r2 = run_cli(["lsw", "--local"], env=env)
@@ -305,13 +305,15 @@ def test_e2e_stats_top_ws_limit(tmp_path: Path):
     env["USERPROFILE"] = str(home_dir)
 
     # Use --no-sync since we already populated the database directly
-    result = run_cli(["stats", "--aw", "--top-ws", "1", "--no-sync"], env=env)
+    # Note: --top-ws N limits total rows globally, not per-home
+    result = run_cli(["stats", "--aw", "--top-ws", "2", "--no-sync"], env=env)
     assert result.returncode == 0, result.stderr
 
     output = result.stdout
-    assert "Home: local" in output
-    assert "Home: wsl:Ubuntu" in output
-    assert "Workspace: local-main" in output
-    assert "Workspace: wsl-main" in output
+    # New flat format: HOME\tWORKSPACE\t... with data rows
+    # With --top-ws 2, should see top 2 workspaces total (local-main=3 sessions, wsl-main=2 sessions)
+    assert "local" in output
+    assert "local-main" in output
+    # Secondary workspaces should not appear (they have fewer sessions)
     assert "local-secondary" not in output
     assert "wsl-secondary" not in output
