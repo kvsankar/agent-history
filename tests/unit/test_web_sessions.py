@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import subprocess
 
 # Import functions from agent-history
 import sys
@@ -58,6 +59,87 @@ class TestWebCredentials:
         monkeypatch.setattr(sys, "platform", "linux")
         result = agent_history.get_access_token_from_keychain()
         assert result is None
+
+    def test_get_access_token_from_keychain_macos_success(self, monkeypatch):
+        """Test keychain access on macOS returns token (mocked)."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"claudeAiOauth": {"accessToken": "keychain-token-123"}}'
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = agent_history.get_access_token_from_keychain()
+
+        assert result == "keychain-token-123"
+
+    def test_get_access_token_from_keychain_macos_not_found(self, monkeypatch):
+        """Test keychain access on macOS when credential not found."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 44  # security command returns non-zero when not found
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = agent_history.get_access_token_from_keychain()
+
+        assert result is None
+
+    def test_get_access_token_from_keychain_macos_invalid_json(self, monkeypatch):
+        """Test keychain access on macOS with invalid JSON in credential."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "not valid json"
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = agent_history.get_access_token_from_keychain()
+
+        assert result is None
+
+    def test_get_access_token_from_keychain_macos_missing_token(self, monkeypatch):
+        """Test keychain access on macOS with valid JSON but missing token."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"someOtherKey": "value"}'
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = agent_history.get_access_token_from_keychain()
+
+        assert result is None
+
+    def test_get_access_token_from_keychain_macos_subprocess_error(self, monkeypatch):
+        """Test keychain access on macOS when subprocess fails."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        with patch("subprocess.run", side_effect=subprocess.SubprocessError("Failed")):
+            result = agent_history.get_access_token_from_keychain()
+
+        assert result is None
+
+    def test_get_access_token_from_keychain_macos_security_not_found(self, monkeypatch):
+        """Test keychain access on macOS when security command not found."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("security not found")):
+            result = agent_history.get_access_token_from_keychain()
+
+        assert result is None
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
+    def test_get_access_token_from_keychain_real_macos(self):
+        """Test real keychain access on macOS (skips if no credentials).
+
+        This test actually calls the macOS `security` command to verify
+        the integration works. It passes whether credentials exist or not,
+        just validates the code doesn't crash.
+        """
+        result = agent_history.get_access_token_from_keychain()
+        # Just verify it returns None or a string token - no crash
+        assert result is None or isinstance(result, str)
 
     def test_get_access_token_from_credentials_file_exists(self, tmp_path):
         """Test token retrieval from credentials file."""
