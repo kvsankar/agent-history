@@ -461,6 +461,9 @@ class StatsCommandArgs:
     top_ws: Optional[int] = None
     this_only: bool = False
     agent: str = "auto"
+    # Output formatting
+    format: Optional[str] = None  # table, tsv, json
+    human: bool = False  # Human-readable numbers and time
 
 
 @dataclass
@@ -1918,13 +1921,15 @@ def analyze_conversation_graph(messages: list) -> ConversationGraph:
         for child_uuid in children:
             child_msg = uuid_to_msg.get(child_uuid)
             if child_msg:
-                branch_info["branches"].append(
-                    {
-                        "uuid": child_uuid,
-                        "timestamp": child_msg.get("timestamp"),
-                        "type": child_msg.get("role"),
-                    }
-                )
+                branches_list = branch_info["branches"]
+                if isinstance(branches_list, list):
+                    branches_list.append(
+                        {
+                            "uuid": child_uuid,
+                            "timestamp": child_msg.get("timestamp"),
+                            "type": child_msg.get("role"),
+                        }
+                    )
 
         branches.append(branch_info)
 
@@ -10464,30 +10469,81 @@ def _display_selected_stats(conn, args, where_sql: str, params: list):
             sys.exit(1)
 
     agent = getattr(args, "agent", None) or "auto"
+    output_format = getattr(args, "format", None)
+    human_readable = getattr(args, "human", False)
 
     # New unified --by flag takes precedence
     by_dims = getattr(args, "by", None)
     if by_dims:
         dimensions = [d.strip() for d in by_dims.split(",")]
-        display_grouped_stats(conn, where_sql, params, dimensions)
+        display_grouped_stats(
+            conn,
+            where_sql,
+            params,
+            dimensions,
+            output_format=output_format,
+            human_readable=human_readable,
+        )
     # Legacy flags (for backward compatibility)
     elif getattr(args, "tools", False):
-        display_grouped_stats(conn, where_sql, params, ["tool"])
+        display_grouped_stats(
+            conn,
+            where_sql,
+            params,
+            ["tool"],
+            output_format=output_format,
+            human_readable=human_readable,
+        )
     elif getattr(args, "models", False):
-        display_grouped_stats(conn, where_sql, params, ["model"])
+        display_grouped_stats(
+            conn,
+            where_sql,
+            params,
+            ["model"],
+            output_format=output_format,
+            human_readable=human_readable,
+        )
     elif getattr(args, "time", False):
         display_time_stats(conn, where_sql, params)
     elif getattr(args, "by_workspace", False):
         # Map legacy --by-workspace [--group X] to new --by format
         group_by = getattr(args, "group", None)
         if group_by == "home":
-            display_grouped_stats(conn, where_sql, params, ["workspace", "home"])
+            display_grouped_stats(
+                conn,
+                where_sql,
+                params,
+                ["workspace", "home"],
+                output_format=output_format,
+                human_readable=human_readable,
+            )
         elif group_by == "agent":
-            display_grouped_stats(conn, where_sql, params, ["workspace", "agent"])
+            display_grouped_stats(
+                conn,
+                where_sql,
+                params,
+                ["workspace", "agent"],
+                output_format=output_format,
+                human_readable=human_readable,
+            )
         else:
-            display_grouped_stats(conn, where_sql, params, ["workspace", "home", "agent"])
+            display_grouped_stats(
+                conn,
+                where_sql,
+                params,
+                ["workspace", "home", "agent"],
+                output_format=output_format,
+                human_readable=human_readable,
+            )
     elif getattr(args, "by_day", False):
-        display_grouped_stats(conn, where_sql, params, ["day"])
+        display_grouped_stats(
+            conn,
+            where_sql,
+            params,
+            ["day"],
+            output_format=output_format,
+            human_readable=human_readable,
+        )
     else:
         display_summary_stats(conn, where_sql, params, top_limit=top_limit, agent=agent)
 
@@ -11074,6 +11130,43 @@ def format_duration_hm(seconds: float) -> str:
     return f"{minutes}m"
 
 
+def format_duration_dhm(seconds: float) -> str:
+    """Format seconds as Xd Xh Xm for human display."""
+    if seconds < SECONDS_PER_MINUTE:
+        return f"{int(seconds)}s"
+    days = int(seconds // 86400)
+    hours = int((seconds % 86400) // 3600)
+    minutes = int((seconds % 3600) // 60)
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def format_number_human(n: int) -> str:
+    """Format number with K/M/B suffixes for human display."""
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{n / 1000:.1f}K"
+    if n < 1_000_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    return f"{n / 1_000_000_000:.1f}B"
+
+
+def format_number_commas(n: int) -> str:
+    """Format number with comma separators."""
+    return f"{n:,}"
+
+
+def truncate_string(s: str, max_len: int) -> str:
+    """Truncate string to max_len, adding … if truncated."""
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 1] + "…"
+
+
 def _parse_timestamp_strings(raw_timestamps: list) -> list:
     """Parse timestamp strings to datetime objects, filtering invalid ones."""
     parsed = []
@@ -11251,13 +11344,26 @@ def display_grouped_stats(
     params: list,
     dimensions: list[str],
     limit: int = 50,
+    output_format: Optional[str] = None,
+    human_readable: bool = False,
 ):
     """Display stats grouped by specified dimensions.
 
     Args:
         dimensions: List of dimension names (home, agent, workspace, day, model, tool)
         limit: Maximum rows to display
+        output_format: 'table', 'tsv', or 'json'. None = auto-detect (table for TTY, tsv for pipes)
+        human_readable: Use K/M/B for numbers and Xd Xh Xm for time
+
+    Output formats:
+    - table: Fixed-width columns, human-readable (like df, ps)
+    - tsv: Tab-separated values for piping to other tools
+    - json: JSON array for programmatic use
     """
+    # Auto-detect format if not specified
+    if output_format is None:
+        output_format = "table" if sys.stdout.isatty() else "tsv"
+
     # Validate dimensions
     invalid = [d for d in dimensions if d not in STATS_DIMENSIONS]
     if invalid:
@@ -11274,6 +11380,7 @@ def display_grouped_stats(
     dim_selects = [str(STATS_DIMENSIONS[d]["sql"]) + f" as {d}" for d in dimensions]
 
     # Build metrics based on what tables are available
+    # Always join messages table to get token counts
     if requires_tools:
         # Tool-specific metrics
         metrics = [
@@ -11281,27 +11388,57 @@ def display_grouped_stats(
             "SUM(t.is_error) as errors",
         ]
         metric_labels = ["Uses", "Errors"]
-    elif requires_messages:
-        # When joining with messages, count message rows directly
-        metrics = [
-            "COUNT(DISTINCT s.file_path) as sessions",
-            "COUNT(*) as messages",
-        ]
-        metric_labels = ["Sessions", "Messages"]
+        metric_types = ["number", "number"]
     else:
-        # Standard metrics from sessions table
+        # Standard metrics with token counts, cache tokens, and work time
+        # Always join messages to get accurate token sums
         metrics = [
             "COUNT(DISTINCT s.file_path) as sessions",
             "SUM(s.message_count) as messages",
+            "COALESCE(CAST(SUM(s.work_period_seconds) AS INTEGER), 0) as work_secs",
+            "COALESCE(SUM(m_tokens.input_tokens), 0) as input_tokens",
+            "COALESCE(SUM(m_tokens.output_tokens), 0) as output_tokens",
+            "COALESCE(SUM(m_tokens.cache_creation_tokens), 0) as cache_write",
+            "COALESCE(SUM(m_tokens.cache_read_tokens), 0) as cache_read",
         ]
-        metric_labels = ["Sessions", "Messages"]
+        metric_labels = [
+            "Sessions",
+            "Messages",
+            "Work",
+            "In_Tokens",
+            "Out_Tokens",
+            "Cache_Write",
+            "Cache_Read",
+        ]
+        metric_types = ["number", "number", "time", "number", "number", "number", "number"]
 
     # Build FROM and JOIN clauses
     from_clause = "sessions s"
-    if requires_messages or "model" in dimensions:
-        from_clause += " LEFT JOIN messages m ON s.file_path = m.file_path"
     if requires_tools:
         from_clause = "tool_uses t LEFT JOIN sessions s ON t.file_path = s.file_path"
+    elif requires_messages or "model" in dimensions:
+        from_clause += " LEFT JOIN messages m ON s.file_path = m.file_path"
+        # Add token aggregation subquery
+        from_clause += """
+            LEFT JOIN (
+                SELECT file_path,
+                       SUM(input_tokens) as input_tokens,
+                       SUM(output_tokens) as output_tokens,
+                       SUM(cache_creation_tokens) as cache_creation_tokens,
+                       SUM(cache_read_tokens) as cache_read_tokens
+                FROM messages GROUP BY file_path
+            ) m_tokens ON s.file_path = m_tokens.file_path"""
+    else:
+        # Add token aggregation subquery for non-message queries
+        from_clause += """
+            LEFT JOIN (
+                SELECT file_path,
+                       SUM(input_tokens) as input_tokens,
+                       SUM(output_tokens) as output_tokens,
+                       SUM(cache_creation_tokens) as cache_creation_tokens,
+                       SUM(cache_read_tokens) as cache_read_tokens
+                FROM messages GROUP BY file_path
+            ) m_tokens ON s.file_path = m_tokens.file_path"""
 
     # Build GROUP BY clause
     group_by = ", ".join(str(STATS_DIMENSIONS[d]["sql"]) for d in dimensions)
@@ -11326,25 +11463,165 @@ def display_grouped_stats(
     if not rows:
         return
 
-    # Build header line (tab-separated)
-    header_parts = [str(STATS_DIMENSIONS[d]["label"]).upper() for d in dimensions]
-    header_parts.extend([label.upper() for label in metric_labels])
-    print("\t".join(header_parts))
+    # Prepare data for output
+    header_labels = [str(STATS_DIMENSIONS[d]["label"]).upper() for d in dimensions]
+    header_labels.extend([label.upper() for label in metric_labels])
 
-    # Print rows (tab-separated)
+    # Process rows into data structure
+    data_rows = []
+    totals = [0] * len(metric_labels)
+
     for row in rows:
-        row_parts = []
+        row_data = {}
+        row_values = []
+
+        # Process dimension columns
         for d in dimensions:
             value = row[d] or "(none)"
-            # Apply transform if specified
             transform = STATS_DIMENSIONS[d].get("transform")
             if transform == "short_name" and value and value != "(none)":
                 value = get_folder_short_name(value)
-            row_parts.append(str(value))
-        for i in range(len(metric_labels)):
+            row_data[d] = value
+            row_values.append(value)
+
+        # Process metric columns
+        for i, label in enumerate(metric_labels):
             metric_value = row[i + len(dimensions)] or 0
-            row_parts.append(str(metric_value))
+            totals[i] += metric_value
+            row_data[label.lower()] = metric_value
+            row_values.append(metric_value)
+
+        data_rows.append({"data": row_data, "values": row_values})
+
+    # Output based on format
+    if output_format == "json":
+        _output_grouped_stats_json(data_rows, totals, dimensions, metric_labels)
+    elif output_format == "table":
+        _output_grouped_stats_table(
+            data_rows,
+            totals,
+            header_labels,
+            dimensions,
+            metric_labels,
+            metric_types,
+            human_readable,
+        )
+    else:  # tsv
+        _output_grouped_stats_tsv(data_rows, totals, header_labels, dimensions, metric_labels)
+
+
+def _output_grouped_stats_tsv(
+    data_rows: list, totals: list, headers: list, dimensions: list, metric_labels: list
+):
+    """Output stats in TSV format (tab-separated values)."""
+    print("\t".join(headers))
+
+    for row in data_rows:
+        row_parts = [str(v) for v in row["values"]]
         print("\t".join(row_parts))
+
+    # Total row
+    total_parts = ["total"] + [""] * (len(dimensions) - 1)
+    total_parts.extend([str(t) for t in totals])
+    print("\t".join(total_parts))
+
+
+def _output_grouped_stats_json(
+    data_rows: list, totals: list, dimensions: list, metric_labels: list
+):
+    """Output stats in JSON format."""
+    output = {
+        "rows": [row["data"] for row in data_rows],
+        "totals": {label.lower(): totals[i] for i, label in enumerate(metric_labels)},
+    }
+    print(json.dumps(output, indent=2))
+
+
+def _output_grouped_stats_table(
+    data_rows: list,
+    totals: list,
+    headers: list,
+    dimensions: list,
+    metric_labels: list,
+    metric_types: list,
+    human_readable: bool,
+):
+    """Output stats in human-readable table format with fixed-width columns."""
+    # Define column widths (cast to int for type checker)
+    dim_widths: dict[str, int] = {d: int(STATS_DIMENSIONS[d].get("width", 20)) for d in dimensions}
+
+    # Metric column widths (right-justified numbers)
+    if human_readable:
+        metric_widths = [12] * len(metric_labels)  # Wider for human format
+    else:
+        metric_widths = [12] * len(metric_labels)
+
+    # Format a metric value based on type and human_readable flag
+    def fmt_metric(value: int, mtype: str) -> str:
+        if mtype == "time":
+            if human_readable:
+                return format_duration_dhm(value)
+            return str(value)
+        else:  # number
+            if human_readable:
+                return format_number_human(value)
+            return format_number_commas(value)
+
+    # Build header line
+    header_parts = []
+    for i, d in enumerate(dimensions):
+        width = dim_widths[d]
+        label = headers[i]
+        header_parts.append(f"{label:<{width}}")
+    for i, label in enumerate(metric_labels):
+        width = metric_widths[i]
+        header_parts.append(f"{headers[len(dimensions) + i]:>{width}}")
+    print("  ".join(header_parts))
+
+    # Separator line
+    sep_parts = []
+    for d in dimensions:
+        sep_parts.append("─" * dim_widths[d])
+    for w in metric_widths:
+        sep_parts.append("─" * w)
+    print("  ".join(sep_parts))
+
+    # Data rows
+    for row in data_rows:
+        row_parts = []
+        values = row["values"]
+
+        # Dimension columns (left-justified, truncated)
+        for i, d in enumerate(dimensions):
+            width = dim_widths[d]
+            value = truncate_string(str(values[i]), width)
+            row_parts.append(f"{value:<{width}}")
+
+        # Metric columns (right-justified)
+        for i in range(len(metric_labels)):
+            width = metric_widths[i]
+            raw_value = values[len(dimensions) + i]
+            mtype = metric_types[i] if i < len(metric_types) else "number"
+            formatted = fmt_metric(raw_value, mtype)
+            row_parts.append(f"{formatted:>{width}}")
+
+        print("  ".join(row_parts))
+
+    # Separator before total
+    print("  ".join(sep_parts))
+
+    # Total row
+    total_parts = []
+    total_label = "TOTAL"
+    total_parts.append(f"{total_label:<{dim_widths[dimensions[0]]}}")
+    for i in range(1, len(dimensions)):
+        total_parts.append(" " * dim_widths[dimensions[i]])
+    for i in range(len(metric_labels)):
+        width = metric_widths[i]
+        mtype = metric_types[i] if i < len(metric_types) else "number"
+        formatted = fmt_metric(totals[i], mtype)
+        total_parts.append(f"{formatted:>{width}}")
+    print("  ".join(total_parts))
 
 
 # ============================================================================
@@ -14786,6 +15063,18 @@ def _add_stats_parser(subparsers):
         help="Group by dimensions (comma-separated): home, agent, workspace, day, model, tool",
     )
     parser.add_argument(
+        "--format",
+        choices=["table", "tsv", "json"],
+        default=None,
+        help="Output format: table (human-readable), tsv (tab-separated), json. Default: table for TTY, tsv for pipes",
+    )
+    parser.add_argument(
+        "-H",
+        "--human",
+        action="store_true",
+        help="Human-readable numbers (K/M/B) and time (Xd Xh Xm)",
+    )
+    parser.add_argument(
         "--time", action="store_true", help="Show time tracking with daily breakdown"
     )
     # Legacy flags (deprecated, use --by instead)
@@ -15983,6 +16272,9 @@ def _build_stats_args(args) -> StatsCommandArgs:
         top_ws=getattr(args, "top_ws", None),
         this_only=getattr(args, "this_only", False),
         agent=getattr(args, "agent", None) or "auto",
+        # Output formatting
+        format=getattr(args, "format", None),
+        human=getattr(args, "human", False),
     )
 
 
