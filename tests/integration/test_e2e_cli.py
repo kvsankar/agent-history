@@ -1,7 +1,6 @@
 import importlib.machinery
 import importlib.util
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,8 +9,19 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-# Check if WSL is available (for Windows-specific tests)
-HAS_WSL = sys.platform == "win32" and shutil.which("wsl") is not None
+
+# Check if WSL is available and functional (for Windows-specific tests)
+def _check_wsl_available():
+    if sys.platform != "win32":
+        return False
+    try:
+        result = subprocess.run(["wsl", "--list"], capture_output=True, timeout=5, check=False)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+HAS_WSL = _check_wsl_available()
 
 # Use agent-history (new name), fall back to claude-history for backward compat
 _CLI_SCRIPT = Path(__file__).resolve().parents[2] / "agent-history"
