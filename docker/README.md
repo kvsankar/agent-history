@@ -78,7 +78,7 @@ Each user has sessions in:
 
 | File | Tests |
 |------|-------|
-| `test_ssh_remote.py` | SSH connectivity, `lsw -r`, `lss -r`, `export -r` |
+| `test_ssh_remote.py` | SSH connectivity, `ws -r`, `ss -r`, `export -r` |
 | `test_multi_user.py` | User isolation, cross-user access |
 | `test_multi_agent.py` | `--agent` flag with Claude/Codex/Gemini |
 | `test_stats_sync.py` | `stats --sync -r` from remote nodes |
