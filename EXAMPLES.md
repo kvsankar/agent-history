@@ -77,7 +77,7 @@ This excludes idle gaps over 30 minutes."
 **Claude's approach**:
 
 ```bash
-agent-history stats --tools
+agent-history stats --by tool
 ```
 
 **Response**: "Your most-used Claude Code tools:
@@ -177,10 +177,10 @@ grep -r -i -l "docker\|container\|dockerfile" /tmp/all-history/
 
 ```bash
 # Get November stats
-agent-history stats --by-day --since 2025-11-01 --until 2025-11-30
+agent-history stats --by day --since 2025-11-01 --until 2025-11-30
 
 # See per-workspace breakdown
-agent-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
+agent-history stats --by workspace --since 2025-11-01 --until 2025-11-30
 
 # List all November sessions
 agent-history lss --since 2025-11-01 --until 2025-11-30

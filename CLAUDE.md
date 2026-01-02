@@ -148,10 +148,11 @@ chmod +x agent-history
 ./agent-history stats                      # summary dashboard (current workspace)
 ./agent-history stats --aw                 # summary dashboard (all workspaces)
 ./agent-history stats myproject            # filter by workspace pattern
-./agent-history stats --tools              # tool usage statistics
-./agent-history stats --models             # model usage breakdown
-./agent-history stats --by-workspace       # per-workspace stats
-./agent-history stats --by-day             # daily usage trends
+./agent-history stats --by tool            # tool usage statistics
+./agent-history stats --by model           # model usage breakdown
+./agent-history stats --by workspace       # per-workspace stats
+./agent-history stats --by day             # daily usage trends
+./agent-history stats --by home,agent      # multi-dimension grouping
 ./agent-history stats --since 2025-11-01   # filter by date
 ./agent-history stats --source local       # filter by source
 

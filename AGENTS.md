@@ -97,8 +97,8 @@ agent-history --agent gemini export myproject
 ```bash
 # Sync and show stats
 agent-history stats --sync
-agent-history stats --tools
-agent-history stats --models
+agent-history stats --by tool
+agent-history stats --by model
 ```
 
 | Metric | Claude | Codex | Gemini |
@@ -223,7 +223,7 @@ agent-history export myproject -o ./backup
 
 # Stats across all agents
 agent-history stats --sync
-agent-history stats --tools
+agent-history stats --by tool
 ```
 
 ### Gemini-Specific Setup

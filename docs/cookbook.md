@@ -167,10 +167,10 @@ agent-history stats
 agent-history stats --aw
 
 # See tool usage patterns
-agent-history stats --tools
+agent-history stats --by tool
 
 # Daily breakdown
-agent-history stats --by-day
+agent-history stats --by day
 
 # Filter to specific project
 agent-history stats myproject
@@ -188,7 +188,7 @@ agent-history stats --sync --ah
 agent-history stats --since 2025-11-01 --until 2025-11-30
 
 # Per-workspace breakdown for the month
-agent-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
+agent-history stats --by workspace --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -197,14 +197,14 @@ agent-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
 
 ```bash
 # Overall tool usage
-agent-history stats --tools
+agent-history stats --by tool
 
 # Tool usage for specific project
-agent-history stats --tools myproject
+agent-history stats --by tool myproject
 
 # Compare by looking at different workspaces
-agent-history stats --tools frontend-app
-agent-history stats --tools backend-api
+agent-history stats --by tool frontend-app
+agent-history stats --by tool backend-api
 ```
 
 ---
@@ -239,7 +239,7 @@ agent-history project add myproject --ah myproject
 agent-history stats
 
 # Detailed workspace view shows projects separately
-agent-history stats --by-workspace
+agent-history stats --by workspace
 ```
 
 ---
