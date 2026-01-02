@@ -110,8 +110,9 @@ def test_cli_export_source_flag_with_workspace(tmp_path, monkeypatch):
 
     outdir = tmp_path / "out"
 
-    # Patch home directory
+    # Patch home directory (HOME for Unix, USERPROFILE for Windows)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     cmd = [
         sys.executable,
