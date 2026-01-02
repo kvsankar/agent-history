@@ -6812,12 +6812,12 @@ class TestSection3Remaining:
 
         ch.display_summary_stats(conn, "1=1", [], top_limit=None)
         captured = capsys.readouterr().out
-        assert "Home: local (2 sessions)" in captured
-        assert "Home: wsl:Ubuntu (2 sessions)" in captured
-        assert "Workspace: proj-local" in captured
-        assert "Workspace: proj-local2" in captured
-        assert "Workspace: proj-wsl" in captured
-        assert "Workspace: proj-wsl2" in captured
+        # Flat format: HOME\tWORKSPACE\tSESSIONS\tMESSAGES
+        assert "HOME\tWORKSPACE" in captured
+        assert "local\tproj-local\t1" in captured
+        assert "local\tproj-local2\t1" in captured
+        assert "wsl:Ubuntu\tproj-wsl\t1" in captured
+        assert "wsl:Ubuntu\tproj-wsl2\t1" in captured
         conn.close()
 
     def test_stats_homes_workspaces_top_limit(self, tmp_path, capsys):
@@ -6841,8 +6841,9 @@ class TestSection3Remaining:
 
         ch.display_summary_stats(conn, "1=1", [], top_limit=1)
         captured = capsys.readouterr().out
-        # One workspace per home when top_limit=1
-        assert captured.count("Workspace: proj-") == 2
+        # top_limit=1 limits to 1 workspace total in flat format
+        workspace_lines = [line for line in captured.split("\n") if "\tproj-" in line]
+        assert len(workspace_lines) == 1
         conn.close()
 
     def test_stats_summary_includes_time(self, tmp_path, capsys):
@@ -6860,8 +6861,10 @@ class TestSection3Remaining:
 
         ch.display_summary_stats(conn, "1=1", [], top_limit=None)
         captured = capsys.readouterr().out
-        assert "Total work time:" in captured
-        assert "Work periods:" in captured
+        # Flat format: TIME_METRIC\tVALUE with total_work_seconds and work_periods
+        assert "TIME_METRIC\tVALUE" in captured
+        assert "total_work_seconds" in captured
+        assert "work_periods" in captured
         conn.close()
 
     def test_dispatch_lss_accepts_unc_without_wsl_flag(self, monkeypatch, tmp_path):

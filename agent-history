@@ -5090,8 +5090,18 @@ def is_wsl_remote(remote_spec: str) -> bool:
 
 
 def is_windows_remote(remote_spec: str) -> bool:
-    """Check if remote spec is Windows from WSL (windows or windows://username)."""
-    return remote_spec == "windows" or remote_spec.startswith("windows://")
+    """Check if remote spec is Windows from WSL.
+
+    Recognizes formats:
+    - 'windows' (no specific user)
+    - 'windows://username' (URL-style)
+    - 'windows:username' (config-style)
+    """
+    return (
+        remote_spec == "windows"
+        or remote_spec.startswith("windows://")
+        or remote_spec.startswith("windows:")
+    )
 
 
 def get_source_tag(remote_spec: Optional[str] = None) -> str:
@@ -5121,6 +5131,9 @@ def get_source_tag(remote_spec: Optional[str] = None) -> str:
         # Windows from WSL: windows_ or windows_username_
         if remote_spec.startswith("windows://"):
             username = remote_spec[10:]  # Remove 'windows://' prefix
+            return f"windows_{username.lower()}_"
+        elif remote_spec.startswith("windows:"):
+            username = remote_spec[8:]  # Remove 'windows:' prefix
             return f"windows_{username.lower()}_"
         else:
             return "windows_"
