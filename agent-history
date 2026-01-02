@@ -8263,14 +8263,18 @@ def cmd_alias_list(args):
     # Collect all data for flat output
     rows = []
     for alias_name, sources in sorted(aliases.items()):
-        for source_key, workspaces in sorted(sources.items()):
-            for workspace in workspaces:
-                ws_readable = normalize_workspace_name(workspace)
-                if show_counts:
-                    sessions = get_sessions_for_source(source_key, workspace)
-                    rows.append((alias_name, source_key, ws_readable, len(sessions)))
-                else:
-                    rows.append((alias_name, source_key, ws_readable, None))
+        if not sources:
+            # Empty project - show with empty source/workspace
+            rows.append((alias_name, "", "", 0 if show_counts else None))
+        else:
+            for source_key, workspaces in sorted(sources.items()):
+                for workspace in workspaces:
+                    ws_readable = normalize_workspace_name(workspace)
+                    if show_counts:
+                        sessions = get_sessions_for_source(source_key, workspace)
+                        rows.append((alias_name, source_key, ws_readable, len(sessions)))
+                    else:
+                        rows.append((alias_name, source_key, ws_readable, None))
 
     # Print flat output
     if show_counts:
