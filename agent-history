@@ -10694,7 +10694,7 @@ def _aggregate_workspace_stats(all_workspace_stats, workspace_to_alias: dict) ->
 
 def _print_session_section(session_stats):
     """Print session statistics section (flat format)."""
-    print("\nSESSION_METRIC\tVALUE")
+    print("\nNAME\tVALUE")
     print(f"total_sessions\t{session_stats['total_sessions'] or 0}")
     print(f"main_sessions\t{session_stats['main_sessions'] or 0}")
     print(f"agent_sessions\t{session_stats['agent_sessions'] or 0}")
@@ -10710,7 +10710,7 @@ def _print_token_section(token_stats):
     cache_total = cache_creation + cache_read
     cache_hit_ratio = (cache_read / cache_total * 100) if cache_total > 0 else 0
 
-    print("\nTOKEN_METRIC\tVALUE")
+    print("\nNAME\tVALUE")
     print(f"input_tokens\t{total_input}")
     print(f"output_tokens\t{total_output}")
     print(f"cache_created\t{cache_creation}")
@@ -10724,7 +10724,7 @@ def _print_tool_section(tool_stats):
     tool_errors = tool_stats["tool_errors"] or 0
     error_rate = (tool_errors / total_tool_uses * 100) if total_tool_uses > 0 else 0
 
-    print("\nTOOL_METRIC\tVALUE")
+    print("\nNAME\tVALUE")
     print(f"total_uses\t{total_tool_uses}")
     print(f"errors\t{tool_errors}")
     print(f"error_rate\t{error_rate:.1f}")
@@ -11323,7 +11323,7 @@ def _print_time_summary(time_stats: dict, include_breakdown: bool = False):
     first_date = time_stats["first_date"]
     last_date = time_stats["last_date"]
 
-    print("\nTIME_METRIC\tVALUE")
+    print("\nNAME\tVALUE")
     print(f"total_work_seconds\t{total_work}")
     print(f"work_periods\t{total_periods}")
     print(f"session_files\t{num_files}")

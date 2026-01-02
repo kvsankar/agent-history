@@ -6861,8 +6861,8 @@ class TestSection3Remaining:
 
         ch.display_summary_stats(conn, "1=1", [], top_limit=None)
         captured = capsys.readouterr().out
-        # Flat format: TIME_METRIC\tVALUE with total_work_seconds and work_periods
-        assert "TIME_METRIC\tVALUE" in captured
+        # Flat format: NAME\tVALUE with total_work_seconds and work_periods
+        assert "NAME\tVALUE" in captured
         assert "total_work_seconds" in captured
         assert "work_periods" in captured
         conn.close()
@@ -10070,7 +10070,7 @@ class TestStatsAndExportEndToEnd:
 
         captured = capsys.readouterr()
         # Flat format outputs tab-separated metrics
-        assert "SESSION_METRIC\tVALUE" in captured.out
+        assert "NAME\tVALUE" in captured.out
         assert "total_sessions\t1" in captured.out
 
 
@@ -11586,10 +11586,12 @@ class TestStatsHeaderAgentNames:
         )
         ch._print_summary_stats(stats)
         captured = capsys.readouterr()
-        # Flat format has tab-separated sections
-        assert "SESSION_METRIC\tVALUE" in captured.out
-        assert "TOKEN_METRIC\tVALUE" in captured.out
-        assert "TOOL_METRIC\tVALUE" in captured.out
+        # Flat format has NAME\tVALUE header for each section
+        assert "NAME\tVALUE" in captured.out
+        # Check that metric names are present
+        assert "total_sessions" in captured.out
+        assert "input_tokens" in captured.out
+        assert "total_uses" in captured.out
 
     def test_print_summary_stats_session_metrics(self, capsys, empty_stats):
         """Test stats outputs session metrics correctly."""
@@ -11906,8 +11908,8 @@ class TestPrintTimeSummary:
         }
         ch._print_time_summary(time_stats, include_breakdown=False)
         captured = capsys.readouterr()
-        # Flat format: TIME_METRIC\tVALUE
-        assert "TIME_METRIC\tVALUE" in captured.out
+        # Flat format: NAME\tVALUE
+        assert "NAME\tVALUE" in captured.out
         assert "total_work_seconds\t3600" in captured.out
         assert "work_periods\t2" in captured.out
 
