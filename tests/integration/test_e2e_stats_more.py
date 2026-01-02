@@ -107,8 +107,8 @@ def test_stats_models_tools_by_day(tmp_path: Path):
     # Time tracking
     r_time = run_cli(["stats", "--aw", "--time"], env=env)
     assert r_time.returncode == 0, r_time.stderr
-    # New flat format has TIME_METRIC header and DATE breakdown
-    assert "TIME_METRIC" in r_time.stdout
+    # New flat format has NAME\tVALUE header and DATE breakdown
+    assert "NAME\tVALUE" in r_time.stdout
     assert "total_work_seconds" in r_time.stdout
     assert "DATE" in r_time.stdout
 
