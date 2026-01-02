@@ -79,7 +79,7 @@ Concurrency:
    - Incremental by default; `--force` ignores mtimes.
    - `--jobs` parallelizes remote sync.
 2. Query and render:
-   - Summary dashboard and breakdowns (`--tools`, `--models`, `--by-day`).
+   - Summary dashboard and breakdowns (`--by tool`, `--by model`, `--by day`).
    - Filters (`--source`, `--since`, `--until`).
 
 ## Remote and Cross-OS Access

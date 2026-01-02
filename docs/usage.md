@@ -358,10 +358,7 @@ agent-history stats [WORKSPACE] [OPTIONS]
 
 **View Options:**
 - `--time`: Show time tracking with daily breakdown (default summary already includes a time summary)
-- `--tools`: Show tool usage statistics
-- `--models`: Show model usage statistics
-- `--by-workspace`: Show per-workspace breakdown
-- `--by-day`: Show daily statistics
+- `--by DIMS`: Group by dimensions (comma-separated): home, agent, workspace, day, model, tool
 - `--top-ws N`: Limit workspaces shown per home in the summary (default: all; N must be > 0)
 
 **Filters:**
@@ -382,10 +379,13 @@ agent-history stats --aw
 agent-history stats --time --ah
 
 # Tool usage statistics
-agent-history stats --tools
+agent-history stats --by tool
 
 # Daily trends
-agent-history stats --by-day
+agent-history stats --by day
+
+# Multi-dimension grouping
+agent-history stats --by home,agent
 
 # Filter by date range
 agent-history stats --since 2025-11-01 --until 2025-11-30
