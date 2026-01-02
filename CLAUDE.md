@@ -9,10 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
 **Design principles:**
-- Simple object-verb structure: `lsw` (list workspaces), `lss` (list sessions), `export`
-- Minimal output: tab-separated data, no decoration, errors to stderr
+- Simple noun-based commands: `workspaces` (or `ws`), `sessions` (or `ss`), `home`, `export`
+- Flat output: tab-separated data with headers, no decoration, errors to stderr
 - Remote access via SSH with `-r` flag
 - Smart path handling for directories with dashes
+- Explicit homes model: Windows/WSL must be added via `home add`
 
 ## Commands
 
@@ -23,32 +24,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 chmod +x agent-history
 
 # List homes (all Claude Code installations)
-./agent-history lsh                        # all hosts (local + WSL + Windows)
-./agent-history lsh --local                # only local
-./agent-history lsh --wsl                  # only WSL distributions (shows available agents)
-./agent-history lsh --windows              # only Windows users
+./agent-history home                       # list configured homes
+./agent-history home add --wsl             # add WSL to homes
+./agent-history home add --windows         # add Windows to homes
+./agent-history home add user@vm01         # add SSH remote to homes
+./agent-history home remove user@vm01      # remove a source
+./agent-history home clear                 # remove all saved sources
 
-# List workspaces
-./agent-history lsw                        # all local workspaces
-./agent-history lsw myproject              # filter by pattern
-./agent-history lsw proj1 proj2            # multiple patterns (match any)
-./agent-history lsw --wsl                  # WSL workspaces
-./agent-history lsw --windows              # Windows workspaces
-./agent-history lsw -r user@server         # SSH remote workspaces
-./agent-history lsw --ah                   # all homes (local + WSL/Windows + remotes)
-./agent-history lsw --ah -r vm01 -r vm02   # all homes + multiple SSH remotes
-./agent-history lsw proj1 proj2 --ah       # multiple patterns from all homes
+# List workspaces (aliases: ws, lsw)
+./agent-history workspaces                 # all local workspaces
+./agent-history ws myproject               # filter by pattern (short form)
+./agent-history ws proj1 proj2             # multiple patterns (match any)
+./agent-history ws --wsl                   # WSL workspaces
+./agent-history ws --windows               # Windows workspaces
+./agent-history ws -r user@server          # SSH remote workspaces
+./agent-history ws --ah                    # all homes (only configured sources)
+./agent-history ws --ah -r vm01 -r vm02    # all homes + additional SSH remotes
+./agent-history ws proj1 proj2 --ah        # multiple patterns from all homes
 
-# List sessions
-./agent-history lss                        # current workspace
-./agent-history lss myproject              # specific workspace
-./agent-history lss proj1 proj2            # multiple workspaces (deduplicated)
-./agent-history lss --wsl                  # from WSL
-./agent-history lss --windows              # from Windows
-./agent-history lss myproject -r user@server    # SSH remote sessions
-./agent-history lss myproject --ah         # from all homes
-./agent-history lss --ah -r vm01 -r vm02   # all homes + multiple SSH remotes
-./agent-history lss proj1 proj2 --ah       # multiple patterns from all homes
+# List sessions (aliases: ss, lss)
+./agent-history sessions                   # current workspace
+./agent-history ss myproject               # specific workspace (short form)
+./agent-history ss proj1 proj2             # multiple workspaces (deduplicated)
+./agent-history ss --wsl                   # from WSL
+./agent-history ss --windows               # from Windows
+./agent-history ss myproject -r user@server     # SSH remote sessions
+./agent-history ss myproject --ah          # from all homes
+./agent-history ss --ah -r vm01 -r vm02    # all homes + multiple SSH remotes
+./agent-history ss proj1 proj2 --ah        # multiple patterns from all homes
 
 # Export (unified command with orthogonal scope flags)
 ./agent-history export                     # current workspace, local source
@@ -76,7 +79,7 @@ chmod +x agent-history
 ./agent-history --version
 
 # Examples with date filtering
-./agent-history lss myproject --since 2025-11-01
+./agent-history ss myproject --since 2025-11-01
 ./agent-history export myproject --since 2025-11-01 --until 2025-11-30
 
 # Export options
@@ -90,42 +93,43 @@ chmod +x agent-history
 ./agent-history export --ah --no-wsl             # skip WSL sources
 ./agent-history export --ah --no-windows         # skip Windows sources
 
-# Workspace Aliases (group workspaces across environments)
-./agent-history alias list                       # list all aliases
-./agent-history alias show myproject             # show workspaces in an alias
-./agent-history alias create myproject           # create new alias
-./agent-history alias delete myproject           # delete an alias
-./agent-history alias add myproject myproject    # add by pattern (searches local)
-./agent-history alias add myproject --windows myproject  # add by pattern from Windows
-./agent-history alias add myproject --ah -r vm myproject  # add from all homes at once
-./agent-history alias remove myproject -- -home-user-myproject  # remove workspace from alias
-./agent-history alias export aliases.json        # export aliases to file
-./agent-history alias import aliases.json        # import aliases from file
+# Projects (group workspaces across environments, aliases: projects, alias)
+./agent-history project list                     # list all projects
+./agent-history project show myproject           # show workspaces in a project
+./agent-history project create myproject         # create new project
+./agent-history project delete myproject         # delete a project
+./agent-history project add myproject myproject  # add by pattern (searches local)
+./agent-history project add myproject --windows myproject  # add by pattern from Windows
+./agent-history project add myproject --ah -r vm myproject  # add from all homes at once
+./agent-history project remove myproject -- -home-user-myproject  # remove workspace from project
+./agent-history project export projects.json     # export projects to file
+./agent-history project import projects.json     # import projects from file
 
-# Using aliases with lss and export
-./agent-history lss @myproject                   # list sessions from all alias workspaces
-./agent-history lss --alias myproject            # same as above
-./agent-history export @myproject                # export from all alias workspaces
-./agent-history export --alias myproject         # same as above
-./agent-history export @myproject --ah           # export alias from all homes
+# Using projects with sessions and export
+./agent-history ss @myproject                    # list sessions from all project workspaces
+./agent-history ss --project myproject           # same as above
+./agent-history export @myproject                # export from all project workspaces
+./agent-history export --project myproject       # same as above
+./agent-history export @myproject --ah           # export project from all homes
 
-# WSL and Windows access (flags auto-detect)
-./agent-history lsw --wsl                  # list WSL workspaces
-./agent-history lss myproject --wsl        # list WSL sessions
+# WSL and Windows access (explicit homes model)
+./agent-history ws --wsl                   # list WSL workspaces
+./agent-history ss myproject --wsl         # list WSL sessions
 ./agent-history export myproject --wsl     # export from WSL
-./agent-history lss --wsl --agent codex    # list Codex WSL sessions
-./agent-history lss --wsl --agent gemini   # list Gemini WSL sessions
+./agent-history ss --wsl --agent codex     # list Codex WSL sessions
+./agent-history ss --wsl --agent gemini    # list Gemini WSL sessions
 
-./agent-history lsw --windows              # list Windows workspaces
-./agent-history lss myproject --windows    # list Windows sessions
+./agent-history ws --windows               # list Windows workspaces
+./agent-history ss myproject --windows     # list Windows sessions
 ./agent-history export myproject --windows # export from Windows
 
-# Saved Sources (for --ah flag)
-./agent-history lsh                        # list saved sources
-./agent-history lsh add user@vm01          # add SSH remote (WSL/Windows auto-detected)
-./agent-history lsh add user@vm02     # add another remote
-./agent-history lsh remove user@vm01  # remove a source
-./agent-history lsh clear             # remove all saved sources
+# Managing homes (explicit model - must add sources for --ah to include them)
+./agent-history home                       # list configured homes
+./agent-history home add --wsl             # add WSL (for --ah to include it)
+./agent-history home add --windows         # add Windows (for --ah to include it)
+./agent-history home add user@vm01         # add SSH remote
+./agent-history home remove user@vm01      # remove a source
+./agent-history home clear                 # remove all saved sources
 
 # Web Sessions (Claude.ai)
 ./agent-history web list                   # list web sessions (auto-auth on macOS)
@@ -158,10 +162,10 @@ chmod +x agent-history
 ./agent-history stats --time --ah --aw     # all workspaces, sync all homes first
 
 # Agent selection (Claude Code, Codex CLI, Gemini CLI)
-./agent-history --agent auto lss           # auto-detect (default)
-./agent-history --agent claude lss         # Claude Code only
-./agent-history --agent codex lss          # Codex CLI only
-./agent-history --agent gemini lss         # Gemini CLI only
+./agent-history --agent auto ss            # auto-detect (default)
+./agent-history --agent claude ss          # Claude Code only
+./agent-history --agent codex ss           # Codex CLI only
+./agent-history --agent gemini ss          # Gemini CLI only
 
 # Gemini CLI hash index management
 ./agent-history gemini-index               # list all hash→path mappings
@@ -234,13 +238,13 @@ See [docker/README.md](docker/README.md) for details.
 
 ```bash
 # Test with your own Claude Code data
-./agent-history lsw
-./agent-history lss
+./agent-history ws
+./agent-history ss
 ./agent-history export myproject ./test
 
 # Test remote access
-./agent-history lsw -r user@server
-./agent-history lss myproject -r user@server
+./agent-history ws -r user@server
+./agent-history ss myproject -r user@server
 ./agent-history export myproject ./test -r user@server
 
 # Test edge cases:
@@ -261,16 +265,16 @@ Use `python` or `python3` to execute the script:
 
 ```powershell
 # Instead of ./agent-history (Unix/Linux)
-python agent-history lsw
-python agent-history lss myproject
+python agent-history ws
+python agent-history ss myproject
 python agent-history export myproject ./output
 ```
 
 ### Local Operations
 
 All local operations work perfectly on Windows:
-- ✅ List workspaces (`lsw`)
-- ✅ List sessions (`lss`)
+- ✅ List workspaces (`workspaces` or `ws`)
+- ✅ List sessions (`sessions` or `ss`)
 - ✅ Export conversations (`export`)
 - ✅ Convert single files
 - ✅ Date filtering
@@ -368,33 +372,33 @@ The file is organized into many sections (36+), grouped into these high-level ca
    - `get_remote_session_info()`: Gets remote file stats (size, mtime, message count) without downloading
    - `fetch_workspace_files()`: Fetches files from one remote workspace using rsync
 
-8. **Workspace Aliases**
-   - `get_aliases_dir()`: Returns `~/.agent-history/` directory
-   - `get_aliases_file()`: Returns `~/.agent-history/aliases.json` path
-   - `load_aliases()`: Loads aliases from JSON file (returns empty dict if not found)
-   - `save_aliases()`: Saves aliases to JSON file
+8. **Projects**
+   - `get_projects_dir()`: Returns `~/.agent-history/` directory
+   - `get_projects_file()`: Returns `~/.agent-history/projects.json` path
+   - `load_projects()`: Loads projects from JSON file (returns empty dict if not found)
+   - `save_projects()`: Saves projects to JSON file
    - `path_to_encoded_workspace()`: Converts absolute path to Claude's encoded workspace name
    - `resolve_workspace_input()`: Resolves pattern/path/encoded name to matching workspaces
-   - `cmd_alias_list()`: Lists all defined aliases
-   - `cmd_alias_show()`: Shows workspaces in a specific alias
-   - `cmd_alias_create()`: Creates a new empty alias
-   - `cmd_alias_delete()`: Deletes an alias
-   - `cmd_alias_add()`: Adds workspaces to an alias (supports patterns, `--ah` flag for all homes)
-   - `cmd_alias_remove()`: Removes a workspace from an alias
-   - `cmd_alias_config_export()`: Exports aliases to a JSON file
-   - `cmd_alias_config_import()`: Imports aliases from a JSON file
-   - `cmd_alias_lss()`: Lists sessions from all workspaces in an alias
-   - `cmd_alias_export()`: Exports sessions from all workspaces in an alias
+   - `cmd_project_list()`: Lists all defined projects
+   - `cmd_project_show()`: Shows workspaces in a specific project
+   - `cmd_project_create()`: Creates a new empty project
+   - `cmd_project_delete()`: Deletes a project
+   - `cmd_project_add()`: Adds workspaces to a project (supports patterns, `--ah` flag for all homes)
+   - `cmd_project_remove()`: Removes a workspace from a project
+   - `cmd_project_config_export()`: Exports projects to a JSON file
+   - `cmd_project_config_import()`: Imports projects from a JSON file
+   - `cmd_project_lss()`: Lists sessions from all workspaces in a project
+   - `cmd_project_export()`: Exports sessions from all workspaces in a project
 
-9. **Configuration and Saved Sources**
+9. **Configuration and Saved Sources (Homes)**
    - `get_config_file()`: Returns `~/.agent-history/config.json` path
    - `load_config()`: Loads configuration from JSON file
    - `save_config()`: Saves configuration to JSON file
-   - `get_saved_sources()`: Returns list of saved SSH remotes
-   - `cmd_sources_list()`: Lists saved sources
-   - `cmd_sources_add()`: Adds SSH remote (validates WSL/Windows are auto-detected)
-   - `cmd_sources_remove()`: Removes a saved source
-   - `cmd_sources_clear()`: Clears all saved sources
+   - `get_saved_sources()`: Returns list of saved homes (WSL, Windows, SSH remotes)
+   - `cmd_home_list()`: Lists configured homes
+   - `cmd_home_add()`: Adds a home (--wsl, --windows, or SSH remote)
+   - `cmd_home_remove()`: Removes a saved home
+   - `cmd_home_clear()`: Clears all saved homes
 
 10. **Metrics Database (SQLite)**
    - `get_metrics_db_path()`: Returns `~/.agent-history/metrics.db` path
@@ -403,25 +407,25 @@ The file is organized into many sections (36+), grouped into these high-level ca
    - `sync_file_to_db()`: Syncs a single JSONL file to database (incremental)
    - `cmd_stats_sync()`: Syncs JSONL files from local/WSL/Windows/SSH sources
    - `cmd_stats()`: Displays metrics with various views (orthogonal --ah/--aw flags)
-   - `display_summary_stats()`: Summary dashboard (alias-aware)
+   - `display_summary_stats()`: Summary dashboard (project-aware)
    - `display_tool_stats()`: Tool usage statistics
    - `display_model_stats()`: Model usage breakdown
-   - `display_workspace_stats()`: Per-workspace statistics (alias-aware)
+   - `display_workspace_stats()`: Per-workspace statistics (project-aware)
    - `display_daily_stats()`: Daily usage trends
    - `display_time_stats()`: Time tracking with daily breakdown
    - `calculate_daily_work_time()`: Calculates work time per day with gap detection
 
 11. **Commands**
-   - `cmd_list()`: Shows all sessions for a workspace with stats (supports `-r` for remote/WSL)
+   - `cmd_workspaces()`: Lists workspaces with session counts (supports `-r` for remote/WSL)
+   - `cmd_sessions()`: Shows all sessions for a workspace with stats (supports `-r` for remote/WSL)
    - `cmd_convert()`: Converts single .jsonl file to markdown (supports `-r` for remote/WSL)
-   - `cmd_batch()`: Exports all sessions from a workspace to markdown (supports `-r` for remote/WSL, `--split` for splitting, organized export by default)
-   - `cmd_list_wsl()`: Lists WSL distributions with agent data
-   - `cmd_fetch()`: Pre-caches remote sessions via SSH (one-way sync)
-   - `cmd_export_all()`: Exports from all homes (local + all WSL + optional SSH remotes) in one command
+   - `cmd_export()`: Exports sessions from a workspace to markdown (supports `-r` for remote/WSL, `--split` for splitting)
+   - `cmd_home()`: Lists and manages configured homes (WSL, Windows, SSH)
+   - `cmd_export_all()`: Exports from all homes in one command
    - `generate_index_manifest()`: Generates index.md summary file with per-source and per-workspace statistics
    - `cmd_version()`: Displays version info
-   - `cmd_alias_*()`: Alias management commands (see section 8)
-   - `cmd_sources_*()`: Source management commands (see section 9)
+   - `cmd_project_*()`: Project management commands (see section 8)
+   - `cmd_home_*()`: Home management commands (see section 9)
 
 12. **Main**
    - Argument parsing with `argparse` (including -r/--remote, --since, --until, --minimal, --split, --flat flags)
@@ -894,19 +898,19 @@ Workspace pattern matching is substring-based:
 - Empty pattern (`""`, `"*"`, or `"all"`) matches all workspaces
 - Case-sensitive matching
 
-### Workspace Aliases
+### Projects
 
-Aliases group related workspaces across different sources for unified access.
+Projects group related workspaces across different sources for unified access.
 
 **Storage Location:**
 - Config directory: `~/.agent-history/`
-- Alias file: `~/.agent-history/aliases.json`
+- Projects file: `~/.agent-history/projects.json`
 
 **JSON Structure:**
 ```json
 {
   "version": 1,
-  "aliases": {
+  "projects": {
     "myproject": {
       "local": ["-home-alice-projects-myproject"],
       "windows": ["C--alice-projects-myproject"],
@@ -926,61 +930,61 @@ Aliases group related workspaces across different sources for unified access.
 **Usage Patterns:**
 ```bash
 # Using @ prefix
-./agent-history lss @myproject
+./agent-history ss @myproject
 ./agent-history export @myproject
 
-# Using --alias flag
-./agent-history lss --alias myproject
-./agent-history export --alias myproject
+# Using --project flag
+./agent-history ss --project myproject
+./agent-history export --project myproject
 
 # Combine with other flags
 ./agent-history export @myproject --ah     # all homes
 ./agent-history export @myproject --minimal
 ```
 
-**Automatic Alias Scoping:**
+**Automatic Project Scoping:**
 
-When running `lss`, `export`, or `stats` without arguments, if the current workspace belongs to an alias, the tool automatically scopes to the alias:
+When running `sessions`, `export`, or `stats` without arguments, if the current workspace belongs to a project, the tool automatically scopes to the project:
 
 ```bash
-# If current workspace is part of @myproject alias:
-./agent-history lss        # 📎 Using alias @myproject (use --this for current workspace only)
-./agent-history export     # 📎 Using alias @myproject (use --this for current workspace only)
-./agent-history stats      # 📎 Using alias @myproject (use --this for current workspace only)
+# If current workspace is part of @myproject:
+./agent-history ss         # Using project @myproject (use --this for current workspace only)
+./agent-history export     # Using project @myproject (use --this for current workspace only)
+./agent-history stats      # Using project @myproject (use --this for current workspace only)
 
 # To force current workspace only:
-./agent-history lss --this
+./agent-history ss --this
 ./agent-history export --this
 ./agent-history stats --this
 ```
 
-This behavior makes it easy to work with related workspaces across environments without explicitly specifying the alias each time.
+This behavior makes it easy to work with related workspaces across environments without explicitly specifying the project each time.
 
-**Syncing Aliases Across Machines:**
+**Syncing Projects Across Machines:**
 ```bash
-# Export aliases to file
-./agent-history alias export aliases.json
+# Export projects to file
+./agent-history project export projects.json
 
 # Copy to another machine
-scp aliases.json user@other-machine:~/
+scp projects.json user@other-machine:~/
 
 # Import on other machine
-./agent-history alias import aliases.json
+./agent-history project import projects.json
 ```
 
-**Adding Workspaces to Aliases:**
+**Adding Workspaces to Projects:**
 ```bash
 # Add by pattern (searches local workspaces)
-./agent-history alias add myproject myproject
+./agent-history project add myproject myproject
 
 # Add from Windows (auto-detects user)
-./agent-history alias add myproject --windows myproject
+./agent-history project add myproject --windows myproject
 
 # Add from all homes at once (local + WSL/Windows + remotes)
-./agent-history alias add myproject --ah -r vm myproject
+./agent-history project add myproject --ah -r vm myproject
 
 # Workspace names starting with '-' need '--' separator
-./agent-history alias remove myproject -- -home-user-myproject
+./agent-history project remove myproject -- -home-user-myproject
 ```
 
 ### Remote Operations
@@ -995,11 +999,11 @@ All commands support remote operations via the `-r/--remote` flag:
 **Usage:**
 ```bash
 # List remote workspaces
-./agent-history lsw -r user@hostname
+./agent-history ws -r user@hostname
 
 # List remote sessions (direct access, no caching)
-./agent-history lss -r user@hostname
-./agent-history lss myproject -r user@hostname
+./agent-history ss -r user@hostname
+./agent-history ss myproject -r user@hostname
 
 # Export remote sessions (caches locally first, then exports)
 ./agent-history export myproject -r user@hostname
@@ -1026,7 +1030,7 @@ All commands support remote operations via the `-r/--remote` flag:
 - Example: When P1 fetches from P2, it skips P2's `remote_p1_*` cache (which is P1's own data)
 
 **Caching Behavior:**
-- **`lsw -r` / `lss -r`**: Direct remote access via SSH (no caching) - fast, real-time view
+- **`ws -r` / `ss -r`**: Direct remote access via SSH (no caching) - fast, real-time view
 - **`export -r`**: Caches files locally first using rsync, then exports - efficient for repeated operations
 
 **Implementation:**
@@ -1066,9 +1070,9 @@ The `--ah` and `--aw` flags are designed to be orthogonal (independent):
 
 **Implementation notes:**
 - `--ah` for `stats --time` triggers auto-sync before display
-- WSL and Windows are auto-detected by `--ah` (no configuration needed)
-- Only SSH remotes need to be saved via `lsh add`
+- **Explicit homes model:** WSL/Windows/SSH must be added via `home add` for `--ah` to include them
 - Saved sources are stored in `~/.agent-history/config.json`
+- Use `home add --wsl` and `home add --windows` to include these in `--ah`
 
 ### Mutually Exclusive Flags
 
@@ -1077,7 +1081,7 @@ Some flags cannot be used together:
 | Flags | Behavior |
 |-------|----------|
 | `--wsl` + `--windows` | Error: mutually exclusive (use one or the other) |
-| `--this` + `@alias` | `--this` overrides alias auto-detection |
+| `--this` + `@project` | `--this` overrides project auto-detection |
 | Multiple `-r` flags | Only first remote is used for single-target operations |
 
 ### Flag Precedence
