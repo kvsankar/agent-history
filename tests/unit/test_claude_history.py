@@ -11206,21 +11206,29 @@ class TestMultiAgentRemotePathFunctions:
             result = ch.codex_get_wsl_sessions_dir("Ubuntu")
         assert result is None
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="WSL not available on Windows")
+    @pytest.mark.skipif(
+        sys.platform != "linux", reason="WSL tests only run on Linux (requires /mnt)"
+    )
     def test_gemini_get_windows_sessions_dir_in_wsl(self):
         """Test Gemini Windows path function returns correct path in WSL."""
         with patch.object(ch, "is_running_in_wsl", return_value=True):
-            with patch("os.path.expanduser", return_value="/mnt/c/Users/testuser"):
+            with patch.object(
+                ch, "get_windows_home_from_wsl", return_value=Path("/mnt/c/Users/testuser")
+            ):
                 with patch("pathlib.Path.exists", return_value=True):
                     result = ch.gemini_get_windows_sessions_dir("testuser")
                     if result:
                         assert ".gemini" in str(result) or result is not None
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="WSL not available on Windows")
+    @pytest.mark.skipif(
+        sys.platform != "linux", reason="WSL tests only run on Linux (requires /mnt)"
+    )
     def test_codex_get_windows_sessions_dir_in_wsl(self):
         """Test Codex Windows path function returns correct path in WSL."""
         with patch.object(ch, "is_running_in_wsl", return_value=True):
-            with patch("os.path.expanduser", return_value="/mnt/c/Users/testuser"):
+            with patch.object(
+                ch, "get_windows_home_from_wsl", return_value=Path("/mnt/c/Users/testuser")
+            ):
                 with patch("pathlib.Path.exists", return_value=True):
                     result = ch.codex_get_windows_sessions_dir("testuser")
                     if result:
