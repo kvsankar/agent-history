@@ -411,14 +411,9 @@ class TestAliasCombinations:
             )
             assert "Traceback" not in result.stderr or "coverage" in result.stderr.lower()
 
-    @given(use_counts=st.booleans())
-    @settings(max_examples=10, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-    def test_alias_list_flags(self, use_counts):
-        """Test alias list with flags."""
+    def test_alias_list_flags(self):
+        """Test alias list basic invocation."""
         args = ["alias", "list"]
-        if use_counts:
-            args.append("--counts")
-
         result = run_cli_in_temp(args)
 
         assert "Traceback" not in result.stderr

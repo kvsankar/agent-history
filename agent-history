@@ -110,6 +110,7 @@ SECONDS_PER_MINUTE = 60
 DB_VERSION_TIME_TRACKING = 3  # Version that added time tracking
 DB_VERSION_AGENT_COLUMN = 4  # Version that added agent column with path-based detection
 DB_VERSION_GEMINI_TIMESTAMPS = 5  # Version that fixes Gemini timestamps
+DB_VERSION_PROJECT_COLUMNS = 6  # Version that adds git_remote_url, project, project_short
 
 
 # ============================================================================
@@ -447,11 +448,15 @@ class StatsCommandArgs:
     source: Optional[str] = None
     since: Optional[str] = None
     until: Optional[str] = None
+    by: Optional[str] = None  # Unified dimension grouping (comma-separated)
+    time: bool = False
+    # Legacy flags (for backward compatibility)
     tools: bool = False
     models: bool = False
-    time: bool = False
     by_workspace: bool = False
     by_day: bool = False
+    group: Optional[str] = None
+    # Other options
     all_workspaces: bool = False
     top_ws: Optional[int] = None
     this_only: bool = False
@@ -786,6 +791,19 @@ WORK_PERIOD_GAP_THRESHOLD = 30 * 60  # 30 minutes gap starts new work period
 
 # Display formatting
 DISPLAY_SEPARATOR_WIDTH = 60  # Width of separator lines
+
+# Stats dimension configuration
+# Maps user-facing dimension names to SQL expressions
+STATS_DIMENSIONS = {
+    "home": {"sql": "s.source", "label": "Home", "width": 15},
+    "agent": {"sql": "s.agent", "label": "Agent", "width": 8},
+    "workspace": {"sql": "s.workspace", "label": "Workspace", "width": 30},
+    "folder": {"sql": "s.workspace", "label": "Folder", "width": 20, "transform": "short_name"},
+    "project": {"sql": "s.project", "label": "Project", "width": 30},
+    "day": {"sql": "DATE(s.start_time)", "label": "Day", "width": 12},
+    "model": {"sql": "m.model", "label": "Model", "width": 30, "requires_messages": True},
+    "tool": {"sql": "t.tool_name", "label": "Tool", "width": 20, "requires_tools": True},
+}
 
 # Cached workspace prefixes
 CACHED_REMOTE_PREFIX = "remote_"
@@ -4556,6 +4574,37 @@ def normalize_workspace_name(
     return _normalize_unix_path(encoded, verify_local, base_path)
 
 
+def get_folder_short_name(workspace: str) -> str:
+    """Get convenience short name from workspace directory name or path.
+
+    Takes either an encoded workspace name or a decoded path and returns
+    just the final directory name (basename).
+
+    Args:
+        workspace: Encoded workspace name (e.g., '-home-sankar-projects-foo')
+                   or decoded path (e.g., '/home/sankar/projects/foo')
+
+    Returns:
+        Short name (e.g., 'foo')
+
+    Examples:
+        - '-home-sankar-projects-foo' → 'foo'
+        - 'C--Users-sankar-projects-bar' → 'bar'
+        - '/home/sankar/projects/foo' → 'foo'
+        - '-home-sankar-projects-foo-feature' → 'foo-feature'
+    """
+    if not workspace:
+        return workspace
+
+    # If it looks like a decoded path (contains /), just get basename
+    if "/" in workspace:
+        return Path(workspace).name
+
+    # Otherwise, decode the workspace name first
+    decoded = normalize_workspace_name(workspace, verify_local=False)
+    return Path(decoded).name
+
+
 def get_current_workspace_pattern():
     """
     Detect the current workspace based on the current working directory.
@@ -6795,8 +6844,13 @@ def get_aliases_dir() -> Path:
 
 
 def get_aliases_file() -> Path:
-    """Get the aliases storage file path."""
+    """Get the legacy aliases storage file path (for migration)."""
     return get_aliases_dir() / "aliases.json"
+
+
+def get_projects_file() -> Path:
+    """Get the projects storage file path."""
+    return get_config_dir() / "projects.json"
 
 
 def get_config_file() -> Path:
@@ -7100,6 +7154,96 @@ def extract_github_repo_from_git_url(url: str) -> Optional[str]:
             return repo_part.removesuffix(".git")
 
     return None
+
+
+def normalize_git_url(url: str) -> tuple[Optional[str], Optional[str]]:
+    """Normalize git URL to canonical and short forms.
+
+    Handles various git URL formats from any hosting provider:
+    - SSH: git@host:owner/repo.git
+    - HTTPS: https://host/owner/repo.git
+    - SSH with explicit ssh://: ssh://git@host/owner/repo.git
+
+    Args:
+        url: Git remote URL
+
+    Returns:
+        Tuple of (canonical, short) where:
+        - canonical: host/owner/repo (e.g., github.com/user/repo)
+        - short: owner/repo (e.g., user/repo)
+        Returns (None, None) if URL cannot be parsed
+    """
+    if not url:
+        return None, None
+
+    url = url.strip()
+
+    # HTTPS/HTTP/SSH with protocol format: https://host/owner/repo.git
+    # Match first to avoid SSH pattern matching protocol URLs
+    url_match = re.match(r"^(?:https?|ssh)://(?:[^@]+@)?([^/]+)/(.+)$", url)
+    if url_match:
+        host = url_match.group(1)
+        path = url_match.group(2).rstrip("/").removesuffix(".git")
+        canonical = f"{host}/{path}"
+        short = path
+        return canonical, short
+
+    # SSH format: git@host:owner/repo.git or host:owner/repo.git
+    # Match pattern like: git@github.com:user/repo.git or github-alias:user/repo.git
+    # The path must contain / to distinguish from port numbers (host:port)
+    ssh_match = re.match(r"^(?:git@)?([^:]+):([^/]+/.+)$", url)
+    if ssh_match:
+        host = ssh_match.group(1)
+        path = ssh_match.group(2).rstrip("/").removesuffix(".git")
+        canonical = f"{host}/{path}"
+        short = path
+        return canonical, short
+
+    return None, None
+
+
+def get_git_remote_for_workspace(
+    workspace_path: Path,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Extract git remote URL and derive project names for a workspace.
+
+    Args:
+        workspace_path: Path to the workspace directory
+
+    Returns:
+        Tuple of (git_remote_url, project_canonical, project_short):
+        - git_remote_url: Raw git remote URL (e.g., git@github.com:user/repo.git)
+        - project_canonical: Normalized canonical name (e.g., github.com/user/repo)
+        - project_short: Short name (e.g., user/repo)
+        Returns (None, None, None) if git remote cannot be extracted
+    """
+    if not workspace_path.exists():
+        return None, None, None
+
+    git_dir = workspace_path / ".git"
+    if not git_dir.exists():
+        return None, None, None
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(workspace_path), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None, None, None
+
+        git_remote_url = result.stdout.strip()
+        if not git_remote_url:
+            return None, None, None
+
+        canonical, short = normalize_git_url(git_remote_url)
+        return git_remote_url, canonical, short
+
+    except (subprocess.TimeoutExpired, OSError):
+        return None, None, None
 
 
 def get_web_session_github_repo(session: dict) -> Optional[str]:
@@ -7580,37 +7724,94 @@ def resolve_web_credentials(
     return token, org_uuid
 
 
-def load_aliases() -> dict:
-    """Load aliases from storage file. Returns empty structure if not found."""
-    aliases_file = get_aliases_file()
-    if not aliases_file.exists():
-        return {"version": 1, "aliases": {}}
+def _migrate_aliases_to_projects() -> Optional[dict]:
+    """Migrate aliases.json to projects.json if needed.
 
+    Returns migrated data or None if no migration needed.
+    """
+    aliases_file = get_aliases_file()
+    projects_file = get_projects_file()
+
+    # If projects.json exists, no migration needed
+    if projects_file.exists():
+        return None
+
+    # If aliases.json doesn't exist, no migration needed
+    if not aliases_file.exists():
+        return None
+
+    # Migrate aliases.json to projects.json
     try:
         with open(aliases_file, encoding="utf-8") as f:
             data = json.load(f)
-            # Ensure structure is valid
-            if "aliases" not in data:
-                data["aliases"] = {}
+
+        # Convert "aliases" key to "projects" key
+        if "aliases" in data:
+            data["projects"] = data.pop("aliases")
+        if "projects" not in data:
+            data["projects"] = {}
+
+        # Update version to 2 for new format
+        data["version"] = 2
+
+        # Save to projects.json
+        projects_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with open(projects_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+        # Rename old file to indicate migration
+        backup_path = aliases_file.with_suffix(".migrated.json")
+        aliases_file.rename(backup_path)
+        sys.stderr.write(f"Migrated aliases.json to projects.json (backup: {backup_path.name})\n")
+
+        return data
+    except (OSError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"Warning: Could not migrate aliases to projects: {e}\n")
+        return None
+
+
+def load_aliases() -> dict:
+    """Load projects from storage file. Returns empty structure if not found.
+
+    Note: This function is named load_aliases for backward compatibility but
+    loads from projects.json. It will auto-migrate from aliases.json if needed.
+    """
+    # Try migration first
+    migrated = _migrate_aliases_to_projects()
+    if migrated:
+        return _normalize_aliases(migrated)
+
+    projects_file = get_projects_file()
+    if not projects_file.exists():
+        return {"version": 2, "projects": {}}
+
+    try:
+        with open(projects_file, encoding="utf-8") as f:
+            data = json.load(f)
+            # Handle both old and new key names
+            if "aliases" in data and "projects" not in data:
+                data["projects"] = data.pop("aliases")
+            if "projects" not in data:
+                data["projects"] = {}
             if "version" not in data:
-                data["version"] = 1
+                data["version"] = 2
             return _normalize_aliases(data)
     except json.JSONDecodeError:
         # Corrupted JSON - create backup and warn user prominently
-        backup_path = aliases_file.with_suffix(
+        backup_path = projects_file.with_suffix(
             f".corrupted.{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         )
         try:
             import shutil
 
-            shutil.copy2(aliases_file, backup_path)
-            sys.stderr.write(f"Warning: aliases file corrupted, backed up to {backup_path}\n")
+            shutil.copy2(projects_file, backup_path)
+            sys.stderr.write(f"Warning: projects file corrupted, backed up to {backup_path}\n")
         except OSError:
-            sys.stderr.write(f"Warning: aliases file corrupted at {aliases_file}\n")
-        return {"version": 1, "aliases": {}}
+            sys.stderr.write(f"Warning: projects file corrupted at {projects_file}\n")
+        return {"version": 2, "projects": {}}
     except OSError as e:
-        sys.stderr.write(f"Warning: Could not load aliases file: {e}\n")
-        return {"version": 1, "aliases": {}}
+        sys.stderr.write(f"Warning: Could not load projects file: {e}\n")
+        return {"version": 2, "projects": {}}
 
 
 def _lock_file(file_handle, exclusive: bool = True):
@@ -7647,48 +7848,56 @@ def _unlock_file(file_handle):
 
 
 def save_aliases(data: dict) -> bool:
-    """Save aliases to storage file with file locking.
+    """Save projects to storage file with file locking.
+
+    Note: This function is named save_aliases for backward compatibility but
+    saves to projects.json with the new structure.
 
     Args:
-        data: Alias data dictionary with 'version' and 'aliases' keys
+        data: Project data dictionary with 'version' and 'projects' keys
 
     Returns:
         True on success, False on failure (error printed to stderr)
 
     Side Effects:
         - Creates ~/.agent-history/ directory with mode 0o700 if missing
-        - Writes to ~/.agent-history/aliases.json
+        - Writes to ~/.agent-history/projects.json
         - Uses file locking to prevent race conditions
     """
-    aliases_dir = get_aliases_dir()
-    aliases_file = get_aliases_file()
+    config_dir = get_config_dir()
+    projects_file = get_projects_file()
 
     try:
         # Create directory if needed
-        aliases_dir.mkdir(parents=True, exist_ok=True)
-        # Set secure permissions on aliases directory (owner-only access)
-        os.chmod(aliases_dir, 0o700)
+        config_dir.mkdir(parents=True, exist_ok=True)
+        # Set secure permissions on config directory (owner-only access)
+        os.chmod(config_dir, 0o700)
 
-        # Ensure version is set
+        # Ensure version is set and use new key name
         if "version" not in data:
-            data["version"] = 1
+            data["version"] = 2
+        # Migrate old key name if present
+        if "aliases" in data and "projects" not in data:
+            data["projects"] = data.pop("aliases")
+        if "projects" not in data:
+            data["projects"] = {}
 
         # Write with file locking to prevent concurrent updates
-        with open(aliases_file, "w", encoding="utf-8") as f:
+        with open(projects_file, "w", encoding="utf-8") as f:
             try:
                 _lock_file(f, exclusive=True)
                 json.dump(data, f, indent=2)
             finally:
                 _unlock_file(f)
 
-        # Set secure permissions on aliases file (owner read/write only)
-        os.chmod(aliases_file, 0o600)
+        # Set secure permissions on projects file (owner read/write only)
+        os.chmod(projects_file, 0o600)
         return True
     except BlockingIOError:
-        sys.stderr.write("Error: Aliases file is locked by another process\n")
+        sys.stderr.write("Error: Projects file is locked by another process\n")
         return False
     except OSError as e:
-        sys.stderr.write(f"Error: Could not save aliases: {e}\n")
+        sys.stderr.write(f"Error: Could not save projects: {e}\n")
         return False
 
 
@@ -7716,7 +7925,7 @@ def _sanitize_alias_workspace_entry(workspace: str) -> str:
 
 def _normalize_aliases(data: dict) -> dict:
     """Normalize stored alias workspace entries for cross-platform compatibility."""
-    aliases = data.get("aliases", {})
+    aliases = data.get("projects", {})
     changed = False
 
     for sources in aliases.values():
@@ -7823,10 +8032,10 @@ def get_source_key(remote_host=None, wsl_distro=None, windows_user=None) -> str:
 
 def get_alias_session_count(alias_name: str, aliases_data: dict) -> int:
     """Count total sessions across all homes for an alias."""
-    if alias_name not in aliases_data.get("aliases", {}):
+    if alias_name not in aliases_data.get("projects", {}):
         return 0
 
-    alias_config = aliases_data["aliases"][alias_name]
+    alias_config = aliases_data["projects"][alias_name]
     total = 0
 
     for _source_key, workspaces in alias_config.items():
@@ -7848,10 +8057,10 @@ def resolve_alias_workspaces(alias_name: str, source_filter: Optional[str] = Non
     """
     aliases_data = load_aliases()
 
-    if alias_name not in aliases_data.get("aliases", {}):
+    if alias_name not in aliases_data.get("projects", {}):
         return []
 
-    alias_config = aliases_data["aliases"][alias_name]
+    alias_config = aliases_data["projects"][alias_name]
     results = []
 
     for source_key, workspaces in alias_config.items():
@@ -7877,7 +8086,7 @@ def get_alias_for_workspace(workspace: str, source_key: str = "local") -> Option
     """
     aliases_data = load_aliases()
 
-    for alias_name, alias_config in aliases_data.get("aliases", {}).items():
+    for alias_name, alias_config in aliases_data.get("projects", {}).items():
         # Check each source in the alias
         for src_key, workspaces in alias_config.items():
             # Handle source key matching (e.g., 'local' matches 'local', 'wsl:Ubuntu' matches 'wsl')
@@ -8009,32 +8218,17 @@ def _print_workspace_with_count(source_key: str, workspace: str) -> int:
     return count
 
 
-def _print_alias_sources(sources: dict, show_counts: bool) -> int:
-    """Print alias sources and return total session count."""
-    total_sessions = 0
-    for source_key, workspaces in sorted(sources.items()):
-        if not workspaces:
-            continue
-        print(f"  {source_key}:")
-        for workspace in workspaces:
-            if show_counts:
-                total_sessions += _print_workspace_with_count(source_key, workspace)
-            else:
-                print(f"    {normalize_workspace_name(workspace)}")
-    return total_sessions
-
-
 def cmd_alias_list(args):
-    """List all aliases with their workspaces."""
+    """List all projects with their workspaces (flat format)."""
     aliases_data = load_aliases()
-    aliases = aliases_data.get("aliases", {})
+    aliases = aliases_data.get("projects", {})
     show_counts = getattr(args, "counts", False)
 
     if not aliases:
-        print("No aliases defined.")
-        print("\nCreate an alias with:")
-        print("  agent-history alias create <name>")
-        print("  agent-history alias add <name> <workspace>")
+        sys.stderr.write("No projects defined.\n")
+        sys.stderr.write("\nCreate a project with:\n")
+        sys.stderr.write("  agent-history project create <name>\n")
+        sys.stderr.write("  agent-history project add <name> <workspace>\n")
         return
 
     # Warn about slow sources when counting
@@ -8048,43 +8242,53 @@ def cmd_alias_list(args):
             sys.stderr.write("Accessing Windows/WSL sources...\n")
             sys.stderr.flush()
 
+    # Collect all data for flat output
+    rows = []
     for alias_name, sources in sorted(aliases.items()):
-        print(f"\n{alias_name}:")
-        total_sessions = _print_alias_sources(sources, show_counts)
-        if show_counts:
-            print(f"  Total: {total_sessions} sessions")
+        for source_key, workspaces in sorted(sources.items()):
+            for workspace in workspaces:
+                ws_readable = normalize_workspace_name(workspace)
+                if show_counts:
+                    sessions = get_sessions_for_source(source_key, workspace)
+                    rows.append((alias_name, source_key, ws_readable, len(sessions)))
+                else:
+                    rows.append((alias_name, source_key, ws_readable, None))
+
+    # Print flat output
+    if show_counts:
+        print("PROJECT\tSOURCE\tWORKSPACE\tSESSIONS")
+        for project, source, workspace, count in rows:
+            print(f"{project}\t{source}\t{workspace}\t{count}")
+    else:
+        print("PROJECT\tSOURCE\tWORKSPACE")
+        for project, source, workspace, _ in rows:
+            print(f"{project}\t{source}\t{workspace}")
 
 
 def cmd_alias_show(args):
-    """Show details of a single alias."""
+    """Show details of a single project (flat format)."""
     aliases_data = load_aliases()
-    aliases = aliases_data.get("aliases", {})
+    aliases = aliases_data.get("projects", {})
 
     alias_name = args.name
     if alias_name not in aliases:
-        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.stderr.write(f"Error: Project '{alias_name}' not found\n")
         sys.exit(1)
 
     sources = aliases[alias_name]
-    total_sessions = 0
 
-    print(f"{alias_name}:")
-
+    # Collect all data for flat output
+    rows = []
     for source_key, workspaces in sorted(sources.items()):
-        if workspaces:
-            print(f"  {source_key}:")
-            for workspace in workspaces:
-                # Use source-aware function to get sessions
-                sessions = get_sessions_for_source(source_key, workspace)
-                count = len(sessions)
-                total_sessions += count
-                ws_readable = normalize_workspace_name(workspace)
-                if count > 0 or source_key == "local":
-                    print(f"    {ws_readable}\t{count} sessions")
-                else:
-                    print(f"    {ws_readable}\t{count} sessions (not cached)")
+        for workspace in workspaces:
+            sessions = get_sessions_for_source(source_key, workspace)
+            ws_readable = normalize_workspace_name(workspace)
+            rows.append((source_key, ws_readable, len(sessions)))
 
-    print(f"  Total: {total_sessions} sessions")
+    # Print flat output
+    print("SOURCE\tWORKSPACE\tSESSIONS")
+    for source, workspace, count in rows:
+        print(f"{source}\t{workspace}\t{count}")
 
 
 def cmd_alias_create(args):
@@ -8093,11 +8297,11 @@ def cmd_alias_create(args):
 
     alias_name = args.name
 
-    if alias_name in aliases_data.get("aliases", {}):
+    if alias_name in aliases_data.get("projects", {}):
         sys.stderr.write(f"Error: Alias '{alias_name}' already exists\n")
         sys.exit(1)
 
-    aliases_data["aliases"][alias_name] = {}
+    aliases_data["projects"][alias_name] = {}
 
     if save_aliases(aliases_data):
         print(f"Created alias '{alias_name}'")
@@ -8111,11 +8315,11 @@ def cmd_alias_delete(args):
 
     alias_name = args.name
 
-    if alias_name not in aliases_data.get("aliases", {}):
+    if alias_name not in aliases_data.get("projects", {}):
         sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
         sys.exit(1)
 
-    del aliases_data["aliases"][alias_name]
+    del aliases_data["projects"][alias_name]
 
     if save_aliases(aliases_data):
         print(f"Deleted alias '{alias_name}'")
@@ -8178,13 +8382,13 @@ def _add_workspaces_to_alias(
     aliases_data: dict, alias_name: str, source_key: str, workspaces: list
 ) -> int:
     """Add workspaces to an alias, avoiding duplicates. Returns count added."""
-    if source_key not in aliases_data["aliases"][alias_name]:
-        aliases_data["aliases"][alias_name][source_key] = []
+    if source_key not in aliases_data["projects"][alias_name]:
+        aliases_data["projects"][alias_name][source_key] = []
 
     added = 0
     for workspace in workspaces:
-        if workspace not in aliases_data["aliases"][alias_name][source_key]:
-            aliases_data["aliases"][alias_name][source_key].append(workspace)
+        if workspace not in aliases_data["projects"][alias_name][source_key]:
+            aliases_data["projects"][alias_name][source_key].append(workspace)
             added += 1
     return added
 
@@ -8271,8 +8475,8 @@ def cmd_alias_add(args):
         sys.exit(1)
 
     # Ensure alias exists
-    if alias_name not in aliases_data.get("aliases", {}):
-        aliases_data["aliases"][alias_name] = {}
+    if alias_name not in aliases_data.get("projects", {}):
+        aliases_data["projects"][alias_name] = {}
 
     # Dispatch to appropriate handler
     if getattr(args, "all_homes", False):
@@ -8335,7 +8539,7 @@ def cmd_alias_remove(args):
     alias_name = args.name
     workspace = args.workspace
 
-    if alias_name not in aliases_data.get("aliases", {}):
+    if alias_name not in aliases_data.get("projects", {}):
         sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
         sys.exit(1)
 
@@ -8349,7 +8553,7 @@ def cmd_alias_remove(args):
         windows_user="" if windows_flag else None,  # Empty string means auto-detect
     )
 
-    alias_config = aliases_data["aliases"][alias_name]
+    alias_config = aliases_data["projects"][alias_name]
 
     if source_key not in alias_config:
         sys.stderr.write(f"Error: No workspaces from '{source_key}' in alias '{alias_name}'\n")
@@ -8369,7 +8573,7 @@ def cmd_alias_remove(args):
         del alias_config[source_key]
 
     if not alias_config:
-        del aliases_data["aliases"][alias_name]
+        del aliases_data["projects"][alias_name]
 
     if save_aliases(aliases_data):
         print(f"Removed workspace from alias '{alias_name}' [{source_key}]")
@@ -8597,14 +8801,14 @@ def cmd_alias_lss(
     """List sessions across all workspaces in an alias."""
     aliases_data = load_aliases()
 
-    if alias_name not in aliases_data.get("aliases", {}):
+    if alias_name not in aliases_data.get("projects", {}):
         sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
         sys.exit(1)
 
     if args is None:
         args = SimpleNamespace(local=False, wsl=False, windows=False, remotes=[], remote=None)
 
-    alias_config = _filter_alias_config_by_flags(aliases_data["aliases"][alias_name], args)
+    alias_config = _filter_alias_config_by_flags(aliases_data["projects"][alias_name], args)
     all_sessions = []
 
     # Collect Claude sessions
@@ -8744,10 +8948,10 @@ def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
     """Export sessions from all workspaces in an alias."""
     aliases_data = load_aliases()
 
-    if alias_name not in aliases_data.get("aliases", {}):
+    if alias_name not in aliases_data.get("projects", {}):
         exit_with_error(f"Alias '{alias_name}' not found")
 
-    alias_config = _filter_alias_config_by_flags(aliases_data["aliases"][alias_name], args)
+    alias_config = _filter_alias_config_by_flags(aliases_data["projects"][alias_name], args)
     opts = _get_alias_export_options(args)
     agent_filter = opts.get("agent", "auto")
     output_path = Path(output_dir)
@@ -8858,34 +9062,41 @@ def _merge_alias_sources(existing_sources: dict, new_sources: dict):
             _merge_flat_list(existing_sources[source_key], workspaces)
 
 
-def _backup_aliases_file() -> Path | None:
-    """Create a backup of the aliases file. Returns backup path or None if no file to backup."""
-    aliases_file = get_aliases_file()
-    if not aliases_file.exists():
+def _backup_projects_file() -> Path | None:
+    """Create a backup of the projects file. Returns backup path or None if no file to backup."""
+    projects_file = get_projects_file()
+    if not projects_file.exists():
         return None
 
-    backup_path = aliases_file.with_suffix(
+    backup_path = projects_file.with_suffix(
         f".backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     )
     try:
         import shutil
 
-        shutil.copy2(aliases_file, backup_path)
+        shutil.copy2(projects_file, backup_path)
         return backup_path
     except OSError as e:
         sys.stderr.write(f"Warning: Could not create backup: {e}\n")
         return None
 
 
+# Keep old name for backward compatibility
+_backup_aliases_file = _backup_projects_file
+
+
 def cmd_alias_config_import(args):
-    """Import aliases from JSON file or stdin."""
+    """Import projects from JSON file or stdin."""
     import_file = getattr(args, "file", None)
     replace_mode = getattr(args, "replace", False)
 
     import_data = _load_import_data(import_file)
 
-    if "aliases" not in import_data:
-        sys.stderr.write("Error: Invalid aliases format (missing 'aliases' key)\n")
+    # Support both old "aliases" and new "projects" keys
+    if "aliases" in import_data and "projects" not in import_data:
+        import_data["projects"] = import_data.pop("aliases")
+    if "projects" not in import_data:
+        sys.stderr.write("Error: Invalid format (missing 'projects' or 'aliases' key)\n")
         sys.exit(1)
 
     if replace_mode:
@@ -8896,15 +9107,15 @@ def cmd_alias_config_import(args):
         new_data = import_data
     else:
         existing_data = load_aliases()
-        for alias_name, sources in import_data["aliases"].items():
-            if alias_name not in existing_data["aliases"]:
-                existing_data["aliases"][alias_name] = sources
+        for alias_name, sources in import_data["projects"].items():
+            if alias_name not in existing_data["projects"]:
+                existing_data["projects"][alias_name] = sources
             else:
-                _merge_alias_sources(existing_data["aliases"][alias_name], sources)
+                _merge_alias_sources(existing_data["projects"][alias_name], sources)
         new_data = existing_data
 
     if save_aliases(new_data):
-        alias_count = len(new_data.get("aliases", {}))
+        alias_count = len(new_data.get("projects", {}))
         mode_str = "Replaced" if replace_mode else "Merged"
         print(f"{mode_str} aliases ({alias_count} aliases)")
     else:
@@ -8915,7 +9126,7 @@ def cmd_alias_config_import(args):
 # Metrics Database (SQLite)
 # ============================================================================
 
-METRICS_DB_VERSION = 5
+METRICS_DB_VERSION = 6
 
 
 def get_metrics_db_path() -> Path:
@@ -8986,7 +9197,10 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
             claude_version TEXT,
             cwd TEXT,
             work_period_seconds REAL DEFAULT 0,
-            num_work_periods INTEGER DEFAULT 1
+            num_work_periods INTEGER DEFAULT 1,
+            git_remote_url TEXT,
+            project TEXT,
+            project_short TEXT
         );
 
         -- Messages table (aggregated stats per message)
@@ -9101,6 +9315,23 @@ def _run_metrics_db_migrations(conn: sqlite3.Connection, current_version: int, v
             sys.stderr.write(
                 f"Migration: {cursor.rowcount} Gemini sessions will be resynced for timestamps\n"
             )
+
+    # Migrate from version 5 to 6: add project columns for git-based project identification
+    if current_version < DB_VERSION_PROJECT_COLUMNS:
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN git_remote_url TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN project TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN project_short TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        # Create index for project queries
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project)")
 
     # Update version
     if version_row is None:
@@ -9401,8 +9632,9 @@ def _write_metrics_to_db(
             file_path, session_id, workspace, source, agent, file_mtime,
             is_agent, parent_session_id, start_time, end_time,
             message_count, git_branch, claude_version, cwd,
-            work_period_seconds, num_work_periods
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            work_period_seconds, num_work_periods,
+            git_remote_url, project, project_short
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
         (
             file_path,
@@ -9421,6 +9653,9 @@ def _write_metrics_to_db(
             session.get("cwd"),
             session.get("work_period_seconds", 0),
             session.get("num_work_periods", 1),
+            session.get("git_remote_url"),
+            session.get("project"),
+            session.get("project_short"),
         ),
     )
 
@@ -9539,6 +9774,18 @@ def sync_file_to_db(
     if session.get("message_count", 0) == 0 and len(metrics.get("messages", [])) == 0:
         return False
 
+    # Extract git remote info for project identification (local sources only)
+    if source == "local":
+        workspace_dir = jsonl_file.parent.name
+        workspace_path_str = normalize_workspace_name(workspace_dir, verify_local=True)
+        workspace_path = Path(workspace_path_str)
+        if workspace_path.is_absolute():
+            git_remote_url, project, project_short = get_git_remote_for_workspace(workspace_path)
+            if git_remote_url:
+                session["git_remote_url"] = git_remote_url
+                session["project"] = project
+                session["project_short"] = project_short
+
     # Write to database with transaction
     try:
         metrics_dict = cast(dict[str, Any], metrics)
@@ -9627,7 +9874,7 @@ def _sync_codex_to_db(
     if not sessions_dir.exists():
         return stats
 
-    label = source_label or "Codex sessions"
+    label = source_label or "local Codex sessions"
     print(f"Scanning {label}...")
 
     # Walk through YYYY/MM/DD structure
@@ -9668,7 +9915,7 @@ def _sync_gemini_to_db(
     if not sessions_dir.exists():
         return stats
 
-    label = source_label or "Gemini sessions"
+    label = source_label or "local Gemini sessions"
     print(f"Scanning {label}...")
 
     # Walk through <hash>/chats/ structure
@@ -9868,7 +10115,7 @@ def _sync_wsl_windows_to_db(
                         conn,
                         wsl_projects,
                         f"wsl:{distro['name']}",
-                        f"WSL ({distro['name']})",
+                        f"WSL ({distro['name']}) Claude sessions",
                         patterns,
                         force,
                         show_progress=show_progress,
@@ -9909,7 +10156,7 @@ def _sync_wsl_windows_to_db(
                         conn,
                         win_projects,
                         f"windows:{user['username']}",
-                        f"Windows ({user['username']})",
+                        f"Windows ({user['username']}) Claude sessions",
                         patterns,
                         force,
                         show_progress,
@@ -10033,16 +10280,22 @@ def cmd_stats_sync(args):
 
     # Sync local Claude sessions
     stats = _sync_source_to_db(
-        conn, get_claude_projects_dir(), "local", "local", patterns, force, show_progress
+        conn,
+        get_claude_projects_dir(),
+        "local",
+        "local Claude sessions",
+        patterns,
+        force,
+        show_progress,
     )
     _accumulate_stats(totals, stats)
 
     # Sync local Codex sessions (~/.codex/sessions/)
-    stats = _sync_codex_to_db(conn, patterns, force)
+    stats = _sync_codex_to_db(conn, patterns, force, source_key="local")
     _accumulate_stats(totals, stats)
 
     # Sync local Gemini sessions (~/.gemini/tmp/)
-    stats = _sync_gemini_to_db(conn, patterns, force)
+    stats = _sync_gemini_to_db(conn, patterns, force, source_key="local")
     _accumulate_stats(totals, stats)
 
     # Sync WSL/Windows if --ah flag
@@ -10139,7 +10392,7 @@ def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:
 
     if workspace_patterns:
         ws_conditions = []
-        aliases = load_aliases().get("aliases", {})
+        aliases = load_aliases().get("projects", {})
 
         for pattern in workspace_patterns:
             if pattern.startswith("@"):
@@ -10199,16 +10452,29 @@ def _display_selected_stats(conn, args, where_sql: str, params: list):
 
     agent = getattr(args, "agent", None) or "auto"
 
-    if getattr(args, "tools", False):
-        display_tool_stats(conn, where_sql, params)
+    # New unified --by flag takes precedence
+    by_dims = getattr(args, "by", None)
+    if by_dims:
+        dimensions = [d.strip() for d in by_dims.split(",")]
+        display_grouped_stats(conn, where_sql, params, dimensions)
+    # Legacy flags (for backward compatibility)
+    elif getattr(args, "tools", False):
+        display_grouped_stats(conn, where_sql, params, ["tool"])
     elif getattr(args, "models", False):
-        display_model_stats(conn, where_sql, params)
+        display_grouped_stats(conn, where_sql, params, ["model"])
     elif getattr(args, "time", False):
         display_time_stats(conn, where_sql, params)
     elif getattr(args, "by_workspace", False):
-        display_workspace_stats(conn, where_sql, params)
+        # Map legacy --by-workspace [--group X] to new --by format
+        group_by = getattr(args, "group", None)
+        if group_by == "home":
+            display_grouped_stats(conn, where_sql, params, ["workspace", "home"])
+        elif group_by == "agent":
+            display_grouped_stats(conn, where_sql, params, ["workspace", "agent"])
+        else:
+            display_grouped_stats(conn, where_sql, params, ["workspace", "home", "agent"])
     elif getattr(args, "by_day", False):
-        display_daily_stats(conn, where_sql, params)
+        display_grouped_stats(conn, where_sql, params, ["day"])
     else:
         display_summary_stats(conn, where_sql, params, top_limit=top_limit, agent=agent)
 
@@ -10286,7 +10552,7 @@ def _build_workspace_to_alias_map(aliases: Optional[dict] = None) -> dict:
     """Build mapping from (workspace, source) to alias name."""
     if aliases is None:
         aliases_data = load_aliases()
-        aliases = aliases_data.get("aliases", {})
+        aliases = aliases_data.get("projects", {})
     else:
         aliases = aliases or {}
 
@@ -10354,16 +10620,16 @@ def _aggregate_workspace_stats(all_workspace_stats, workspace_to_alias: dict) ->
 
 
 def _print_session_section(session_stats):
-    """Print session statistics section."""
-    print("\nSessions")
-    print(f"   Total: {(session_stats['total_sessions'] or 0):,}")
-    print(f"   Main sessions: {(session_stats['main_sessions'] or 0):,}")
-    print(f"   Agent tasks: {(session_stats['agent_sessions'] or 0):,}")
-    print(f"   Total messages: {(session_stats['total_messages'] or 0):,}")
+    """Print session statistics section (flat format)."""
+    print("\nSESSION_METRIC\tVALUE")
+    print(f"total_sessions\t{session_stats['total_sessions'] or 0}")
+    print(f"main_sessions\t{session_stats['main_sessions'] or 0}")
+    print(f"agent_sessions\t{session_stats['agent_sessions'] or 0}")
+    print(f"total_messages\t{session_stats['total_messages'] or 0}")
 
 
 def _print_token_section(token_stats):
-    """Print token statistics section."""
+    """Print token statistics section (flat format)."""
     total_input = token_stats["total_input"] or 0
     total_output = token_stats["total_output"] or 0
     cache_creation = token_stats["total_cache_creation"] or 0
@@ -10371,61 +10637,52 @@ def _print_token_section(token_stats):
     cache_total = cache_creation + cache_read
     cache_hit_ratio = (cache_read / cache_total * 100) if cache_total > 0 else 0
 
-    print("\nTokens")
-    print(f"   Input: {total_input:,}")
-    print(f"   Output: {total_output:,}")
-    print(f"   Cache created: {cache_creation:,}")
-    print(f"   Cache read: {cache_read:,}")
-    print(f"   Cache hit ratio: {cache_hit_ratio:.1f}%")
+    print("\nTOKEN_METRIC\tVALUE")
+    print(f"input_tokens\t{total_input}")
+    print(f"output_tokens\t{total_output}")
+    print(f"cache_created\t{cache_creation}")
+    print(f"cache_read\t{cache_read}")
+    print(f"cache_hit_ratio\t{cache_hit_ratio:.1f}")
 
 
 def _print_tool_section(tool_stats):
-    """Print tool statistics section."""
+    """Print tool statistics section (flat format)."""
     total_tool_uses = tool_stats["total_tool_uses"] or 0
     tool_errors = tool_stats["tool_errors"] or 0
+    error_rate = (tool_errors / total_tool_uses * 100) if total_tool_uses > 0 else 0
 
-    print("\nTools")
-    print(f"   Total uses: {total_tool_uses:,}")
-    print(f"   Errors: {tool_errors:,}")
-    if total_tool_uses > 0:
-        print(f"   Error rate: {tool_errors / total_tool_uses * 100:.1f}%")
+    print("\nTOOL_METRIC\tVALUE")
+    print(f"total_uses\t{total_tool_uses}")
+    print(f"errors\t{tool_errors}")
+    print(f"error_rate\t{error_rate:.1f}")
 
 
 def _print_sources_section(sources):
-    """Print homes/sources section."""
+    """Print homes/sources section (flat format)."""
     if not sources:
         return
-    print("\nHomes")
+    print("\nHOME\tSESSIONS")
     for src in sources:
-        print(f"   {src['source']}: {src['count']:,} sessions")
+        print(f"{src['source']}\t{src['count']}")
 
 
 def _print_models_section(models):
-    """Print models section."""
+    """Print models section (flat format)."""
     if not models:
         return
-    print("\nModels (top 3)")
+    print("\nMODEL\tMESSAGES")
     for model in models:
         model_name = model["model"] or "unknown"
-        short_name = (
-            model_name.replace("claude-", "").replace("-20250929", "").replace("-20251001", "")
-        )
-        print(f"   {short_name}: {model['count']:,} messages")
+        print(f"{model_name}\t{model['count']}")
 
 
 def _print_workspaces_section(top_workspaces):
-    """Print top workspaces section."""
+    """Print top workspaces section (flat format)."""
     if not top_workspaces:
         return
-    print("\nTop Workspaces")
+    print("\nWORKSPACE\tSESSIONS\tMESSAGES")
     for ws in top_workspaces:
-        if ws.get("is_alias"):
-            ws_count = ws.get("workspace_count", 0)
-            print(
-                f"   {ws['name']} ({ws_count} workspaces): {ws['sessions']} sessions, {ws['messages']} msgs"
-            )
-        else:
-            print(f"   {ws['name']}: {ws['sessions']} sessions, {ws['messages']} msgs")
+        print(f"{ws['name']}\t{ws['sessions']}\t{ws['messages']}")
 
 
 def _parse_top_limit(top_limit) -> int | None:
@@ -10439,59 +10696,31 @@ def _parse_top_limit(top_limit) -> int | None:
         return None
 
 
-def _print_workspace_item(ws: dict):
-    """Print a single workspace item with appropriate formatting."""
-    if ws.get("is_alias"):
-        ws_count = ws.get("workspace_count", 0)
-        print(
-            f"      Workspace: {ws['name']} ({ws_count} workspaces)"
-            f" — {ws['sessions']} sessions, {ws['messages']} msgs"
-        )
-    else:
-        print(f"      Workspace: {ws['name']} — {ws['sessions']} sessions, {ws['messages']} msgs")
-
-
 def _print_homes_and_workspaces(sources, top_workspaces, top_limit=None):
-    """Print homes and workspaces together at the top of stats output."""
+    """Print homes and workspaces together (flat format)."""
     if not sources and not top_workspaces:
         return
-    print("\nHomes & Workspaces")
-
-    source_map = {s.get("source"): s.get("count", 0) for s in (sources or [])}
-
-    grouped = {}
-    for ws in top_workspaces or []:
-        home_label = ws.get("source") or "home"
-        grouped.setdefault(home_label, []).append(ws)
 
     top_limit_int = _parse_top_limit(top_limit)
 
-    for ws_items in grouped.values():
-        ws_items.sort(key=lambda x: x.get("sessions", 0), reverse=True)
+    # Collect all rows
+    rows = []
+    for ws in top_workspaces or []:
+        home = ws.get("source") or "local"
+        rows.append((home, ws["name"], ws["sessions"], ws["messages"]))
 
-    ordered_homes = list(source_map.keys()) + [h for h in grouped if h not in source_map]
+    # Apply top limit if set
+    if top_limit_int:
+        rows = rows[:top_limit_int]
 
-    for home in ordered_homes:
-        total = source_map.get(home)
-        print(f"   Home: {home} ({total:,} sessions)" if total is not None else f"   Home: {home}")
-        ws_items = grouped.get(home, [])[:top_limit_int] if top_limit_int else grouped.get(home, [])
-        for ws in ws_items:
-            _print_workspace_item(ws)
+    # Print flat output
+    print("HOME\tWORKSPACE\tSESSIONS\tMESSAGES")
+    for home, workspace, sessions, messages in rows:
+        print(f"{home}\t{workspace}\t{sessions}\t{messages}")
 
 
 def _print_summary_stats(stats: SummaryStatsData):
-    """Print the formatted summary statistics."""
-    agent_names = {
-        "claude": "CLAUDE CODE",
-        "codex": "CODEX CLI",
-        "gemini": "GEMINI CLI",
-        "auto": "AI ASSISTANT",
-    }
-    agent_name = agent_names.get(stats.agent, "AI ASSISTANT")
-    print("=" * DISPLAY_SEPARATOR_WIDTH)
-    print(f"{agent_name} METRICS SUMMARY")
-    print("=" * DISPLAY_SEPARATOR_WIDTH)
-
+    """Print the formatted summary statistics (flat format)."""
     _print_homes_and_workspaces(stats.sources, stats.top_workspaces, top_limit=stats.top_limit)
     _print_session_section(stats.session_stats)
     _print_token_section(stats.token_stats)
@@ -10499,7 +10728,6 @@ def _print_summary_stats(stats: SummaryStatsData):
     _print_models_section(stats.models)
     if stats.time_stats is not None:
         _print_time_summary(stats.time_stats, include_breakdown=False)
-    print()
 
 
 def display_summary_stats(
@@ -10552,7 +10780,7 @@ def display_summary_stats(
 
 
 def display_tool_stats(conn: sqlite3.Connection, where_sql: str, params: list):
-    """Display tool usage statistics."""
+    """Display tool usage statistics (flat format)."""
     cursor = conn.execute(
         f"""
         SELECT
@@ -10569,24 +10797,16 @@ def display_tool_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     )
     tools = cursor.fetchall()
 
-    print("=" * DISPLAY_SEPARATOR_WIDTH)
-    print("TOOL USAGE STATISTICS")
-    print("=" * DISPLAY_SEPARATOR_WIDTH)
-
-    print(f"\n{'Tool':<25} {'Uses':>10} {'Errors':>10} {'Error %':>10}")
-    print("-" * 55)
-
+    print("TOOL\tUSES\tERRORS\tERROR_PCT")
     for row in tools:
         uses = row["uses"]
         errors = row["errors"]
         error_pct = (errors / uses * 100) if uses > 0 else 0
-        print(f"{row['tool_name']:<25} {uses:>10,} {errors:>10,} {error_pct:>9.1f}%")
-
-    print()
+        print(f"{row['tool_name']}\t{uses}\t{errors}\t{error_pct:.1f}")
 
 
 def display_model_stats(conn: sqlite3.Connection, where_sql: str, params: list):
-    """Display model usage statistics."""
+    """Display model usage statistics (flat format)."""
     cursor = conn.execute(
         f"""
         SELECT
@@ -10605,24 +10825,12 @@ def display_model_stats(conn: sqlite3.Connection, where_sql: str, params: list):
     )
     models = cursor.fetchall()
 
-    print("=" * DISPLAY_SEPARATOR_WIDTH)
-    print("MODEL USAGE STATISTICS")
-    print("=" * DISPLAY_SEPARATOR_WIDTH)
-
-    print(f"\n{'Model':<35} {'Messages':>10} {'Sessions':>10} {'Avg Out':>10}")
-    print("-" * 65)
-
+    print("MODEL\tMESSAGES\tSESSIONS\tAVG_OUTPUT")
     for row in models:
         model = row["model"] or "unknown"
-        short_model = (
-            model.replace("claude-", "")
-            .replace("-20250929", "")
-            .replace("-20251001", "")
-            .replace("-20251101", "")
-        )
         messages = row["messages"]
         avg_output = (row["output_tokens"] / messages) if messages > 0 else 0
-        print(f"{short_model:<35} {messages:>10,} {row['sessions']:>10,} {avg_output:>10,.0f}")
+        print(f"{model}\t{messages}\t{row['sessions']}\t{avg_output:.0f}")
 
 
 def _aggregate_workspace_stats_detailed(all_workspaces: list, workspace_to_alias: dict) -> tuple:
@@ -10649,53 +10857,139 @@ def _aggregate_workspace_stats_detailed(all_workspaces: list, workspace_to_alias
     return alias_stats, unaliased
 
 
-def display_workspace_stats(conn: sqlite3.Connection, where_sql: str, params: list):
-    """Display per-workspace statistics with alias aggregation."""
-    cursor = conn.execute(
-        f"""
-        SELECT s.workspace, s.source, COUNT(*) as sessions, SUM(s.message_count) as messages,
-               SUM(m_stats.input_tokens) as input_tokens, SUM(m_stats.output_tokens) as output_tokens
-        FROM sessions s
-        LEFT JOIN (SELECT session_id, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens
-                   FROM messages GROUP BY session_id) m_stats ON s.session_id = m_stats.session_id
-        WHERE {where_sql}
-        GROUP BY s.workspace, s.source ORDER BY sessions DESC
-    """,
-        params,
-    )
+def display_workspace_stats(
+    conn: sqlite3.Connection, where_sql: str, params: list, group_by: Optional[str] = None
+):
+    """Display per-workspace statistics with alias aggregation.
+
+    Args:
+        group_by: None for full breakdown (home + agent), "home" to aggregate by home,
+                  "agent" to aggregate by agent
+    """
+    # Build SQL query based on grouping
+    if group_by == "home":
+        # Aggregate by workspace + source (home), sum across agents
+        query = f"""
+            SELECT s.workspace, s.source, COUNT(*) as sessions, SUM(s.message_count) as messages,
+                   SUM(m_stats.input_tokens) as input_tokens, SUM(m_stats.output_tokens) as output_tokens
+            FROM sessions s
+            LEFT JOIN (SELECT session_id, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens
+                       FROM messages GROUP BY session_id) m_stats ON s.session_id = m_stats.session_id
+            WHERE {where_sql}
+            GROUP BY s.workspace, s.source ORDER BY sessions DESC
+        """
+    elif group_by == "agent":
+        # Aggregate by workspace + agent, sum across homes
+        query = f"""
+            SELECT s.workspace, s.agent, COUNT(*) as sessions, SUM(s.message_count) as messages,
+                   SUM(m_stats.input_tokens) as input_tokens, SUM(m_stats.output_tokens) as output_tokens
+            FROM sessions s
+            LEFT JOIN (SELECT session_id, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens
+                       FROM messages GROUP BY session_id) m_stats ON s.session_id = m_stats.session_id
+            WHERE {where_sql}
+            GROUP BY s.workspace, s.agent ORDER BY sessions DESC
+        """
+    else:
+        # Default: full breakdown by workspace + source + agent
+        query = f"""
+            SELECT s.workspace, s.source, s.agent, COUNT(*) as sessions, SUM(s.message_count) as messages,
+                   SUM(m_stats.input_tokens) as input_tokens, SUM(m_stats.output_tokens) as output_tokens
+            FROM sessions s
+            LEFT JOIN (SELECT session_id, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens
+                       FROM messages GROUP BY session_id) m_stats ON s.session_id = m_stats.session_id
+            WHERE {where_sql}
+            GROUP BY s.workspace, s.source, s.agent ORDER BY sessions DESC
+        """
+
+    cursor = conn.execute(query, params)
     all_workspaces = cursor.fetchall()
 
     aliases_data = load_aliases()
-    workspace_to_alias = _build_workspace_to_alias_map(aliases_data.get("aliases", {}))
-    alias_stats, unaliased = _aggregate_workspace_stats_detailed(all_workspaces, workspace_to_alias)
+    workspace_to_alias = _build_workspace_to_alias_map(aliases_data.get("projects", {}))
 
     print("=" * DISPLAY_SEPARATOR_WIDTH)
     print("WORKSPACE STATISTICS")
     print("=" * DISPLAY_SEPARATOR_WIDTH)
 
-    if alias_stats:
-        print("\nAliases")
-        print(f"{'Alias':<30} {'Sources':<15} {'Sessions':>8} {'Messages':>10}")
-        print("-" * 65)
-        for alias_name, stats in sorted(
-            alias_stats.items(), key=lambda x: x[1]["sessions"], reverse=True
-        ):
-            sources_str = ",".join(sorted(stats["sources"]))[:13]
-            print(
-                f"@{alias_name:<29} {sources_str:<15} {stats['sessions']:>8,} {stats['messages']:>10,}"
+    # Display based on grouping mode
+    if group_by == "home":
+        alias_stats, unaliased = _aggregate_workspace_stats_detailed(
+            all_workspaces, workspace_to_alias
+        )
+        if alias_stats:
+            print("\nAliases")
+            print(f"{'Alias':<30} {'Sources':<15} {'Sessions':>8} {'Messages':>10}")
+            print("-" * 65)
+            for alias_name, stats in sorted(
+                alias_stats.items(), key=lambda x: x[1]["sessions"], reverse=True
+            ):
+                sources_str = ",".join(sorted(stats["sources"]))[:13]
+                print(
+                    f"@{alias_name:<29} {sources_str:<15} {stats['sessions']:>8,} {stats['messages']:>10,}"
+                )
+
+        print(f"\nIndividual Workspaces (Top {MAX_TOP_WORKSPACES})")
+        print(f"{'Workspace':<30} {'Home':<10} {'Sessions':>8} {'Messages':>10}")
+        print("-" * DISPLAY_SEPARATOR_WIDTH)
+
+        for row in unaliased[:MAX_TOP_WORKSPACES]:
+            ws_name = (
+                row["name"][:MAX_WORKSPACE_NAME_DISPLAY]
+                if len(row["name"]) > MAX_WORKSPACE_NAME_DISPLAY
+                else row["name"]
+            )
+            print(f"{ws_name:<30} {row['source']:<10} {row['sessions']:>8,} {row['messages']:>10,}")
+
+    elif group_by == "agent":
+        # For agent grouping, aggregate across homes
+        unaliased = []
+        for row in all_workspaces:
+            ws_name, agent = row["workspace"], row["agent"]
+            sessions, messages = row["sessions"], row["messages"] or 0
+            unaliased.append(
+                {"name": ws_name, "agent": agent, "sessions": sessions, "messages": messages}
             )
 
-    print(f"\nIndividual Workspaces (Top {MAX_TOP_WORKSPACES})")
-    print(f"{'Workspace':<30} {'Source':<10} {'Sessions':>8} {'Messages':>10}")
-    print("-" * DISPLAY_SEPARATOR_WIDTH)
+        print(f"\nIndividual Workspaces (Top {MAX_TOP_WORKSPACES})")
+        print(f"{'Workspace':<30} {'Agent':<10} {'Sessions':>8} {'Messages':>10}")
+        print("-" * DISPLAY_SEPARATOR_WIDTH)
 
-    for row in unaliased[:MAX_TOP_WORKSPACES]:
-        ws_name = (
-            row["name"][:MAX_WORKSPACE_NAME_DISPLAY]
-            if len(row["name"]) > MAX_WORKSPACE_NAME_DISPLAY
-            else row["name"]
-        )
-        print(f"{ws_name:<30} {row['source']:<10} {row['sessions']:>8,} {row['messages']:>10,}")
+        for row in unaliased[:MAX_TOP_WORKSPACES]:
+            ws_name = (
+                row["name"][:MAX_WORKSPACE_NAME_DISPLAY]
+                if len(row["name"]) > MAX_WORKSPACE_NAME_DISPLAY
+                else row["name"]
+            )
+            print(f"{ws_name:<30} {row['agent']:<10} {row['sessions']:>8,} {row['messages']:>10,}")
+
+    else:
+        # Default: full breakdown with home + agent columns
+        unaliased = []
+        for row in all_workspaces:
+            ws_name = row["workspace"]
+            source = row["source"]
+            agent = row["agent"]
+            sessions, messages = row["sessions"], row["messages"] or 0
+            unaliased.append(
+                {
+                    "name": ws_name,
+                    "source": source,
+                    "agent": agent,
+                    "sessions": sessions,
+                    "messages": messages,
+                }
+            )
+
+        print(f"\nIndividual Workspaces (Top {MAX_TOP_WORKSPACES})")
+        print(f"{'Workspace':<26} {'Home':<10} {'Agent':<8} {'Sessions':>8} {'Messages':>10}")
+        print("-" * DISPLAY_SEPARATOR_WIDTH)
+
+        for row in unaliased[:MAX_TOP_WORKSPACES]:
+            ws_name = row["name"][:24] if len(row["name"]) > 24 else row["name"]
+            print(
+                f"{ws_name:<26} {row['source']:<10} {row['agent']:<8} "
+                f"{row['sessions']:>8,} {row['messages']:>10,}"
+            )
 
     print()
 
@@ -10878,28 +11172,13 @@ def _calculate_time_totals(daily_stats: dict) -> tuple:
 def _print_daily_breakdown(
     daily_stats: dict, total_work: int, total_periods: int, total_messages: int
 ):
-    """Print daily breakdown table."""
-    print("\nDaily Breakdown")
-    print(f"\n{'Date':<12} {'Work Time':>12} {'Periods':>10} {'Messages':>10}  Bar (time)")
-    print("-" * 70)
-
-    max_work = (
-        max((stats["work_seconds"] or 0) for stats in daily_stats.values()) if daily_stats else 0
-    )
+    """Print daily breakdown table (flat format)."""
+    print("\nDATE\tWORK_SECONDS\tPERIODS\tMESSAGES")
 
     for date_str in sorted(daily_stats.keys(), reverse=True):
         stats = daily_stats[date_str]
         work_seconds = stats["work_seconds"]
-        work_time = format_duration_hm(work_seconds)
-        bar = _build_bar(int(work_seconds), int(max_work))
-        print(
-            f"{date_str:<12} {work_time:>12} {stats['work_periods']:>10} {stats['messages']:>10}  {bar}"
-        )
-
-    print("-" * 70)
-    print(
-        f"{'TOTAL':<12} {format_duration_hm(total_work):>12} {total_periods:>10} {total_messages:>10}"
-    )
+        print(f"{date_str}\t{work_seconds}\t{stats['work_periods']}\t{stats['messages']}")
 
 
 def _compute_time_stats(conn: sqlite3.Connection, where_sql: str, params: list) -> dict:
@@ -10925,7 +11204,7 @@ def _compute_time_stats(conn: sqlite3.Connection, where_sql: str, params: list) 
 
 
 def _print_time_summary(time_stats: dict, include_breakdown: bool = False):
-    """Print time tracking summary (optionally with daily breakdown)."""
+    """Print time tracking summary (flat format)."""
     daily_stats = time_stats["daily_stats"]
     total_work = time_stats["total_work"]
     total_messages = time_stats["total_messages"]
@@ -10934,26 +11213,125 @@ def _print_time_summary(time_stats: dict, include_breakdown: bool = False):
     first_date = time_stats["first_date"]
     last_date = time_stats["last_date"]
 
-    print("\nTime")
-    print(f"   Total work time: {format_duration_hm(total_work)}")
-    print(f"   Work periods: {total_periods}")
-    print(f"   Session files: {num_files}")
-    if first_date and last_date:
-        print(f"   Date range: {first_date} to {last_date}")
+    print("\nTIME_METRIC\tVALUE")
+    print(f"total_work_seconds\t{total_work}")
+    print(f"work_periods\t{total_periods}")
+    print(f"session_files\t{num_files}")
+    if first_date:
+        print(f"first_date\t{first_date}")
+    if last_date:
+        print(f"last_date\t{last_date}")
 
     if include_breakdown and daily_stats:
         _print_daily_breakdown(daily_stats, total_work, total_periods, total_messages)
 
 
 def display_time_stats(conn: sqlite3.Connection, where_sql: str, params: list):
-    """Display time tracking statistics with daily breakdown."""
+    """Display time tracking statistics with daily breakdown (flat format)."""
     time_stats = _compute_time_stats(conn, where_sql, params)
-
-    print("=" * DISPLAY_SEPARATOR_WIDTH)
-    print("TIME TRACKING")
-    print("=" * DISPLAY_SEPARATOR_WIDTH)
     _print_time_summary(time_stats, include_breakdown=True)
-    print()
+
+
+def display_grouped_stats(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    params: list,
+    dimensions: list[str],
+    limit: int = 50,
+):
+    """Display stats grouped by specified dimensions.
+
+    Args:
+        dimensions: List of dimension names (home, agent, workspace, day, model, tool)
+        limit: Maximum rows to display
+    """
+    # Validate dimensions
+    invalid = [d for d in dimensions if d not in STATS_DIMENSIONS]
+    if invalid:
+        valid = ", ".join(STATS_DIMENSIONS.keys())
+        print(f"Error: Invalid dimensions: {', '.join(invalid)}", file=sys.stderr)
+        print(f"Valid dimensions: {valid}", file=sys.stderr)
+        sys.exit(1)
+
+    # Determine which tables we need to join
+    requires_messages = any(STATS_DIMENSIONS[d].get("requires_messages") for d in dimensions)
+    requires_tools = any(STATS_DIMENSIONS[d].get("requires_tools") for d in dimensions)
+
+    # Build SELECT clause for dimensions
+    dim_selects = [str(STATS_DIMENSIONS[d]["sql"]) + f" as {d}" for d in dimensions]
+
+    # Build metrics based on what tables are available
+    if requires_tools:
+        # Tool-specific metrics
+        metrics = [
+            "COUNT(*) as uses",
+            "SUM(t.is_error) as errors",
+        ]
+        metric_labels = ["Uses", "Errors"]
+    elif requires_messages:
+        # When joining with messages, count message rows directly
+        metrics = [
+            "COUNT(DISTINCT s.file_path) as sessions",
+            "COUNT(*) as messages",
+        ]
+        metric_labels = ["Sessions", "Messages"]
+    else:
+        # Standard metrics from sessions table
+        metrics = [
+            "COUNT(DISTINCT s.file_path) as sessions",
+            "SUM(s.message_count) as messages",
+        ]
+        metric_labels = ["Sessions", "Messages"]
+
+    # Build FROM and JOIN clauses
+    from_clause = "sessions s"
+    if requires_messages or "model" in dimensions:
+        from_clause += " LEFT JOIN messages m ON s.file_path = m.file_path"
+    if requires_tools:
+        from_clause = "tool_uses t LEFT JOIN sessions s ON t.file_path = s.file_path"
+
+    # Build GROUP BY clause
+    group_by = ", ".join(str(STATS_DIMENSIONS[d]["sql"]) for d in dimensions)
+
+    # Build ORDER BY clause (by first metric descending)
+    order_by = "2 DESC" if len(dimensions) == 1 else f"{len(dimensions) + 1} DESC"
+
+    # Construct full query
+    select_clause = ", ".join(dim_selects + metrics)
+    query = f"""
+        SELECT {select_clause}
+        FROM {from_clause}
+        WHERE {where_sql}
+        GROUP BY {group_by}
+        ORDER BY {order_by}
+        LIMIT {limit}
+    """
+
+    cursor = conn.execute(query, params)
+    rows = cursor.fetchall()
+
+    if not rows:
+        return
+
+    # Build header line (tab-separated)
+    header_parts = [str(STATS_DIMENSIONS[d]["label"]).upper() for d in dimensions]
+    header_parts.extend([label.upper() for label in metric_labels])
+    print("\t".join(header_parts))
+
+    # Print rows (tab-separated)
+    for row in rows:
+        row_parts = []
+        for d in dimensions:
+            value = row[d] or "(none)"
+            # Apply transform if specified
+            transform = STATS_DIMENSIONS[d].get("transform")
+            if transform == "short_name" and value and value != "(none)":
+                value = get_folder_short_name(value)
+            row_parts.append(str(value))
+        for i in range(len(metric_labels)):
+            metric_value = row[i + len(dimensions)] or 0
+            row_parts.append(str(metric_value))
+        print("\t".join(row_parts))
 
 
 # ============================================================================
@@ -12614,16 +12992,14 @@ def _print_all_homes_results(all_results, workspaces_only, use_uris: bool = True
         return
 
     if workspaces_only:
+        # Print flat tab-separated format with HOME column for consistency
+        print("HOME\tWORKSPACE")
         for source_label, sessions in all_results:
-            print(f"# {source_label}")
+            # Derive short home label from source_label
+            home_label = _source_label_to_home(source_label)
             workspaces = sorted({s["workspace_readable"] for s in sessions})
             for ws in workspaces:
-                if use_uris:
-                    uri = workspace_uri_from_source(source_label, ws)
-                    print(f"  {uri}")
-                else:
-                    print(f"  {ws}")
-            print()
+                print(f"{home_label}\t{ws}")
     else:
         print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
         for source_label, sessions in all_results:
@@ -12631,13 +13007,49 @@ def _print_all_homes_results(all_results, workspaces_only, use_uris: bool = True
                 print(format_session_line(session, source_label))
 
 
+def _source_label_to_home(source_label: str) -> str:
+    """Convert source label to short home identifier.
+
+    Examples:
+        "Local (WSL)" -> "local"
+        "Windows (kvsan)" -> "windows:kvsan"
+        "Remote (vm01)" -> "remote:vm01"
+        "Web (claude.ai)" -> "web"
+    """
+    label = source_label.lower()
+    if label.startswith("local"):
+        return "local"
+    if label.startswith("windows"):
+        # Extract username from "Windows (username)"
+        if "(" in source_label and ")" in source_label:
+            user = source_label.split("(")[1].split(")")[0]
+            return f"windows:{user}"
+        return "windows"
+    if label.startswith("remote"):
+        # Extract hostname from "Remote (hostname)"
+        if "(" in source_label and ")" in source_label:
+            host = source_label.split("(")[1].split(")")[0]
+            return f"remote:{host}"
+        return "remote"
+    if label.startswith("web"):
+        return "web"
+    # WSL distro names like "WSL (Ubuntu)"
+    if label.startswith("wsl"):
+        if "(" in source_label and ")" in source_label:
+            distro = source_label.split("(")[1].split(")")[0]
+            return f"wsl:{distro}"
+        return "wsl"
+    return source_label
+
+
 def cmd_list_all_homes(args):
-    """List workspaces or sessions from all homes: local, WSL/Windows, and remotes."""
+    """List workspaces or sessions from all homes: local + configured sources."""
     in_wsl = is_running_in_wsl()
     workspaces_only = getattr(args, "workspaces_only", False)
     agent = getattr(args, "agent", None) or "auto"
     no_wsl = getattr(args, "no_wsl", False)
     no_windows = getattr(args, "no_windows", False)
+    no_remote = getattr(args, "no_remote", False)
     wsl_counts = getattr(args, "counts", False) or getattr(args, "wsl_counts", False)
 
     patterns = getattr(args, "patterns", None)
@@ -12646,26 +13058,36 @@ def cmd_list_all_homes(args):
 
     since_date = getattr(args, "since_date", None)
     until_date = getattr(args, "until_date", None)
-    remotes = getattr(args, "remotes", []) or []
 
+    # Get configured sources
     saved_sources = get_saved_sources()
-    for src in saved_sources:
-        if src not in remotes:
-            remotes.append(src)
+
+    # Categorize sources
+    windows_sources = [s for s in saved_sources if s.startswith("windows:")]
+    wsl_sources = [s for s in saved_sources if s.startswith("wsl:")]
+    ssh_remotes = [s for s in saved_sources if "@" in s]
+
+    # Add any explicitly passed remotes
+    explicit_remotes = getattr(args, "remotes", []) or []
+    for r in explicit_remotes:
+        if r not in ssh_remotes:
+            ssh_remotes.append(r)
 
     all_results = []
 
-    # Collect from all sources
+    # 1. Always collect local sessions
     all_results.extend(_collect_local_sessions(patterns, since_date, until_date, in_wsl, agent))
 
-    if in_wsl:
-        if not no_windows:
-            all_results.extend(
-                _collect_windows_sessions_from_wsl(
-                    patterns, since_date, until_date, agent, workspaces_only=workspaces_only
-                )
+    # 2. Collect from configured Windows sources (only if in WSL)
+    if in_wsl and not no_windows and windows_sources:
+        all_results.extend(
+            _collect_windows_sessions_from_wsl(
+                patterns, since_date, until_date, agent, workspaces_only=workspaces_only
             )
-    elif not no_wsl:
+        )
+
+    # 3. Collect from configured WSL sources (only if on Windows)
+    if not in_wsl and not no_wsl and wsl_sources:
         all_results.extend(
             _collect_wsl_sessions_from_windows(
                 patterns,
@@ -12677,119 +13099,126 @@ def cmd_list_all_homes(args):
             )
         )
 
-    all_results.extend(
-        _collect_all_remote_sessions(remotes, patterns, since_date, until_date, agent)
-    )
+    # 4. Collect from SSH remotes
+    if not no_remote:
+        all_results.extend(
+            _collect_all_remote_sessions(ssh_remotes, patterns, since_date, until_date, agent)
+        )
 
     _print_all_homes_results(all_results, workspaces_only)
 
 
-def _lsh_show_local():
-    """Show local home folder."""
+def _lsh_get_local() -> Optional[dict]:
+    """Get local home info."""
     try:
         projects_dir = get_claude_projects_dir()
         if projects_dir.exists():
             workspace_count = len(
                 [d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
             )
-            print("Local:")
-            print(f"  {projects_dir.parent}\t{workspace_count} workspaces")
-            print()
-    except (OSError, PermissionError) as e:
-        sys.stderr.write(f"Error accessing local: {e}\n")
+            return {
+                "home": "local",
+                "path": str(projects_dir.parent),
+                "workspaces": workspace_count,
+            }
+    except (OSError, PermissionError):
+        pass
+    return None
 
 
-def _lsh_show_wsl():
-    """Show WSL distributions (when on Windows)."""
-    print("WSL Distributions:")
+def _lsh_get_wsl() -> list:
+    """Get WSL distributions info (when on Windows)."""
+    results = []
     try:
         wsl_distros = _filter_wsl_distros_for_agent(get_wsl_distributions(), "auto")
+        for distro in wsl_distros:
+            agents = []
+            if distro.get("has_claude"):
+                agents.append(AGENT_CLAUDE)
+            if distro.get("has_codex"):
+                agents.append(AGENT_CODEX)
+            if distro.get("has_gemini"):
+                agents.append(AGENT_GEMINI)
 
-        if wsl_distros:
-            for distro in wsl_distros:
-                agents = []
-                if distro.get("has_claude"):
-                    agents.append(AGENT_CLAUDE)
-                if distro.get("has_codex"):
-                    agents.append(AGENT_CODEX)
-                if distro.get("has_gemini"):
-                    agents.append(AGENT_GEMINI)
-                agents_label = ",".join(agents) if agents else "none"
-
-                workspace_count = "n/a"
-                projects_dir = None
-                if distro.get("has_claude"):
-                    projects_dir = get_wsl_projects_dir(distro["name"])
-                    if projects_dir:
-                        workspace_count = len(
-                            [
-                                d
-                                for d in projects_dir.iterdir()
-                                if d.is_dir() and not d.name.startswith(".")
-                            ]
-                        )
-                path_hint = (
-                    str(projects_dir)
-                    if projects_dir
-                    else (distro.get("codex_path") or distro.get("gemini_path") or "")
-                )
-                print(
-                    f"  {distro['name']}\t{distro['username']}\t{agents_label}\t"
-                    f"{workspace_count} workspaces\t{path_hint}"
-                )
-        else:
-            print("  No WSL distributions with agent data found")
-        print()
-    except (OSError, subprocess.SubprocessError) as e:
-        sys.stderr.write(f"Error accessing WSL: {e}\n")
+            workspace_count = 0
+            projects_dir = None
+            if distro.get("has_claude"):
+                projects_dir = get_wsl_projects_dir(distro["name"])
+                if projects_dir:
+                    workspace_count = len(
+                        [
+                            d
+                            for d in projects_dir.iterdir()
+                            if d.is_dir() and not d.name.startswith(".")
+                        ]
+                    )
+            path_hint = (
+                str(projects_dir)
+                if projects_dir
+                else (distro.get("codex_path") or distro.get("gemini_path") or "")
+            )
+            results.append(
+                {
+                    "home": f"wsl:{distro['name']}",
+                    "path": path_hint,
+                    "workspaces": workspace_count,
+                    "agents": ",".join(agents) if agents else "none",
+                    "username": distro["username"],
+                }
+            )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return results
 
 
-def _lsh_show_windows():
-    """Show Windows users (when on WSL)."""
-    print("Windows Users:")
+def _lsh_get_windows() -> list:
+    """Get Windows users info (when on WSL)."""
+    results = []
     try:
         windows_users = get_windows_users_with_claude()
+        for user in windows_users:
+            results.append(
+                {
+                    "home": f"windows:{user['username']}",
+                    "path": user["path"],
+                    "workspaces": user["workspace_count"],
+                }
+            )
+    except (OSError, PermissionError):
+        pass
+    return results
 
-        if windows_users:
-            for user in windows_users:
-                print(f"  {user['username']}\t{user['path']}\t{user['workspace_count']} workspaces")
-        else:
-            print("  No Windows users with Claude Code found")
-        print()
-    except (OSError, PermissionError) as e:
-        sys.stderr.write(f"Error accessing Windows: {e}\n")
 
-
-def _lsh_show_remotes():
-    """Show configured SSH remotes."""
+def _lsh_get_configured() -> list:
+    """Get configured homes (SSH remotes, Windows, WSL)."""
     sources = get_saved_sources()
-    print("SSH Remotes:")
-    if sources:
-        for source in sources:
-            print(f"  {source}")
-    else:
-        print("  (none configured)")
-    print()
+    results = []
+    for source in sources:
+        results.append({"home": source, "path": "-", "workspaces": "-"})
+    return results
 
 
-def _lsh_show_web():
-    """Show Claude.ai web session status."""
-    print("Web (Claude.ai):")
-    # Check if we can authenticate
+def _lsh_get_web() -> Optional[dict]:
+    """Get Claude.ai web session info."""
     token = get_access_token()
     org_uuid = get_org_uuid_from_claude_config()
 
     if token and org_uuid:
         try:
             sessions = fetch_web_sessions(token, org_uuid)
-            print(f"  authenticated ({len(sessions)} sessions)")
+            return {
+                "home": "web",
+                "path": "-",
+                "workspaces": len(sessions),
+                "status": "authenticated",
+            }
         except WebSessionsError as e:
-            print(f"  error: {e}")
+            return {"home": "web", "path": "-", "workspaces": 0, "status": f"error: {e}"}
     elif not token:
-        print("  not authenticated (no token in ~/.claude/.credentials.json)")
+        return {"home": "web", "path": "-", "workspaces": 0, "status": "not authenticated"}
     elif not org_uuid:
-        print("  not authenticated (no org UUID in ~/.claude.json)")
-    print()
+        return {"home": "web", "path": "-", "workspaces": 0, "status": "not authenticated"}
+    return None
 
 
 def _get_lsh_display_flags(args) -> tuple:
@@ -12828,71 +13257,179 @@ def cmd_lsh(args):
         cmd_lsh_clear(args)
         return
 
-    # Default: list all hosts
+    # Default: list homes (flat output)
     in_wsl = is_running_in_wsl()
-    show_local, show_wsl, show_windows, show_web, show_remotes = _get_lsh_display_flags(args)
+    show_wsl = getattr(args, "wsl", False)
+    show_windows = getattr(args, "windows", False)
+    show_web_flag = getattr(args, "web", False)
+    show_local_flag = getattr(args, "local", False)
+    show_remotes_flag = getattr(args, "remotes", False)
 
-    if show_local:
-        _lsh_show_local()
+    # If specific flags are set, show only those
+    specific_filter = (
+        show_wsl or show_windows or show_web_flag or show_local_flag or show_remotes_flag
+    )
+
+    # Collect all homes
+    homes = []
+
+    if show_local_flag or not specific_filter:
+        local_info = _lsh_get_local()
+        if local_info:
+            homes.append(local_info)
+
+    # --wsl and --windows show available options for discovery (not configured homes)
     if show_wsl:
-        _lsh_show_wsl()
+        homes.extend(_lsh_get_wsl())
     if show_windows and in_wsl:
-        _lsh_show_windows()
-    if show_web:
-        _lsh_show_web()
-    if show_remotes:
-        _lsh_show_remotes()
+        homes.extend(_lsh_get_windows())
+
+    if show_web_flag or not specific_filter:
+        web_info = _lsh_get_web()
+        if web_info:
+            homes.append(web_info)
+
+    if show_remotes_flag or not specific_filter:
+        homes.extend(_lsh_get_configured())
+
+    # Print flat output
+    if homes:
+        print("HOME\tPATH\tSESSIONS")
+        for home in homes:
+            print(f"{home['home']}\t{home['path']}\t{home['workspaces']}")
+
+
+def _resolve_wsl_distro(distro_arg: Optional[str]) -> Optional[str]:
+    """Resolve WSL distro name from argument or auto-detect.
+
+    Args:
+        distro_arg: Distro name or "auto" to auto-detect
+
+    Returns:
+        Distro name or None if not found
+    """
+    if distro_arg and distro_arg != "auto":
+        return distro_arg
+
+    # Auto-detect: find first WSL distro with Claude data
+    wsl_distros = get_wsl_distributions()
+    claude_distros = [
+        d for d in wsl_distros if d.get("has_claude") or d.get("has_codex") or d.get("has_gemini")
+    ]
+    if claude_distros:
+        return claude_distros[0]["name"]
+
+    # Fall back to any WSL distro
+    if wsl_distros:
+        return wsl_distros[0]["name"]
+
+    return None
+
+
+def _resolve_windows_user() -> Optional[str]:
+    """Resolve Windows username for adding Windows home.
+
+    Returns:
+        Windows username or None if not found
+    """
+    if not is_running_in_wsl():
+        sys.stderr.write("Error: --windows flag only works from WSL\n")
+        return None
+
+    # Find Windows users with Claude data
+    windows_users = get_windows_users_with_claude()
+    if windows_users:
+        # Each entry is a dict with 'username' key
+        return windows_users[0]["username"]
+
+    sys.stderr.write("Error: No Windows users with Claude data found\n")
+    return None
 
 
 def cmd_lsh_add(args):
-    """Add a remote source to configuration."""
-    source = args.source
+    """Add a home source to configuration."""
+    source = getattr(args, "source", None)
+    add_windows = getattr(args, "windows", False)
+    add_wsl = getattr(args, "wsl", None)
 
-    # WSL and Windows are auto-detected, no need to save them
-    if source.startswith("wsl://") or source == "windows":
-        sys.stderr.write(f"Note: {source} is auto-detected by --ah flag, no need to add it.\n")
-        sys.stderr.write("This command is for SSH remotes (user@hostname).\n")
-        return
-
-    # Validate source format (SSH remote)
-    if "@" not in source:
+    # Determine what to add
+    if add_windows:
+        user = _resolve_windows_user()
+        if not user:
+            sys.exit(1)
+        source = f"windows:{user}"
+    elif add_wsl is not None:
+        distro = _resolve_wsl_distro(add_wsl)
+        if not distro:
+            sys.stderr.write("Error: No WSL distributions found\n")
+            sys.exit(1)
+        source = f"wsl:{distro}"
+    elif not source:
+        sys.stderr.write("Error: Specify a source (user@host), --windows, or --wsl\n")
+        sys.exit(1)
+    elif "@" not in source and source not in ("windows",) and not source.startswith("wsl:"):
+        # Validate SSH remote format
         sys.stderr.write(f"Error: Invalid source format: {source}\n")
-        sys.stderr.write("Expected: user@hostname (e.g., alice@server.example.com)\n")
+        sys.stderr.write("Expected: user@hostname, --windows, or --wsl\n")
         sys.exit(1)
 
     config = load_config()
     sources = config.get("sources", [])
 
     if source in sources:
-        print(f"Source '{source}' already configured.")
+        print(f"Home '{source}' already configured.")
         return
 
     sources.append(source)
     config["sources"] = sources
 
     if save_config(config):
-        print(f"Added source: {source}")
+        print(f"Added home: {source}")
     else:
         sys.exit(1)
 
 
 def cmd_lsh_remove(args):
-    """Remove a remote source from configuration."""
-    source = args.source
+    """Remove a home source from configuration."""
+    source = getattr(args, "source", None)
+    remove_windows = getattr(args, "windows", False)
+    remove_wsl = getattr(args, "wsl", None)
 
     config = load_config()
     sources = config.get("sources", [])
 
+    # Determine what to remove
+    if remove_windows:
+        # Find and remove any windows:* source
+        windows_sources = [s for s in sources if s.startswith("windows:")]
+        if not windows_sources:
+            sys.stderr.write("Error: No Windows home configured\n")
+            sys.exit(1)
+        source = windows_sources[0]
+    elif remove_wsl is not None:
+        # Find and remove matching wsl:* source
+        if remove_wsl == "auto":
+            wsl_sources = [s for s in sources if s.startswith("wsl:")]
+            if not wsl_sources:
+                sys.stderr.write("Error: No WSL home configured\n")
+                sys.exit(1)
+            source = wsl_sources[0]
+        else:
+            source = f"wsl:{remove_wsl}"
+    elif not source:
+        sys.stderr.write("Error: Specify a source to remove, --windows, or --wsl\n")
+        sys.exit(1)
+
     if source not in sources:
-        sys.stderr.write(f"Error: Source '{source}' not found.\n")
-        sys.stderr.write(f"Configured sources: {', '.join(sources) if sources else '(none)'}\n")
+        sys.stderr.write(f"Error: Home '{source}' not found.\n")
+        sys.stderr.write(f"Configured homes: {', '.join(sources) if sources else '(none)'}\n")
         sys.exit(1)
 
     sources.remove(source)
     config["sources"] = sources
 
     if save_config(config):
-        print(f"Removed source: {source}")
+        print(f"Removed home: {source}")
     else:
         sys.exit(1)
 
@@ -12921,10 +13458,14 @@ def _get_reset_items(what: Optional[str], config_dir: Path) -> list:
         config_file = config_dir / "config.json"
         if config_file.exists():
             items.append(("Settings (SSH remotes)", config_file))
-    if reset_all or what == "aliases":
+    if reset_all or what in ("aliases", "projects"):
+        # Check both new and legacy file names
+        projects_file = config_dir / "projects.json"
         aliases_file = config_dir / "aliases.json"
+        if projects_file.exists():
+            items.append(("Projects", projects_file))
         if aliases_file.exists():
-            items.append(("Aliases", aliases_file))
+            items.append(("Legacy aliases", aliases_file))
 
     return items
 
@@ -13730,9 +14271,12 @@ def _resolve_remote_list(args):
 
 
 def _add_lsw_parser(subparsers):
-    """Add lsw (list workspaces) subparser."""
+    """Add workspaces (list workspaces) subparser with aliases."""
     parser = subparsers.add_parser(
-        "lsw", help="List workspaces", description="List all workspaces (local or remote)"
+        "workspaces",
+        aliases=["ws", "lsw"],
+        help="List workspaces",
+        description="List all workspaces (local or remote)",
     )
 
     parser.add_argument(
@@ -13781,9 +14325,10 @@ def _add_lsw_parser(subparsers):
 
 
 def _add_lss_parser(subparsers):
-    """Add lss (list sessions) subparser."""
+    """Add sessions (list sessions) subparser with aliases."""
     parser = subparsers.add_parser(
-        "lss",
+        "sessions",
+        aliases=["ss", "lss"],
         help="List sessions",
         description="List sessions in a workspace (defaults to current workspace)",
     )
@@ -13887,10 +14432,11 @@ def _add_lss_parser(subparsers):
 
 
 def _add_lsh_parser(subparsers):
-    """Add lsh (list homes) subparser."""
+    """Add home (list/manage homes) subparser with aliases."""
     parser = subparsers.add_parser(
-        "lsh",
-        help="List homes and manage SSH remotes",
+        "home",
+        aliases=["homes", "lsh"],
+        help="List homes and manage sources",
         description="List all Claude Code installations (local, WSL, Windows, web, SSH remotes)",
     )
 
@@ -13898,15 +14444,37 @@ def _add_lsh_parser(subparsers):
 
     # lsh add
     parser_add = lsh_subparsers.add_parser(
-        "add", help="Add an SSH remote", description="Add an SSH remote (user@hostname)"
+        "add",
+        help="Add a home (SSH remote, Windows, or WSL)",
+        description="Add a home: user@host for SSH, --windows for Windows, --wsl for WSL",
     )
-    parser_add.add_argument("source", help="SSH remote (user@hostname)")
+    parser_add.add_argument("source", nargs="?", help="SSH remote (user@hostname)")
+    parser_add.add_argument("--windows", action="store_true", help="Add Windows as a home")
+    parser_add.add_argument(
+        "--wsl",
+        nargs="?",
+        const="auto",
+        metavar="DISTRO",
+        help="Add WSL as a home (auto-detect distro if not specified)",
+    )
 
     # lsh remove
     parser_remove = lsh_subparsers.add_parser(
-        "remove", help="Remove an SSH remote", description="Remove an SSH remote from configuration"
+        "remove",
+        help="Remove a home",
+        description="Remove a home from configuration",
     )
-    parser_remove.add_argument("source", help="SSH remote to remove")
+    parser_remove.add_argument(
+        "source", nargs="?", help="Source to remove (e.g., user@host, windows, wsl:Ubuntu)"
+    )
+    parser_remove.add_argument("--windows", action="store_true", help="Remove Windows")
+    parser_remove.add_argument(
+        "--wsl",
+        nargs="?",
+        const="auto",
+        metavar="DISTRO",
+        help="Remove WSL (auto-detect distro if not specified)",
+    )
 
     # lsh clear
     lsh_subparsers.add_parser(
@@ -14055,21 +14623,27 @@ def _add_export_parser(subparsers):
     return parser
 
 
-def _add_alias_parser(subparsers):
-    """Add alias subparser."""
+def _add_project_parser(subparsers):
+    """Add project subparser with aliases."""
+    # Primary 'project' subcommand with aliases
     parser = subparsers.add_parser(
-        "alias",
-        help="Manage workspace aliases",
-        description="Create and manage workspace aliases for consolidated exports",
+        "project",
+        aliases=["projects", "alias"],  # 'projects' is new, 'alias' for backward compat
+        help="Manage workspace projects",
+        description="Create and manage workspace projects for consolidated exports",
     )
 
-    alias_subparsers = parser.add_subparsers(dest="alias_command", help="Alias subcommand")
+    project_subparsers = parser.add_subparsers(dest="alias_command", help="Project subcommand")
 
-    # alias list
-    parser_list = alias_subparsers.add_parser(
+    # Helper function for adding subparsers
+    def add_subparser(name, **kwargs):
+        return project_subparsers.add_parser(name, **kwargs)
+
+    # list
+    parser_list = add_subparser(
         "list",
-        help="List all aliases",
-        description="List all aliases with their workspaces",
+        help="List all projects",
+        description="List all projects with their workspaces",
     )
     parser_list.add_argument(
         "-c",
@@ -14078,37 +14652,37 @@ def _add_alias_parser(subparsers):
         help="Show session counts (slower, accesses all sources)",
     )
 
-    # alias show
-    parser_show = alias_subparsers.add_parser(
-        "show", help="Show alias details", description="Show details of a single alias"
+    # show
+    parser_show = add_subparser(
+        "show", help="Show project details", description="Show details of a single project"
     )
-    parser_show.add_argument("name", help="Alias name")
+    parser_show.add_argument("name", help="Project name")
 
-    # alias create
-    parser_create = alias_subparsers.add_parser(
-        "create", help="Create a new alias", description="Create a new empty alias"
+    # create
+    parser_create = add_subparser(
+        "create", help="Create a new project", description="Create a new empty project"
     )
-    parser_create.add_argument("name", help="Alias name")
+    parser_create.add_argument("name", help="Project name")
 
-    # alias delete
-    parser_delete = alias_subparsers.add_parser(
+    # delete
+    parser_delete = add_subparser(
         "delete",
-        help="Delete an alias",
-        description="Delete an alias and all its workspace associations",
+        help="Delete a project",
+        description="Delete a project and all its workspace associations",
     )
-    parser_delete.add_argument("name", help="Alias name")
+    parser_delete.add_argument("name", help="Project name")
 
-    # alias add
-    parser_add = alias_subparsers.add_parser(
+    # add
+    parser_add = add_subparser(
         "add",
-        help="Add workspace(s) to alias",
-        description="Add one or more workspaces to an alias",
+        help="Add workspace(s) to project",
+        description="Add one or more workspaces to a project",
     )
     parser_add.add_argument(
         "name",
         nargs="?",
         default="",
-        help="Alias name (default: auto-detect from current directory)",
+        help="Project name (default: auto-detect from current directory)",
     )
     parser_add.add_argument(
         "workspaces", nargs="*", help="Workspace names to add (encoded directory names)"
@@ -14131,11 +14705,13 @@ def _add_alias_parser(subparsers):
         help="Add from all homes (local + WSL/Windows + remotes)",
     )
 
-    # alias remove
-    parser_remove = alias_subparsers.add_parser(
-        "remove", help="Remove workspace from alias", description="Remove a workspace from an alias"
+    # remove
+    parser_remove = add_subparser(
+        "remove",
+        help="Remove workspace from project",
+        description="Remove a workspace from a project",
     )
-    parser_remove.add_argument("name", help="Alias name")
+    parser_remove.add_argument("name", help="Project name")
     parser_remove.add_argument(
         "workspace", help="Workspace name to remove (encoded directory name)"
     )
@@ -14149,22 +14725,22 @@ def _add_alias_parser(subparsers):
         "--windows", action="store_true", help="Remove workspace from Windows source"
     )
 
-    # alias export
-    alias_subparsers.add_parser(
+    # export
+    add_subparser(
         "export",
-        help="Export aliases to JSON",
-        description="Export aliases configuration to JSON (stdout)",
+        help="Export projects to JSON",
+        description="Export projects configuration to JSON (stdout)",
     )
 
-    # alias import
-    parser_import = alias_subparsers.add_parser(
+    # import
+    parser_import = add_subparser(
         "import",
-        help="Import aliases from JSON",
-        description="Import aliases from JSON file or stdin",
+        help="Import projects from JSON",
+        description="Import projects from JSON file or stdin",
     )
     parser_import.add_argument("file", nargs="?", help="JSON file to import (default: stdin)")
     parser_import.add_argument(
-        "--replace", action="store_true", help="Replace all aliases instead of merging"
+        "--replace", action="store_true", help="Replace all projects instead of merging"
     )
 
     return parser
@@ -14191,15 +14767,40 @@ def _add_stats_parser(subparsers):
     parser.add_argument(
         "--force", action="store_true", help="Force re-sync all files (ignore mtime)"
     )
-    parser.add_argument("--tools", action="store_true", help="Show tool usage statistics")
-    parser.add_argument("--models", action="store_true", help="Show model usage statistics")
+    parser.add_argument(
+        "--by",
+        metavar="DIMS",
+        help="Group by dimensions (comma-separated): home, agent, workspace, day, model, tool",
+    )
     parser.add_argument(
         "--time", action="store_true", help="Show time tracking with daily breakdown"
     )
+    # Legacy flags (deprecated, use --by instead)
     parser.add_argument(
-        "--by-workspace", action="store_true", help="Show statistics grouped by workspace"
+        "--tools",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden, use --by tool
     )
-    parser.add_argument("--by-day", action="store_true", help="Show daily statistics")
+    parser.add_argument(
+        "--models",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden, use --by model
+    )
+    parser.add_argument(
+        "--by-workspace",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden, use --by workspace
+    )
+    parser.add_argument(
+        "--group",
+        choices=["home", "agent"],
+        help=argparse.SUPPRESS,  # Hidden, use --by
+    )
+    parser.add_argument(
+        "--by-day",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden, use --by day
+    )
     parser.add_argument(
         "--source",
         metavar="SOURCE",
@@ -14269,16 +14870,16 @@ def _add_reset_parser(subparsers):
     """Add reset subparser."""
     parser = subparsers.add_parser(
         "reset",
-        help="Reset stored data (database, settings, aliases)",
-        description="Delete metrics database, settings, and/or aliases.",
+        help="Reset stored data (database, settings, projects)",
+        description="Delete metrics database, settings, and/or projects.",
     )
 
     parser.add_argument(
         "what",
         nargs="?",
-        choices=["db", "settings", "aliases", "all"],
+        choices=["db", "settings", "projects", "aliases", "all"],
         default="all",
-        help="What to reset: db (metrics), settings (SSH remotes), aliases, or all (default: all)",
+        help="What to reset: db (metrics), settings (SSH remotes), projects, or all (default: all)",
     )
     parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     return parser
@@ -14315,7 +14916,7 @@ def _create_argument_parser():
     _add_lss_parser(subparsers)
     _add_lsh_parser(subparsers)
     _add_export_parser(subparsers)
-    _add_alias_parser(subparsers)
+    _add_project_parser(subparsers)
     _add_stats_parser(subparsers)
     _add_reset_parser(subparsers)
     _add_install_parser(subparsers)
@@ -14475,10 +15076,14 @@ def _get_remote_workspaces_for_lsw(remote: str, patterns: list, agent: str = "au
 
 
 def _print_lsw_results(all_results: list, workspaces_only: bool):
-    """Print lsw results in the appropriate format."""
-    for source_label, sessions in all_results:
-        if workspaces_only:
-            print(f"# {source_label}")
+    """Print lsw results in flat tab-separated format."""
+    if not all_results:
+        return
+
+    if workspaces_only:
+        print("HOME\tWORKSPACE")
+        for source_label, sessions in all_results:
+            home_label = _source_label_to_home(source_label)
             seen_workspaces = set()
             for session in sessions:
                 ws = session["workspace_readable"]
@@ -14495,9 +15100,9 @@ def _print_lsw_results(all_results: list, workspaces_only: bool):
                         pass
                 if ws not in seen_workspaces:
                     seen_workspaces.add(ws)
-                    print(f"  {ws}")
-            print()
-        else:
+                    print(f"{home_label}\t{ws}")
+    else:
+        for source_label, sessions in all_results:
             for session in sessions:
                 print(format_session_line(session, source_label))
 
@@ -14623,8 +15228,8 @@ def _dispatch_lsw(args):
             agent=agent,
         )
         cmd_list_all_homes(list_args)
-        # Also include web sessions with --all-homes
-        _dispatch_lsw_web()
+        # Also include web sessions with --all-homes (header already printed)
+        _dispatch_lsw_web(print_header=False)
     elif local_flag and remotes:
         # --local with -r: show both local and remotes (additive)
         list_args = ListCommandArgs(
@@ -14645,8 +15250,13 @@ def _dispatch_lsw(args):
         cmd_list(list_args)
 
 
-def _dispatch_lsw_web():
-    """List web workspaces as URIs (unique repos from sessions)."""
+def _dispatch_lsw_web(print_header: bool = True):
+    """List web workspaces in flat tab-separated format.
+
+    Args:
+        print_header: If True, print HOME\tWORKSPACE header. Set False when
+            called after cmd_list_all_homes which already prints the header.
+    """
     try:
         token, org_uuid = resolve_web_credentials()
         sessions = fetch_web_sessions(token, org_uuid)
@@ -14654,26 +15264,23 @@ def _dispatch_lsw_web():
         if not sessions:
             return
 
-        print("# Web (claude.ai)")
+        if print_header:
+            print("HOME\tWORKSPACE")
 
         # Collect unique workspaces with their GitHub repos
-        workspace_uris = set()
+        workspaces = set()
         for session in sessions:
             github_repo = get_web_session_github_repo(session)
             if github_repo:
-                # Web session with GitHub repo: claude.ai@github.com/owner/repo
-                uri = make_workspace_uri(location="web", github_repo=github_repo)
-                workspace_uris.add(uri)
+                workspaces.add(github_repo)
             else:
                 # Web session without GitHub repo - show session ID
                 session_id = session.get("uuid", "unknown")
-                uri = make_workspace_uri(location="web", session_id=session_id)
-                workspace_uris.add(uri)
+                workspaces.add(f"session:{session_id}")
 
-        # Print unique workspace URIs
-        for uri in sorted(workspace_uris):
-            print(f"  {uri}")
-        print()
+        # Print in flat format
+        for ws in sorted(workspaces):
+            print(f"web\t{ws}")
 
     except WebSessionsError:
         # Silently skip if web auth not available
@@ -15350,11 +15957,15 @@ def _build_stats_args(args) -> StatsCommandArgs:
         source=args.source,
         since=args.since,
         until=args.until,
-        tools=args.tools,
-        models=args.models,
+        by=getattr(args, "by", None),
         time=getattr(args, "time", False),
+        # Legacy flags
+        tools=getattr(args, "tools", False),
+        models=getattr(args, "models", False),
         by_workspace=getattr(args, "by_workspace", False),
         by_day=getattr(args, "by_day", False),
+        group=getattr(args, "group", None),
+        # Other options
         all_workspaces=getattr(args, "all_workspaces", False),
         top_ws=getattr(args, "top_ws", None),
         this_only=getattr(args, "this_only", False),
@@ -15498,15 +16109,15 @@ def _dispatch_command(args):
     Args:
         args: Parsed argparse.Namespace object
     """
-    if args.command == "lsw":
+    if args.command in ("workspaces", "ws", "lsw"):
         _dispatch_lsw(args)
-    elif args.command == "lss":
+    elif args.command in ("sessions", "ss", "lss"):
         _dispatch_lss(args)
-    elif args.command == "lsh":
+    elif args.command in ("home", "homes", "lsh"):
         cmd_lsh(args)
     elif args.command == "export":
         _dispatch_export(args)
-    elif args.command == "alias":
+    elif args.command in ("project", "projects", "alias"):
         _dispatch_alias(args)
     elif args.command == "stats":
         _dispatch_stats(args)
