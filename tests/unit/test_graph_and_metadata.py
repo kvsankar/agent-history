@@ -7,7 +7,7 @@ from pathlib import Path
 # Load agent-history as a module
 spec = importlib.util.spec_from_loader("agent_history", loader=None)
 agent_history = importlib.util.module_from_spec(spec)
-with open(Path(__file__).parent.parent.parent / "agent-history") as f:
+with open(Path(__file__).parent.parent.parent / "agent-history", encoding="utf-8") as f:
     code = f.read()
 exec(compile(code, "agent-history", "exec"), agent_history.__dict__)
 
