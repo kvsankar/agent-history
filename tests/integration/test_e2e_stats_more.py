@@ -39,31 +39,38 @@ def test_stats_models_tools_by_day(tmp_path: Path):
     cfg.mkdir(parents=True, exist_ok=True)
 
     # Two days, include assistant with model and tool_use to populate stats
+    # Use proper JSONL format with message wrapper
     rows = [
         {
             "type": "user",
             "timestamp": "2025-01-01T10:00:00Z",
-            "content": [{"type": "text", "text": "start"}],
+            "message": {"role": "user", "content": [{"type": "text", "text": "start"}]},
         },
         {
             "type": "assistant",
             "timestamp": "2025-01-01T10:01:00Z",
-            "model": "claude-3-5-sonnet",
-            "content": [
-                {"type": "text", "text": "ok"},
-                {"type": "tool_use", "name": "bash", "id": "t1", "input": {"cmd": "echo hi"}},
-            ],
+            "message": {
+                "role": "assistant",
+                "model": "claude-3-5-sonnet",
+                "content": [
+                    {"type": "text", "text": "ok"},
+                    {"type": "tool_use", "name": "bash", "id": "t1", "input": {"cmd": "echo hi"}},
+                ],
+            },
         },
         {
             "type": "user",
             "timestamp": "2025-01-02T09:00:00Z",
-            "content": [{"type": "text", "text": "next"}],
+            "message": {"role": "user", "content": [{"type": "text", "text": "next"}]},
         },
         {
             "type": "assistant",
             "timestamp": "2025-01-02T09:01:00Z",
-            "model": "claude-3-5-haiku",
-            "content": [{"type": "text", "text": "done"}],
+            "message": {
+                "role": "assistant",
+                "model": "claude-3-5-haiku",
+                "content": [{"type": "text", "text": "done"}],
+            },
         },
     ]
     make_jsonl(projects / "-home-user-stats" / "s.jsonl", rows)
@@ -82,25 +89,28 @@ def test_stats_models_tools_by_day(tmp_path: Path):
     # Models (--models is legacy, maps to --by model)
     r_models = run_cli(["stats", "--aw", "--models"], env=env)
     assert r_models.returncode == 0, r_models.stderr
-    assert "STATS BY MODEL" in r_models.stdout
+    # New flat format has "MODEL" column header
+    assert "MODEL" in r_models.stdout
 
     # Tools (--tools is legacy, maps to --by tool)
     r_tools = run_cli(["stats", "--aw", "--tools"], env=env)
     assert r_tools.returncode == 0, r_tools.stderr
-    assert "STATS BY TOOL" in r_tools.stdout
+    # New flat format has "TOOL" column header
+    assert "TOOL" in r_tools.stdout
 
     # By day (--by-day is legacy, maps to --by day)
     r_by_day = run_cli(["stats", "--aw", "--by-day"], env=env)
     assert r_by_day.returncode == 0, r_by_day.stderr
     assert "2025-01-01" in r_by_day.stdout or "2025-01-02" in r_by_day.stdout
-    assert "Day" in r_by_day.stdout  # Header column
+    assert "DAY" in r_by_day.stdout  # Header column (uppercase in flat format)
 
     # Time tracking
     r_time = run_cli(["stats", "--aw", "--time"], env=env)
     assert r_time.returncode == 0, r_time.stderr
-    assert "TIME TRACKING" in r_time.stdout
-    assert "Bar (time)" in r_time.stdout
-    assert "#" in r_time.stdout
+    # New flat format has TIME_METRIC header and DATE breakdown
+    assert "TIME_METRIC" in r_time.stdout
+    assert "total_work_seconds" in r_time.stdout
+    assert "DATE" in r_time.stdout
 
 
 def test_all_homes_sessions_windows(tmp_path: Path):
