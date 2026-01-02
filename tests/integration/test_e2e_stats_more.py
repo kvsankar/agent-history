@@ -79,21 +79,21 @@ def test_stats_models_tools_by_day(tmp_path: Path):
     r_sync = run_cli(["stats", "--sync", "--aw"], env=env)
     assert r_sync.returncode == 0, r_sync.stderr
 
-    # Models
+    # Models (--models is legacy, maps to --by model)
     r_models = run_cli(["stats", "--aw", "--models"], env=env)
     assert r_models.returncode == 0, r_models.stderr
-    assert "MODEL USAGE STATISTICS" in r_models.stdout
+    assert "STATS BY MODEL" in r_models.stdout
 
-    # Tools
+    # Tools (--tools is legacy, maps to --by tool)
     r_tools = run_cli(["stats", "--aw", "--tools"], env=env)
     assert r_tools.returncode == 0, r_tools.stderr
-    assert "TOOL USAGE STATISTICS" in r_tools.stdout
+    assert "STATS BY TOOL" in r_tools.stdout
 
-    # By day
+    # By day (--by-day is legacy, maps to --by day)
     r_by_day = run_cli(["stats", "--aw", "--by-day"], env=env)
     assert r_by_day.returncode == 0, r_by_day.stderr
     assert "2025-01-01" in r_by_day.stdout or "2025-01-02" in r_by_day.stdout
-    assert "#" in r_by_day.stdout
+    assert "Day" in r_by_day.stdout  # Header column
 
     # Time tracking
     r_time = run_cli(["stats", "--aw", "--time"], env=env)

@@ -775,6 +775,10 @@ class TestCodexRealJSONLPatterns:
         metrics = ch.codex_extract_metrics_from_jsonl(temp_codex_session_file)
         assert metrics["session"]["model"] == "gpt-5-codex"
 
+    @pytest.mark.skipif(
+        not Path("docs/codex-format.md").exists(),
+        reason="docs/codex-format.md not found",
+    )
     def test_codex_supported_record_types_match_docs(self):
         """Documented Codex record types marked supported should be parsed."""
         doc_lines = Path("docs/codex-format.md").read_text(encoding="utf-8").splitlines()
@@ -796,6 +800,10 @@ class TestCodexRealJSONLPatterns:
         missing = documented - supported
         assert not missing, f"Supported in docs but not handled: {sorted(missing)}"
 
+    @pytest.mark.skipif(
+        not Path("docs/claude-format.md").exists(),
+        reason="docs/claude-format.md not found",
+    )
     def test_claude_supported_record_types_match_docs(self):
         """Documented Claude record types marked supported should be parsed."""
         doc_lines = Path("docs/claude-format.md").read_text(encoding="utf-8").splitlines()
@@ -808,6 +816,10 @@ class TestCodexRealJSONLPatterns:
         missing = documented - supported
         assert not missing, f"Supported in docs but not handled: {sorted(missing)}"
 
+    @pytest.mark.skipif(
+        not Path("docs/gemini-format.md").exists(),
+        reason="docs/gemini-format.md not found",
+    )
     def test_gemini_supported_record_types_match_docs(self):
         """Documented Gemini record types marked supported should be parsed."""
         doc_lines = Path("docs/gemini-format.md").read_text(encoding="utf-8").splitlines()
@@ -2029,13 +2041,13 @@ class TestMetricsDBSchema:
         assert "agent" in columns
         conn.close()
 
-    def test_db_version_is_5(self, tmp_path):
-        """Database should be version 5."""
+    def test_db_version_is_6(self, tmp_path):
+        """Database should be version 6."""
         db_path = tmp_path / "test.db"
         conn = ch.init_metrics_db(db_path)
         cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
         row = cursor.fetchone()
-        assert row["version"] == 5
+        assert row["version"] == 6
         conn.close()
 
     def test_agent_index_exists(self, tmp_path):
@@ -2100,9 +2112,9 @@ class TestMetricsDBSchema:
         assert agent_by_path["/home/user/.codex/sessions/session2.jsonl"] == "codex"
         assert agent_by_path["/home/user/.gemini/tmp/abc123/chats/session-001.json"] == "gemini"
 
-        # Verify version is now 5
+        # Verify version is now 6
         cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
-        assert cursor.fetchone()["version"] == 5
+        assert cursor.fetchone()["version"] == 6
 
         conn.close()
 
@@ -3724,27 +3736,27 @@ class TestAliasStorage:
 
     def test_load_empty_aliases(self, temp_config_dir):
         """Should return default structure for missing file."""
-        with patch.object(ch, "get_aliases_file", return_value=temp_config_dir / "aliases.json"):
+        with patch.object(ch, "get_projects_file", return_value=temp_config_dir / "projects.json"):
             aliases = ch.load_aliases()
-            assert aliases == {"version": 1, "aliases": {}}
+            assert aliases == {"version": 2, "projects": {}}
 
     def test_save_and_load_aliases(self, temp_config_dir):
         """Should save and load aliases correctly."""
-        aliases_file = temp_config_dir / "aliases.json"
+        projects_file = temp_config_dir / "projects.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=temp_config_dir):
-            with patch.object(ch, "get_aliases_file", return_value=aliases_file):
+            with patch.object(ch, "get_projects_file", return_value=projects_file):
                 # Save
                 test_data = {
                     "version": 1,
-                    "aliases": {"myproject": {"local": ["-home-user-myproject"]}},
+                    "projects": {"myproject": {"local": ["-home-user-myproject"]}},
                 }
                 result = ch.save_aliases(test_data)
                 assert result is True
 
                 # Load
                 loaded = ch.load_aliases()
-                assert loaded["aliases"]["myproject"]["local"] == ["-home-user-myproject"]
+                assert loaded["projects"]["myproject"]["local"] == ["-home-user-myproject"]
 
 
 class TestConfigStorage:
@@ -4671,14 +4683,14 @@ class TestCLICommands:
     def test_aliases_create_and_list(self, cli_test_env):
         """Should create and retrieve aliases."""
         config_dir = cli_test_env["config_dir"]
-        aliases_file = config_dir / "aliases.json"
+        projects_file = config_dir / "projects.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=config_dir):
-            with patch.object(ch, "get_aliases_file", return_value=aliases_file):
+            with patch.object(ch, "get_projects_file", return_value=projects_file):
                 # Create alias
                 test_alias = {
                     "version": 1,
-                    "aliases": {
+                    "projects": {
                         "myalias": {"local": ["-home-user-project1", "-home-user-project2"]}
                     },
                 }
@@ -4687,8 +4699,8 @@ class TestCLICommands:
 
                 # Load and verify
                 loaded = ch.load_aliases()
-                assert "myalias" in loaded["aliases"]
-                assert len(loaded["aliases"]["myalias"]["local"]) == 2
+                assert "myalias" in loaded["projects"]
+                assert len(loaded["projects"]["myalias"]["local"]) == 2
 
     def test_matches_any_pattern_single(self):
         """Should match single patterns correctly."""
@@ -4791,14 +4803,14 @@ class TestHomeDirMocking:
         """Should save and load aliases correctly with mocked alias paths."""
         fake_aliases_dir = tmp_path / ".agent-history"
         fake_aliases_dir.mkdir()
-        aliases_file = fake_aliases_dir / "aliases.json"
+        projects_file = fake_aliases_dir / "projects.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=fake_aliases_dir):
-            with patch.object(ch, "get_aliases_file", return_value=aliases_file):
+            with patch.object(ch, "get_projects_file", return_value=projects_file):
                 # Save aliases with multiple entries
                 test_aliases = {
                     "version": 1,
-                    "aliases": {
+                    "projects": {
                         "project1": {
                             "local": ["-home-user-proj1", "-home-user-proj1-renamed"],
                             "remote:server1": ["-home-user-proj1"],
@@ -4813,16 +4825,16 @@ class TestHomeDirMocking:
                 assert save_result is True
 
                 # Verify file was actually written
-                assert aliases_file.exists()
+                assert projects_file.exists()
 
                 # Load and verify content matches
                 loaded = ch.load_aliases()
                 assert loaded["version"] == 1
-                assert "project1" in loaded["aliases"]
-                assert "project2" in loaded["aliases"]
-                assert len(loaded["aliases"]["project1"]["local"]) == 2
-                assert "-home-user-proj1-renamed" in loaded["aliases"]["project1"]["local"]
-                assert "windows" in loaded["aliases"]["project2"]
+                assert "project1" in loaded["projects"]
+                assert "project2" in loaded["projects"]
+                assert len(loaded["projects"]["project1"]["local"]) == 2
+                assert "-home-user-proj1-renamed" in loaded["projects"]["project1"]["local"]
+                assert "windows" in loaded["projects"]["project2"]
 
     def test_projects_dir_injection_for_session_listing(self, tmp_path):
         """Should use injected projects_dir to list sessions from alternate locations."""
@@ -5757,99 +5769,99 @@ class TestSection9AliasOperations:
         return {
             "config_dir": config_dir,
             "projects_dir": projects_dir,
-            "aliases_file": config_dir / "aliases.json",
+            "projects_file": config_dir / "projects.json",
         }
 
     # Section 9.1: Alias Management
     def test_alias_mgmt_list_empty(self, alias_env):
         """9.1.1: alias list shows empty when no aliases."""
-        with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+        with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
             aliases = ch.load_aliases()
-            assert aliases["aliases"] == {}
+            assert aliases["projects"] == {}
 
     def test_alias_mgmt_create(self, alias_env):
         """9.1.2-9.1.3: Create alias and show it."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 # Create alias
-                aliases = {"version": 1, "aliases": {"testproject": {"local": []}}}
+                aliases = {"version": 1, "projects": {"testproject": {"local": []}}}
                 ch.save_aliases(aliases)
 
                 # Load and verify
                 loaded = ch.load_aliases()
-                assert "testproject" in loaded["aliases"]
-                assert loaded["aliases"]["testproject"]["local"] == []
+                assert "testproject" in loaded["projects"]
+                assert loaded["projects"]["testproject"]["local"] == []
 
     def test_alias_mgmt_show_empty(self, alias_env):
         """9.1.3: alias show testproject shows empty alias."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 # Create empty alias
-                aliases = {"version": 1, "aliases": {"testproject": {"local": []}}}
+                aliases = {"version": 1, "projects": {"testproject": {"local": []}}}
                 ch.save_aliases(aliases)
 
                 # Show the alias - it exists but is empty
                 loaded = ch.load_aliases()
-                assert "testproject" in loaded["aliases"]
-                assert loaded["aliases"]["testproject"]["local"] == []
+                assert "testproject" in loaded["projects"]
+                assert loaded["projects"]["testproject"]["local"] == []
 
     def test_alias_mgmt_add(self, alias_env):
         """9.1.4-9.1.5: Add workspace to alias and verify."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 # Create alias with workspace
                 aliases = {
                     "version": 1,
-                    "aliases": {"testproject": {"local": ["-home-user-project1"]}},
+                    "projects": {"testproject": {"local": ["-home-user-project1"]}},
                 }
                 ch.save_aliases(aliases)
 
                 # Verify
                 loaded = ch.load_aliases()
-                assert "-home-user-project1" in loaded["aliases"]["testproject"]["local"]
+                assert "-home-user-project1" in loaded["projects"]["testproject"]["local"]
 
     def test_alias_mgmt_show_ws(self, alias_env):
         """9.1.5: alias show testproject shows added workspace."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 # Create alias with workspace
                 aliases = {
                     "version": 1,
-                    "aliases": {"testproject": {"local": ["-home-user-project1"]}},
+                    "projects": {"testproject": {"local": ["-home-user-project1"]}},
                 }
                 ch.save_aliases(aliases)
 
                 # Show the alias - it shows the added workspace
                 loaded = ch.load_aliases()
-                assert "testproject" in loaded["aliases"]
-                assert "-home-user-project1" in loaded["aliases"]["testproject"]["local"]
+                assert "testproject" in loaded["projects"]
+                assert "-home-user-project1" in loaded["projects"]["testproject"]["local"]
 
     def test_alias_mgmt_delete(self, alias_env):
         """9.1.7: Delete alias removes it."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 # Create then delete
                 aliases = {
                     "version": 1,
-                    "aliases": {"testproject": {"local": ["-home-user-project1"]}},
+                    "projects": {"testproject": {"local": ["-home-user-project1"]}},
                 }
                 ch.save_aliases(aliases)
 
                 # Delete by removing from dict
-                aliases["aliases"].pop("testproject")
+                aliases["projects"].pop("testproject")
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "testproject" not in loaded["aliases"]
+                assert "testproject" not in loaded["projects"]
 
     # Section 9.2: Alias with Sources
     def test_9_2_alias_multi_source(self, alias_env):
         """9.2: Alias can have workspaces from multiple sources."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 aliases = {
                     "version": 1,
-                    "aliases": {
+                    "projects": {
                         "testproject": {
                             "local": ["-home-user-project1"],
                             "windows": ["C--Users-user-project1"],
@@ -5860,9 +5872,9 @@ class TestSection9AliasOperations:
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "local" in loaded["aliases"]["testproject"]
-                assert "windows" in loaded["aliases"]["testproject"]
-                assert "remote:user@server" in loaded["aliases"]["testproject"]
+                assert "local" in loaded["projects"]["testproject"]
+                assert "windows" in loaded["projects"]["testproject"]
+                assert "remote:user@server" in loaded["projects"]["testproject"]
 
     # Section 9.5: Alias Export/Import
     def test_alias_io_export(self, alias_env):
@@ -5870,11 +5882,11 @@ class TestSection9AliasOperations:
         export_file = alias_env["config_dir"] / "export.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 # Create aliases
                 original = {
                     "version": 1,
-                    "aliases": {
+                    "projects": {
                         "project1": {"local": ["-home-user-proj1"]},
                         "project2": {"local": ["-home-user-proj2"]},
                     },
@@ -5886,7 +5898,7 @@ class TestSection9AliasOperations:
                 export_file.write_text(json.dumps(loaded, indent=2))
 
                 # Clear original
-                ch.save_aliases({"version": 1, "aliases": {}})
+                ch.save_aliases({"version": 2, "projects": {}})
 
                 # "Import" by reading export and saving
                 imported = json.loads(export_file.read_text())
@@ -5894,22 +5906,22 @@ class TestSection9AliasOperations:
 
                 # Verify
                 final = ch.load_aliases()
-                assert "project1" in final["aliases"]
-                assert "project2" in final["aliases"]
+                assert "project1" in final["projects"]
+                assert "project2" in final["projects"]
 
     def test_alias_io_import(self, alias_env):
-        """9.5.3: alias import /tmp/aliases.json imports aliases from file."""
+        """9.5.3: alias import /tmp/projects.json imports aliases from file."""
         import_file = alias_env["config_dir"] / "import.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 # Start with empty aliases
-                ch.save_aliases({"version": 1, "aliases": {}})
+                ch.save_aliases({"version": 2, "projects": {}})
 
                 # Create import file
                 to_import = {
                     "version": 1,
-                    "aliases": {"imported_project": {"local": ["-home-user-imported"]}},
+                    "projects": {"imported_project": {"local": ["-home-user-imported"]}},
                 }
                 import_file.write_text(json.dumps(to_import, indent=2))
 
@@ -5919,17 +5931,17 @@ class TestSection9AliasOperations:
 
                 # Verify import succeeded
                 final = ch.load_aliases()
-                assert "imported_project" in final["aliases"]
-                assert "-home-user-imported" in final["aliases"]["imported_project"]["local"]
+                assert "imported_project" in final["projects"]
+                assert "-home-user-imported" in final["projects"]["imported_project"]["local"]
 
     # Section 9.6: Edge Cases
     def test_alias_edge_duplicate(self, alias_env):
         """9.6.3: Adding duplicate workspace should be detected."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_env["projects_file"]):
                 aliases = {
                     "version": 1,
-                    "aliases": {
+                    "projects": {
                         "testproject": {
                             "local": ["-home-user-project1", "-home-user-project1"]  # Duplicate
                         }
@@ -5939,7 +5951,7 @@ class TestSection9AliasOperations:
 
                 # Remove duplicates
                 loaded = ch.load_aliases()
-                unique = list(set(loaded["aliases"]["testproject"]["local"]))
+                unique = list(set(loaded["projects"]["testproject"]["local"]))
                 assert len(unique) == 1
 
 
@@ -6415,14 +6427,14 @@ class TestSection14ResetCommand:
         config_file = config_dir / "config.json"
         config_file.write_text('{"version": 1, "sources": []}')
 
-        aliases_file = config_dir / "aliases.json"
-        aliases_file.write_text('{"version": 1, "aliases": {}}')
+        projects_file = config_dir / "projects.json"
+        projects_file.write_text('{"version": 2, "projects": {}}')
 
         return {
             "config_dir": config_dir,
             "db_file": db_file,
             "config_file": config_file,
-            "aliases_file": aliases_file,
+            "projects_file": projects_file,
         }
 
     def test_14_reset_command_exists(self):
@@ -6480,22 +6492,22 @@ class TestSection14ResetCommand:
         # Check files don't exist
         db_file = empty_dir / "metrics.db"
         config_file = empty_dir / "config.json"
-        aliases_file = empty_dir / "aliases.json"
+        projects_file = empty_dir / "projects.json"
 
         assert not db_file.exists()
         assert not config_file.exists()
-        assert not aliases_file.exists()
+        assert not projects_file.exists()
 
     def test_reset_edge_db_only_exists(self, reset_env):
         """14.3.2: Reset db when only db exists."""
         # Remove config and aliases
         reset_env["config_file"].unlink()
-        reset_env["aliases_file"].unlink()
+        reset_env["projects_file"].unlink()
 
         # Only db should exist
         assert reset_env["db_file"].exists()
         assert not reset_env["config_file"].exists()
-        assert not reset_env["aliases_file"].exists()
+        assert not reset_env["projects_file"].exists()
 
 
 # ============================================================================
@@ -7608,35 +7620,39 @@ class TestSection9Remaining:
     def alias_test_env(self, tmp_path):
         config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
-        return {"config_dir": config_dir, "aliases_file": config_dir / "aliases.json"}
+        return {"config_dir": config_dir, "projects_file": config_dir / "projects.json"}
 
     def test_alias_mgmt_remove(self, alias_test_env):
         """9.1.6: alias remove removes workspace."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 # Create alias with workspace
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"local": ["-home-user-proj", "-home-user-other"]}},
+                    "projects": {"test": {"local": ["-home-user-proj", "-home-user-other"]}},
                 }
                 ch.save_aliases(aliases)
 
                 # Remove one workspace
                 loaded = ch.load_aliases()
-                loaded["aliases"]["test"]["local"].remove("-home-user-proj")
+                loaded["projects"]["test"]["local"].remove("-home-user-proj")
                 ch.save_aliases(loaded)
 
                 final = ch.load_aliases()
-                assert "-home-user-proj" not in final["aliases"]["test"]["local"]
-                assert "-home-user-other" in final["aliases"]["test"]["local"]
+                assert "-home-user-proj" not in final["projects"]["test"]["local"]
+                assert "-home-user-other" in final["projects"]["test"]["local"]
 
     def test_alias_remove_accepts_paths(self, alias_test_env):
         """Alias remove resolves absolute paths."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"remote:alice@host": ["-home-user-proj"]}},
+                    "projects": {"test": {"remote:alice@host": ["-home-user-proj"]}},
                 }
                 ch.save_aliases(aliases)
 
@@ -7650,57 +7666,65 @@ class TestSection9Remaining:
                 ch.cmd_alias_remove(args)
 
                 final = ch.load_aliases()
-                assert "remote:alice@host" not in final["aliases"].get("test", {})
+                assert "remote:alice@host" not in final["projects"].get("test", {})
 
     def test_alias_source_local(self, alias_test_env):
         """9.2.1: alias add <pattern> adds local workspace by pattern."""
         # Test that workspaces can be added
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"local": ["-home-user-myproject"]}}}
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
+                aliases = {"version": 1, "projects": {"test": {"local": ["-home-user-myproject"]}}}
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "-home-user-myproject" in loaded["aliases"]["test"]["local"]
+                assert "-home-user-myproject" in loaded["projects"]["test"]["local"]
 
     def test_alias_source_windows(self, alias_test_env):
         """9.2.2: alias add --windows <pattern> adds Windows workspace."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"windows": ["C--Users-test-project"]}},
+                    "projects": {"test": {"windows": ["C--Users-test-project"]}},
                 }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "windows" in loaded["aliases"]["test"]
+                assert "windows" in loaded["projects"]["test"]
 
     def test_alias_source_wsl(self, alias_test_env):
         """9.2.3: alias add --wsl <pattern> adds WSL workspace."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"wsl:Ubuntu": ["-home-user-project"]}},
+                    "projects": {"test": {"wsl:Ubuntu": ["-home-user-project"]}},
                 }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "wsl:Ubuntu" in loaded["aliases"]["test"]
+                assert "wsl:Ubuntu" in loaded["projects"]["test"]
 
     def test_alias_source_remote(self, alias_test_env):
         """9.2.4: alias add -r user@host <pattern> adds remote workspace."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"remote:user@host": ["-home-user-project"]}},
+                    "projects": {"test": {"remote:user@host": ["-home-user-project"]}},
                 }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "remote:user@host" in loaded["aliases"]["test"]
+                assert "remote:user@host" in loaded["projects"]["test"]
 
     def test_alias_source_all_homes(self, alias_test_env):
         """9.2.5: alias add --ah adds from all homes at once."""
@@ -7717,16 +7741,18 @@ class TestSection9Remaining:
     def test_alias_source_show_counts(self, alias_test_env):
         """9.2.7: alias show shows workspaces by source with session counts."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"local": ["-home-user-proj"], "windows": ["C--proj"]}},
+                    "projects": {"test": {"local": ["-home-user-proj"], "windows": ["C--proj"]}},
                 }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "local" in loaded["aliases"]["test"]
-                assert "windows" in loaded["aliases"]["test"]
+                assert "local" in loaded["projects"]["test"]
+                assert "windows" in loaded["projects"]["test"]
 
     def test_alias_lss_at_syntax(self):
         """9.3.1: lss @testproject lists sessions from alias."""
@@ -7788,24 +7814,28 @@ class TestSection9Remaining:
         """9.4a.1: Alias with remote workspace (not cached) auto-fetches via SSH."""
         # This tests the alias structure can hold remote workspaces
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"remote:user@host": ["-home-user-project"]}},
+                    "projects": {"test": {"remote:user@host": ["-home-user-project"]}},
                 }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "remote:user@host" in loaded["aliases"]["test"]
+                assert "remote:user@host" in loaded["projects"]["test"]
 
     def test_alias_fetch_cached(self, alias_test_env):
         """9.4a.2: Alias with remote workspace (already cached) uses cache."""
         # Tests that cached remote detection works with aliases
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"remote:user@host": ["-home-user-project"]}},
+                    "projects": {"test": {"remote:user@host": ["-home-user-project"]}},
                 }
                 ch.save_aliases(aliases)
                 # Cache detection is handled by is_cached_workspace
@@ -7814,23 +7844,27 @@ class TestSection9Remaining:
     def test_alias_fetch_windows(self, alias_test_env):
         """9.4a.3: Alias with Windows workspace exports from Windows directly."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {"test": {"windows": ["C--Users-test-project"]}},
+                    "projects": {"test": {"windows": ["C--Users-test-project"]}},
                 }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "windows" in loaded["aliases"]["test"]
+                assert "windows" in loaded["projects"]["test"]
 
     def test_alias_fetch_mixed(self, alias_test_env):
         """9.4a.4: Alias with mixed sources exports from all with correct prefixes."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
                 aliases = {
                     "version": 1,
-                    "aliases": {
+                    "projects": {
                         "test": {
                             "local": ["-home-user-project"],
                             "windows": ["C--Users-test-project"],
@@ -7841,9 +7875,9 @@ class TestSection9Remaining:
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "local" in loaded["aliases"]["test"]
-                assert "windows" in loaded["aliases"]["test"]
-                assert "remote:user@host" in loaded["aliases"]["test"]
+                assert "local" in loaded["projects"]["test"]
+                assert "windows" in loaded["projects"]["test"]
+                assert "remote:user@host" in loaded["projects"]["test"]
 
     def test_alias_fetch_unreachable(self):
         """9.4a.5: Unreachable remote shows warning, continues with other sources."""
@@ -7859,13 +7893,15 @@ class TestSection9Remaining:
     def test_alias_io_verify(self, alias_test_env):
         """9.5.2: Verify exported aliases is valid JSON."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"local": ["-home-user-proj"]}}}
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
+                aliases = {"version": 2, "projects": {"test": {"local": ["-home-user-proj"]}}}
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
                 assert "version" in loaded
-                assert "aliases" in loaded
+                assert "projects" in loaded
 
     def test_alias_io_not_found(self):
         """9.5.4: alias import nonexistent.json shows file not found error."""
@@ -7883,38 +7919,46 @@ class TestSection9Remaining:
     def test_alias_edge_special(self, alias_test_env):
         """9.6.2: Alias name with special chars handled."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test-project_v2": {"local": []}}}
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
+                aliases = {"version": 1, "projects": {"test-project_v2": {"local": []}}}
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "test-project_v2" in loaded["aliases"]
+                assert "test-project_v2" in loaded["projects"]
 
     def test_alias_edge_remove_missing(self, alias_test_env):
         """9.6.4: Remove non-existent workspace shows not found."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"local": ["-home-user-proj"]}}}
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
+                aliases = {"version": 1, "projects": {"test": {"local": ["-home-user-proj"]}}}
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "-nonexistent" not in loaded["aliases"]["test"]["local"]
+                assert "-nonexistent" not in loaded["projects"]["test"]["local"]
 
     def test_alias_edge_create_dup(self, alias_test_env):
         """9.6.5: Create duplicate alias shows already exists."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"test": {"local": []}}}
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
+                aliases = {"version": 1, "projects": {"test": {"local": []}}}
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "test" in loaded["aliases"]
+                assert "test" in loaded["projects"]
 
     def test_alias_edge_empty(self, alias_test_env):
         """9.6.6: Empty alias with lss/export shows no workspaces message."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
-                aliases = {"version": 1, "aliases": {"empty": {"local": []}}}
+            with patch.object(
+                ch, "get_projects_file", return_value=alias_test_env["projects_file"]
+            ):
+                aliases = {"version": 1, "projects": {"empty": {"local": []}}}
                 ch.save_aliases(aliases)
 
                 result = ch.resolve_alias_workspaces("empty")
@@ -8263,13 +8307,13 @@ class TestSection12Full:
         """12.4.1: Workspace in multiple aliases uses first matching."""
         config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
-        aliases_file = config_dir / "aliases.json"
+        projects_file = config_dir / "projects.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=config_dir):
-            with patch.object(ch, "get_aliases_file", return_value=aliases_file):
+            with patch.object(ch, "get_projects_file", return_value=projects_file):
                 aliases = {
                     "version": 1,
-                    "aliases": {
+                    "projects": {
                         "alias1": {"local": ["-home-user-proj"]},
                         "alias2": {"local": ["-home-user-proj"]},
                     },
@@ -8284,11 +8328,11 @@ class TestSection12Full:
         """12.4.2: Empty alias shows empty/no sessions message."""
         config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
-        aliases_file = config_dir / "aliases.json"
+        projects_file = config_dir / "projects.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=config_dir):
-            with patch.object(ch, "get_aliases_file", return_value=aliases_file):
-                aliases = {"version": 1, "aliases": {"empty": {"local": []}}}
+            with patch.object(ch, "get_projects_file", return_value=projects_file):
+                aliases = {"version": 1, "projects": {"empty": {"local": []}}}
                 ch.save_aliases(aliases)
 
                 result = ch.resolve_alias_workspaces("empty")
@@ -8298,36 +8342,36 @@ class TestSection12Full:
         """12.4.3: Alias with only remote workspaces."""
         config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
-        aliases_file = config_dir / "aliases.json"
+        projects_file = config_dir / "projects.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=config_dir):
-            with patch.object(ch, "get_aliases_file", return_value=aliases_file):
+            with patch.object(ch, "get_projects_file", return_value=projects_file):
                 aliases = {
                     "version": 1,
-                    "aliases": {"remote-only": {"remote:user@host": ["-home-user-proj"]}},
+                    "projects": {"remote-only": {"remote:user@host": ["-home-user-proj"]}},
                 }
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "remote:user@host" in loaded["aliases"]["remote-only"]
+                assert "remote:user@host" in loaded["projects"]["remote-only"]
 
     def test_scope_edge_deleted(self, tmp_path):
         """12.4.4: Delete alias, then run lss uses current workspace."""
         config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True)
-        aliases_file = config_dir / "aliases.json"
+        projects_file = config_dir / "projects.json"
 
         with patch.object(ch, "get_aliases_dir", return_value=config_dir):
-            with patch.object(ch, "get_aliases_file", return_value=aliases_file):
+            with patch.object(ch, "get_projects_file", return_value=projects_file):
                 # Create then delete alias
-                aliases = {"version": 1, "aliases": {"test": {"local": ["-home-user-proj"]}}}
+                aliases = {"version": 1, "projects": {"test": {"local": ["-home-user-proj"]}}}
                 ch.save_aliases(aliases)
 
-                aliases["aliases"].pop("test")
+                aliases["projects"].pop("test")
                 ch.save_aliases(aliases)
 
                 loaded = ch.load_aliases()
-                assert "test" not in loaded["aliases"]
+                assert "test" not in loaded["projects"]
 
 
 # ============================================================================
@@ -8539,14 +8583,14 @@ class TestSection14Remaining:
         config_file = config_dir / "config.json"
         config_file.write_text('{"version": 1, "sources": []}')
 
-        aliases_file = config_dir / "aliases.json"
-        aliases_file.write_text('{"version": 1, "aliases": {}}')
+        projects_file = config_dir / "projects.json"
+        projects_file.write_text('{"version": 2, "projects": {}}')
 
         return {
             "config_dir": config_dir,
             "db_file": db_file,
             "config_file": config_file,
-            "aliases_file": aliases_file,
+            "projects_file": projects_file,
         }
 
     def test_reset_confirm_cancelled(self):
@@ -8577,7 +8621,7 @@ class TestSection14Remaining:
         assert args.yes is True
 
     def test_reset_confirm_aliases_only(self):
-        """14.1.5: reset aliases deletes only aliases.json."""
+        """14.1.5: reset aliases deletes only projects.json."""
         parser = ch._create_argument_parser()
         args = parser.parse_args(["reset", "aliases", "-y"])
         assert args.what == "aliases"
@@ -8620,12 +8664,12 @@ class TestSection14Remaining:
         # Delete all files
         reset_test_env["db_file"].unlink()
         reset_test_env["config_file"].unlink()
-        reset_test_env["aliases_file"].unlink()
+        reset_test_env["projects_file"].unlink()
 
         # Verify all deleted
         assert not reset_test_env["db_file"].exists()
         assert not reset_test_env["config_file"].exists()
-        assert not reset_test_env["aliases_file"].exists()
+        assert not reset_test_env["projects_file"].exists()
 
     def test_reset_edge_ctrl_c(self):
         """14.3.4: Ctrl+C during prompt shows 'Cancelled.'"""
@@ -9423,9 +9467,10 @@ class TestLocalFlagBehavior:
             ch._dispatch_lsw_additive(Args)
 
         captured = capsys.readouterr()
-        # Should show local header
-        assert "Local" in captured.out
-        # Should show myproject workspace
+        # Should show flat tab-separated format with header
+        assert "HOME\tWORKSPACE" in captured.out
+        # Should show local home and myproject workspace
+        assert "local\t" in captured.out
         assert "myproject" in captured.out
 
     def test_lsw_additive_with_mocked_remote(self, temp_projects_dir, capsys):
@@ -9448,10 +9493,12 @@ class TestLocalFlagBehavior:
             ch._dispatch_lsw_additive(Args)
 
         captured = capsys.readouterr()
-        # Should show local header
-        assert "Local" in captured.out
-        # Should show remote header
-        assert "Remote (testhost)" in captured.out
+        # Should show flat tab-separated format with header
+        assert "HOME\tWORKSPACE" in captured.out
+        # Should show local home
+        assert "local\t" in captured.out
+        # Should show remote home
+        assert "remote:testhost\t" in captured.out
         # Should show local workspace
         assert "myproject" in captured.out
         # Should show remote workspace
@@ -9473,8 +9520,9 @@ class TestLocalFlagBehavior:
             ch._dispatch_lsw_additive(Args)
 
         captured = capsys.readouterr()
-        # Should show local results
-        assert "Local" in captured.out
+        # Should show local results in flat format
+        assert "HOME\tWORKSPACE" in captured.out
+        assert "local\t" in captured.out
         # Should show error for remote
         assert "Cannot connect to remote" in captured.err
 
@@ -9985,9 +10033,9 @@ class TestStatsAndExportEndToEnd:
         )
 
         db_path = tmp_path / "metrics.db"
-        aliases_file = tmp_path / ".agent-history" / "aliases.json"
-        aliases_file.parent.mkdir(parents=True, exist_ok=True)
-        aliases_file.write_text(json.dumps({"version": 1, "aliases": {}}))
+        projects_file = tmp_path / ".agent-history" / "projects.json"
+        projects_file.parent.mkdir(parents=True, exist_ok=True)
+        projects_file.write_text(json.dumps({"version": 2, "projects": {}}))
 
         monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
         monkeypatch.setattr(ch, "get_metrics_db_path", lambda: db_path)
@@ -9995,8 +10043,8 @@ class TestStatsAndExportEndToEnd:
         monkeypatch.setattr(ch, "get_wsl_distributions", lambda: [])
         monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: [])
         monkeypatch.setattr(ch, "get_windows_projects_dir", lambda username=None: None)
-        monkeypatch.setattr(ch, "get_aliases_file", lambda: aliases_file)
-        monkeypatch.setattr(ch, "get_aliases_dir", lambda: aliases_file.parent)
+        monkeypatch.setattr(ch, "get_projects_file", lambda: projects_file)
+        monkeypatch.setattr(ch, "get_aliases_dir", lambda: projects_file.parent)
 
         sync_args = SimpleNamespace(
             force=False, all_homes=False, remotes=[], patterns=["myproject"]
@@ -10060,15 +10108,15 @@ class TestAliasEndToEnd:
         jan21_ts = datetime(2025, 1, 21, 10, 0, 0).timestamp()
         os.utime(session2, (jan21_ts, jan21_ts))
 
-        # Create config directory and alias file
+        # Create config directory and projects file (new format)
         config_dir = tmp_path / ".agent-history"
         config_dir.mkdir(parents=True, exist_ok=True)
-        aliases_file = config_dir / "aliases.json"
+        projects_file = config_dir / "projects.json"
 
-        # Create alias "myproject" that includes both workspaces
-        aliases_data = {
-            "version": 1,
-            "aliases": {
+        # Create project "myproject" that includes both workspaces
+        projects_data = {
+            "version": 2,
+            "projects": {
                 "myproject": {
                     "local": [
                         "-home-user-project-frontend",
@@ -10077,25 +10125,25 @@ class TestAliasEndToEnd:
                 }
             },
         }
-        aliases_file.write_text(json.dumps(aliases_data))
+        projects_file.write_text(json.dumps(projects_data))
 
         return {
             "projects_dir": projects_dir,
             "config_dir": config_dir,
-            "aliases_file": aliases_file,
+            "projects_file": projects_file,
             "tmp_path": tmp_path,
         }
 
     def test_alias_lss_returns_sessions_from_all_workspaces(self, alias_e2e_env):
         """16.1: lss @myproject returns sessions from all alias workspaces."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_e2e_env["projects_file"]):
                 with patch.object(
                     ch, "get_claude_projects_dir", return_value=alias_e2e_env["projects_dir"]
                 ):
                     # Get sessions via alias
                     aliases_data = ch.load_aliases()
-                    alias_config = aliases_data["aliases"]["myproject"]
+                    alias_config = aliases_data["projects"]["myproject"]
 
                     all_sessions = ch._collect_alias_sessions(alias_config, None, None)
 
@@ -10113,7 +10161,7 @@ class TestAliasEndToEnd:
         output_dir.mkdir()
 
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_e2e_env["projects_file"]):
                 with patch.object(
                     ch, "get_claude_projects_dir", return_value=alias_e2e_env["projects_dir"]
                 ):
@@ -10136,7 +10184,7 @@ class TestAliasEndToEnd:
     def test_alias_resolve_workspaces_returns_correct_list(self, alias_e2e_env):
         """16.3: resolve_alias_workspaces returns all workspaces in alias."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_e2e_env["projects_file"]):
                 workspaces = ch.resolve_alias_workspaces("myproject")
 
                 assert len(workspaces) == 2
@@ -10147,12 +10195,12 @@ class TestAliasEndToEnd:
     def test_alias_lss_with_date_filter(self, alias_e2e_env):
         """16.4: lss @myproject --since filters correctly."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_e2e_env["projects_file"]):
                 with patch.object(
                     ch, "get_claude_projects_dir", return_value=alias_e2e_env["projects_dir"]
                 ):
                     aliases_data = ch.load_aliases()
-                    alias_config = aliases_data["aliases"]["myproject"]
+                    alias_config = aliases_data["projects"]["myproject"]
 
                     # Filter to only sessions from Jan 21 onwards
                     # Use datetime (not date) for comparison with session modified times
@@ -10166,14 +10214,14 @@ class TestAliasEndToEnd:
     def test_alias_nonexistent_returns_empty(self, alias_e2e_env):
         """16.5: Nonexistent alias returns empty workspace list."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_e2e_env["projects_file"]):
                 workspaces = ch.resolve_alias_workspaces("nonexistent")
                 assert workspaces == []
 
     def test_alias_lss_filters_by_agent(self, alias_e2e_env, monkeypatch):
         """cmd_alias_lss should filter by agent when specified."""
         with patch.object(ch, "get_aliases_dir", return_value=alias_e2e_env["config_dir"]):
-            with patch.object(ch, "get_aliases_file", return_value=alias_e2e_env["aliases_file"]):
+            with patch.object(ch, "get_projects_file", return_value=alias_e2e_env["projects_file"]):
                 with patch.object(
                     ch, "get_claude_projects_dir", return_value=alias_e2e_env["projects_dir"]
                 ):
@@ -10187,7 +10235,7 @@ class TestAliasEndToEnd:
 
                     # Get all sessions (agent=auto)
                     aliases_data = ch.load_aliases()
-                    alias_config = aliases_data["aliases"]["myproject"]
+                    alias_config = aliases_data["projects"]["myproject"]
                     all_sessions = ch._collect_alias_sessions(alias_config, None, None)
 
                     # All sessions should be claude (from fixture)
@@ -10322,7 +10370,7 @@ class TestAliasEndToEnd:
 
     def test_alias_export_uses_non_claude_sessions(self, monkeypatch, tmp_path):
         """cmd_alias_export should export Codex/Gemini sessions when agent is non-claude."""
-        aliases_data = {"aliases": {"myalias": {"local": ["-home-user-project"]}}}
+        aliases_data = {"projects": {"myalias": {"local": ["-home-user-project"]}}}
         monkeypatch.setattr(ch, "load_aliases", lambda: aliases_data)
 
         sessions = [
@@ -10442,7 +10490,7 @@ class TestCommandCombinationMatrix:
             ),
         ],
     )
-    def test_lss_combination_matrix(
+    def test_lss_combination_matrix(  # noqa: C901
         self,
         description,
         in_workspace,
@@ -10465,9 +10513,14 @@ class TestCommandCombinationMatrix:
             ch, "get_windows_projects_dir", lambda username=None: env["windows_projects"]
         )
         monkeypatch.setattr(ch, "get_windows_users_with_claude", lambda: env["windows_users"])
-        monkeypatch.setattr(
-            ch, "get_saved_sources", lambda: ["user@mock"] if include_remote else []
-        )
+        # Build saved sources based on test scenario
+        # Windows needs to be in saved_sources for --ah to include it (explicit homes model)
+        saved_sources = []
+        if use_all_homes:
+            saved_sources.append("windows:mockuser")  # Add Windows when testing --ah
+        if include_remote:
+            saved_sources.append("user@mock")
+        monkeypatch.setattr(ch, "get_saved_sources", lambda s=saved_sources: s)
         monkeypatch.setattr(ch, "is_running_in_wsl", lambda: True)
         monkeypatch.setattr(ch, "check_ssh_connection", lambda host: True)
         monkeypatch.setattr(ch, "list_remote_workspaces", lambda host: ["-home-user-remoteproj"])
@@ -10536,10 +10589,15 @@ class TestCommandCombinationMatrix:
         ]
 
         def normalize_label(label: str) -> str:
-            if label.startswith("Local"):
+            # Handle new lowercase format: local, windows:user, remote:host
+            if label == "local" or label.startswith("Local"):
                 return "Local"
-            if label.startswith("Windows"):
+            if label.startswith("windows:") or label.startswith("Windows"):
                 return "Windows"
+            if label.startswith("remote:"):
+                # Extract hostname from remote:hostname
+                hostname = label.split(":")[1] if ":" in label else label
+                return f"Remote ({hostname})"
             return label
 
         # Column index 1 is HOME (after AGENT column at index 0)
@@ -12388,16 +12446,16 @@ class TestCriticalFixesAliases:
     """Tests for alias-related critical fixes."""
 
     def test_corrupted_aliases_creates_backup(self, tmp_path, monkeypatch):
-        """Verify that corrupted aliases.json creates a backup file."""
+        """Verify that corrupted projects.json creates a backup file."""
         aliases_dir = tmp_path / ".agent-history"
         aliases_dir.mkdir()
-        aliases_file = aliases_dir / "aliases.json"
+        projects_file = aliases_dir / "projects.json"
 
         # Write corrupted JSON
-        aliases_file.write_text("{invalid json content")
+        projects_file.write_text("{invalid json content")
 
-        # Mock get_aliases_file to return our test path
-        monkeypatch.setattr(ch, "get_aliases_file", lambda: aliases_file)
+        # Mock get_projects_file to return our test path
+        monkeypatch.setattr(ch, "get_projects_file", lambda: projects_file)
 
         # Capture stderr
         import io
@@ -12409,10 +12467,10 @@ class TestCriticalFixesAliases:
         result = ch.load_aliases()
 
         # Should return empty structure
-        assert result == {"version": 1, "aliases": {}}
+        assert result == {"version": 2, "projects": {}}
 
         # Should have created a backup
-        backup_files = list(aliases_dir.glob("aliases.corrupted.*.json"))
+        backup_files = list(aliases_dir.glob("projects.corrupted.*.json"))
         assert len(backup_files) == 1, "Should create one backup file"
 
         # Backup should contain original corrupted content
@@ -12426,19 +12484,19 @@ class TestCriticalFixesAliases:
         """Verify that alias import with --replace creates a backup first."""
         aliases_dir = tmp_path / ".agent-history"
         aliases_dir.mkdir()
-        aliases_file = aliases_dir / "aliases.json"
+        projects_file = aliases_dir / "projects.json"
 
         # Write existing aliases
-        original_aliases = {"version": 1, "aliases": {"myproject": {"local": ["ws1"]}}}
-        aliases_file.write_text(json.dumps(original_aliases))
+        original_aliases = {"version": 1, "projects": {"myproject": {"local": ["ws1"]}}}
+        projects_file.write_text(json.dumps(original_aliases))
 
-        # Mock get_aliases_file and get_aliases_dir
-        monkeypatch.setattr(ch, "get_aliases_file", lambda: aliases_file)
+        # Mock get_projects_file and get_aliases_dir
+        monkeypatch.setattr(ch, "get_projects_file", lambda: projects_file)
         monkeypatch.setattr(ch, "get_aliases_dir", lambda: aliases_dir)
 
         # Create import file
         import_file = tmp_path / "import.json"
-        new_aliases = {"version": 1, "aliases": {"newproject": {"local": ["ws2"]}}}
+        new_aliases = {"version": 1, "projects": {"newproject": {"local": ["ws2"]}}}
         import_file.write_text(json.dumps(new_aliases))
 
         # Mock args for import
@@ -12454,7 +12512,7 @@ class TestCriticalFixesAliases:
         ch.cmd_alias_config_import(args)
 
         # Check backup was created
-        backup_files = list(aliases_dir.glob("aliases.backup.*.json"))
+        backup_files = list(aliases_dir.glob("projects.backup.*.json"))
         assert len(backup_files) == 1, "Should create backup before replace"
 
         # Backup should contain original content
@@ -12462,8 +12520,8 @@ class TestCriticalFixesAliases:
         assert backup_content == original_aliases
 
         # New aliases should be in place
-        current_content = json.loads(aliases_file.read_text())
-        assert "newproject" in current_content["aliases"]
+        current_content = json.loads(projects_file.read_text())
+        assert "newproject" in current_content["projects"]
 
 
 class TestCriticalFixesRsync:

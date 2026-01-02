@@ -100,12 +100,15 @@ def test_e2e_alias_create_add_show_export(tmp_path: Path):
     assert r2.returncode == 0, r2.stderr
 
     # Export alias config and verify structure contains our workspace
+    # Note: The new format uses "projects" key instead of "aliases"
     r3 = run_cli(["alias", "export"], env=env)
     assert r3.returncode == 0, r3.stderr
     data = json.loads(r3.stdout)
-    assert alias in data.get("aliases", {})
-    assert "local" in data["aliases"][alias]
-    assert "-home-user-alias" in data["aliases"][alias]["local"]
+    # Support both old and new key names for compatibility
+    projects = data.get("projects", data.get("aliases", {}))
+    assert alias in projects
+    assert "local" in projects[alias]
+    assert "-home-user-alias" in projects[alias]["local"]
 
     # Show should succeed (content may vary by platform setup)
     r4 = run_cli(["alias", "show", alias], env=env)
