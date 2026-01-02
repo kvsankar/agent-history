@@ -10069,8 +10069,9 @@ class TestStatsAndExportEndToEnd:
         ch.cmd_stats(stats_args)
 
         captured = capsys.readouterr()
-        assert "METRICS SUMMARY" in captured.out  # Header varies by agent
-        assert "Total: 1" in captured.out
+        # Flat format outputs tab-separated metrics
+        assert "SESSION_METRIC\tVALUE" in captured.out
+        assert "total_sessions\t1" in captured.out
 
 
 # ============================================================================
@@ -11572,8 +11573,8 @@ class TestStatsHeaderAgentNames:
             },
         }
 
-    def test_print_summary_stats_claude_header(self, capsys, empty_stats):
-        """Test stats header shows 'CLAUDE CODE' for claude agent."""
+    def test_print_summary_stats_flat_format(self, capsys, empty_stats):
+        """Test stats outputs flat tab-separated format."""
         stats = ch.SummaryStatsData(
             session_stats=empty_stats["session_stats"],
             token_stats=empty_stats["token_stats"],
@@ -11585,67 +11586,76 @@ class TestStatsHeaderAgentNames:
         )
         ch._print_summary_stats(stats)
         captured = capsys.readouterr()
-        assert "CLAUDE CODE METRICS SUMMARY" in captured.out
+        # Flat format has tab-separated sections
+        assert "SESSION_METRIC\tVALUE" in captured.out
+        assert "TOKEN_METRIC\tVALUE" in captured.out
+        assert "TOOL_METRIC\tVALUE" in captured.out
 
-    def test_print_summary_stats_codex_header(self, capsys, empty_stats):
-        """Test stats header shows 'CODEX CLI' for codex agent."""
+    def test_print_summary_stats_session_metrics(self, capsys, empty_stats):
+        """Test stats outputs session metrics correctly."""
         stats = ch.SummaryStatsData(
-            session_stats=empty_stats["session_stats"],
+            session_stats={
+                "total_sessions": 10,
+                "main_sessions": 8,
+                "agent_sessions": 2,
+                "total_messages": 100,
+            },
             token_stats=empty_stats["token_stats"],
             tool_stats=empty_stats["tool_stats"],
             sources=[],
             models=[],
             top_workspaces=[],
-            agent="codex",
+            agent="claude",
         )
         ch._print_summary_stats(stats)
         captured = capsys.readouterr()
-        assert "CODEX CLI METRICS SUMMARY" in captured.out
+        assert "total_sessions\t10" in captured.out
+        assert "main_sessions\t8" in captured.out
+        assert "agent_sessions\t2" in captured.out
+        assert "total_messages\t100" in captured.out
 
-    def test_print_summary_stats_gemini_header(self, capsys, empty_stats):
-        """Test stats header shows 'GEMINI CLI' for gemini agent."""
+    def test_print_summary_stats_token_metrics(self, capsys, empty_stats):
+        """Test stats outputs token metrics correctly."""
         stats = ch.SummaryStatsData(
             session_stats=empty_stats["session_stats"],
-            token_stats=empty_stats["token_stats"],
+            token_stats={
+                "total_input": 1000,
+                "total_output": 500,
+                "total_cache_creation": 100,
+                "total_cache_read": 200,
+            },
             tool_stats=empty_stats["tool_stats"],
             sources=[],
             models=[],
             top_workspaces=[],
-            agent="gemini",
+            agent="claude",
         )
         ch._print_summary_stats(stats)
         captured = capsys.readouterr()
-        assert "GEMINI CLI METRICS SUMMARY" in captured.out
+        assert "input_tokens\t1000" in captured.out
+        assert "output_tokens\t500" in captured.out
+        assert "cache_created\t100" in captured.out
+        assert "cache_read\t200" in captured.out
 
-    def test_print_summary_stats_auto_header(self, capsys, empty_stats):
-        """Test stats header shows 'AI ASSISTANT' for auto agent."""
+    def test_print_summary_stats_tool_metrics(self, capsys, empty_stats):
+        """Test stats outputs tool metrics correctly."""
         stats = ch.SummaryStatsData(
             session_stats=empty_stats["session_stats"],
             token_stats=empty_stats["token_stats"],
-            tool_stats=empty_stats["tool_stats"],
+            tool_stats={
+                "total_tool_uses": 50,
+                "tool_errors": 5,
+            },
             sources=[],
             models=[],
             top_workspaces=[],
-            agent="auto",
+            agent="claude",
         )
         ch._print_summary_stats(stats)
         captured = capsys.readouterr()
-        assert "AI ASSISTANT METRICS SUMMARY" in captured.out
-
-    def test_print_summary_stats_unknown_agent_defaults_to_ai_assistant(self, capsys, empty_stats):
-        """Test stats header defaults to 'AI ASSISTANT' for unknown agent."""
-        stats = ch.SummaryStatsData(
-            session_stats=empty_stats["session_stats"],
-            token_stats=empty_stats["token_stats"],
-            tool_stats=empty_stats["tool_stats"],
-            sources=[],
-            models=[],
-            top_workspaces=[],
-            agent="unknown_agent",
-        )
-        ch._print_summary_stats(stats)
-        captured = capsys.readouterr()
-        assert "AI ASSISTANT METRICS SUMMARY" in captured.out
+        assert "total_uses\t50" in captured.out
+        assert "errors\t5" in captured.out
+        assert "error_rate\t10.0" in captured.out  # 5/50 = 10%
 
 
 # ============================================================================
@@ -11882,7 +11892,7 @@ class TestPrintTimeSummary:
     """Tests for _print_time_summary function."""
 
     def test_prints_time_summary(self, capsys):
-        """Should print formatted time summary."""
+        """Should print formatted time summary (flat format)."""
         time_stats = {
             "daily_stats": {
                 "2025-01-15": {"work_seconds": 3600, "messages": 10, "work_periods": 2}
@@ -11896,12 +11906,13 @@ class TestPrintTimeSummary:
         }
         ch._print_time_summary(time_stats, include_breakdown=False)
         captured = capsys.readouterr()
-        assert "Time" in captured.out
-        assert "1h 0m" in captured.out
-        assert "Work periods: 2" in captured.out
+        # Flat format: TIME_METRIC\tVALUE
+        assert "TIME_METRIC\tVALUE" in captured.out
+        assert "total_work_seconds\t3600" in captured.out
+        assert "work_periods\t2" in captured.out
 
     def test_prints_daily_breakdown_when_requested(self, capsys):
-        """Should print daily breakdown when include_breakdown is True."""
+        """Should print daily breakdown when include_breakdown is True (flat format)."""
         time_stats = {
             "daily_stats": {
                 "2025-01-15": {"work_seconds": 3600, "messages": 10, "work_periods": 2}
@@ -11915,7 +11926,8 @@ class TestPrintTimeSummary:
         }
         ch._print_time_summary(time_stats, include_breakdown=True)
         captured = capsys.readouterr()
-        assert "Daily Breakdown" in captured.out
+        # Flat format: DATE\tWORK_SECONDS\tPERIODS\tMESSAGES
+        assert "DATE\tWORK_SECONDS\tPERIODS\tMESSAGES" in captured.out
         assert "2025-01-15" in captured.out
 
 
@@ -13194,8 +13206,9 @@ class TestDisplayFunctions:
         conn.close()
 
         captured = capsys.readouterr()
-        assert "MODEL USAGE STATISTICS" in captured.out
-        assert "sonnet-4" in captured.out  # Model name is shortened in display
+        # Flat format: MODEL\tMESSAGES\tSESSIONS\tAVG_OUTPUT
+        assert "MODEL\tMESSAGES\tSESSIONS\tAVG_OUTPUT" in captured.out
+        assert "claude-sonnet-4" in captured.out
 
     def test_display_daily_stats(self, tmp_path, capsys):
         """Should display daily usage statistics."""
