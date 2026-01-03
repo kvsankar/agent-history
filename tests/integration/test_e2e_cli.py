@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -260,8 +261,11 @@ def test_e2e_lss_absolute_path_target(tmp_path: Path):
 def test_e2e_all_homes_windows(tmp_path: Path):
     local = tmp_path / "local"
     wsl = tmp_path / "wsl"
+    home_dir = tmp_path / "home"
+    config_dir = home_dir / ".agent-history"
     local.mkdir(parents=True, exist_ok=True)
     wsl.mkdir(parents=True, exist_ok=True)
+    config_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a local and a WSL workspace with one session each
     (local / "-home-user-loc").mkdir()
@@ -269,7 +273,12 @@ def test_e2e_all_homes_windows(tmp_path: Path):
     (wsl / "-home-test-distro-ws").mkdir()
     (wsl / "-home-test-distro-ws" / "b.jsonl").write_text("{}\n")
 
+    # Add WSL to saved sources (required for --ah to include WSL)
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"version": 1, "sources": ["wsl:TestWSL"]}))
+
     env = os.environ.copy()
+    env["HOME"] = str(home_dir)
     env["CLAUDE_PROJECTS_DIR"] = str(local)
     env["CLAUDE_WSL_TEST_DISTRO"] = "TestWSL"
     env["CLAUDE_WSL_PROJECTS_DIR"] = str(wsl)

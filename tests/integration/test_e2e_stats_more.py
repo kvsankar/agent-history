@@ -91,10 +91,10 @@ def test_stats_models_tools_by_day(tmp_path: Path):
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    # Set HOME to ensure test uses isolated config/database directory
+    env["HOME"] = str(cfg)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(cfg)
-    else:
-        env["HOME"] = str(cfg)
 
     # Sync
     r_sync = run_cli(["stats", "--sync", "--aw"], env=env)
@@ -132,6 +132,10 @@ def test_all_homes_sessions_windows(tmp_path: Path):
     # Local and WSL synthetic roots
     local = tmp_path / "local"
     wsl = tmp_path / "wsl"
+    home_dir = tmp_path / "home"
+    config_dir = home_dir / ".agent-history"
+    config_dir.mkdir(parents=True, exist_ok=True)
+
     make_jsonl(
         local / "-home-user-loc" / "a.jsonl",
         [
@@ -153,7 +157,12 @@ def test_all_homes_sessions_windows(tmp_path: Path):
         ],
     )
 
+    # Add WSL to saved sources (required for --ah to include WSL)
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"version": 1, "sources": ["wsl:TestWSL"]}))
+
     env = os.environ.copy()
+    env["HOME"] = str(home_dir)
     env["CLAUDE_PROJECTS_DIR"] = str(local)
     env["CLAUDE_WSL_TEST_DISTRO"] = "TestWSL"
     env["CLAUDE_WSL_PROJECTS_DIR"] = str(wsl)

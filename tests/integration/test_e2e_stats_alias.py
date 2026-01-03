@@ -53,11 +53,10 @@ def test_e2e_stats_sync_and_show_local(tmp_path: Path):
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
-    # Redirect config/metrics DB to temp
+    # Set HOME to ensure test uses isolated config/metrics DB directory
+    env["HOME"] = str(cfg)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(cfg)
-    else:
-        env["HOME"] = str(cfg)
 
     r1 = run_cli(["stats", "--sync", "--aw"], env=env)
     assert r1.returncode == 0, r1.stderr
@@ -86,10 +85,10 @@ def test_e2e_alias_create_add_show_export(tmp_path: Path):
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    # Set HOME to ensure test uses isolated config directory
+    env["HOME"] = str(cfg)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(cfg)
-    else:
-        env["HOME"] = str(cfg)
 
     # Create alias and add the encoded workspace dir
     alias = "mye2e"
