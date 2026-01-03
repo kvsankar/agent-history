@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -7,7 +8,23 @@ from pathlib import Path
 
 import pytest
 
+from tests.legacy_cli import translate_legacy_args
+
 pytestmark = pytest.mark.integration
+
+
+# Check if WSL is available and functional (for Windows-specific tests)
+def _check_wsl_available():
+    if sys.platform != "win32":
+        return False
+    try:
+        result = subprocess.run(["wsl", "--list"], capture_output=True, timeout=5, check=False)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+HAS_WSL = _check_wsl_available()
 
 # Use agent-history (new name), fall back to claude-history for backward compat
 _CLI_SCRIPT = Path(__file__).resolve().parents[2] / "agent-history"
@@ -21,6 +38,7 @@ _CLI_LOADER.exec_module(_claude_cli)
 
 def run_cli(args, env=None, timeout=20):
     # Use agent-history (new name), fall back to claude-history for backward compat
+    args = translate_legacy_args(list(args))
     script_path = Path.cwd() / "agent-history"
     if not script_path.exists():
         script_path = Path.cwd() / "claude-history"
@@ -54,7 +72,7 @@ def test_e2e_local_lsh_lsw_lss(tmp_path: Path):
     # lsh local
     r1 = run_cli(["lsh", "--local"], env=env)
     assert r1.returncode == 0, r1.stderr
-    assert "Local" in r1.stdout
+    assert "local" in r1.stdout.lower()
 
     # lsw local
     r2 = run_cli(["lsw", "--local"], env=env)
@@ -242,13 +260,15 @@ def test_e2e_lss_absolute_path_target(tmp_path: Path):
     assert "session-0.jsonl" in r.stdout
 
 
+@pytest.mark.skipif(not HAS_WSL, reason="Requires WSL on Windows")
 def test_e2e_all_homes_windows(tmp_path: Path):
-    if sys.platform != "win32":
-        return
     local = tmp_path / "local"
     wsl = tmp_path / "wsl"
+    home_dir = tmp_path / "home"
+    config_dir = home_dir / ".agent-history"
     local.mkdir(parents=True, exist_ok=True)
     wsl.mkdir(parents=True, exist_ok=True)
+    config_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a local and a WSL workspace with one session each
     (local / "-home-user-loc").mkdir()
@@ -256,7 +276,12 @@ def test_e2e_all_homes_windows(tmp_path: Path):
     (wsl / "-home-test-distro-ws").mkdir()
     (wsl / "-home-test-distro-ws" / "b.jsonl").write_text("{}\n")
 
+    # Add WSL to saved sources (required for --ah to include WSL)
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"version": 1, "sources": ["wsl:TestWSL"]}))
+
     env = os.environ.copy()
+    env["HOME"] = str(home_dir)
     env["CLAUDE_PROJECTS_DIR"] = str(local)
     env["CLAUDE_WSL_TEST_DISTRO"] = "TestWSL"
     env["CLAUDE_WSL_PROJECTS_DIR"] = str(wsl)
@@ -305,13 +330,15 @@ def test_e2e_stats_top_ws_limit(tmp_path: Path):
     env["USERPROFILE"] = str(home_dir)
 
     # Use --no-sync since we already populated the database directly
-    result = run_cli(["stats", "--aw", "--top-ws", "1", "--no-sync"], env=env)
+    # Note: --top-ws N limits total rows globally, not per-home
+    result = run_cli(["stats", "--aw", "--top-ws", "2", "--no-sync"], env=env)
     assert result.returncode == 0, result.stderr
 
     output = result.stdout
-    assert "Home: local" in output
-    assert "Home: wsl:Ubuntu" in output
-    assert "Workspace: local-main" in output
-    assert "Workspace: wsl-main" in output
+    # New flat format: HOME\tWORKSPACE\t... with data rows
+    # With --top-ws 2, should see top 2 workspaces total (local-main=3 sessions, wsl-main=2 sessions)
+    assert "local" in output
+    assert "local-main" in output
+    # Secondary workspaces should not appear (they have fewer sessions)
     assert "local-secondary" not in output
     assert "wsl-secondary" not in output

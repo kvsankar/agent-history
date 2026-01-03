@@ -253,48 +253,6 @@ Content can also be a simple string in some cases:
 
 ---
 
-## Implementation Status in agent-history
-
-### Supported Record Types
-
-| Type | Status | Notes |
-|------|--------|-------|
-| `session_meta` | ? Supported | ID, cwd, cli_version, source extracted |
-| `turn_context` | ? Supported | Model name extracted for stats |
-| `response_item.message` | ? Supported | User and assistant messages |
-| `response_item.function_call` | ? Supported | Tool calls with arguments |
-| `response_item.function_call_output` | ? Supported | Tool results |
-| `response_item.custom_tool_call` | ? Supported | Custom/MCP tool calls |
-| `response_item.custom_tool_call_output` | ? Supported | Custom tool results |
-| `event_msg.token_count` | ✅ Supported | Token usage snapshots |
-| `response_item.reasoning` | ? Not handled | Extended thinking summaries |
-| `response_item.local_shell_call` | ? Not handled | Shell command executions |
-| `response_item.web_search_call` | ? Not handled | Web search actions |
-| `response_item.ghost_snapshot` | ? Not handled | Git snapshots |
-| `compacted` | ? Not handled | Compacted conversation items |
-| `event_msg` | ? Not handled | Other event messages |
-### Session Metadata Fields
-
-| Field | Shown in Export | Used in Stats |
-|-------|-----------------|---------------|
-| `id` | ✅ Yes | ✅ Yes |
-| `cwd` | ✅ Yes | ✅ Yes (workspace) |
-| `cli_version` | ✅ Yes | ✅ Yes |
-| `source` | ✅ Yes | ❌ No |
-| `timestamp` | ✅ Yes | ✅ Yes |
-| `originator` | ❌ No | ❌ No |
-| `instructions` | ❌ No | ❌ No |
-| `model_provider` | ❌ No | ❌ No |
-| `git` (branch, commit) | ❌ No | ❌ No |
-
-### Test Coverage
-
-- **Unit tests**: Comprehensive coverage for parsing, content extraction, metrics
-- **E2E tests**: 16 integration tests covering lsw, lss, export, stats
-- **All tests passing**: 728 unit + 16 E2E as of December 2025
-
----
-
 ## Sources
 
 - [Codex CLI GitHub Repository](https://github.com/openai/codex)

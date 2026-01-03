@@ -6,11 +6,28 @@ from pathlib import Path
 
 import pytest
 
+from tests.legacy_cli import translate_legacy_args
+
 pytestmark = pytest.mark.integration
+
+
+# Check if WSL is available and functional (for Windows-specific tests)
+def _check_wsl_available():
+    if sys.platform != "win32":
+        return False
+    try:
+        result = subprocess.run(["wsl", "--list"], capture_output=True, timeout=5, check=False)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+HAS_WSL = _check_wsl_available()
 
 
 def run_cli(args, env=None, timeout=25):
     # Use agent-history (new name), fall back to claude-history for backward compat
+    args = translate_legacy_args(list(args))
     script_path = Path.cwd() / "agent-history"
     if not script_path.exists():
         script_path = Path.cwd() / "claude-history"
@@ -39,76 +56,89 @@ def test_stats_models_tools_by_day(tmp_path: Path):
     cfg.mkdir(parents=True, exist_ok=True)
 
     # Two days, include assistant with model and tool_use to populate stats
+    # Use proper JSONL format with message wrapper
     rows = [
         {
             "type": "user",
             "timestamp": "2025-01-01T10:00:00Z",
-            "content": [{"type": "text", "text": "start"}],
+            "message": {"role": "user", "content": [{"type": "text", "text": "start"}]},
         },
         {
             "type": "assistant",
             "timestamp": "2025-01-01T10:01:00Z",
-            "model": "claude-3-5-sonnet",
-            "content": [
-                {"type": "text", "text": "ok"},
-                {"type": "tool_use", "name": "bash", "id": "t1", "input": {"cmd": "echo hi"}},
-            ],
+            "message": {
+                "role": "assistant",
+                "model": "claude-3-5-sonnet",
+                "content": [
+                    {"type": "text", "text": "ok"},
+                    {"type": "tool_use", "name": "bash", "id": "t1", "input": {"cmd": "echo hi"}},
+                ],
+            },
         },
         {
             "type": "user",
             "timestamp": "2025-01-02T09:00:00Z",
-            "content": [{"type": "text", "text": "next"}],
+            "message": {"role": "user", "content": [{"type": "text", "text": "next"}]},
         },
         {
             "type": "assistant",
             "timestamp": "2025-01-02T09:01:00Z",
-            "model": "claude-3-5-haiku",
-            "content": [{"type": "text", "text": "done"}],
+            "message": {
+                "role": "assistant",
+                "model": "claude-3-5-haiku",
+                "content": [{"type": "text", "text": "done"}],
+            },
         },
     ]
     make_jsonl(projects / "-home-user-stats" / "s.jsonl", rows)
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    # Set HOME to ensure test uses isolated config/database directory
+    env["HOME"] = str(cfg)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(cfg)
-    else:
-        env["HOME"] = str(cfg)
 
     # Sync
     r_sync = run_cli(["stats", "--sync", "--aw"], env=env)
     assert r_sync.returncode == 0, r_sync.stderr
 
-    # Models
+    # Models (--models is legacy, maps to --by model)
     r_models = run_cli(["stats", "--aw", "--models"], env=env)
     assert r_models.returncode == 0, r_models.stderr
-    assert "MODEL USAGE STATISTICS" in r_models.stdout
+    # New flat format has "MODEL" column header
+    assert "MODEL" in r_models.stdout
 
-    # Tools
+    # Tools (--tools is legacy, maps to --by tool)
     r_tools = run_cli(["stats", "--aw", "--tools"], env=env)
     assert r_tools.returncode == 0, r_tools.stderr
-    assert "TOOL USAGE STATISTICS" in r_tools.stdout
+    # New flat format has "TOOL" column header
+    assert "TOOL" in r_tools.stdout
 
-    # By day
+    # By day (--by-day is legacy, maps to --by day)
     r_by_day = run_cli(["stats", "--aw", "--by-day"], env=env)
     assert r_by_day.returncode == 0, r_by_day.stderr
     assert "2025-01-01" in r_by_day.stdout or "2025-01-02" in r_by_day.stdout
-    assert "#" in r_by_day.stdout
+    assert "DAY" in r_by_day.stdout  # Header column (uppercase in flat format)
 
     # Time tracking
     r_time = run_cli(["stats", "--aw", "--time"], env=env)
     assert r_time.returncode == 0, r_time.stderr
-    assert "TIME TRACKING" in r_time.stdout
-    assert "Bar (time)" in r_time.stdout
-    assert "#" in r_time.stdout
+    # New flat format has NAME\tVALUE header and DATE breakdown
+    assert "NAME\tVALUE" in r_time.stdout
+    assert "total_work_seconds" in r_time.stdout
+    assert "DATE" in r_time.stdout
 
 
+@pytest.mark.skipif(not HAS_WSL, reason="Requires WSL on Windows")
 def test_all_homes_sessions_windows(tmp_path: Path):
-    if sys.platform != "win32":
-        return
     # Local and WSL synthetic roots
     local = tmp_path / "local"
     wsl = tmp_path / "wsl"
+    home_dir = tmp_path / "home"
+    config_dir = home_dir / ".agent-history"
+    config_dir.mkdir(parents=True, exist_ok=True)
+
     make_jsonl(
         local / "-home-user-loc" / "a.jsonl",
         [
@@ -130,7 +160,12 @@ def test_all_homes_sessions_windows(tmp_path: Path):
         ],
     )
 
+    # Add WSL to saved sources (required for --ah to include WSL)
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"version": 1, "sources": ["wsl:TestWSL"]}))
+
     env = os.environ.copy()
+    env["HOME"] = str(home_dir)
     env["CLAUDE_PROJECTS_DIR"] = str(local)
     env["CLAUDE_WSL_TEST_DISTRO"] = "TestWSL"
     env["CLAUDE_WSL_PROJECTS_DIR"] = str(wsl)

@@ -188,16 +188,6 @@ When present, contains the model's reasoning steps:
 
 ---
 
-## Supported Record Types in agent-history
-
-| Type | Status | Notes |
-|------|--------|-------|
-| `user` | ✅ Supported | User messages parsed and exported |
-| `gemini` | ✅ Supported | Assistant messages parsed and exported |
-| `info` | ✅ Supported | System info messages |
-| `warning` | ✅ Supported | System warning messages |
-| `error` | ✅ Supported | System error messages |
-
 ## Tool Calls
 
 Tool calls are embedded in Gemini messages as a `toolCalls` array:
@@ -369,38 +359,6 @@ GEMINI_SESSIONS_DIR = os.environ.get("GEMINI_SESSIONS_DIR") or Path.home() / ".g
 2. **Use CWD heuristic**: Compare current directory hash to find matching project
 3. **Display hash prefix**: Show first 8 chars of hash as identifier
 4. **Build mapping file**: Cache hash → path mappings on first discovery
-
----
-
-## Implementation Status in agent-history
-
-**Current Status:** ✅ Fully implemented with 21 unit tests and 10 E2E tests passing.
-
-### Implemented Features
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `gemini_parse_json_to_markdown()` | ✅ Implemented | Full markdown export with thoughts |
-| `GEMINI_SESSIONS_DIR` env var | ✅ Implemented | For testing and custom paths |
-| `--agent gemini` CLI option | ✅ Implemented | Full integration with CLI |
-| `gemini_scan_sessions()` | ✅ Implemented | Scans `~/.gemini/tmp/*/chats/` |
-| `gemini_extract_metrics()` | ✅ Implemented | For stats database |
-| `gemini_read_json_messages()` | ✅ Implemented | JSON parsing with metadata |
-| Stats sync for Gemini | ✅ Implemented | `sync_file_to_db()` integration |
-| Handle `info`/`error`/`warning` types | ✅ Implemented | System message types |
-
-### Workspace Display
-
-Project hashes are displayed as `[hash:xxxxxxxx]` (first 8 characters of SHA-256).
-Future enhancement: mapping hash → project path via `.gemini/` directory scanning.
-
-### Key Implementation Differences from Claude/Codex
-
-1. **JSON not JSONL**: Entire file loaded as single JSON object
-2. **Type field values**: `"gemini"` mapped to `"assistant"` for display
-3. **Thoughts array**: Reasoning steps displayed in markdown under "Reasoning:" header
-4. **Project hashing**: SHA-256 shown as truncated hash identifier
-5. **Content format**: Direct string, not array of content blocks
 
 ---
 

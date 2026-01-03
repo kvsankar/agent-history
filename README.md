@@ -30,7 +30,7 @@ Claude Code, Codex CLI, and Gemini CLI leave conversation data fragmented across
 - **Markdown export (flexible)** – Export whole workspaces or single sessions; minimal/flat/split modes; size and path control.
 - **Workspace-aware filtering** – Target workspaces by name or path (slashes ok); matches encoded names automatically.
 - **Multi-environment reach** – Local, WSL (UNC or Linux paths), Windows from WSL, and SSH remotes; `[missing]` marker shows closest match for renamed workspaces.
-- **Aliases** – Group related workspaces across homes/sources; apply aliases to `lss`, `lsw`, `export`, and `stats`.
+- **Projects** – Group related workspaces across homes/sources; apply projects to `sessions`, `workspaces`, `export`, and `stats`.
 - **Usage metrics** – Summaries, homes/workspaces breakdown, token/tool stats, time tracking (with daily breakdown via `--time`), top workspaces limit via `--top-ws`.
 - **Cross-home sync** – Sync metrics from all homes (`--ah`), all workspaces (`--aw`), or current workspace only (`--this`).
 - **WSL/Windows helpers** – Auto-detect WSL distros/Windows users; UNC path inference for `lss` without `--wsl`; converts path separators safely.
@@ -89,29 +89,25 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 <!-- help-snippet:start -->
 ```
-usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini}]
-                     {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index} ...
-
+usage: agent-history [options] command
 Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)
 
 positional arguments:
-  {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index}
-                        Command to execute
-    lsw                 List workspaces
-    lss                 List sessions
-    lsh                 List homes and manage SSH remotes
-    export              Export to markdown
-    alias               Manage workspace aliases
-    stats               Show usage statistics and metrics
-    reset               Reset stored data (database, settings, aliases)
-    install             Install CLI and Claude skill
-    gemini-index        Manage Gemini hash→path index
+  COMMAND                     Command to execute
+    reset                     Reset stored data (database, settings, projects)
+    install                   Install CLI and Claude skill
+    gemini-index              Manage Gemini hash→path index
+    home                      Manage homes
+    ws                        Workspace commands
+    session                   Session commands
+    project                   Manage projects
 
 options:
-  -h, --help            show this help message and exit
-  --version             show program's version number and exit
+  -h, --help                  show this help message and exit
+  --version                   show program's version number and exit
   --agent {auto,claude,codex,gemini}
-                        Agent backend to use (default: auto-detect based on available data)
+                              Agent backend to use (default: auto-detect based
+                              on available data)
 
 EXAMPLES:
 
@@ -274,22 +270,22 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `lsh` | List homes and manage SSH remotes |
-| `lsw` | List workspaces |
-| `lss` | List sessions |
-| `export` | Export to markdown |
-| `alias` | Manage workspace aliases |
-| `stats` | Usage statistics |
-| `reset` | Reset stored data |
-| `install` | Install CLI + Claude skill and update retention settings |
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `home` | `homes`, `lsh` | List homes and manage sources (WSL, Windows, SSH) |
+| `workspaces` | `ws`, `lsw` | List workspaces |
+| `sessions` | `ss`, `lss` | List sessions |
+| `export` | | Export to markdown |
+| `project` | `projects`, `alias` | Manage workspace projects |
+| `stats` | | Usage statistics |
+| `reset` | | Reset stored data |
+| `install` | | Install CLI + Claude skill and update retention settings |
 
 ## Common Examples
 
 ```bash
 # List all workspaces
-agent-history lsw
+agent-history ws
 
 # Export specific project
 agent-history export myproject
@@ -298,7 +294,7 @@ agent-history export myproject
 agent-history export myproject --ah
 
 # Date filtering
-agent-history lss --since 2025-11-01
+agent-history ss --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
 agent-history export myproject --minimal
@@ -314,46 +310,48 @@ agent-history stats --time
 ## Multi-Environment Access
 
 ```bash
-# Discover all Claude installations and SSH remotes
-agent-history lsh
+# Discover all Claude installations
+agent-history home
 
-# Add/remove SSH remotes
-agent-history lsh add user@server
-agent-history lsh remove user@server
+# Add homes (explicit model - must add for --ah to include)
+agent-history home add --wsl              # add WSL
+agent-history home add --windows          # add Windows
+agent-history home add user@server        # add SSH remote
+agent-history home remove user@server     # remove a source
 
 # Access WSL (from Windows)
-agent-history lss --wsl
+agent-history ss --wsl
 
 # Access Windows (from WSL)
-agent-history lss --windows
+agent-history ss --windows
 
 # Access SSH remote
-agent-history lss -r user@server
+agent-history ss -r user@server
 
-# All homes at once (includes saved SSH remotes)
+# All homes at once (includes configured sources)
 agent-history export --ah
 ```
 
-## Workspace Aliases
+## Projects
 
 Group related workspaces across environments:
 
 ```bash
-# Create alias
-agent-history alias create myproject
+# Create project
+agent-history project create myproject
 
 # Add workspaces
-agent-history alias add myproject myproject
-agent-history alias add myproject --windows myproject
-agent-history alias add myproject -r user@vm myproject
+agent-history project add myproject myproject
+agent-history project add myproject --windows myproject
+agent-history project add myproject -r user@vm myproject
 
 # Use with @ prefix
-agent-history lss @myproject
+agent-history ss @myproject
 agent-history export @myproject
 
 # Remove entries using paths from any home
-agent-history alias remove myproject -r user@vm /home/user/myproject
-agent-history alias remove myproject --windows /mnt/c/Users/me/projects/myproject
+agent-history project remove myproject -r user@vm /home/user/myproject
+agent-history project remove myproject --windows /mnt/c/Users/me/projects/myproject
 ```
 
 ## Important: Preserve Your History

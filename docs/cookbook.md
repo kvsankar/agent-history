@@ -4,24 +4,24 @@ Common workflows and recipes for managing Claude Code conversations across envir
 
 Tip: When targeting Codex or Gemini sessions (including in WSL), pass `--agent codex` or `--agent gemini`.
 
-## Recipe 1: Set Up a Cross-Environment Alias
+## Recipe 1: Set Up a Cross-Environment Project
 
-Create an alias to manage a project that exists on Windows, WSL, and a remote VM:
+Create a project to manage workspaces that exist on Windows, WSL, and a remote VM:
 
 ```bash
-# Create the alias
-agent-history alias create myproject
+# Create the project
+agent-history project create myproject
 
 # Add workspaces interactively from all homes
-agent-history alias add myproject --ah -r user@vm01 --pick
+agent-history project add myproject --ah -r user@vm01 --pick
 
 # Or add by pattern (non-interactive)
-agent-history alias add myproject myproject                    # local
-agent-history alias add myproject --windows myproject          # Windows
-agent-history alias add myproject -r user@vm01 myproject       # remote
+agent-history project add myproject myproject                    # local
+agent-history project add myproject --windows myproject          # Windows
+agent-history project add myproject -r user@vm01 myproject       # remote
 
-# View the alias
-agent-history alias show myproject
+# View the project
+agent-history project show myproject
 ```
 
 ---
@@ -31,9 +31,9 @@ agent-history alias show myproject
 Export all sessions from all environments to a backup directory:
 
 ```bash
-# One-time: create an alias for everything
-agent-history alias create all-projects
-agent-history alias add all-projects --ah -r vm01 -r vm02 --pick
+# One-time: create a project for everything
+agent-history project create all-projects
+agent-history project add all-projects --ah -r vm01 -r vm02 --pick
 
 # Daily backup (incremental - only exports new/changed files)
 agent-history export @all-projects -o ~/backups/claude-history/
@@ -51,8 +51,8 @@ agent-history export @all-projects -o ~/backups/claude-history/ --jobs 4 --quiet
 
 ```bash
 # List sessions from all homes matching "myproject"
-agent-history lss myproject --ah -r user@vm01
-agent-history lss myproject --ah --no-wsl    # exclude WSL if it is slow
+agent-history ss myproject --ah -r user@vm01
+agent-history ss myproject --ah --no-wsl    # exclude WSL if it is slow
 
 # Export from all homes
 agent-history export myproject --ah -r user@vm01 -o ./exports/
@@ -67,14 +67,14 @@ agent-history export myproject --ah --no-remote -o ./exports/
 
 ```bash
 # List all workspaces from everywhere
-agent-history lsw --ah -r user@vm01 -r user@vm02
+agent-history ws --ah -r user@vm01 -r user@vm02
 
 # Find sessions mentioning a specific project
-agent-history lsw --ah | grep django
+agent-history ws --ah | grep django
 
 # List sessions from matching workspaces
-agent-history lss django --ah
-agent-history lss django --ah --counts       # force counts on all sources
+agent-history ss django --ah
+agent-history ss django --ah --counts       # force counts on all sources
 ```
 
 ---
@@ -86,7 +86,7 @@ agent-history lss django --ah --counts       # force counts on all sources
 agent-history export myproject -r user@vm01
 
 # Later, work with cached data (no network needed)
-agent-history lss remote_vm01_home-user-myproject
+agent-history ss remote_vm01_home-user-myproject
 ```
 
 ---
@@ -105,17 +105,17 @@ agent-history export myproject --minimal --split 500 -o ./blog-posts/
 
 ---
 
-## Recipe 7: Move Aliases Between Machines
+## Recipe 7: Move Projects Between Machines
 
 ```bash
-# On source machine: export aliases
-agent-history alias export aliases.json
+# On source machine: export projects
+agent-history project export projects.json
 
 # Copy to target machine
-scp aliases.json user@newmachine:~/
+scp projects.json user@newmachine:~/
 
-# On target machine: import aliases
-agent-history alias import aliases.json
+# On target machine: import projects
+agent-history project import projects.json
 ```
 
 ---
@@ -124,8 +124,8 @@ agent-history alias import aliases.json
 
 ```bash
 # Sessions from last week across all homes
-agent-history lss --ah --since 2025-11-24
-agent-history lss --ah --wsl-counts          # count WSL messages on Windows
+agent-history ss --ah --since 2025-11-24
+agent-history ss --ah --wsl-counts          # count WSL messages on Windows
 
 # Export recent sessions only
 agent-history export @myproject --since 2025-11-01 -o ./recent/
@@ -133,21 +133,23 @@ agent-history export @myproject --since 2025-11-01 -o ./recent/
 
 ---
 
-## Recipe 9: Configure SSH Remotes (One-Time Setup)
+## Recipe 9: Configure Homes (One-Time Setup)
 
-Configure SSH remotes once so `--ah` uses them automatically:
+Configure homes once so `--ah` uses them automatically:
 
 ```bash
-# Add your SSH remotes (WSL/Windows are auto-detected)
-agent-history lsh add user@vm01
-agent-history lsh add user@vm02
+# Add homes (explicit model - must add for --ah to include)
+agent-history home add --wsl                 # add WSL
+agent-history home add --windows             # add Windows
+agent-history home add user@vm01             # add SSH remote
+agent-history home add user@vm02             # add another remote
 
 # Verify saved sources
-agent-history lsh
+agent-history home
 
-# Now --ah includes saved remotes automatically
-agent-history lsw --ah              # includes vm01 and vm02
-agent-history stats --time --ah     # syncs from vm01 and vm02
+# Now --ah includes configured homes automatically
+agent-history ws --ah              # includes configured sources
+agent-history stats --time --ah     # syncs from all homes
 ```
 
 ---
@@ -165,10 +167,10 @@ agent-history stats
 agent-history stats --aw
 
 # See tool usage patterns
-agent-history stats --tools
+agent-history stats --by tool
 
 # Daily breakdown
-agent-history stats --by-day
+agent-history stats --by day
 
 # Filter to specific project
 agent-history stats myproject
@@ -186,7 +188,7 @@ agent-history stats --sync --ah
 agent-history stats --since 2025-11-01 --until 2025-11-30
 
 # Per-workspace breakdown for the month
-agent-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
+agent-history stats --by workspace --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -195,14 +197,14 @@ agent-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
 
 ```bash
 # Overall tool usage
-agent-history stats --tools
+agent-history stats --by tool
 
 # Tool usage for specific project
-agent-history stats --tools myproject
+agent-history stats --by tool myproject
 
 # Compare by looking at different workspaces
-agent-history stats --tools frontend-app
-agent-history stats --tools backend-api
+agent-history stats --by tool frontend-app
+agent-history stats --by tool backend-api
 ```
 
 ---
@@ -224,42 +226,42 @@ agent-history stats --time --since 2025-11-01 --until 2025-11-30
 
 ---
 
-## Recipe 14: Analyze Alias Usage
+## Recipe 14: Analyze Project Usage
 
-Aliases are automatically aggregated in stats output:
+Projects are automatically aggregated in stats output:
 
 ```bash
-# Create alias for a project across environments
-agent-history alias create myproject
-agent-history alias add myproject --ah myproject
+# Create project for workspaces across environments
+agent-history project create myproject
+agent-history project add myproject --ah myproject
 
 # View aggregated stats (shows @myproject with combined metrics)
 agent-history stats
 
-# Detailed workspace view shows aliases separately
-agent-history stats --by-workspace
+# Detailed workspace view shows projects separately
+agent-history stats --by workspace
 ```
 
 ---
 
-## Recipe 15: Automatic Alias Scoping
+## Recipe 15: Automatic Project Scoping
 
-Once a workspace is part of an alias, commands automatically use the alias scope:
+Once a workspace is part of a project, commands automatically use the project scope:
 
 ```bash
-# Set up: create alias and add current workspace
-agent-history alias create myproject
-agent-history alias add myproject myproject
+# Set up: create project and add current workspace
+agent-history project create myproject
+agent-history project add myproject myproject
 
-# Now running from this workspace automatically uses the alias
-agent-history lss        # 📎 Using alias @myproject
-agent-history lss --counts
-agent-history export     # 📎 Using alias @myproject
-agent-history stats      # 📎 Using alias @myproject
+# Now running from this workspace automatically uses the project
+agent-history ss         # Using project @myproject
+agent-history ss --counts
+agent-history export     # Using project @myproject
+agent-history stats      # Using project @myproject
 
 # Force current workspace only when needed
-agent-history lss --this
-agent-history lss --this --no-windows
+agent-history ss --this
+agent-history ss --this --no-windows
 agent-history export --this
 agent-history stats --this
 ```

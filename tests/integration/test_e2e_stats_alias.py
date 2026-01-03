@@ -6,11 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.legacy_cli import translate_legacy_args
+
 pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, timeout=25):
     # Use agent-history (new name), fall back to claude-history for backward compat
+    args = translate_legacy_args(list(args))
     script_path = Path.cwd() / "agent-history"
     if not script_path.exists():
         script_path = Path.cwd() / "claude-history"
@@ -53,11 +56,10 @@ def test_e2e_stats_sync_and_show_local(tmp_path: Path):
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
-    # Redirect config/metrics DB to temp
+    # Set HOME to ensure test uses isolated config/metrics DB directory
+    env["HOME"] = str(cfg)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(cfg)
-    else:
-        env["HOME"] = str(cfg)
 
     r1 = run_cli(["stats", "--sync", "--aw"], env=env)
     assert r1.returncode == 0, r1.stderr
@@ -86,10 +88,10 @@ def test_e2e_alias_create_add_show_export(tmp_path: Path):
 
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    # Set HOME to ensure test uses isolated config directory
+    env["HOME"] = str(cfg)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(cfg)
-    else:
-        env["HOME"] = str(cfg)
 
     # Create alias and add the encoded workspace dir
     alias = "mye2e"
@@ -100,12 +102,15 @@ def test_e2e_alias_create_add_show_export(tmp_path: Path):
     assert r2.returncode == 0, r2.stderr
 
     # Export alias config and verify structure contains our workspace
+    # Note: The new format uses "projects" key instead of "aliases"
     r3 = run_cli(["alias", "export"], env=env)
     assert r3.returncode == 0, r3.stderr
     data = json.loads(r3.stdout)
-    assert alias in data.get("aliases", {})
-    assert "local" in data["aliases"][alias]
-    assert "-home-user-alias" in data["aliases"][alias]["local"]
+    # Support both old and new key names for compatibility
+    projects = data.get("projects", data.get("aliases", {}))
+    assert alias in projects
+    assert "local" in projects[alias]
+    assert "-home-user-alias" in projects[alias]["local"]
 
     # Show should succeed (content may vary by platform setup)
     r4 = run_cli(["alias", "show", alias], env=env)
