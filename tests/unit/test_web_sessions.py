@@ -7,6 +7,7 @@ import subprocess
 # Import functions from agent-history
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -323,6 +324,31 @@ class TestWebCredentials:
             agent_history.extract_github_repo_from_git_url("git@essence:Essence-10/BP-v1.git")
             is None
         )
+
+
+class TestWebLssOutput:
+    """Tests for web session listing output formatting."""
+
+    def test_dispatch_lss_web_formats_columns(self, monkeypatch, capsys, tmp_path):
+        """Should align message count and date format with other lss output."""
+        session = {
+            "uuid": "abc123",
+            "created_at": "2025-05-01T12:34:56Z",
+            "messageCount": 7,
+            "session_context": {
+                "sources": [{"type": "git_repository", "url": "https://github.com/acme/proj"}]
+            },
+        }
+
+        monkeypatch.setattr(agent_history, "resolve_web_credentials", lambda: ("token", "org"))
+        monkeypatch.setattr(agent_history, "fetch_web_sessions", lambda _t, _o: [session])
+        monkeypatch.setattr(agent_history, "get_claude_projects_dir", lambda: tmp_path)
+        monkeypatch.setattr(agent_history, "build_github_to_workspace_map", lambda _dir=None: {})
+
+        agent_history._dispatch_lss_web(SimpleNamespace())
+
+        output_lines = capsys.readouterr().out.strip().splitlines()
+        assert output_lines == ["web\tweb\tacme/proj\tabc123\t7\t2025-05-01"]
 
 
 class TestWebSessionConversion:

@@ -15836,16 +15836,21 @@ def _dispatch_lss_web(args):
         for session in sessions:
             session_id = session.get("uuid", session.get("id", "unknown"))
             workspace = get_web_session_workspace(session, github_map) or "(no repo)"
-            created = session.get("created_at", session.get("createdAt", ""))
-            msg_count = session.get("message_count", "?")
+            created_raw = session.get("created_at") or session.get("createdAt") or ""
+            msg_count_val = session.get("message_count")
+            if msg_count_val is None:
+                msg_count_val = session.get("messageCount")
+            msg_count = msg_count_val if msg_count_val is not None else "?"
 
             # Format timestamp
-            if created:
+            created = created_raw
+            if created_raw:
                 try:
-                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                    created = dt.strftime("%Y-%m-%d %H:%M")
+                    dt = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                    # Match lss output: date-only column
+                    created = dt.strftime("%Y-%m-%d")
                 except (ValueError, AttributeError):
-                    pass
+                    created = created_raw
 
             # Print in same format: AGENT HOME WORKSPACE FILE MESSAGES DATE
             # For web: agent=web, home=web, workspace=local path or repo
