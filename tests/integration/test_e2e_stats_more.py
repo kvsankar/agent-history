@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.legacy_cli import translate_legacy_args
+
 pytestmark = pytest.mark.integration
 
 
@@ -25,6 +27,7 @@ HAS_WSL = _check_wsl_available()
 
 def run_cli(args, env=None, timeout=25):
     # Use agent-history (new name), fall back to claude-history for backward compat
+    args = translate_legacy_args(list(args))
     script_path = Path.cwd() / "agent-history"
     if not script_path.exists():
         script_path = Path.cwd() / "claude-history"

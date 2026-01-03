@@ -72,12 +72,12 @@ date_strings = st.sampled_from(
 
 
 # ============================================================================
-# lsw command tests
+# ws command tests
 # ============================================================================
 
 
-class TestLswCombinations:
-    """Test lsw command with various flag combinations."""
+class TestWsCombinations:
+    """Test ws command with various flag combinations."""
 
     @given(
         pattern=workspace_patterns,
@@ -86,9 +86,9 @@ class TestLswCombinations:
         agent=st.one_of(st.none(), agent_choices),
     )
     @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-    def test_lsw_flag_combinations(self, pattern, use_ah, use_local, agent):
-        """Test lsw with various flag combinations."""
-        args = ["lsw"]
+    def test_ws_flag_combinations(self, pattern, use_ah, use_local, agent):
+        """Test ws with various flag combinations."""
+        args = ["ws"]
         if pattern:
             args.append(pattern)
         if use_ah:
@@ -114,9 +114,9 @@ class TestLswCombinations:
         use_windows=st.booleans(),
     )
     @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-    def test_lsw_wsl_windows_flags(self, pattern, use_wsl, use_windows):
+    def test_ws_wsl_windows_flags(self, pattern, use_wsl, use_windows):
         """Test that --wsl and --windows are handled gracefully."""
-        args = ["lsw"]
+        args = ["ws"]
         if pattern:
             args.append(pattern)
         if use_wsl:
@@ -132,12 +132,12 @@ class TestLswCombinations:
 
 
 # ============================================================================
-# lss command tests
+# session list command tests
 # ============================================================================
 
 
-class TestLssCombinations:
-    """Test lss command with various flag combinations."""
+class TestSessionCombinations:
+    """Test session list command with various flag combinations."""
 
     @given(
         workspace=workspace_patterns,
@@ -147,9 +147,9 @@ class TestLssCombinations:
         agent=st.one_of(st.none(), agent_choices),
     )
     @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-    def test_lss_scope_combinations(self, workspace, use_ah, use_aw, use_this, agent):
-        """Test lss with scope flag combinations."""
-        args = ["lss"]
+    def test_session_scope_combinations(self, workspace, use_ah, use_aw, use_this, agent):
+        """Test session list with scope flag combinations."""
+        args = ["session"]
         if workspace:
             args.append(workspace)
         if use_ah:
@@ -171,9 +171,9 @@ class TestLssCombinations:
         until=date_strings,
     )
     @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-    def test_lss_date_combinations(self, since, until):
-        """Test lss with date filter combinations."""
-        args = ["lss", "*"]  # Use wildcard to match any workspace
+    def test_session_date_combinations(self, since, until):
+        """Test session list with date filter combinations."""
+        args = ["session", "-n", "*"]  # Use wildcard to match any workspace
         if since:
             args.extend(["--since", since])
         if until:
@@ -188,12 +188,12 @@ class TestLssCombinations:
 
 
 # ============================================================================
-# export command tests
+# session export command tests
 # ============================================================================
 
 
 class TestExportCombinations:
-    """Test export command with various flag combinations."""
+    """Test session export command with various flag combinations."""
 
     @given(
         target=workspace_patterns,
@@ -225,7 +225,7 @@ class TestExportCombinations:
             (tmp_path / ".gemini").mkdir(parents=True)
             output_dir = tmp_path / "output"
 
-            args = ["export"]
+            args = ["session", "export"]
             if target:
                 args.append(target)
             args.extend(["-o", str(output_dir)])
@@ -278,7 +278,7 @@ class TestExportCombinations:
             (tmp_path / ".agent-history").mkdir(parents=True)
             output_dir = tmp_path / "output"
 
-            args = ["export", "*", "-o", str(output_dir)]
+            args = ["session", "export", "-n", "*", "-o", str(output_dir)]
             if split_value is not None:
                 args.extend(["--split", str(split_value)])
 
@@ -299,12 +299,12 @@ class TestExportCombinations:
 
 
 # ============================================================================
-# stats command tests
+# session stats command tests
 # ============================================================================
 
 
 class TestStatsCombinations:
-    """Test stats command with various flag combinations."""
+    """Test session stats command with various flag combinations."""
 
     @given(
         workspace=workspace_patterns,
@@ -319,9 +319,9 @@ class TestStatsCombinations:
         # Skip --ah in unit tests (causes SSH timeouts); tested in Docker E2E
         assume(not use_ah)
 
-        args = ["stats"]
+        args = ["session", "stats"]
         if workspace:
-            args.append(workspace)
+            args.extend(["-n", workspace])
         if use_sync:
             args.append("--sync")
         if use_ah:
@@ -348,7 +348,7 @@ class TestStatsCombinations:
         self, use_tools, use_models, use_by_workspace, use_by_day, use_time
     ):
         """Test stats with multiple view flags."""
-        args = ["stats"]
+        args = ["session", "stats"]
         if use_tools:
             args.append("--tools")
         if use_models:
@@ -371,49 +371,12 @@ class TestStatsCombinations:
 # ============================================================================
 
 
-class TestAliasCombinations:
-    """Test alias subcommands with various combinations."""
+class TestProjectCombinations:
+    """Test project subcommands with basic invocations."""
 
-    @given(
-        alias_name=st.sampled_from(["myalias", "test-alias", "a", "alias_123"]),
-    )
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-    def test_alias_create_show_delete(self, alias_name):
-        """Test alias create/show/delete lifecycle."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            env = os.environ.copy()
-            env["HOME"] = str(tmp_path)
-            # Disable coverage subprocess tracking to avoid coverage atexit errors
-            env.pop("COVERAGE_PROCESS_START", None)
-
-            (tmp_path / ".claude" / "projects").mkdir(parents=True)
-            (tmp_path / ".agent-history").mkdir(parents=True)
-
-            # Create
-            cmd = [sys.executable, str(CLI_PATH), "alias", "create", alias_name]
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=5, env=env, check=False
-            )
-            assert "Traceback" not in result.stderr or "coverage" in result.stderr.lower()
-
-            # Show
-            cmd = [sys.executable, str(CLI_PATH), "alias", "show", alias_name]
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=5, env=env, check=False
-            )
-            assert "Traceback" not in result.stderr or "coverage" in result.stderr.lower()
-
-            # Delete
-            cmd = [sys.executable, str(CLI_PATH), "alias", "delete", alias_name]
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=5, env=env, check=False
-            )
-            assert "Traceback" not in result.stderr or "coverage" in result.stderr.lower()
-
-    def test_alias_list_flags(self):
-        """Test alias list basic invocation."""
-        args = ["alias", "list"]
+    def test_project_list(self):
+        """Test project list basic invocation."""
+        args = ["project", "list"]
         result = run_cli_in_temp(args)
 
         assert "Traceback" not in result.stderr
@@ -429,7 +392,7 @@ class TestCrossCommandConsistency:
     """Test that similar flags work consistently across commands."""
 
     @given(
-        command=st.sampled_from(["lsw", "lss", "export"]),
+        command=st.sampled_from(["ws", "session", "session-export"]),
         agent=agent_choices,
     )
     @settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow], deadline=None)
@@ -448,12 +411,12 @@ class TestCrossCommandConsistency:
             (tmp_path / ".gemini").mkdir(parents=True)
             output_dir = tmp_path / "output"
 
-            if command == "lsw":
-                args = ["lsw", "*", "--agent", agent]
-            elif command == "lss":
-                args = ["lss", "*", "--agent", agent]
-            else:  # export
-                args = ["export", "*", "-o", str(output_dir), "--agent", agent]
+            if command == "ws":
+                args = ["ws", "-n", "*", "--agent", agent]
+            elif command == "session":
+                args = ["session", "-n", "*", "--agent", agent]
+            else:  # session-export
+                args = ["session", "export", "-n", "*", "-o", str(output_dir), "--agent", agent]
 
             cmd = [sys.executable, str(CLI_PATH), *args]
             timeout = 30 if sys.platform == "win32" else 10
@@ -471,7 +434,7 @@ class TestCrossCommandConsistency:
             assert result.returncode in (0, 1)
 
     @given(
-        command=st.sampled_from(["lss", "export"]),
+        command=st.sampled_from(["session", "session-export"]),
         use_ah=st.booleans(),
         use_aw=st.booleans(),
     )
@@ -492,10 +455,10 @@ class TestCrossCommandConsistency:
             (tmp_path / ".agent-history").mkdir(parents=True)
             output_dir = tmp_path / "output"
 
-            if command == "lss":
-                args = ["lss", "*"]
+            if command == "session":
+                args = ["session", "-n", "*"]
             else:  # export
-                args = ["export", "*", "-o", str(output_dir)]
+                args = ["session", "export", "-n", "*", "-o", str(output_dir)]
 
             if use_ah:
                 args.append("--ah")
@@ -543,7 +506,7 @@ class TestEdgeCases:
         # Skip patterns that could be interpreted as flags
         assume(not pattern.startswith("-"))
 
-        result = run_cli_in_temp(["lsw", pattern])
+        result = run_cli_in_temp(["ws", "-n", pattern])
 
         assert "Traceback" not in result.stderr
 
@@ -552,7 +515,9 @@ class TestEdgeCases:
     def test_multiple_workspace_patterns(self, num_patterns):
         """Test with multiple workspace patterns."""
         patterns = [f"pattern{i}" for i in range(num_patterns)]
-        args = ["lsw", *patterns]
+        args = ["ws"]
+        for p in patterns:
+            args.extend(["-n", p])
 
         result = run_cli_in_temp(args)
 
