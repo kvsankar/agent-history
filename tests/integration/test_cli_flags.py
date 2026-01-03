@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.legacy_cli import translate_legacy_args
+
 
 def _write_session(path: Path) -> None:
     messages = [
@@ -29,19 +31,20 @@ def test_cli_export_with_flags(tmp_path):
     outdir = tmp_path / "out"
     _write_session(jsonl)
 
-    cmd = [
-        sys.executable,
-        "agent-history",
-        "export",
-        str(jsonl),
-        "-o",
-        str(outdir),
-        "--minimal",
-        "--flat",
-        "--split",
-        "1",
-        "--force",
-    ]
+    args = translate_legacy_args(
+        [
+            "export",
+            str(jsonl),
+            "-o",
+            str(outdir),
+            "--minimal",
+            "--flat",
+            "--split",
+            "1",
+            "--force",
+        ]
+    )
+    cmd = [sys.executable, "agent-history", *args]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     stdout_path = Path(result.stdout.strip()) if result.stdout.strip() else None
@@ -55,14 +58,15 @@ def test_cli_export_with_flags(tmp_path):
 
 def test_cli_export_missing_file_returns_error(tmp_path):
     outdir = tmp_path / "out"
-    cmd = [
-        sys.executable,
-        "agent-history",
-        "export",
-        str(tmp_path / "missing.jsonl"),
-        "-o",
-        str(outdir),
-    ]
+    args = translate_legacy_args(
+        [
+            "export",
+            str(tmp_path / "missing.jsonl"),
+            "-o",
+            str(outdir),
+        ]
+    )
+    cmd = [sys.executable, "agent-history", *args]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode != 0
     assert "not found" in (result.stderr or result.stdout).lower()
@@ -74,16 +78,17 @@ def test_cli_export_with_source_flag(tmp_path):
     outdir = tmp_path / "out"
     _write_session(jsonl)
 
-    cmd = [
-        sys.executable,
-        "agent-history",
-        "export",
-        str(jsonl),
-        "-o",
-        str(outdir),
-        "--source",
-        "--force",
-    ]
+    args = translate_legacy_args(
+        [
+            "export",
+            str(jsonl),
+            "-o",
+            str(outdir),
+            "--source",
+            "--force",
+        ]
+    )
+    cmd = [sys.executable, "agent-history", *args]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
 
@@ -114,16 +119,17 @@ def test_cli_export_source_flag_with_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
-    cmd = [
-        sys.executable,
-        "agent-history",
-        "export",
-        "test-workspace",
-        "-o",
-        str(outdir),
-        "--source",
-        "--force",
-    ]
+    args = translate_legacy_args(
+        [
+            "export",
+            "test-workspace",
+            "-o",
+            str(outdir),
+            "--source",
+            "--force",
+        ]
+    )
+    cmd = [sys.executable, "agent-history", *args]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
 

@@ -37,6 +37,74 @@ from typing import Any, Callable, Optional, TypedDict, Union, cast
 
 __version__ = "1.5.1"
 
+
+class WrappedHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Custom formatter that wraps usage lines at reasonable width."""
+
+    def __init__(self, prog, indent_increment=2, max_help_position=30, width=80):
+        super().__init__(prog, indent_increment, max_help_position, width)
+
+    def _format_usage(self, usage, actions, groups, prefix):
+        """Format usage with one option per line for readability."""
+        if prefix is None:
+            prefix = "usage: "
+
+        # Get the prog name
+        prog = self._prog
+
+        # Separate positional and optional arguments
+        optionals = []
+        positionals = []
+        for action in actions:
+            if action.option_strings:
+                optionals.append(action)
+            else:
+                positionals.append(action)
+
+        # Build usage string with wrapped options
+        lines = [f"{prefix}{prog}"]
+
+        # Add optionals (abbreviated)
+        if optionals:
+            lines[0] += " [options]"
+
+        # Add positionals
+        for action in positionals:
+            if action.nargs == "*":
+                lines[0] += f" [{action.dest} ...]"
+            elif action.nargs == "?":
+                lines[0] += f" [{action.dest}]"
+            else:
+                lines[0] += f" {action.dest}"
+
+        return lines[0] + "\n"
+
+
+class ChoiceHintArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that shows choices in error messages."""
+
+    def error(self, message):
+        """Show available choices when a choice argument is missing its value."""
+        # Check if this is a "expected one argument" error for a choice argument
+        if "expected one argument" in message:
+            # Find the argument name from the message
+            # Format: "argument --format: expected one argument"
+            import re
+
+            match = re.search(r"argument (--?\w+):", message)
+            if match:
+                arg_name = match.group(1)
+                # Find the action for this argument
+                for action in self._actions:
+                    if arg_name in action.option_strings and action.choices:
+                        choices_str = ", ".join(str(c) for c in action.choices)
+                        message = f"argument {arg_name}: requires a value\n\nAvailable choices: {choices_str}"
+                        break
+
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\n")
+
+
 DEFAULT_CLI_NAME = "agent-history"
 DEFAULT_SKILL_NAME = "agent-history"
 DEFAULT_BIN_DIR = Path.home() / ".local/bin"
@@ -394,6 +462,7 @@ class ListCommandArgs:
     wsl_counts: bool = False
     no_wsl: bool = False
     no_windows: bool = False
+    format: Optional[str] = None
 
     @property
     def workspace(self) -> str:
@@ -524,6 +593,8 @@ class SummaryStatsData:
     top_limit: Optional[int] = None
     time_stats: Optional[dict] = None
     agent: str = "auto"
+    output_format: Optional[str] = None  # table, tsv, json
+    human_readable: bool = False
 
 
 # ============================================================================
@@ -922,6 +993,7 @@ def matches_any_pattern(workspace_name: str, patterns: list[str]) -> bool:
     """Check if workspace name matches any pattern in the list.
 
     A pattern matches if it is a substring of the workspace name.
+    Patterns prefixed with '=' require an exact match.
     Empty patterns ('', '*', 'all') match all workspaces.
 
     Args:
@@ -937,6 +1009,21 @@ def matches_any_pattern(workspace_name: str, patterns: list[str]) -> bool:
     # Check for match-all patterns using frozenset (SIMPLIFY-BOOLEAN)
     if any(p in _MATCH_ALL_PATTERNS for p in patterns):
         return True
+
+    # Exact match support (pattern startswith '=')
+    for pattern in patterns:
+        if not pattern:
+            continue
+        if pattern.startswith("="):
+            target = pattern[1:]
+            if workspace_name == target:
+                return True
+            try:
+                if normalize_workspace_name(workspace_name, verify_local=False) == target:
+                    return True
+            except Exception:
+                # Best-effort normalization; fall back to substring
+                pass
 
     # Check for substring matches
     return any(pattern and pattern in workspace_name for pattern in patterns)
@@ -1035,6 +1122,19 @@ def _matches_workspace_pattern(
     # No pattern filter - match all
     if not pattern:
         return True
+
+    # Exact match prefix ('=') matches encoded or readable path exactly
+    if pattern.startswith("="):
+        target = pattern[1:]
+        readable = get_readable(workspace) if get_readable else None
+        if target in (workspace, readable):
+            return True
+        try:
+            if normalize_workspace_name(workspace, verify_local=False) == target:
+                return True
+        except Exception:
+            pass
+        return False
 
     readable = get_readable(workspace) if get_readable else None
 
@@ -1353,13 +1453,16 @@ def format_session_line(session: dict, source_label: str) -> str:
     )
 
 
-def print_sessions_output(sessions: list, source_label: str, workspaces_only: bool):
+def print_sessions_output(
+    sessions: list, source_label: str, workspaces_only: bool, output_format: Optional[str] = None
+):
     """Print sessions in appropriate format (workspaces-only or full details).
 
     Args:
         sessions: List of session dictionaries
         source_label: Source label for output
         workspaces_only: If True, print only unique workspace names
+        output_format: table, tsv, or json (default: existing TSV output)
     """
 
     # M3: Extracted Windows path filtering for testability
@@ -1372,6 +1475,41 @@ def print_sessions_output(sessions: list, source_label: str, workspaces_only: bo
             return not Path(path_str).exists()
         except OSError:
             return True  # Skip on error
+
+    if output_format == "json":
+        if workspaces_only:
+            seen = set()
+            ordered = []
+            for s in sessions:
+                key = s.get("workspace_readable") or s.get("workspace")
+                if key in seen:
+                    continue
+                seen.add(key)
+                ordered.append(
+                    {
+                        "home": source_label,
+                        "workspace": s.get("workspace_readable") or s.get("workspace"),
+                    }
+                )
+            print(json.dumps(ordered, indent=2))
+            return
+
+        json_rows = []
+        for session in sessions:
+            json_rows.append(
+                {
+                    "agent": session.get("agent", AGENT_CLAUDE),
+                    "home": source_label,
+                    "workspace": session.get("workspace_readable") or session.get("workspace"),
+                    "file": session.get("filename") or session.get("file"),
+                    "messages": session.get("message_count"),
+                    "date": session.get("modified").strftime("%Y-%m-%d")
+                    if session.get("modified")
+                    else None,
+                }
+            )
+        print(json.dumps(json_rows, indent=2))
+        return
 
     if workspaces_only:
         seen = set()
@@ -8236,7 +8374,7 @@ def _print_workspace_with_count(source_key: str, workspace: str) -> int:
     return count
 
 
-def cmd_alias_list(args):
+def cmd_project_list(args):
     """List all projects with their workspaces (flat format)."""
     aliases_data = load_aliases()
     aliases = aliases_data.get("projects", {})
@@ -8244,8 +8382,7 @@ def cmd_alias_list(args):
 
     if not aliases:
         sys.stderr.write("No projects defined.\n")
-        sys.stderr.write("\nCreate a project with:\n")
-        sys.stderr.write("  agent-history project create <name>\n")
+        sys.stderr.write("\nAdd a project with:\n")
         sys.stderr.write("  agent-history project add <name> <workspace>\n")
         return
 
@@ -8287,7 +8424,7 @@ def cmd_alias_list(args):
             print(f"{project}\t{source}\t{workspace}")
 
 
-def cmd_alias_show(args):
+def cmd_project_show(args):
     """Show details of a single project (flat format)."""
     aliases_data = load_aliases()
     aliases = aliases_data.get("projects", {})
@@ -8313,38 +8450,38 @@ def cmd_alias_show(args):
         print(f"{source}\t{workspace}\t{count}")
 
 
-def cmd_alias_create(args):
+def cmd_project_create(args):
     """Create a new empty alias."""
     aliases_data = load_aliases()
 
     alias_name = args.name
 
     if alias_name in aliases_data.get("projects", {}):
-        sys.stderr.write(f"Error: Alias '{alias_name}' already exists\n")
+        sys.stderr.write(f"Error: Project '{alias_name}' already exists\n")
         sys.exit(1)
 
     aliases_data["projects"][alias_name] = {}
 
     if save_aliases(aliases_data):
-        print(f"Created alias '{alias_name}'")
+        print(f"Created project '{alias_name}'")
     else:
         sys.exit(1)
 
 
-def cmd_alias_delete(args):
+def cmd_project_delete(args):
     """Delete an alias."""
     aliases_data = load_aliases()
 
     alias_name = args.name
 
     if alias_name not in aliases_data.get("projects", {}):
-        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.stderr.write(f"Error: Project '{alias_name}' not found\n")
         sys.exit(1)
 
     del aliases_data["projects"][alias_name]
 
     if save_aliases(aliases_data):
-        print(f"Deleted alias '{alias_name}'")
+        print(f"Deleted project '{alias_name}'")
     else:
         sys.exit(1)
 
@@ -8435,7 +8572,7 @@ def _alias_add_all_homes(
             total_added += added
 
     if save_aliases(aliases_data):
-        print(f"Added {total_added} workspace(s) to alias '{alias_name}' from all homes")
+        print(f"Added {total_added} workspace(s) to project '{alias_name}' from all homes")
     else:
         sys.exit(1)
 
@@ -8474,12 +8611,12 @@ def _alias_add_single_source(
     added = _add_workspaces_to_alias(aliases_data, alias_name, source_key, workspaces_to_add)
 
     if save_aliases(aliases_data):
-        print(f"Added {added} workspace(s) to alias '{alias_name}' [{source_key}]")
+        print(f"Added {added} workspace(s) to project '{alias_name}' [{source_key}]")
     else:
         sys.exit(1)
 
 
-def cmd_alias_add(args):
+def cmd_project_add(args):
     """Add workspace(s) to an alias."""
     aliases_data = load_aliases()
 
@@ -8490,15 +8627,21 @@ def cmd_alias_add(args):
 
     # Get workspace patterns
     raw_workspaces = args.workspaces if args.workspaces else []
+    if getattr(args, "name_patterns", None):
+        raw_workspaces.extend(args.name_patterns)
     use_picker = getattr(args, "pick", False)
 
-    if not raw_workspaces and not use_picker:
+    if not raw_workspaces and not use_picker and not getattr(args, "allow_empty", False):
         sys.stderr.write("Error: No workspaces specified. Use --pick for interactive mode.\n")
         sys.exit(1)
 
     # Ensure alias exists
     if alias_name not in aliases_data.get("projects", {}):
         aliases_data["projects"][alias_name] = {}
+
+    if getattr(args, "allow_empty", False) and not raw_workspaces and not use_picker:
+        save_aliases(aliases_data)
+        return
 
     # Dispatch to appropriate handler
     if getattr(args, "all_homes", False):
@@ -8554,7 +8697,7 @@ def interactive_workspace_picker(source_key: str, args) -> list:
     return _parse_workspace_selection(selection, sorted(workspaces))
 
 
-def cmd_alias_remove(args):
+def cmd_project_remove(args):
     """Remove workspace from an alias."""
     aliases_data = load_aliases()
 
@@ -8562,8 +8705,13 @@ def cmd_alias_remove(args):
     workspace = args.workspace
 
     if alias_name not in aliases_data.get("projects", {}):
-        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.stderr.write(f"Error: Project '{alias_name}' not found\n")
         sys.exit(1)
+
+    # If no workspace specified, remove entire project
+    if workspace is None:
+        cmd_project_delete(SimpleNamespace(name=alias_name))
+        return
 
     # Determine source key
     # For alias remove, --wsl and --windows are boolean flags
@@ -8578,13 +8726,13 @@ def cmd_alias_remove(args):
     alias_config = aliases_data["projects"][alias_name]
 
     if source_key not in alias_config:
-        sys.stderr.write(f"Error: No workspaces from '{source_key}' in alias '{alias_name}'\n")
+        sys.stderr.write(f"Error: No workspaces from '{source_key}' in project '{alias_name}'\n")
         sys.exit(1)
 
     target = _match_alias_workspace(alias_config[source_key], workspace)
     if not target:
         sys.stderr.write(
-            f"Error: Workspace '{workspace}' not in alias '{alias_name}' [{source_key}]\n"
+            f"Error: Workspace '{workspace}' not in project '{alias_name}' [{source_key}]\n"
         )
         sys.exit(1)
 
@@ -8598,12 +8746,12 @@ def cmd_alias_remove(args):
         del aliases_data["projects"][alias_name]
 
     if save_aliases(aliases_data):
-        print(f"Removed workspace from alias '{alias_name}' [{source_key}]")
+        print(f"Removed workspace from project '{alias_name}' [{source_key}]")
     else:
         sys.exit(1)
 
 
-def cmd_alias_config_export(args):
+def cmd_project_config_export(args):
     """Export aliases configuration to JSON (stdout)."""
     aliases_data = load_aliases()
     print(pretty_json(aliases_data))
@@ -8817,14 +8965,14 @@ def _print_alias_sessions(sessions: list):
         )
 
 
-def cmd_alias_lss(
+def cmd_project_lss(
     alias_name: str, since_date=None, until_date=None, agent: str = "auto", args=None
 ):
     """List sessions across all workspaces in an alias."""
     aliases_data = load_aliases()
 
     if alias_name not in aliases_data.get("projects", {}):
-        sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
+        sys.stderr.write(f"Error: Project '{alias_name}' not found\n")
         sys.exit(1)
 
     if args is None:
@@ -8855,7 +9003,7 @@ def cmd_alias_lss(
             )
         else:
             agent_msg = f" for agent '{agent}'" if agent != "auto" else ""
-            sys.stderr.write(f"Error: No sessions found in alias '{alias_name}'{agent_msg}\n")
+            sys.stderr.write(f"Error: No sessions found in project '{alias_name}'{agent_msg}\n")
         sys.exit(1)
 
     _print_alias_sessions(all_sessions)
@@ -8966,12 +9114,12 @@ def _export_session_file(
         stats["failed"] += 1
 
 
-def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
+def cmd_project_export(alias_name: str, output_dir: Union[str, Path], args):
     """Export sessions from all workspaces in an alias."""
     aliases_data = load_aliases()
 
     if alias_name not in aliases_data.get("projects", {}):
-        exit_with_error(f"Alias '{alias_name}' not found")
+        exit_with_error(f"Project '{alias_name}' not found")
 
     alias_config = _filter_alias_config_by_flags(aliases_data["projects"][alias_name], args)
     opts = _get_alias_export_options(args)
@@ -9018,7 +9166,7 @@ def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
 
     if stats["exported"] > 0 or stats["skipped"] > 0:
         print(
-            f"\nAlias '{alias_name}': {stats['exported']} exported, "
+            f"\nProject '{alias_name}': {stats['exported']} exported, "
             f"{stats['skipped']} skipped, {stats['failed']} failed"
         )
 
@@ -9107,7 +9255,7 @@ def _backup_projects_file() -> Path | None:
 _backup_aliases_file = _backup_projects_file
 
 
-def cmd_alias_config_import(args):
+def cmd_project_config_import(args):
     """Import projects from JSON file or stdin."""
     import_file = getattr(args, "file", None)
     replace_mode = getattr(args, "replace", False)
@@ -10359,6 +10507,10 @@ def _get_stats_workspace_patterns(args) -> list:
     this_only = getattr(args, "this_only", False)
     agent = getattr(args, "agent", None) or "auto"
     source_filter = getattr(args, "source", None)
+    project_names = getattr(args, "projects", None) or []
+
+    if project_names:
+        workspace_patterns.extend([f"@{p}" for p in project_names])
 
     if workspace_patterns or all_workspaces:
         return workspace_patterns
@@ -10385,7 +10537,9 @@ def _get_stats_workspace_patterns(args) -> list:
     if not this_only and agent in ("auto", "claude"):
         alias_name = get_alias_for_workspace(full_pattern, "local")
         if alias_name:
-            sys.stderr.write(f"Using alias @{alias_name} (use --this for current workspace only)\n")
+            sys.stderr.write(
+                f"Using project {alias_name} (use --this for current workspace only)\n"
+            )
             return [f"@{alias_name}"]
 
     return [ws_name]
@@ -10394,7 +10548,7 @@ def _get_stats_workspace_patterns(args) -> list:
 def _expand_alias_to_conditions(alias_name: str, aliases: dict) -> tuple:
     """Expand alias to SQL conditions and params. Returns (conditions, params)."""
     if alias_name not in aliases:
-        print(f" Alias '{alias_name}' not found. Treating as workspace pattern.")
+        print(f" Project '{alias_name}' not found. Treating as workspace pattern.")
         return (["s.workspace LIKE ?"], [f"%{alias_name}%"])
 
     conditions = []
@@ -10421,6 +10575,9 @@ def _build_stats_where_clause(args, workspace_patterns: list) -> tuple:
                 conds, prms = _expand_alias_to_conditions(pattern[1:], aliases)
                 ws_conditions.extend(conds)
                 params.extend(prms)
+            elif pattern.startswith("="):
+                ws_conditions.append("s.workspace = ?")
+                params.append(pattern[1:])
             else:
                 ws_conditions.append("s.workspace LIKE ?")
                 params.append(f"%{pattern}%")
@@ -10549,7 +10706,15 @@ def _display_selected_stats(conn, args, where_sql: str, params: list):
             human_readable=human_readable,
         )
     else:
-        display_summary_stats(conn, where_sql, params, top_limit=top_limit, agent=agent)
+        display_summary_stats(
+            conn,
+            where_sql,
+            params,
+            top_limit=top_limit,
+            agent=agent,
+            output_format=output_format,
+            human_readable=human_readable,
+        )
 
 
 def cmd_stats(args):
@@ -10692,17 +10857,36 @@ def _aggregate_workspace_stats(all_workspace_stats, workspace_to_alias: dict) ->
     return top_workspaces
 
 
-def _print_session_section(session_stats):
-    """Print session statistics section (flat format)."""
-    print("\nNAME\tVALUE")
-    print(f"total_sessions\t{session_stats['total_sessions'] or 0}")
-    print(f"main_sessions\t{session_stats['main_sessions'] or 0}")
-    print(f"agent_sessions\t{session_stats['agent_sessions'] or 0}")
-    print(f"total_messages\t{session_stats['total_messages'] or 0}")
+def _print_session_section(session_stats, output_format: str = "tsv", human_readable: bool = False):
+    """Print session statistics section."""
+    total = session_stats["total_sessions"] or 0
+    main = session_stats["main_sessions"] or 0
+    agent = session_stats["agent_sessions"] or 0
+    messages = session_stats["total_messages"] or 0
+
+    if output_format == "table":
+        # Table format with aligned columns
+        label_width = 16
+        value_width = 14
+        print()
+        print(f"{'Metric':<{label_width}}  {'Value':>{value_width}}")
+        print(f"{'─' * label_width}  {'─' * value_width}")
+        fmt = format_number_human if human_readable else format_number_commas
+        print(f"{'Total Sessions':<{label_width}}  {fmt(total):>{value_width}}")
+        print(f"{'Main Sessions':<{label_width}}  {fmt(main):>{value_width}}")
+        print(f"{'Agent Sessions':<{label_width}}  {fmt(agent):>{value_width}}")
+        print(f"{'Total Messages':<{label_width}}  {fmt(messages):>{value_width}}")
+    else:
+        # TSV format
+        print("\nNAME\tVALUE")
+        print(f"total_sessions\t{total}")
+        print(f"main_sessions\t{main}")
+        print(f"agent_sessions\t{agent}")
+        print(f"total_messages\t{messages}")
 
 
-def _print_token_section(token_stats):
-    """Print token statistics section (flat format)."""
+def _print_token_section(token_stats, output_format: str = "tsv", human_readable: bool = False):
+    """Print token statistics section."""
     total_input = token_stats["total_input"] or 0
     total_output = token_stats["total_output"] or 0
     cache_creation = token_stats["total_cache_creation"] or 0
@@ -10710,24 +10894,48 @@ def _print_token_section(token_stats):
     cache_total = cache_creation + cache_read
     cache_hit_ratio = (cache_read / cache_total * 100) if cache_total > 0 else 0
 
-    print("\nNAME\tVALUE")
-    print(f"input_tokens\t{total_input}")
-    print(f"output_tokens\t{total_output}")
-    print(f"cache_created\t{cache_creation}")
-    print(f"cache_read\t{cache_read}")
-    print(f"cache_hit_ratio\t{cache_hit_ratio:.1f}")
+    if output_format == "table":
+        label_width = 16
+        value_width = 14
+        print()
+        print(f"{'Token Metric':<{label_width}}  {'Value':>{value_width}}")
+        print(f"{'─' * label_width}  {'─' * value_width}")
+        fmt = format_number_human if human_readable else format_number_commas
+        print(f"{'Input Tokens':<{label_width}}  {fmt(total_input):>{value_width}}")
+        print(f"{'Output Tokens':<{label_width}}  {fmt(total_output):>{value_width}}")
+        print(f"{'Cache Created':<{label_width}}  {fmt(cache_creation):>{value_width}}")
+        print(f"{'Cache Read':<{label_width}}  {fmt(cache_read):>{value_width}}")
+        print(f"{'Cache Hit Ratio':<{label_width}}  {cache_hit_ratio:>{value_width - 1}.1f}%")
+    else:
+        print("\nNAME\tVALUE")
+        print(f"input_tokens\t{total_input}")
+        print(f"output_tokens\t{total_output}")
+        print(f"cache_created\t{cache_creation}")
+        print(f"cache_read\t{cache_read}")
+        print(f"cache_hit_ratio\t{cache_hit_ratio:.1f}")
 
 
-def _print_tool_section(tool_stats):
-    """Print tool statistics section (flat format)."""
+def _print_tool_section(tool_stats, output_format: str = "tsv", human_readable: bool = False):
+    """Print tool statistics section."""
     total_tool_uses = tool_stats["total_tool_uses"] or 0
     tool_errors = tool_stats["tool_errors"] or 0
     error_rate = (tool_errors / total_tool_uses * 100) if total_tool_uses > 0 else 0
 
-    print("\nNAME\tVALUE")
-    print(f"total_uses\t{total_tool_uses}")
-    print(f"errors\t{tool_errors}")
-    print(f"error_rate\t{error_rate:.1f}")
+    if output_format == "table":
+        label_width = 16
+        value_width = 14
+        print()
+        print(f"{'Tool Metric':<{label_width}}  {'Value':>{value_width}}")
+        print(f"{'─' * label_width}  {'─' * value_width}")
+        fmt = format_number_human if human_readable else format_number_commas
+        print(f"{'Total Uses':<{label_width}}  {fmt(total_tool_uses):>{value_width}}")
+        print(f"{'Errors':<{label_width}}  {fmt(tool_errors):>{value_width}}")
+        print(f"{'Error Rate':<{label_width}}  {error_rate:>{value_width - 1}.1f}%")
+    else:
+        print("\nNAME\tVALUE")
+        print(f"total_uses\t{total_tool_uses}")
+        print(f"errors\t{tool_errors}")
+        print(f"error_rate\t{error_rate:.1f}")
 
 
 def _print_sources_section(sources):
@@ -10739,14 +10947,27 @@ def _print_sources_section(sources):
         print(f"{src['source']}\t{src['count']}")
 
 
-def _print_models_section(models):
-    """Print models section (flat format)."""
+def _print_models_section(models, output_format: str = "tsv", human_readable: bool = False):
+    """Print models section."""
     if not models:
         return
-    print("\nMODEL\tMESSAGES")
-    for model in models:
-        model_name = model["model"] or "unknown"
-        print(f"{model_name}\t{model['count']}")
+
+    if output_format == "table":
+        model_width = 32
+        count_width = 14
+        print()
+        print(f"{'Model':<{model_width}}  {'Messages':>{count_width}}")
+        print(f"{'─' * model_width}  {'─' * count_width}")
+        fmt = format_number_human if human_readable else format_number_commas
+        for model in models:
+            model_name = model["model"] or "unknown"
+            model_name = truncate_string(model_name, model_width)
+            print(f"{model_name:<{model_width}}  {fmt(model['count']):>{count_width}}")
+    else:
+        print("\nMODEL\tMESSAGES")
+        for model in models:
+            model_name = model["model"] or "unknown"
+            print(f"{model_name}\t{model['count']}")
 
 
 def _print_workspaces_section(top_workspaces):
@@ -10769,8 +10990,14 @@ def _parse_top_limit(top_limit) -> int | None:
         return None
 
 
-def _print_homes_and_workspaces(sources, top_workspaces, top_limit=None):
-    """Print homes and workspaces together (flat format)."""
+def _print_homes_and_workspaces(
+    sources,
+    top_workspaces,
+    top_limit=None,
+    output_format: str = "tsv",
+    human_readable: bool = False,
+):
+    """Print homes and workspaces together."""
     if not sources and not top_workspaces:
         return
 
@@ -10786,25 +11013,66 @@ def _print_homes_and_workspaces(sources, top_workspaces, top_limit=None):
     if top_limit_int:
         rows = rows[:top_limit_int]
 
-    # Print flat output
-    print("HOME\tWORKSPACE\tSESSIONS\tMESSAGES")
-    for home, workspace, sessions, messages in rows:
-        print(f"{home}\t{workspace}\t{sessions}\t{messages}")
+    if output_format == "table":
+        # Calculate column widths based on content
+        home_width = max(6, max((len(r[0]) for r in rows), default=6))
+        ws_width = max(10, max((len(r[1]) for r in rows), default=10))
+        # Cap widths to reasonable limits
+        home_width = min(home_width, 20)
+        ws_width = min(ws_width, 30)
+        sess_width = 10
+        msg_width = 12
+
+        print(
+            f"{'Home':<{home_width}}  {'Workspace':<{ws_width}}  {'Sessions':>{sess_width}}  {'Messages':>{msg_width}}"
+        )
+        print(f"{'─' * home_width}  {'─' * ws_width}  {'─' * sess_width}  {'─' * msg_width}")
+        fmt = format_number_human if human_readable else format_number_commas
+        for home, workspace, sessions, messages in rows:
+            home_tr = truncate_string(home, home_width)
+            ws_tr = truncate_string(workspace, ws_width)
+            print(
+                f"{home_tr:<{home_width}}  {ws_tr:<{ws_width}}  {fmt(sessions):>{sess_width}}  {fmt(messages):>{msg_width}}"
+            )
+    else:
+        # TSV format
+        print("HOME\tWORKSPACE\tSESSIONS\tMESSAGES")
+        for home, workspace, sessions, messages in rows:
+            print(f"{home}\t{workspace}\t{sessions}\t{messages}")
 
 
 def _print_summary_stats(stats: SummaryStatsData):
-    """Print the formatted summary statistics (flat format)."""
-    _print_homes_and_workspaces(stats.sources, stats.top_workspaces, top_limit=stats.top_limit)
-    _print_session_section(stats.session_stats)
-    _print_token_section(stats.token_stats)
-    _print_tool_section(stats.tool_stats)
-    _print_models_section(stats.models)
+    """Print the formatted summary statistics."""
+    # Auto-detect format if not specified
+    output_format = stats.output_format
+    if output_format is None:
+        output_format = "table" if sys.stdout.isatty() else "tsv"
+
+    human_readable = stats.human_readable
+
+    _print_homes_and_workspaces(
+        stats.sources,
+        stats.top_workspaces,
+        top_limit=stats.top_limit,
+        output_format=output_format,
+        human_readable=human_readable,
+    )
+    _print_session_section(stats.session_stats, output_format, human_readable)
+    _print_token_section(stats.token_stats, output_format, human_readable)
+    _print_tool_section(stats.tool_stats, output_format, human_readable)
+    _print_models_section(stats.models, output_format, human_readable)
     if stats.time_stats is not None:
-        _print_time_summary(stats.time_stats, include_breakdown=False)
+        _print_time_summary(stats.time_stats, include_breakdown=False, output_format=output_format)
 
 
 def display_summary_stats(
-    conn: sqlite3.Connection, where_sql: str, params: list, top_limit=None, agent: str = "auto"
+    conn: sqlite3.Connection,
+    where_sql: str,
+    params: list,
+    top_limit=None,
+    agent: str = "auto",
+    output_format: Optional[str] = None,
+    human_readable: bool = False,
 ):
     """Display summary statistics dashboard."""
     session_stats = _query_session_stats(conn, where_sql, params)
@@ -10848,6 +11116,8 @@ def display_summary_stats(
         top_limit=top_limit,
         time_stats=time_stats,
         agent=agent,
+        output_format=output_format,
+        human_readable=human_readable,
     )
     _print_summary_stats(stats)
 
@@ -11148,6 +11418,14 @@ def format_duration_dhm(seconds: float) -> str:
     return f"{minutes}m"
 
 
+def format_duration_hours(seconds: float) -> str:
+    """Format seconds as decimal hours (e.g., 143.2h)."""
+    if seconds < SECONDS_PER_MINUTE:
+        return f"{int(seconds)}s"
+    hours = seconds / 3600
+    return f"{hours:.1f}h"
+
+
 def format_number_human(n: int) -> str:
     """Format number with K/M/B suffixes for human display."""
     if n < 1000:
@@ -11313,8 +11591,10 @@ def _compute_time_stats(conn: sqlite3.Connection, where_sql: str, params: list) 
     }
 
 
-def _print_time_summary(time_stats: dict, include_breakdown: bool = False):
-    """Print time tracking summary (flat format)."""
+def _print_time_summary(
+    time_stats: dict, include_breakdown: bool = False, output_format: str = "tsv"
+):
+    """Print time tracking summary."""
     daily_stats = time_stats["daily_stats"]
     total_work = time_stats["total_work"]
     total_messages = time_stats["total_messages"]
@@ -11323,14 +11603,30 @@ def _print_time_summary(time_stats: dict, include_breakdown: bool = False):
     first_date = time_stats["first_date"]
     last_date = time_stats["last_date"]
 
-    print("\nNAME\tVALUE")
-    print(f"total_work_seconds\t{total_work}")
-    print(f"work_periods\t{total_periods}")
-    print(f"session_files\t{num_files}")
-    if first_date:
-        print(f"first_date\t{first_date}")
-    if last_date:
-        print(f"last_date\t{last_date}")
+    if output_format == "table":
+        label_width = 16
+        value_width = 14
+        print()
+        print(f"{'Time Metric':<{label_width}}  {'Value':>{value_width}}")
+        print(f"{'─' * label_width}  {'─' * value_width}")
+        print(f"{'Total Work':<{label_width}}  {format_duration_hours(total_work):>{value_width}}")
+        print(
+            f"{'Work Periods':<{label_width}}  {format_number_commas(total_periods):>{value_width}}"
+        )
+        print(f"{'Session Files':<{label_width}}  {format_number_commas(num_files):>{value_width}}")
+        if first_date:
+            print(f"{'First Date':<{label_width}}  {first_date:>{value_width}}")
+        if last_date:
+            print(f"{'Last Date':<{label_width}}  {last_date:>{value_width}}")
+    else:
+        print("\nNAME\tVALUE")
+        print(f"total_work_seconds\t{total_work}")
+        print(f"work_periods\t{total_periods}")
+        print(f"session_files\t{num_files}")
+        if first_date:
+            print(f"first_date\t{first_date}")
+        if last_date:
+            print(f"last_date\t{last_date}")
 
     if include_breakdown and daily_stats:
         _print_daily_breakdown(daily_stats, total_work, total_periods, total_messages)
@@ -11728,7 +12024,9 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
         _show_no_sessions_error(agent, "Windows", "--windows")
 
     source_label = f"Windows ({username})" if username else "Windows"
-    print_sessions_output(all_sessions, source_label, workspaces_only)
+    print_sessions_output(
+        all_sessions, source_label, workspaces_only, output_format=getattr(args, "format", None)
+    )
 
 
 def _list_wsl_claude_workspaces(sessions_dir: Path, patterns: list) -> list:
@@ -11808,7 +12106,9 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
         _show_no_sessions_error(agent, f"WSL '{distro_name}'", "--wsl")
 
     source_label = f"WSL ({distro_name})"
-    print_sessions_output(all_sessions, source_label, workspaces_only)
+    print_sessions_output(
+        all_sessions, source_label, workspaces_only, output_format=getattr(args, "format", None)
+    )
 
 
 # ============================================================================
@@ -12065,7 +12365,12 @@ def _list_ssh_remote_sessions(args, patterns: list, since_date, until_date):
         )
         if not sessions:
             exit_with_error("No sessions found")
-        print_sessions_output(sessions, f"Remote ({remote_host})", workspaces_only=False)
+        print_sessions_output(
+            sessions,
+            f"Remote ({remote_host})",
+            workspaces_only=False,
+            output_format=getattr(args, "format", None),
+        )
 
 
 def _list_local_sessions(args, patterns: list, since_date, until_date):
@@ -12107,7 +12412,9 @@ def _list_local_sessions(args, patterns: list, since_date, until_date):
 
     in_wsl = is_running_in_wsl()
     source_label = "Local (WSL)" if in_wsl else "Local"
-    print_sessions_output(sessions, source_label, workspaces_only)
+    print_sessions_output(
+        sessions, source_label, workspaces_only, output_format=getattr(args, "format", None)
+    )
 
 
 def cmd_list(args):
@@ -13538,53 +13845,29 @@ def _get_lsh_display_flags(args) -> tuple:
 
 def cmd_lsh(args):
     """List all home folders with Claude Code installations."""
-    # Check for subcommands first
+    home_verb = getattr(args, "home_verb", None)
     lsh_action = getattr(args, "lsh_action", None)
 
-    if lsh_action == "add":
+    if lsh_action == "add" or home_verb == "add":
         cmd_lsh_add(args)
         return
-    if lsh_action == "remove":
+    if lsh_action == "remove" or home_verb == "remove":
         cmd_lsh_remove(args)
         return
     if lsh_action == "clear":
         cmd_lsh_clear(args)
         return
+    if home_verb == "show":
+        _cmd_home_show(args)
+        return
+    if home_verb == "export":
+        _cmd_home_export(args)
+        return
+    if home_verb == "stats":
+        _cmd_home_stats(args)
+        return
 
-    # Default: list homes (flat output)
-    in_wsl = is_running_in_wsl()
-    show_wsl = getattr(args, "wsl", False)
-    show_windows = getattr(args, "windows", False)
-    show_web_flag = getattr(args, "web", False)
-    show_local_flag = getattr(args, "local", False)
-    show_remotes_flag = getattr(args, "remotes", False)
-
-    # If specific flags are set, show only those
-    specific_filter = (
-        show_wsl or show_windows or show_web_flag or show_local_flag or show_remotes_flag
-    )
-
-    # Collect all homes
-    homes = []
-
-    if show_local_flag or not specific_filter:
-        local_info = _lsh_get_local()
-        if local_info:
-            homes.append(local_info)
-
-    # --wsl and --windows show available options for discovery (not configured homes)
-    if show_wsl:
-        homes.extend(_lsh_get_wsl())
-    if show_windows and in_wsl:
-        homes.extend(_lsh_get_windows())
-
-    if show_web_flag or not specific_filter:
-        web_info = _lsh_get_web()
-        if web_info:
-            homes.append(web_info)
-
-    if show_remotes_flag or not specific_filter:
-        homes.extend(_lsh_get_configured())
+    homes = _gather_homes(args)
 
     # Print flat output
     if homes:
@@ -13617,7 +13900,7 @@ def _resolve_wsl_distro(distro_arg: Optional[str]) -> Optional[str]:
     if wsl_distros:
         return wsl_distros[0]["name"]
 
-    return None
+        return None
 
 
 def _resolve_windows_user() -> Optional[str]:
@@ -13640,14 +13923,51 @@ def _resolve_windows_user() -> Optional[str]:
     return None
 
 
+def _gather_homes(args) -> list[dict]:
+    """Collect homes based on filter flags."""
+    in_wsl = is_running_in_wsl()
+    show_wsl = getattr(args, "wsl", False)
+    show_windows = getattr(args, "windows", False)
+    show_web_flag = getattr(args, "web", False)
+    show_local_flag = getattr(args, "local", False)
+    show_remotes_flag = getattr(args, "remotes", False)
+
+    specific_filter = (
+        show_wsl or show_windows or show_web_flag or show_local_flag or show_remotes_flag
+    )
+
+    homes = []
+    if show_local_flag or not specific_filter:
+        local_info = _lsh_get_local()
+        if local_info:
+            homes.append(local_info)
+
+    if show_wsl:
+        homes.extend(_lsh_get_wsl())
+    if show_windows and in_wsl:
+        homes.extend(_lsh_get_windows())
+
+    if show_web_flag or not specific_filter:
+        web_info = _lsh_get_web()
+        if web_info:
+            homes.append(web_info)
+
+    if show_remotes_flag or not specific_filter:
+        homes.extend(_lsh_get_configured())
+    return homes
+
+
 def cmd_lsh_add(args):
     """Add a home source to configuration."""
     source = getattr(args, "source", None)
     add_windows = getattr(args, "windows", False)
     add_wsl = getattr(args, "wsl", None)
+    add_web = getattr(args, "web", False)
 
     # Determine what to add
-    if add_windows:
+    if add_web:
+        source = "web"
+    elif add_windows:
         user = _resolve_windows_user()
         if not user:
             sys.exit(1)
@@ -13659,12 +13979,12 @@ def cmd_lsh_add(args):
             sys.exit(1)
         source = f"wsl:{distro}"
     elif not source:
-        sys.stderr.write("Error: Specify a source (user@host), --windows, or --wsl\n")
+        sys.stderr.write("Error: Specify a source (user@host), --windows, --wsl, or --web\n")
         sys.exit(1)
-    elif "@" not in source and source not in ("windows",) and not source.startswith("wsl:"):
+    elif "@" not in source and source not in ("windows", "web") and not source.startswith("wsl:"):
         # Validate SSH remote format
         sys.stderr.write(f"Error: Invalid source format: {source}\n")
-        sys.stderr.write("Expected: user@hostname, --windows, or --wsl\n")
+        sys.stderr.write("Expected: user@hostname, --windows, --web, or --wsl\n")
         sys.exit(1)
 
     config = load_config()
@@ -13688,12 +14008,15 @@ def cmd_lsh_remove(args):
     source = getattr(args, "source", None)
     remove_windows = getattr(args, "windows", False)
     remove_wsl = getattr(args, "wsl", None)
+    remove_web = getattr(args, "web", False)
 
     config = load_config()
     sources = config.get("sources", [])
 
     # Determine what to remove
-    if remove_windows:
+    if remove_web:
+        source = "web"
+    elif remove_windows:
         # Find and remove any windows:* source
         windows_sources = [s for s in sources if s.startswith("windows:")]
         if not windows_sources:
@@ -13711,7 +14034,7 @@ def cmd_lsh_remove(args):
         else:
             source = f"wsl:{remove_wsl}"
     elif not source:
-        sys.stderr.write("Error: Specify a source to remove, --windows, or --wsl\n")
+        sys.stderr.write("Error: Specify a source to remove, --windows, --web, or --wsl\n")
         sys.exit(1)
 
     if source not in sources:
@@ -13737,6 +14060,45 @@ def cmd_lsh_clear(args):
         print("Cleared all SSH remotes.")
     else:
         sys.exit(1)
+
+
+def _cmd_home_show(args):
+    """Show a single home entry."""
+    all_args = SimpleNamespace(
+        wsl=True,
+        windows=True,
+        web=True,
+        local=True,
+        remotes=True,
+        agent=getattr(args, "agent", None),
+    )
+    homes = _gather_homes(all_args)
+    matches = [h for h in homes if h.get("home") == args.name]
+    if not matches:
+        exit_with_error(f"Home '{args.name}' not found.")
+    print("HOME\tPATH\tSESSIONS")
+    for home in matches:
+        print(f"{home['home']}\t{home['path']}\t{home['workspaces']}")
+
+
+def _cmd_home_export(args):
+    """Export all sessions from selected homes."""
+    export_args = SimpleNamespace(**vars(args))
+    export_args.target = []
+    export_args.all_workspaces = True
+    export_args.all_homes = getattr(args, "all_homes", False)
+    _apply_home_flags_from_names(export_args, getattr(args, "names", []) or [])
+    _dispatch_export(export_args)
+
+
+def _cmd_home_stats(args):
+    """Show stats for selected homes."""
+    stats_args = SimpleNamespace(**vars(args))
+    stats_args.workspace = []
+    stats_args.all_workspaces = True
+    stats_args.all_homes = getattr(args, "all_homes", False)
+    _apply_home_flags_from_names(stats_args, getattr(args, "names", []) or [])
+    _dispatch_stats(stats_args)
 
 
 def _get_reset_items(what: Optional[str], config_dir: Path) -> list:
@@ -14565,13 +14927,15 @@ def _resolve_remote_list(args):
 
 
 def _add_lsw_parser(subparsers):
-    """Add workspaces (list workspaces) subparser with aliases."""
+    """Add ws (list workspaces) subparser with aliases."""
     parser = subparsers.add_parser(
-        "workspaces",
-        aliases=["ws", "lsw"],
+        "ws",
         help="List workspaces",
         description="List all workspaces (local or remote)",
     )
+    # Add hidden aliases
+    for alias in ["workspaces", "lsw"]:
+        subparsers._name_parser_map[alias] = parser
 
     parser.add_argument(
         "pattern",
@@ -14619,13 +14983,15 @@ def _add_lsw_parser(subparsers):
 
 
 def _add_lss_parser(subparsers):
-    """Add sessions (list sessions) subparser with aliases."""
+    """Add ss (list sessions) subparser with aliases."""
     parser = subparsers.add_parser(
-        "sessions",
-        aliases=["ss", "lss"],
+        "ss",
         help="List sessions",
         description="List sessions in a workspace (defaults to current workspace)",
     )
+    # Add hidden aliases
+    for alias in ["sessions", "lss"]:
+        subparsers._name_parser_map[alias] = parser
 
     parser.add_argument(
         "workspace",
@@ -14729,10 +15095,12 @@ def _add_lsh_parser(subparsers):
     """Add home (list/manage homes) subparser with aliases."""
     parser = subparsers.add_parser(
         "home",
-        aliases=["homes", "lsh"],
         help="List homes and manage sources",
         description="List all Claude Code installations (local, WSL, Windows, web, SSH remotes)",
     )
+    # Add hidden aliases
+    for alias in ["homes", "lsh"]:
+        subparsers._name_parser_map[alias] = parser
 
     lsh_subparsers = parser.add_subparsers(dest="lsh_action")
 
@@ -14919,15 +15287,18 @@ def _add_export_parser(subparsers):
 
 def _add_project_parser(subparsers):
     """Add project subparser with aliases."""
-    # Primary 'project' subcommand with aliases
     parser = subparsers.add_parser(
         "project",
-        aliases=["projects", "alias"],  # 'projects' is new, 'alias' for backward compat
         help="Manage workspace projects",
         description="Create and manage workspace projects for consolidated exports",
     )
+    # Add hidden aliases (for backward compat)
+    for alias in ["projects", "alias"]:
+        subparsers._name_parser_map[alias] = parser
 
-    project_subparsers = parser.add_subparsers(dest="alias_command", help="Project subcommand")
+    project_subparsers = parser.add_subparsers(
+        dest="project_command", help="Project subcommand", metavar="COMMAND"
+    )
 
     # Helper function for adding subparsers
     def add_subparser(name, **kwargs):
@@ -14952,9 +15323,11 @@ def _add_project_parser(subparsers):
     )
     parser_show.add_argument("name", help="Project name")
 
-    # create
+    # create - deprecated, use 'add' instead (which auto-creates)
     parser_create = add_subparser(
-        "create", help="Create a new project", description="Create a new empty project"
+        "create",
+        help="(deprecated: use 'add')",
+        description="Deprecated: use 'add' which auto-creates",
     )
     parser_create.add_argument("name", help="Project name")
 
@@ -15046,6 +15419,7 @@ def _add_stats_parser(subparsers):
         "stats",
         help="Show usage statistics and metrics",
         description="Display Claude Code usage statistics from synced metrics database",
+        formatter_class=WrappedHelpFormatter,
     )
 
     parser.add_argument(
@@ -15191,6 +15565,215 @@ def _add_reset_parser(subparsers):
     return parser
 
 
+def _add_home_scope_flags(parser):
+    """Add home-scope flags shared by ws/session/project commands."""
+    parser.add_argument(
+        "--home",
+        action="append",
+        dest="homes",
+        metavar="NAME",
+        help="Specific saved home (repeatable)",
+    )
+    parser.add_argument(
+        "--ah",
+        "--all-homes",
+        dest="all_homes",
+        action="store_true",
+        help="Include all configured homes",
+    )
+    parser.add_argument("--wsl", action="store_true", help="Use WSL home")
+    parser.add_argument("--windows", action="store_true", help="Use Windows home")
+    parser.add_argument("--web", action="store_true", help="Include Claude.ai web sessions")
+    parser.add_argument(
+        "-r",
+        "--remote",
+        action="append",
+        dest="remotes",
+        metavar="HOST",
+        help="SSH remote (user@host) - repeatable",
+    )
+    parser.add_argument("--no-wsl", action="store_true", help="Exclude WSL sources (with --ah)")
+    parser.add_argument(
+        "--no-windows", action="store_true", help="Exclude Windows sources (with --ah)"
+    )
+    parser.add_argument("--no-remote", action="store_true", help="Exclude SSH remotes (with --ah)")
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Local home only (use with -r/--home to combine)",
+    )
+
+
+def _add_workspace_scope_flags(parser, positional_name: str = "workspace"):
+    """Add workspace scope flags."""
+    parser.add_argument(
+        positional_name,
+        nargs="*",
+        help="Workspace path(s) (exact)",
+    )
+    parser.add_argument(
+        "-n",
+        "--name",
+        dest="name_patterns",
+        action="append",
+        help="Substring match workspace names/paths (repeatable)",
+    )
+    parser.add_argument(
+        "--aw",
+        "--all-workspaces",
+        dest="all_workspaces",
+        action="store_true",
+        help="Use all workspaces in scope",
+    )
+    parser.add_argument(
+        "--this",
+        dest="this_only",
+        action="store_true",
+        help="Current workspace only (skip project auto-detection)",
+    )
+    parser.add_argument(
+        "--project",
+        action="append",
+        dest="projects",
+        metavar="NAME",
+        help="Project name (repeatable)",
+    )
+
+
+def _add_date_filters(parser):
+    """Add since/until date filters."""
+    parser.add_argument(
+        "--since",
+        metavar="DATE",
+        help="Only include sessions on/after this date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--until",
+        metavar="DATE",
+        help="Only include sessions on/before this date (YYYY-MM-DD)",
+    )
+
+
+def _add_output_format(parser):
+    """Add --format for table/tsv/json."""
+    parser.add_argument(
+        "--format",
+        choices=["table", "tsv", "json"],
+        default=None,
+        help="Output format (default: table for TTY, tsv for pipes)",
+    )
+
+
+def _add_export_options(parser):
+    """Add export-related options."""
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="DIR",
+        dest="output_override",
+        help="Output directory (default: ./ai-chats)",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Force re-export (default: incremental)"
+    )
+    parser.add_argument(
+        "--minimal",
+        action="store_true",
+        help="Minimal export: omit metadata, keep only conversation content",
+    )
+    parser.add_argument(
+        "--split",
+        metavar="LINES",
+        type=validate_split_lines,
+        help="Split long conversations into parts (e.g., --split 500)",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Parallelism for exports (default: 1)",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-file output (show summary only)",
+    )
+    parser.add_argument(
+        "--flat",
+        action="store_true",
+        help="Use flat directory structure (default: organized by workspace with source tags)",
+    )
+    parser.add_argument(
+        "--source",
+        action="store_true",
+        dest="include_source",
+        help="Include raw source file alongside markdown export",
+    )
+    _add_date_filters(parser)
+
+
+def _add_stats_options(parser):
+    """Add stats options."""
+    parser.add_argument("--sync", action="store_true", help="Sync only (don't show stats)")
+    parser.add_argument(
+        "--no-sync",
+        action="store_true",
+        dest="no_sync",
+        help="Skip auto-sync (faster, uses cached data)",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Force re-sync all files (ignore mtime)"
+    )
+    parser.add_argument(
+        "--by",
+        metavar="DIMS",
+        help="Group by dimensions (comma-separated): home, agent, workspace, day, model, tool",
+    )
+    _add_output_format(parser)
+    parser.add_argument(
+        "-H",
+        "--human",
+        action="store_true",
+        help="Human-readable numbers (K/M/B) and time (Xd Xh Xm)",
+    )
+    parser.add_argument(
+        "--time", action="store_true", help="Show time tracking with daily breakdown"
+    )
+    parser.add_argument(
+        "--top-ws",
+        type=int,
+        default=None,
+        help="Limit the number of workspaces shown per home (default: all)",
+    )
+    # Legacy flags (hidden) for backward compatibility
+    parser.add_argument(
+        "--tools",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden, use --by tool
+    )
+    parser.add_argument(
+        "--models",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden, use --by model
+    )
+    parser.add_argument(
+        "--by-workspace",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden, use --by workspace
+    )
+    parser.add_argument(
+        "--group",
+        choices=["home", "agent"],
+        help=argparse.SUPPRESS,  # Hidden, use --by
+    )
+    parser.add_argument(
+        "--by-day",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden, use --by day
+    )
+    _add_date_filters(parser)
+
+
 def _create_argument_parser():
     """Create and configure the argument parser.
 
@@ -15200,7 +15783,7 @@ def _create_argument_parser():
     parser = argparse.ArgumentParser(
         prog="agent-history",
         description="Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=WrappedHelpFormatter,
         epilog=HELP_EPILOG,
     )
 
@@ -15214,19 +15797,271 @@ def _create_argument_parser():
         help="Agent backend to use (default: auto-detect based on available data)",
     )
 
-    # Create subparsers for commands
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute", required=False)
+    # Create subparsers for commands (use custom parser class for better error messages)
+    subparsers = parser.add_subparsers(
+        dest="command",
+        help="Command to execute",
+        required=False,
+        parser_class=ChoiceHintArgumentParser,
+        metavar="COMMAND",
+    )
 
-    # Add all command parsers
-    _add_lsw_parser(subparsers)
-    _add_lss_parser(subparsers)
-    _add_lsh_parser(subparsers)
-    _add_export_parser(subparsers)
-    _add_project_parser(subparsers)
-    _add_stats_parser(subparsers)
+    # Utility commands
     _add_reset_parser(subparsers)
     _add_install_parser(subparsers)
     _add_gemini_index_parser(subparsers)
+
+    # home object
+    home_parser = subparsers.add_parser(
+        "home",
+        help="Manage homes",
+        description="Manage data sources (local, WSL, Windows, web, SSH remotes).",
+    )
+    home_parser.set_defaults(command="home", home_verb="list")
+    home_sub = home_parser.add_subparsers(dest="home_verb")
+    home_sub.required = False
+    home_sub.default = "list"
+
+    home_list = home_sub.add_parser("list", help="List homes")
+    home_list.set_defaults(command="home", home_verb="list")
+    home_list.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
+    home_list.add_argument("--windows", action="store_true", help="Show Windows users only")
+    home_list.add_argument("--web", action="store_true", help="Show Claude.ai status only")
+    home_list.add_argument("--local", action="store_true", help="Show local home only")
+    home_list.add_argument("--remotes", action="store_true", help="Show SSH remotes only")
+    _add_output_format(home_list)
+
+    home_show = home_sub.add_parser("show", help="Show home details")
+    home_show.set_defaults(command="home", home_verb="show")
+    home_show.add_argument("name", help="Home name")
+
+    home_add = home_sub.add_parser("add", help="Add a home")
+    home_add.set_defaults(command="home", home_verb="add")
+    home_add.add_argument("source", nargs="?", help="SSH remote (user@hostname)")
+    home_add.add_argument("--windows", action="store_true", help="Add Windows as a home")
+    home_add.add_argument(
+        "--wsl", nargs="?", const="auto", metavar="DISTRO", help="Add WSL as a home"
+    )
+    home_add.add_argument("--web", action="store_true", help="Add Claude.ai web as a home")
+
+    home_remove = home_sub.add_parser("remove", help="Remove a home")
+    home_remove.set_defaults(command="home", home_verb="remove")
+    home_remove.add_argument("source", nargs="?", help="Source to remove")
+    home_remove.add_argument("--windows", action="store_true", help="Remove Windows")
+    home_remove.add_argument("--wsl", nargs="?", const="auto", metavar="DISTRO", help="Remove WSL")
+    home_remove.add_argument("--web", action="store_true", help="Remove Claude.ai web")
+
+    home_export = home_sub.add_parser("export", help="Export all sessions from home(s)")
+    home_export.set_defaults(command="home", home_verb="export")
+    home_export.add_argument("names", nargs="*", help="Home names (default: local)")
+    home_export.add_argument(
+        "output_dir",
+        nargs="?",
+        default="./ai-chats",
+        help="Output directory (default: ./ai-chats)",
+    )
+    _add_export_options(home_export)
+    _add_home_scope_flags(home_export)
+
+    home_stats = home_sub.add_parser("stats", help="Stats for home(s)")
+    home_stats.set_defaults(command="home", home_verb="stats")
+    home_stats.add_argument("names", nargs="*", help="Home names (default: local)")
+    _add_stats_options(home_stats)
+    _add_home_scope_flags(home_stats)
+
+    # ws object
+    ws_parser = subparsers.add_parser(
+        "ws",
+        help="Workspace commands",
+        description="Browse workspaces (project directories with sessions).",
+    )
+    ws_parser.set_defaults(command="ws", ws_verb="list")
+    ws_sub = ws_parser.add_subparsers(dest="ws_verb")
+    ws_sub.required = False
+    ws_sub.default = "list"
+
+    ws_list = ws_sub.add_parser("list", help="List workspaces")
+    ws_list.set_defaults(command="ws", ws_verb="list")
+    _add_workspace_scope_flags(ws_list)
+    _add_home_scope_flags(ws_list)
+    _add_output_format(ws_list)
+
+    ws_show = ws_sub.add_parser("show", help="Show workspace details")
+    ws_show.set_defaults(command="ws", ws_verb="show")
+    ws_show.add_argument("workspace", nargs="*", help="Workspace path(s)")
+    _add_home_scope_flags(ws_show)
+    _add_output_format(ws_show)
+
+    ws_export = ws_sub.add_parser("export", help="Export sessions from workspace")
+    ws_export.set_defaults(command="ws", ws_verb="export")
+    ws_export.add_argument("target", nargs="*", help="Workspace path(s)")
+    ws_export.add_argument(
+        "output_dir",
+        nargs="?",
+        default="./ai-chats",
+        help="Output directory (default: ./ai-chats)",
+    )
+    _add_export_options(ws_export)
+    _add_home_scope_flags(ws_export)
+    ws_export.add_argument("--aw", "--all-workspaces", dest="all_workspaces", action="store_true")
+    ws_export.add_argument("--project", action="append", dest="projects", metavar="NAME")
+
+    ws_stats = ws_sub.add_parser("stats", help="Stats for workspace")
+    ws_stats.set_defaults(command="ws", ws_verb="stats")
+    _add_workspace_scope_flags(ws_stats)
+    _add_stats_options(ws_stats)
+    _add_home_scope_flags(ws_stats)
+
+    # session object
+    session_parser = subparsers.add_parser(
+        "session",
+        help="Session commands",
+        description="Browse and export conversation sessions.",
+    )
+    session_parser.set_defaults(command="session", session_verb="list")
+    sess_sub = session_parser.add_subparsers(dest="session_verb")
+    sess_sub.required = False
+    sess_sub.default = "list"
+
+    sess_list = sess_sub.add_parser("list", help="List sessions")
+    sess_list.set_defaults(command="session", session_verb="list")
+    _add_workspace_scope_flags(sess_list, positional_name="workspace")
+    _add_home_scope_flags(sess_list)
+    _add_date_filters(sess_list)
+    sess_list.add_argument(
+        "--counts",
+        action="store_true",
+        help="Count messages (slower, required for some sources)",
+    )
+    sess_list.add_argument(
+        "--wsl-counts",
+        action="store_true",
+        help="Count messages for WSL sessions on Windows (slower)",
+    )
+    _add_output_format(sess_list)
+
+    sess_show = sess_sub.add_parser("show", help="Show session details")
+    sess_show.set_defaults(command="session", session_verb="show")
+    sess_show.add_argument("session_id", help="Session identifier or path")
+    _add_home_scope_flags(sess_show)
+    _add_workspace_scope_flags(sess_show, positional_name="workspace")
+    _add_date_filters(sess_show)
+
+    sess_export = sess_sub.add_parser("export", help="Export sessions to markdown")
+    sess_export.set_defaults(command="session", session_verb="export")
+    _add_workspace_scope_flags(sess_export, positional_name="target")
+    sess_export.add_argument(
+        "output_dir",
+        nargs="?",
+        default="./ai-chats",
+        help="Output directory (default: ./ai-chats)",
+    )
+    _add_export_options(sess_export)
+    _add_home_scope_flags(sess_export)
+
+    sess_stats = sess_sub.add_parser("stats", help="Stats for sessions")
+    sess_stats.set_defaults(command="session", session_verb="stats")
+    _add_workspace_scope_flags(sess_stats)
+    _add_stats_options(sess_stats)
+    _add_home_scope_flags(sess_stats)
+
+    # project object
+    project_parser = subparsers.add_parser(
+        "project",
+        help="Manage projects",
+        description="Manage named workspace groups (projects).",
+    )
+    project_parser.set_defaults(command="project", project_command="list")
+    proj_sub = project_parser.add_subparsers(dest="project_command")
+    proj_sub.required = False
+    proj_sub.default = "list"
+
+    proj_list = proj_sub.add_parser("list", help="List projects")
+    proj_list.set_defaults(command="project", project_command="list")
+    proj_list.add_argument(
+        "-c",
+        "--counts",
+        action="store_true",
+        help="Show session counts (slower, accesses all sources)",
+    )
+    _add_output_format(proj_list)
+
+    proj_show = proj_sub.add_parser("show", help="Show project details")
+    proj_show.set_defaults(command="project", project_command="show")
+    proj_show.add_argument("name", help="Project name")
+
+    proj_add = proj_sub.add_parser("add", help="Add workspace to project")
+    proj_add.set_defaults(command="project", project_command="add")
+    proj_add.add_argument("name", help="Project name")
+    proj_add.add_argument("workspaces", nargs="*", help="Workspace paths to add")
+    proj_add.add_argument("-n", "--name", dest="name_patterns", action="append")
+    proj_add.add_argument("--pick", action="store_true", help="Interactive workspace picker")
+    proj_add.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help=argparse.SUPPRESS,  # Hidden flag used for legacy alias create compatibility
+    )
+    proj_add.add_argument(
+        "-r", "--remote", metavar="HOST", help="Add workspace from remote host (user@hostname)"
+    )
+    proj_add.add_argument("--wsl", action="store_true", help="Add workspace from WSL")
+    proj_add.add_argument("--windows", action="store_true", help="Add workspace from Windows")
+    proj_add.add_argument(
+        "--ah",
+        "--all-homes",
+        action="store_true",
+        dest="all_homes",
+        help="Add from all homes (local + WSL/Windows + remotes)",
+    )
+
+    proj_remove = proj_sub.add_parser("remove", help="Remove workspace or project")
+    proj_remove.set_defaults(command="project", project_command="remove")
+    proj_remove.add_argument("name", help="Project name")
+    proj_remove.add_argument("workspace", nargs="?", help="Workspace to remove (optional)")
+    proj_remove.add_argument(
+        "-r", "--remote", metavar="HOST", help="Remove workspace from remote source"
+    )
+    proj_remove.add_argument("--wsl", action="store_true", help="Remove workspace from WSL source")
+    proj_remove.add_argument(
+        "--windows", action="store_true", help="Remove workspace from Windows source"
+    )
+
+    proj_export = proj_sub.add_parser("export", help="Export all sessions in project")
+    proj_export.set_defaults(command="project", project_command="export")
+    proj_export.add_argument("name", help="Project name")
+    proj_export.add_argument(
+        "output_dir",
+        nargs="?",
+        default="./ai-chats",
+        help="Output directory (default: ./ai-chats)",
+    )
+    _add_export_options(proj_export)
+    _add_home_scope_flags(proj_export)
+
+    proj_stats = proj_sub.add_parser("stats", help="Stats for project")
+    proj_stats.set_defaults(command="project", project_command="stats")
+    proj_stats.add_argument("name", help="Project name")
+    _add_stats_options(proj_stats)
+    _add_home_scope_flags(proj_stats)
+
+    # Legacy config import/export kept as hidden subcommands
+    proj_conf_export = proj_sub.add_parser(
+        "config-export",
+        help=argparse.SUPPRESS,
+        description="Export projects configuration to JSON (stdout)",
+    )
+    proj_conf_export.set_defaults(command="project", project_command="config-export")
+
+    proj_conf_import = proj_sub.add_parser(
+        "config-import",
+        help=argparse.SUPPRESS,
+        description="Import projects configuration from JSON",
+    )
+    proj_conf_import.set_defaults(command="project", project_command="config-import")
+    proj_conf_import.add_argument("file", nargs="?", help="JSON file to import (default: stdin)")
+    proj_conf_import.add_argument(
+        "--replace", action="store_true", help="Replace all projects instead of merging"
+    )
 
     return parser
 
@@ -15319,6 +16154,57 @@ def _add_gemini_index_parser(subparsers):
 # ============================================================================
 
 
+def _combine_workspace_inputs(
+    workspaces: Optional[list],
+    name_patterns: Optional[list],
+    all_flag: bool,
+    default_all: bool = False,
+) -> list[str]:
+    """Combine exact workspace paths and name patterns into a single list.
+
+    Exact paths are prefixed with '=' to force exact matching; name patterns
+    are used as-is for substring matching.
+    """
+    combined: list[str] = []
+    for ws in workspaces or []:
+        if ws is None:
+            continue
+        combined.append(f"={ws}")
+    if name_patterns:
+        combined.extend([p for p in name_patterns if p])
+
+    if all_flag and not combined:
+        combined.append("")
+    elif default_all and not combined:
+        combined.append("")
+    return combined
+
+
+def _apply_home_flags_from_names(args, names: list[str]):
+    """Apply --home selections by mutating args flags/remotes."""
+    if not names:
+        return
+    remotes = list(getattr(args, "remotes", None) or [])
+    for home_name in names:
+        if home_name == "local":
+            args.local = True
+        elif home_name == "web":
+            args.web = True
+        elif home_name.startswith("wsl:"):
+            args.wsl = True
+            remotes.append(f"wsl://{home_name.split(':', 1)[1]}")
+        elif home_name.startswith("windows:"):
+            args.windows = True
+            remotes.append(f"windows:{home_name.split(':', 1)[1]}")
+        elif home_name == "wsl":
+            args.wsl = True
+        elif home_name == "windows":
+            args.windows = True
+        else:
+            remotes.append(home_name)
+    args.remotes = remotes
+
+
 def _get_remote_workspaces_for_lsw(remote: str, patterns: list, agent: str = "auto") -> tuple:
     """Get filtered workspaces from a remote for lsw.
 
@@ -15381,9 +16267,38 @@ def _get_remote_workspaces_for_lsw(remote: str, patterns: list, agent: str = "au
     return hostname, sessions
 
 
-def _print_lsw_results(all_results: list, workspaces_only: bool):
+def _print_lsw_results(
+    all_results: list, workspaces_only: bool, output_format: Optional[str] = None
+):
     """Print lsw results in flat tab-separated format."""
     if not all_results:
+        return
+
+    if output_format == "json":
+        data = []
+        if workspaces_only:
+            seen = set()
+            for source_label, sessions in all_results:
+                home_label = _source_label_to_home(source_label)
+                for session in sessions:
+                    ws = session["workspace_readable"]
+                    if ws in seen:
+                        continue
+                    seen.add(ws)
+                    data.append({"home": home_label, "workspace": ws})
+        else:
+            for source_label, sessions in all_results:
+                home_label = _source_label_to_home(source_label)
+                for session in sessions:
+                    data.append(
+                        {
+                            "agent": session.get("agent", AGENT_CLAUDE),
+                            "home": home_label,
+                            "workspace": session.get("workspace_readable")
+                            or session.get("workspace"),
+                        }
+                    )
+        print(json.dumps(data, indent=2))
         return
 
     if workspaces_only:
@@ -15444,7 +16359,63 @@ def _dispatch_lsw_additive(args):
         except (OSError, subprocess.SubprocessError) as e:
             sys.stderr.write(f"Error accessing remote {remote}: {e}\n")
 
-    _print_lsw_results(all_results, workspaces_only)
+    _print_lsw_results(all_results, workspaces_only, output_format=getattr(args, "format", None))
+
+
+def _dispatch_ws(args):
+    """Dispatch workspace (ws) commands."""
+    verb = getattr(args, "ws_verb", None) or "list"
+    _apply_home_flags_from_names(args, getattr(args, "homes", []) or [])
+    workspace_inputs = getattr(args, "workspace", []) or []
+    name_patterns = getattr(args, "name_patterns", []) or []
+
+    project_names = getattr(args, "projects", None) or []
+    project_only = False
+    if project_names:
+        for project_name in project_names:
+            cmd_project_show(SimpleNamespace(name=project_name))
+        project_only = not (
+            workspace_inputs or name_patterns or getattr(args, "all_workspaces", False)
+        )
+
+    if verb == "show":
+        combined = _combine_workspace_inputs(
+            workspace_inputs,
+            name_patterns,
+            getattr(args, "all_workspaces", False),
+        )
+        args.workspace = combined
+        _dispatch_lss(args)
+        return
+
+    if project_only:
+        return
+
+    if (
+        verb == "list"
+        and not workspace_inputs
+        and not name_patterns
+        and not getattr(args, "all_workspaces", False)
+        and not getattr(args, "this_only", False)
+    ):
+        pattern, exists = check_current_workspace_exists()
+        if exists:
+            alias_for_ws = get_alias_for_workspace(pattern, "local")
+            if alias_for_ws:
+                sys.stderr.write(
+                    f"Using project {alias_for_ws} (use --this for current workspace only)\n"
+                )
+                cmd_project_show(SimpleNamespace(name=alias_for_ws))
+                return
+
+    combined = _combine_workspace_inputs(
+        workspace_inputs,
+        name_patterns,
+        getattr(args, "all_workspaces", False),
+        default_all=True,
+    )
+    args.pattern = combined
+    _dispatch_lsw(args)
 
 
 def _filter_sessions_by_date(sessions: list, since_date, until_date) -> list:
@@ -15545,6 +16516,7 @@ def _dispatch_lsw(args):
             local_only=True,
             agent=agent,
         )
+        list_args.format = getattr(args, "format", None)
         _dispatch_lsw_additive(list_args)
     else:
         list_args = ListCommandArgs(
@@ -15598,7 +16570,9 @@ def _dispatch_lss_to_alias(alias_name: str, args):
     since_date = parse_date_with_validation(args.since, "--since")
     until_date = parse_date_with_validation(args.until, "--until")
     agent = getattr(args, "agent", None) or "auto"
-    cmd_alias_lss(alias_name, since_date=since_date, until_date=until_date, agent=agent, args=args)
+    cmd_project_lss(
+        alias_name, since_date=since_date, until_date=until_date, agent=agent, args=args
+    )
 
 
 def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
@@ -15636,8 +16610,8 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
             workspace_list, this_only, agent=agent, source_hint=source_hint
         )
     if alias_for_ws:
-        sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
-        cmd_alias_lss(alias_for_ws, since_date=since_date, until_date=until_date, agent=agent)
+        sys.stderr.write(f"Using project {alias_for_ws} (use --this for current workspace only)\n")
+        cmd_project_lss(alias_for_ws, since_date=since_date, until_date=until_date, agent=agent)
         return
 
     list_args = ListCommandArgs(
@@ -15688,7 +16662,7 @@ def _dispatch_lss_local(args, workspace_list: list):
             source_hint=source_hint,
         )
     if alias_for_ws:
-        sys.stderr.write(f"Using alias @{alias_for_ws} (use --this for current workspace only)\n")
+        sys.stderr.write(f"Using project {alias_for_ws} (use --this for current workspace only)\n")
         _dispatch_lss_to_alias(alias_for_ws, args)
         return
 
@@ -15772,12 +16746,28 @@ def _apply_wsl_unc_override(args, saw_wsl_unc: bool):
 
 def _dispatch_lss(args):
     """Dispatch lss (list sessions) command."""
+    _apply_home_flags_from_names(args, getattr(args, "homes", []) or [])
+
     workspace_inputs = args.workspace if args.workspace else []
     projects_dir_override, wsl_unc_in_input = _detect_projects_dir_override(workspace_inputs)
-    workspace_list = [_coerce_target_to_workspace_pattern(w) for w in workspace_inputs]
+    workspace_list = []
+    for raw in workspace_inputs:
+        coerced = _coerce_target_to_workspace_pattern(raw)
+        if isinstance(raw, str) and raw.startswith("="):
+            workspace_list.append(raw)
+        else:
+            workspace_list.append(coerced)
+    name_patterns = getattr(args, "name_patterns", None) or []
+    if name_patterns:
+        workspace_list.extend(name_patterns)
+    if getattr(args, "all_workspaces", False) and not workspace_list:
+        workspace_list.append("")
+
     workspace_list = _ensure_workspace_default_for_remote(args, workspace_list)
     _apply_wsl_unc_override(args, wsl_unc_in_input)
     args.projects_dir_override = projects_dir_override
+    args.workspace = workspace_list
+    args.patterns = workspace_list
 
     if getattr(args, "wsl", False) and getattr(args, "no_wsl", False):
         exit_with_error("Conflicting flags: --wsl and --no-wsl")
@@ -15789,10 +16779,19 @@ def _dispatch_lss(args):
     local_flag = getattr(args, "local", False)
     remotes = getattr(args, "remotes", None) or []
 
+    project_names = getattr(args, "projects", None) or []
+    handled_project = False
+    for project_name in project_names:
+        _dispatch_lss_to_alias(project_name, args)
+        handled_project = True
+
     # Check for alias (explicit flag or @ prefix)
     alias_name = detect_alias_from_args(args, workspace_list)
     if alias_name:
         _dispatch_lss_to_alias(alias_name, args)
+        return
+
+    if handled_project and not workspace_list and not getattr(args, "all_workspaces", False):
         return
 
     # Handle --local with -r (additive mode)
@@ -15960,6 +16959,75 @@ def _export_remote_claude_single_file(
             tmp_path.unlink()
 
 
+def _resolve_session_file_for_show(session_id: str, args) -> Path:
+    """Resolve a session identifier to a local JSONL file."""
+    candidate = Path(session_id).expanduser()
+    if candidate.exists():
+        return candidate
+
+    patterns = _combine_workspace_inputs(
+        getattr(args, "workspace", []) or [],
+        getattr(args, "name_patterns", []) or [],
+        getattr(args, "all_workspaces", False),
+    )
+    since_date = parse_date_with_validation(getattr(args, "since", None), "--since")
+    until_date = parse_date_with_validation(getattr(args, "until", None), "--until")
+    agent = getattr(args, "agent", None) or "auto"
+
+    sessions = collect_sessions_with_dedup(
+        patterns or [""],
+        since_date=since_date,
+        until_date=until_date,
+        include_cached=True,
+        agent=agent,
+    )
+    matches = []
+    for session in sessions:
+        file_path = session.get("file")
+        if not file_path:
+            continue
+        path_obj = Path(file_path)
+        filename = session.get("filename") or path_obj.name
+        if session_id == filename or session_id in str(path_obj):
+            matches.append(path_obj)
+            continue
+        if session_id in path_obj.name:
+            matches.append(path_obj)
+
+    if not matches:
+        exit_with_error(f"Session '{session_id}' not found in current scope.")
+
+    unique_matches = []
+    seen = set()
+    for m in matches:
+        key = str(m)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_matches.append(m)
+
+    if len(unique_matches) > 1:
+        details = "\n".join(f"  - {m}" for m in unique_matches)
+        exit_with_error(f"Session '{session_id}' matched multiple files:\n{details}")
+
+    return unique_matches[0]
+
+
+def _dispatch_session_show(args):
+    """Show a single session as markdown."""
+    _apply_home_flags_from_names(args, getattr(args, "homes", []) or [])
+    session_path = _resolve_session_file_for_show(args.session_id, args)
+    agent_type = detect_agent_from_path(session_path)
+    try:
+        markdown = _parse_file_to_markdown(session_path, agent_type)
+    except (OSError, json.JSONDecodeError) as e:
+        exit_with_error(f"Error reading session: {e}")
+
+    if not markdown.endswith("\n"):
+        markdown += "\n"
+    sys.stdout.write(markdown)
+
+
 def _dispatch_export_single_file(args, jsonl_file: str):
     """Handle export of a single JSONL file."""
     final_remotes = _resolve_remote_list(args)
@@ -16086,9 +17154,9 @@ def _resolve_export_targets(args, targets: list, output_dir: Union[str, Path]) -
         alias_for_ws = get_alias_for_workspace(pattern, "local")
         if alias_for_ws:
             sys.stderr.write(
-                f"Using alias @{alias_for_ws} (use --this for current workspace only)\n"
+                f"Using project {alias_for_ws} (use --this for current workspace only)\n"
             )
-            cmd_alias_export(alias_for_ws, output_dir, args)
+            cmd_project_export(alias_for_ws, output_dir, args)
             return [], True
 
     return [pattern], False
@@ -16189,20 +17257,45 @@ def _dispatch_export_web(args, output_dir: Union[str, Path]):
 
 def _dispatch_export(args):
     """Dispatch export command."""
+    _apply_home_flags_from_names(args, getattr(args, "homes", []) or [])
     output_dir = _get_export_output_dir(args)
-    targets = args.target if args.target else []
-    targets = [_coerce_target_to_workspace_pattern(t) for t in targets]
+    raw_targets = args.target if args.target else []
+    targets = []
+    for t in raw_targets:
+        if t.endswith(".jsonl"):
+            targets.append(t)
+        elif isinstance(t, str) and t.startswith("="):
+            targets.append(t)
+        else:
+            targets.append(_coerce_target_to_workspace_pattern(t))
 
-    alias_name = detect_alias_from_args(args, targets)
-    if alias_name:
-        cmd_alias_export(alias_name, output_dir, args)
+    name_patterns = getattr(args, "name_patterns", None) or []
+    if name_patterns:
+        targets.extend(name_patterns)
+
+    project_names = getattr(args, "projects", None) or []
+    handled_project = False
+    for project_name in project_names:
+        cmd_project_export(project_name, output_dir, args)
+        handled_project = True
+
+    alias_handled = False
+    if not project_names:
+        alias_name = detect_alias_from_args(args, targets)
+        if alias_name:
+            cmd_project_export(alias_name, output_dir, args)
+            alias_handled = True
+
+    if alias_handled or (
+        handled_project and not targets and not getattr(args, "all_workspaces", False)
+    ):
         return
 
     targets, alias_handled = _resolve_export_targets(args, targets, output_dir)
     if alias_handled:
         return
 
-    if len(targets) == 1 and targets[0].endswith(".jsonl"):
+    if len(targets) == 1 and isinstance(targets[0], str) and targets[0].endswith(".jsonl"):
         _dispatch_export_single_file(args, targets[0])
         return
 
@@ -16211,26 +17304,35 @@ def _dispatch_export(args):
     _route_export(args, output_dir, final_patterns, final_remotes)
 
 
-def _dispatch_alias(args):
-    """Dispatch alias command."""
-    alias_cmd = getattr(args, "alias_command", None)
+def _dispatch_project(args):
+    """Dispatch project command."""
+    project_cmd = getattr(args, "project_command", None)
 
-    if alias_cmd == "list" or alias_cmd is None:
-        cmd_alias_list(args)
-    elif alias_cmd == "show":
-        cmd_alias_show(args)
-    elif alias_cmd == "create":
-        cmd_alias_create(args)
-    elif alias_cmd == "delete":
-        cmd_alias_delete(args)
-    elif alias_cmd == "add":
-        cmd_alias_add(args)
-    elif alias_cmd == "remove":
-        cmd_alias_remove(args)
-    elif alias_cmd == "export":
-        cmd_alias_config_export(args)
-    elif alias_cmd == "import":
-        cmd_alias_config_import(args)
+    if project_cmd == "list" or project_cmd is None:
+        cmd_project_list(args)
+    elif project_cmd == "show":
+        cmd_project_show(args)
+    elif project_cmd == "create":
+        cmd_project_create(args)
+    elif project_cmd == "delete":
+        cmd_project_delete(args)
+    elif project_cmd == "add":
+        cmd_project_add(args)
+    elif project_cmd == "remove":
+        cmd_project_remove(args)
+    elif project_cmd == "export":
+        _apply_home_flags_from_names(args, getattr(args, "homes", []) or [])
+        cmd_project_export(args.name, args.output_dir, args)
+    elif project_cmd == "stats":
+        _apply_home_flags_from_names(args, getattr(args, "homes", []) or [])
+        stats_args = SimpleNamespace(**vars(args))
+        stats_args.workspace = [f"@{args.name}"]
+        stats_args.all_workspaces = False
+        _dispatch_stats(stats_args)
+    elif project_cmd == "config-export":
+        cmd_project_config_export(args)
+    elif project_cmd == "config-import":
+        cmd_project_config_import(args)
 
 
 def _get_stats_remotes(args) -> list:
@@ -16265,7 +17367,7 @@ def _build_stats_args(args) -> StatsCommandArgs:
     """Build StatsCommandArgs for cmd_stats."""
     return StatsCommandArgs(
         workspace=args.workspace,
-        source=args.source,
+        source=getattr(args, "source", None),
         since=args.since,
         until=args.until,
         by=getattr(args, "by", None),
@@ -16289,6 +17391,14 @@ def _build_stats_args(args) -> StatsCommandArgs:
 
 def _dispatch_stats(args):
     """Dispatch stats command."""
+    _apply_home_flags_from_names(args, getattr(args, "homes", []) or [])
+    combined = _combine_workspace_inputs(
+        getattr(args, "workspace", []) or [],
+        getattr(args, "name_patterns", []) or [],
+        getattr(args, "all_workspaces", False),
+    )
+    args.workspace = combined
+
     remotes = _get_stats_remotes(args)
 
     # Always auto-sync before showing stats (unless --no-sync)
@@ -16423,23 +17533,36 @@ def _dispatch_command(args):
     Args:
         args: Parsed argparse.Namespace object
     """
-    if args.command in ("workspaces", "ws", "lsw"):
-        _dispatch_lsw(args)
-    elif args.command in ("sessions", "ss", "lss"):
-        _dispatch_lss(args)
-    elif args.command in ("home", "homes", "lsh"):
+    cmd = getattr(args, "command", None)
+    if cmd in ("home", "homes", "lsh"):
         cmd_lsh(args)
-    elif args.command == "export":
-        _dispatch_export(args)
-    elif args.command in ("project", "projects", "alias"):
-        _dispatch_alias(args)
-    elif args.command == "stats":
+    elif cmd in ("workspaces", "ws", "lsw"):
+        verb = getattr(args, "ws_verb", None) or "list"
+        if verb == "export":
+            _dispatch_export(args)
+        elif verb == "stats":
+            _dispatch_stats(args)
+        else:
+            _dispatch_ws(args)
+    elif cmd in ("sessions", "session", "ss", "lss"):
+        verb = getattr(args, "session_verb", None) or "list"
+        if verb == "show":
+            _dispatch_session_show(args)
+        elif verb == "export":
+            _dispatch_export(args)
+        elif verb == "stats":
+            _dispatch_stats(args)
+        else:
+            _dispatch_lss(args)
+    elif cmd in ("project", "projects", "alias"):
+        _dispatch_project(args)
+    elif cmd == "stats":
         _dispatch_stats(args)
-    elif args.command == "reset":
+    elif cmd == "reset":
         cmd_reset(args)
-    elif args.command == "install":
+    elif cmd == "install":
         _dispatch_install(args)
-    elif args.command == "gemini-index":
+    elif cmd == "gemini-index":
         cmd_gemini_index(args)
 
 
@@ -16459,10 +17582,111 @@ def _extract_agent_override(argv: list) -> tuple:
     return args.agent, remaining
 
 
+def _translate_legacy_cli_args(argv: list[str]) -> list[str]:
+    """Translate legacy CLI nouns to redesigned commands."""
+    if not argv:
+        return []
+
+    normalized = ["-o" if arg == "--out" else arg for arg in argv]
+
+    prefix: list[str] = []
+    i = 0
+    opts_with_value = {"--agent"}
+    while i < len(normalized):
+        tok = normalized[i]
+        if not tok.startswith("-"):
+            break
+        prefix.append(tok)
+        if tok in opts_with_value and i + 1 < len(normalized):
+            i += 1
+            prefix.append(normalized[i])
+        i += 1
+
+    if i >= len(normalized):
+        return prefix
+
+    cmd = normalized[i]
+    rest = normalized[i + 1 :]
+
+    def _alias_mapping(subcmd: str, tail: list[str]) -> list[str]:
+        if subcmd == "export":
+            return ["project", "config-export", *tail]
+        if subcmd == "import":
+            return ["project", "config-import", *tail]
+        if subcmd == "create":
+            return ["project", "add", *tail, "--allow-empty"]
+        if subcmd == "add":
+            return ["project", "add", *tail]
+        if subcmd == "remove":
+            return ["project", "remove", *tail]
+        if subcmd == "show":
+            return ["project", "show", *tail]
+        if subcmd == "list":
+            return ["project", "list", *tail]
+        return ["project", subcmd, *tail]
+
+    if cmd == "export":
+        mapped = ["session", "export", *rest]
+    elif cmd == "stats":
+        mapped = ["session", "stats", *rest]
+    elif cmd == "lss":
+        mapped = ["session", *rest]
+    elif cmd == "lsw":
+        mapped = ["ws", *rest]
+    elif cmd == "lsh":
+        mapped = ["home", *rest]
+    elif cmd == "alias":
+        if rest:
+            mapped = _alias_mapping(rest[0], rest[1:])
+        else:
+            mapped = ["project", "list"]
+    else:
+        mapped = [cmd, *rest]
+
+    return prefix + mapped
+
+
+def _insert_default_verb(argv: list[str]) -> list[str]:
+    """Insert default 'list' verb when omitted for noun commands."""
+    if not argv:
+        return argv
+
+    verb_map = {
+        "home": {"list", "show", "add", "remove", "export", "stats"},
+        "ws": {"list", "show", "export", "stats"},
+        "session": {"list", "show", "export", "stats"},
+        "project": {
+            "list",
+            "show",
+            "add",
+            "remove",
+            "export",
+            "stats",
+            "config-export",
+            "config-import",
+        },
+    }
+
+    cmd = argv[0]
+    verbs = verb_map.get(cmd)
+    if not verbs:
+        return argv
+
+    if len(argv) == 1:
+        return [cmd, "list"]
+
+    next_token = argv[1]
+    if next_token.startswith("-") or next_token not in verbs:
+        return [cmd, "list", *argv[1:]]
+    return argv
+
+
 def main():
     """Main entry point."""
     _setup_windows_encoding()
     agent_override, remaining = _extract_agent_override(sys.argv[1:])
+    remaining = _translate_legacy_cli_args(remaining)
+    remaining = _insert_default_verb(remaining)
     parser = _create_argument_parser()
     args = parser.parse_args(remaining)
     if agent_override is not None:

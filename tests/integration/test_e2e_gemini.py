@@ -16,11 +16,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.legacy_cli import translate_legacy_args
+
 pytestmark = pytest.mark.integration
 
 
 def run_cli(args, env=None, timeout=25):
     """Run agent-history CLI command."""
+    args = translate_legacy_args(list(args))
     script_path = Path.cwd() / "agent-history"
     if not script_path.exists():
         script_path = Path.cwd() / "claude-history"
