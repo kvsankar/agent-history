@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests.legacy_cli import translate_legacy_args
+from tests.legacy.legacy_cli import translate_legacy_args
 
 
 def _write_session(path: Path) -> None:
