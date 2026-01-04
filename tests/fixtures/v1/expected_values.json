@@ -1,0 +1,63 @@
+{
+  "claude_golden": {
+    "session_id": "golden-claude-001",
+    "workspace": "-home-testuser-golden-project",
+    "agent": "claude",
+    "message_count": 6,
+    "user_messages": 3,
+    "assistant_messages": 3,
+    "input_tokens": 500,
+    "output_tokens": 200,
+    "tool_calls": {
+      "Read": 1,
+      "Edit": 1
+    },
+    "has_thinking": true,
+    "has_tool_results": true,
+    "first_timestamp": "2025-01-03T10:00:00.000Z",
+    "last_timestamp": "2025-01-03T10:00:15.000Z"
+  },
+  "codex_golden": {
+    "session_id": "golden-codex-001",
+    "workspace": "-home-testuser-codex-project",
+    "agent": "codex",
+    "message_count": 4,
+    "user_messages": 2,
+    "assistant_messages": 2,
+    "input_tokens": 300,
+    "output_tokens": 150,
+    "tool_calls": {
+      "shell": 1
+    },
+    "has_reasoning": true,
+    "has_function_output": true,
+    "first_timestamp": "2025-01-04T09:00:02.000Z",
+    "last_timestamp": "2025-01-04T09:00:12.000Z"
+  },
+  "gemini_golden": {
+    "session_id": "golden-gemini-001",
+    "workspace": "abc123def456789012345678901234567890123456789012345678901234",
+    "agent": "gemini",
+    "message_count": 4,
+    "user_messages": 2,
+    "assistant_messages": 2,
+    "input_tokens": 400,
+    "output_tokens": 180,
+    "tool_calls": {
+      "read_file": 1
+    },
+    "has_thoughts": true,
+    "has_tool_results": true,
+    "first_timestamp": "2025-01-05T14:00:00.000Z",
+    "last_timestamp": "2025-01-05T14:00:30.000Z"
+  },
+  "totals": {
+    "sessions": 3,
+    "messages": 14,
+    "user_messages": 7,
+    "assistant_messages": 7,
+    "input_tokens": 1200,
+    "output_tokens": 530,
+    "tool_calls_total": 4
+  }
+}
