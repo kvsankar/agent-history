@@ -548,12 +548,12 @@ class TestGeminiIndexCombinations:
 
 
 # ============================================================================
-# lsh command tests
+# home command tests
 # ============================================================================
 
 
-class TestLshCombinations:
-    """Test lsh (list homes) command combinations."""
+class TestHomeCombinations:
+    """Test home (list homes) command combinations."""
 
     @given(
         use_local=st.booleans(),
@@ -561,9 +561,9 @@ class TestLshCombinations:
         use_windows=st.booleans(),
     )
     @settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-    def test_lsh_flag_combinations(self, use_local, use_wsl, use_windows):
-        """Test lsh with flag combinations."""
-        args = ["lsh"]
+    def test_home_flag_combinations(self, use_local, use_wsl, use_windows):
+        """Test home with flag combinations."""
+        args = ["home"]
         if use_local:
             args.append("--local")
         if use_wsl:
