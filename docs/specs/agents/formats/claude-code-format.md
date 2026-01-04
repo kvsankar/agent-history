@@ -64,10 +64,55 @@ User message (human input).
   "timestamp": "2025-11-30T11:09:33.123Z",
   "cwd": "/home/alice/myproject",
   "gitBranch": "main",
-  "version": "2.0.55",
+  "version": "2.0.75",
+  "userType": "external",
+  "isSidechain": false,
+  "slug": "silly-humming-cocke",
+  "thinkingMetadata": {
+    "level": "high",
+    "disabled": false,
+    "triggers": []
+  },
+  "todos": [],
   "message": {
     "role": "user",
     "content": "Help me fix this bug"
+  }
+}
+```
+
+**Additional User Message Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userType` | string | User type identifier (e.g., "external") |
+| `isSidechain` | bool | True if this is part of a sub-agent task |
+| `slug` | string | Human-readable session identifier (e.g., "silly-humming-cocke") |
+| `thinkingMetadata` | object | Controls extended thinking behavior |
+| `todos` | array | Current todo list state |
+
+**User Message with Tool Result:**
+
+When a user message contains tool results, it includes additional metadata:
+
+```json
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": [
+      {
+        "tool_use_id": "toolu_01BjXPpsLb...",
+        "type": "tool_result",
+        "content": "The file has been updated..."
+      }
+    ]
+  },
+  "toolUseResult": {
+    "filePath": "/path/to/file.py",
+    "oldString": "original content",
+    "newString": "new content",
+    "originalFile": "full original file content..."
   }
 }
 ```
@@ -84,22 +129,74 @@ Claude's response.
   "sessionId": "6c073d8e-...",
   "timestamp": "2025-11-30T11:09:37.456Z",
   "requestId": "req_011CVc...",
+  "cwd": "/home/alice/myproject",
+  "gitBranch": "main",
+  "version": "2.0.75",
+  "userType": "external",
+  "isSidechain": false,
   "message": {
     "id": "msg_01Pfp...",
     "type": "message",
     "role": "assistant",
-    "model": "claude-sonnet-4-5-20250929",
+    "model": "claude-opus-4-5-20251101",
     "content": [...],
     "stop_reason": "end_turn",
+    "stop_sequence": null,
     "usage": {
       "input_tokens": 1234,
       "output_tokens": 567,
-      "cache_creation_input_tokens": 0,
-      "cache_read_input_tokens": 890
+      "cache_creation_input_tokens": 100,
+      "cache_read_input_tokens": 890,
+      "cache_creation": {
+        "ephemeral_5m_input_tokens": 100,
+        "ephemeral_1h_input_tokens": 0
+      },
+      "service_tier": "standard"
     }
   }
 }
 ```
+
+**Extended Usage Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `cache_creation.ephemeral_5m_input_tokens` | Tokens cached for 5 minutes |
+| `cache_creation.ephemeral_1h_input_tokens` | Tokens cached for 1 hour |
+| `service_tier` | API service tier (e.g., "standard") |
+
+### `system`
+
+System messages for session events (e.g., compaction).
+
+```json
+{
+  "type": "system",
+  "subtype": "compact_boundary",
+  "content": "Conversation compacted",
+  "uuid": "db0953ca-...",
+  "parentUuid": null,
+  "logicalParentUuid": "9f8cc203-...",
+  "timestamp": "2025-12-16T10:37:04.233Z",
+  "isMeta": false,
+  "level": "info",
+  "compactMetadata": {
+    "trigger": "auto",
+    "preTokens": 155116
+  }
+}
+```
+
+**System Message Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `subtype` | Event subtype (e.g., "compact_boundary") |
+| `logicalParentUuid` | Links to last message before compaction |
+| `compactMetadata.trigger` | How compaction was triggered ("auto") |
+| `compactMetadata.preTokens` | Token count before compaction |
+| `level` | Log level (e.g., "info") |
+| `isMeta` | Whether this is a meta/system message |
 
 ### `summary`
 
@@ -363,6 +460,11 @@ Array of content blocks:
     "role": "assistant",
     "content": [
       {
+        "type": "thinking",
+        "thinking": "Let me analyze this step by step...",
+        "signature": "EtoECkYIChgCKkCPLjvF..."
+      },
+      {
         "type": "text",
         "text": "I'll help you fix that bug..."
       },
@@ -381,6 +483,25 @@ Array of content blocks:
       }
     ]
   }
+}
+```
+
+### Content Block Types
+
+| Type | Description |
+|------|-------------|
+| `thinking` | Extended thinking/reasoning (may have encrypted `signature`) |
+| `text` | Regular text output |
+| `tool_use` | Request to execute a tool |
+| `tool_result` | Output from tool execution |
+
+**Thinking Block:**
+
+```json
+{
+  "type": "thinking",
+  "thinking": "The user wants me to analyze...",
+  "signature": "EtoECkYIChgCKkCPLjvF..."
 }
 ```
 

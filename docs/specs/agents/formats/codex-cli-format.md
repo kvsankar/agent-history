@@ -58,12 +58,34 @@ Session metadata, typically the first record.
   "type": "session_meta",
   "payload": {
     "id": "unique-session-id",
+    "timestamp": "2025-12-24T00:56:59.223Z",
     "cwd": "/home/user/project",
-    "cli_version": "0.65.0",
-    "source": "cli"
+    "originator": "codex_cli_rs",
+    "cli_version": "0.77.0",
+    "instructions": "# Repository Guidelines\n\n## Project Structure...",
+    "source": "cli",
+    "model_provider": "openai",
+    "git": {
+      "commit_hash": "0e3689aea549c3d3cf87ba8d606e0802089b939d",
+      "branch": "master"
+    }
   }
 }
 ```
+
+**Session Meta Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `id` | Unique session identifier |
+| `cwd` | Working directory |
+| `originator` | Client identifier (e.g., "codex_cli_rs") |
+| `cli_version` | CLI version (e.g., "0.77.0") |
+| `instructions` | Full agent instructions (from AGENTS.md, etc.) |
+| `source` | Session source (e.g., "cli") |
+| `model_provider` | Model provider (e.g., "openai") |
+| `git.commit_hash` | Current git commit |
+| `git.branch` | Current git branch |
 
 ### `turn_context`
 
@@ -74,10 +96,31 @@ Model and context information for a turn.
   "timestamp": "2025-12-08T00:38:00.000Z",
   "type": "turn_context",
   "payload": {
-    "model": "o4-mini"
+    "cwd": "/home/user/project",
+    "approval_policy": "on-request",
+    "sandbox_policy": {
+      "type": "workspace-write",
+      "network_access": false,
+      "exclude_tmpdir_env_var": false,
+      "exclude_slash_tmp": false
+    },
+    "model": "gpt-5.1-codex-max",
+    "effort": "high",
+    "summary": "auto"
   }
 }
 ```
+
+**Turn Context Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `approval_policy` | Tool approval policy (e.g., "on-request") |
+| `sandbox_policy.type` | Sandbox type (e.g., "workspace-write") |
+| `sandbox_policy.network_access` | Whether network access is allowed |
+| `model` | Model identifier (e.g., "gpt-5.1-codex-max") |
+| `effort` | Effort level (e.g., "high") |
+| `summary` | Summary mode (e.g., "auto") |
 
 ### `response_item`
 
@@ -148,9 +191,68 @@ Alternative types: `custom_tool_call`
 
 Alternative types: `custom_tool_call_output`
 
-### `event_msg` (Token Usage)
+#### Reasoning (Extended Thinking)
 
-Codex emits token usage snapshots as `event_msg` records with `payload.type: "token_count"`.
+```json
+{
+  "timestamp": "2025-12-24T00:56:59.252Z",
+  "type": "response_item",
+  "payload": {
+    "type": "reasoning",
+    "summary": [
+      {
+        "type": "summary_text",
+        "text": "**Preparing to explore repo files**"
+      }
+    ],
+    "content": null,
+    "encrypted_content": "gAAAAABpSi4X1CPuupBD..."
+  }
+}
+```
+
+**Reasoning Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `summary` | Array of summary_text items (visible to user) |
+| `content` | Plain text reasoning (if not encrypted) |
+| `encrypted_content` | Encrypted reasoning content |
+
+#### Ghost Snapshot (Git State)
+
+```json
+{
+  "timestamp": "2025-12-24T00:56:59.251Z",
+  "type": "response_item",
+  "payload": {
+    "type": "ghost_snapshot",
+    "ghost_commit": {
+      "id": "dac072223e6110f2adebe4d63761120cd347fcc4",
+      "parent": "b92c69c4528558916336cdd0c885c7bff3b47bf6",
+      "preexisting_untracked_files": ["specs.md"],
+      "preexisting_untracked_dirs": []
+    }
+  }
+}
+```
+
+**Ghost Snapshot Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `ghost_commit.id` | Virtual commit ID for this state |
+| `ghost_commit.parent` | Parent commit hash |
+| `preexisting_untracked_files` | Untracked files present before session |
+| `preexisting_untracked_dirs` | Untracked directories present before session |
+
+### `event_msg`
+
+Event messages for various session events. The `payload.type` field determines the event type.
+
+#### Token Count
+
+Token usage snapshots.
 
 ```json
 {
@@ -183,6 +285,86 @@ Notes:
 - `total_token_usage` is cumulative for the session.
 - `cached_input_tokens` reflects cache read tokens.
 - `reasoning_output_tokens` is counted as output in stats.
+
+#### Agent Reasoning
+
+Displayed reasoning text from the model.
+
+```json
+{
+  "timestamp": "2025-12-24T00:56:59.252Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "agent_reasoning",
+    "text": "**Preparing to explore repo files**"
+  }
+}
+```
+
+#### User Message Event
+
+Records user input as an event.
+
+```json
+{
+  "timestamp": "2025-12-24T00:56:59.252Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "user_message",
+    "message": "Read specs.md and fix any issues",
+    "images": []
+  }
+}
+```
+
+#### Turn Aborted (Interruption)
+
+Records when a turn is interrupted by the user.
+
+```json
+{
+  "timestamp": "2025-12-03T15:24:46.622Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "turn_aborted",
+    "reason": "interrupted"
+  }
+}
+```
+
+#### Context Compacted
+
+Records when context is compacted (distinct from top-level `compacted` type).
+
+```json
+{
+  "timestamp": "2025-12-24T00:56:59.252Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "context_compacted"
+  }
+}
+```
+
+### `compacted`
+
+Top-level compaction record with full summary.
+
+```json
+{
+  "timestamp": "2025-10-28T05:26:42.667Z",
+  "type": "compacted",
+  "payload": {
+    "message": "**Progress + Plan Status**\n- Completed X\n- In progress Y\n\n**Outstanding TODOs**\n- Task 1\n- Task 2\n\n**Testing Gaps**\n- Need tests for...\n\n**Open quirks / setup notes**\n- Note about..."
+  }
+}
+```
+
+**Compacted Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `payload.message` | Full markdown summary of compacted context |
 
 ---
 

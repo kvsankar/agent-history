@@ -120,6 +120,34 @@ Sessions are stored as **single JSON files** (not JSONL).
 
 **Note:** The `type` field can also be `"info"`, `"error"`, or `"warning"` for system messages.
 
+### System Messages (info/error/warning)
+
+System messages use the same structure but with different `type` values:
+
+```json
+{
+  "id": "9d608b69-76eb-42e8-8e0d-b5b76b06eb7c",
+  "timestamp": "2025-11-30T10:08:12.198Z",
+  "type": "info",
+  "content": "Request cancelled."
+}
+```
+
+```json
+{
+  "id": "0ef400f8-4d45-41a0-9eae-6f55bcfb8a81",
+  "timestamp": "2025-12-29T17:54:49.000Z",
+  "type": "error",
+  "content": "Automatic update failed. Please try updating manually"
+}
+```
+
+| Type | Description |
+|------|-------------|
+| `info` | Informational messages (e.g., "Request cancelled.") |
+| `error` | Error messages (e.g., update failures) |
+| `warning` | Warning messages |
+
 ### Gemini Message
 
 ```json
@@ -143,7 +171,7 @@ Sessions are stored as **single JSON files** (not JSONL).
 | `content` | string | The model's response text |
 | `thoughts` | array | Optional reasoning/thinking steps |
 | `tokens` | object | Token usage statistics |
-| `model` | string | Model name (e.g., `"gemini-2.5-pro"`) |
+| `model` | string | Model name (e.g., `"gemini-2.5-pro"`, `"gemini-3-pro-preview"`) |
 | `toolCalls` | array | Optional tool calls made by the model |
 
 ### Thoughts Array
@@ -218,7 +246,8 @@ Tool calls are embedded in Gemini messages as a `toolCalls` array:
 | `name` | string | Tool name (e.g., `"shell"`, `"read_file"`) |
 | `args` | object | Arguments passed to the tool |
 | `result` | array | Tool execution results |
-| `status` | string | `"success"` or error status |
+| `status` | string | `"success"` or `"error"` |
+| `error` | string | Error message (present when `status` is `"error"`) |
 | `timestamp` | string | When the tool call completed |
 | `displayName` | string | Human-readable tool name |
 | `description` | string | Tool description |
@@ -238,6 +267,26 @@ Tool calls are embedded in Gemini messages as a `toolCalls` array:
           "output": "Tool output here..."
         }
       }
+    }
+  ]
+}
+```
+
+### Tool Error Example
+
+When a tool fails, the `status` is `"error"` and an `error` field contains the message:
+
+```json
+{
+  "toolCalls": [
+    {
+      "id": "edit_file-1766466138789-e2c99dfd917c",
+      "name": "edit_file",
+      "args": {"file_path": "src/file.py", "old_string": "..."},
+      "result": [...],
+      "status": "error",
+      "error": "Failed to edit, 0 occurrences found for old_string (...). Original old_string was (...) in /path/to/file. No edits made. The exact text in old_string was not found.",
+      "timestamp": "2025-12-23T05:02:19.249Z"
     }
   ]
 }
