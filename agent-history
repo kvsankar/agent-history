@@ -394,6 +394,7 @@ class ExportConfig:
     jobs: int = 1
     quiet: bool = False
     include_source: bool = False
+    export_json: bool = False
 
     @property
     def workspace(self) -> str:
@@ -435,6 +436,7 @@ class ExportConfig:
             agent=get_field("agent") or "auto",
             jobs=get_field("jobs", 1),
             quiet=get_field("quiet", False),
+            export_json=get_field("export_json", False),
         )
 
 
@@ -3718,6 +3720,227 @@ def gemini_get_workspace_readable(workspace: str) -> str:
     if len(workspace) > HASH_DISPLAY_LEN:
         return f"[hash:{workspace[:HASH_DISPLAY_LEN]}]"
     return workspace
+
+
+# ============================================================================
+# Unified NDJSON Export
+# ============================================================================
+
+
+def _normalize_role(role: str) -> str:
+    """Normalize role names to unified schema.
+
+    Converts agent-specific role names to unified roles:
+    - gemini -> assistant
+    - tool -> system (tool results are system-level)
+
+    Args:
+        role: Original role from agent format
+
+    Returns:
+        Normalized role: "user", "assistant", or "system"
+    """
+    if role == "gemini":
+        return "assistant"
+    if role == "tool":
+        return "system"
+    if role in ("user", "assistant", "system"):
+        return role
+    # System-level types (info, error, warning)
+    if role in ("info", "error", "warning"):
+        return "system"
+    return role
+
+
+def _extract_unified_content(msg: dict, agent_type: str) -> str:
+    """Extract content string from agent-specific message format.
+
+    Args:
+        msg: Message dict from agent-specific format
+        agent_type: Agent type (claude, codex, gemini)
+
+    Returns:
+        Content string
+    """
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content
+    # For array content (e.g., Claude tool_use blocks), join text parts
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+                elif item.get("type") in ("input_text", "output_text"):
+                    parts.append(item.get("text", ""))
+        return "\n".join(parts) if parts else str(content)
+    return str(content)
+
+
+def _claude_message_to_unified(msg: dict) -> dict:
+    """Convert Claude message to unified NDJSON schema.
+
+    Args:
+        msg: Claude message dict from read_jsonl_messages
+
+    Returns:
+        Unified schema dict with timestamp, role, content, and optional fields
+    """
+    unified = {
+        "timestamp": msg.get("timestamp", ""),
+        "role": _normalize_role(msg.get("role", "user")),
+        "content": _extract_unified_content(msg, AGENT_CLAUDE),
+    }
+
+    # Optional fields
+    if msg.get("model"):
+        unified["model"] = msg["model"]
+    if msg.get("usage"):
+        usage = msg["usage"]
+        unified["tokens"] = {
+            "input": usage.get("input_tokens", 0),
+            "output": usage.get("output_tokens", 0),
+        }
+        if usage.get("cache_read_input_tokens"):
+            unified["tokens"]["cached"] = usage["cache_read_input_tokens"]
+
+    # Tool calls for Claude are embedded in content array
+    message_obj = msg.get("message", {})
+    content_array = message_obj.get("content", []) if isinstance(message_obj, dict) else []
+    if isinstance(content_array, list):
+        tool_calls = []
+        for item in content_array:
+            if isinstance(item, dict) and item.get("type") == "tool_use":
+                tool_calls.append(
+                    {
+                        "name": item.get("name"),
+                        "id": item.get("id"),
+                        "input": item.get("input"),
+                    }
+                )
+        if tool_calls:
+            unified["tool_calls"] = tool_calls
+
+    return unified
+
+
+def _codex_message_to_unified(msg: dict) -> dict:
+    """Convert Codex message to unified NDJSON schema.
+
+    Args:
+        msg: Codex message dict from codex_read_jsonl_messages
+
+    Returns:
+        Unified schema dict with timestamp, role, content, and optional fields
+    """
+    unified = {
+        "timestamp": msg.get("timestamp", ""),
+        "role": _normalize_role(msg.get("role", "user")),
+        "content": msg.get("content", ""),
+    }
+
+    # Tool call handling - Codex stores these in content as formatted text
+    if msg.get("is_tool_call"):
+        # Parse the formatted tool call content for structured data
+        unified["role"] = "assistant"
+    elif msg.get("is_tool_result"):
+        unified["role"] = "system"
+
+    return unified
+
+
+def _gemini_message_to_unified(msg: dict) -> dict:
+    """Convert Gemini message to unified NDJSON schema.
+
+    Args:
+        msg: Gemini message dict from gemini_read_json_messages
+
+    Returns:
+        Unified schema dict with timestamp, role, content, and optional fields
+    """
+    role = msg.get("role", "user")
+    unified = {
+        "timestamp": msg.get("timestamp", ""),
+        "role": _normalize_role(role),
+        "content": msg.get("content", ""),
+    }
+
+    # Optional fields
+    if msg.get("model"):
+        unified["model"] = msg["model"]
+    if msg.get("tokens"):
+        tokens = msg["tokens"]
+        unified["tokens"] = {
+            "input": tokens.get("input", 0),
+            "output": tokens.get("output", 0),
+        }
+        if tokens.get("cached"):
+            unified["tokens"]["cached"] = tokens["cached"]
+
+    # Tool calls
+    tool_calls = msg.get("tool_calls", [])
+    if tool_calls:
+        unified["tool_calls"] = [
+            {
+                "name": tc.get("name"),
+                "id": tc.get("id"),
+                "args": tc.get("args"),
+                "status": tc.get("status"),
+            }
+            for tc in tool_calls
+        ]
+
+    return unified
+
+
+def parse_to_unified_ndjson(
+    session_file: Path, agent_type: str, messages: Optional[list] = None
+) -> list:
+    """Parse session file to unified NDJSON format.
+
+    Args:
+        session_file: Path to session file
+        agent_type: Agent type (claude, codex, gemini)
+        messages: Pre-parsed messages (optional)
+
+    Returns:
+        List of unified schema dicts ready for NDJSON output
+    """
+    if messages is None:
+        if agent_type == AGENT_GEMINI:
+            messages, _ = gemini_read_json_messages(session_file)
+        elif agent_type == AGENT_CODEX:
+            messages, _ = codex_read_jsonl_messages(session_file)
+        else:
+            messages = read_jsonl_messages(session_file, quiet=True)
+
+    unified_records = []
+    for msg in messages:
+        if agent_type == AGENT_GEMINI:
+            unified_records.append(_gemini_message_to_unified(msg))
+        elif agent_type == AGENT_CODEX:
+            unified_records.append(_codex_message_to_unified(msg))
+        else:
+            unified_records.append(_claude_message_to_unified(msg))
+
+    return unified_records
+
+
+def write_unified_ndjson(records: list, output_file: Path, quiet: bool = False) -> None:
+    """Write unified records to NDJSON file.
+
+    Args:
+        records: List of unified schema dicts
+        output_file: Output file path (should have .ndjson extension)
+        quiet: If True, suppress output
+    """
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, "w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    if not quiet:
+        print(output_file)
 
 
 def _has_gemini_sessions(project_hash: str, gemini_dir: Path) -> bool:
@@ -12914,8 +13137,17 @@ def _get_export_output_path(
     output_dir: Path,
     flat: bool,
     remote_host: Optional[str],
+    extension: str = ".md",
 ) -> tuple:
     """Get output path and name for export file.
+
+    Args:
+        session: Session dict with 'file' and 'workspace' keys
+        ts_prefix: Timestamp prefix for filename (optional)
+        output_dir: Output directory path
+        flat: If True, use flat structure without workspace subdirs
+        remote_host: Remote host name for source tagging
+        extension: File extension (default: ".md", use ".ndjson" for JSON export)
 
     Returns:
         Tuple of (output_file, output_name)
@@ -12923,14 +13155,18 @@ def _get_export_output_path(
     jsonl_file = session["file"]
 
     if flat:
-        output_name = f"{ts_prefix}_{jsonl_file.stem}.md" if ts_prefix else f"{jsonl_file.stem}.md"
+        output_name = (
+            f"{ts_prefix}_{jsonl_file.stem}{extension}"
+            if ts_prefix
+            else f"{jsonl_file.stem}{extension}"
+        )
         return output_dir / output_name, output_name
 
     source_tag = get_source_tag(remote_host)
     output_name = (
-        f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
+        f"{source_tag}{ts_prefix}_{jsonl_file.stem}{extension}"
         if ts_prefix
-        else f"{source_tag}{jsonl_file.stem}.md"
+        else f"{source_tag}{jsonl_file.stem}{extension}"
     )
     workspace = session["workspace"]
     # Handle absolute paths (Gemini returns real paths like /home/user/project)
@@ -12986,23 +13222,29 @@ def _export_single_session(
     split_lines: Optional[int],
     quiet: bool,
     include_source: bool = False,
+    export_json: bool = False,
 ):
-    """Export a single session to markdown file(s).
+    """Export a single session to markdown or NDJSON file(s).
 
     Args:
         jsonl_file: Source JSON/JSONL file path
-        output_file: Destination markdown file path
+        output_file: Destination file path (.md or .ndjson)
         output_name: Name of the output file
         agent_type: Agent type (claude, codex, gemini)
         messages: Pre-read messages
         minimal: If True, produce minimal output without metadata
-        split_lines: Line threshold for splitting (None to disable)
+        split_lines: Line threshold for splitting (None to disable, markdown only)
         quiet: If True, suppress per-file output
-        include_source: If True, copy source JSON/JSONL alongside markdown
+        include_source: If True, copy source JSON/JSONL alongside export
+        export_json: If True, export as NDJSON instead of markdown
     """
     try:
+        if export_json:
+            # Export as unified NDJSON
+            records = parse_to_unified_ndjson(jsonl_file, agent_type, messages)
+            write_unified_ndjson(records, output_file, quiet)
         # Codex/Gemini files don't support splitting yet; use direct export
-        if agent_type in (AGENT_CODEX, AGENT_GEMINI):
+        elif agent_type in (AGENT_CODEX, AGENT_GEMINI):
             _write_single_file(
                 jsonl_file,
                 output_file,
@@ -13053,11 +13295,11 @@ def _copy_source_json(jsonl_file: Path, output_file: Path, output_name: str, qui
 
 
 def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
-    """Export sessions to markdown files.
+    """Export sessions to markdown or NDJSON files.
 
     Args:
         sessions: List of session dictionaries
-        args: Parsed arguments (for force, flat, minimal, split, remote, include_source)
+        args: Parsed arguments (for force, flat, minimal, split, remote, include_source, export_json)
         output_dir: Output directory path
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -13069,12 +13311,17 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
     split_lines = getattr(args, "split", None)
     quiet = getattr(args, "quiet", False)
     include_source = getattr(args, "include_source", False)
+    export_json = getattr(args, "export_json", False)
     jobs = max(1, int(getattr(args, "jobs", 1) or 1))
     total_sessions = len(sessions)
     progress_interval = 0
 
+    # Determine file extension based on export format
+    extension = ".ndjson" if export_json else ".md"
+
     if not quiet and total_sessions:
-        sys.stderr.write(f"Exporting {total_sessions} sessions...\n")
+        format_name = "NDJSON" if export_json else "markdown"
+        sys.stderr.write(f"Exporting {total_sessions} sessions to {format_name}...\n")
         if total_sessions >= EXPORT_PROGRESS_MIN:
             progress_interval = max(EXPORT_PROGRESS_MIN, total_sessions // 20)
 
@@ -13088,7 +13335,7 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
 
         ts_prefix = _extract_timestamp_prefix(messages)
         output_file, output_name = _get_export_output_path(
-            session, ts_prefix, output_dir, flat, remote_host
+            session, ts_prefix, output_dir, flat, remote_host, extension
         )
 
         if _is_export_up_to_date(output_file, jsonl_file, force):
@@ -13104,6 +13351,7 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
             split_lines,
             quiet,
             include_source,
+            export_json,
         )
 
     if jobs > 1 and len(sessions) > 1:
@@ -15677,6 +15925,12 @@ def _add_export_options(parser):
         "--force", action="store_true", help="Force re-export (default: incremental)"
     )
     parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="export_json",
+        help="Export as NDJSON (unified schema) instead of Markdown",
+    )
+    parser.add_argument(
         "--minimal",
         action="store_true",
         help="Minimal export: omit metadata, keep only conversation content",
@@ -16886,6 +17140,7 @@ def _build_export_config(
         jobs=getattr(args, "jobs", 1),
         quiet=getattr(args, "quiet", False),
         include_source=getattr(args, "include_source", False),
+        export_json=getattr(args, "export_json", False),
     )
 
 
