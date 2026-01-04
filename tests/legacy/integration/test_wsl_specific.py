@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 # Import the agent-history module (no .py extension)
-module_path = Path(__file__).parent.parent.parent / "agent-history"
+module_path = Path(__file__).parent.parent.parent.parent / "agent-history"
 loader = importlib.machinery.SourceFileLoader("agent_history", str(module_path))
 spec = importlib.util.spec_from_loader("agent_history", loader)
 ah = importlib.util.module_from_spec(spec)

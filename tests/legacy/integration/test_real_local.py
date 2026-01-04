@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.legacy_cli import translate_legacy_args
+from tests.legacy.legacy_cli import translate_legacy_args
 
 # Mark all tests in this module as integration
 pytestmark = pytest.mark.integration

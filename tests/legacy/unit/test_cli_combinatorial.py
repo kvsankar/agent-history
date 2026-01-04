@@ -15,7 +15,7 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 # Path to the CLI script
-CLI_PATH = Path(__file__).parent.parent.parent / "agent-history"
+CLI_PATH = Path(__file__).parent.parent.parent.parent / "agent-history"
 
 
 def run_cli_in_temp(args: list, timeout: int = None) -> subprocess.CompletedProcess:
