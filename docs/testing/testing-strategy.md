@@ -156,11 +156,9 @@ Before writing tests, these conflicts must be resolved:
 | SESSIONS | ✓ (count) | ❌ (missing) |
 | LAST_MODIFIED | ✓ | ❌ (missing) |
 
-**Resolution Options:**
-1. Update spec to match impl (remove session count, last_modified)
-2. Update impl to match spec (add session count, last_modified)
+**Decision:** Keep spec as-is. Implementation needs to be updated to add SESSIONS count and LAST_MODIFIED columns.
 
-**Testing Decision:** Tests should be written against the **resolved behavior**. Until resolved, V1 tests validate only `HOME` and `WORKSPACE` columns.
+**Testing Decision:** V1 tests are written against the **spec** (WORKSPACE, SESSIONS, LAST_MODIFIED). Tests will fail until implementation is updated. This is intentional - the test failure tracks the impl gap.
 
 ### 2. Web Sessions Scope
 
