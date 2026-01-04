@@ -6,14 +6,16 @@ Draft strategy for behavior-driven testing based on specifications.
 
 1. [Overview](#overview)
 2. [V1 Minimal Slice](#v1-minimal-slice)
-3. [Test Philosophy](#test-philosophy)
-4. [Environment Strategy](#environment-strategy)
-5. [Fixture Architecture](#fixture-architecture)
-6. [Mocking Strategy](#mocking-strategy)
-7. [Test Categories](#test-categories)
-8. [Parameterization Strategy](#parameterization-strategy)
-9. [Test Data Generation](#test-data-generation)
-10. [Open Questions](#open-questions)
+3. [Known Spec/Impl Conflicts](#known-specimpl-conflicts)
+4. [Heavy Suite Gating](#heavy-suite-gating)
+5. [Test Philosophy](#test-philosophy)
+6. [Environment Strategy](#environment-strategy)
+7. [Fixture Architecture](#fixture-architecture)
+8. [Mocking Strategy](#mocking-strategy)
+9. [Test Categories](#test-categories)
+10. [Parameterization Strategy](#parameterization-strategy)
+11. [Test Data Generation](#test-data-generation)
+12. [Open Questions](#open-questions)
 
 ---
 
@@ -136,6 +138,104 @@ tests/
 4. **Stats golden validation** (Agent 6 partial)
 
 Only after V1 is green: expand to combinatorial scope, cross-env, Docker SSH.
+
+---
+
+## Known Spec/Impl Conflicts
+
+Before writing tests, these conflicts must be resolved:
+
+### 1. `ws list` Output Fields
+
+**Status:** Spec differs from implementation (see `docs/specs/todo.md`)
+
+| Field | Spec Says | Impl Does |
+|-------|-----------|-----------|
+| HOME | ✓ | ✓ |
+| WORKSPACE | ✓ | ✓ |
+| SESSIONS | ✓ (count) | ❌ (missing) |
+| LAST_MODIFIED | ✓ | ❌ (missing) |
+
+**Resolution Options:**
+1. Update spec to match impl (remove session count, last_modified)
+2. Update impl to match spec (add session count, last_modified)
+
+**Testing Decision:** Tests should be written against the **resolved behavior**. Until resolved, V1 tests validate only `HOME` and `WORKSPACE` columns.
+
+### 2. Web Sessions Scope
+
+**Status:** Undecided whether to include (see `docs/specs/todo.md`)
+
+**Current state:**
+- `web list`, `web export` commands exist
+- `--web` flag on various commands
+- Requires authentication (token + org-uuid)
+
+**Testing Decision:** Web sessions are **out of scope** for V1 testing. If kept in final scope:
+- Add tests for auth flow
+- Add fixtures for web session format
+- Mark with `@pytest.mark.web`
+
+---
+
+## Heavy Suite Gating
+
+Heavy tests (Docker, SSH, cross-env) need explicit gating to keep CI fast.
+
+### Markers and Skip Conditions
+
+```python
+# Mark heavy tests
+@pytest.mark.docker   # Requires Docker
+@pytest.mark.ssh      # Requires SSH containers
+@pytest.mark.slow     # Takes > 10 seconds
+@pytest.mark.cross_env  # Requires specific platform
+
+# Skip by default in CI
+def pytest_configure(config):
+    if os.environ.get("CI") and not os.environ.get("RUN_HEAVY_TESTS"):
+        config.addinivalue_line("addopts", "-m 'not (docker or ssh or slow)'")
+```
+
+### CI Configuration
+
+```yaml
+# Fast CI (default) - runs on every push
+fast_tests:
+  script: pytest -m "not (docker or ssh or slow)"
+  timeout: 10m
+
+# Heavy CI (scheduled/manual) - runs nightly or on demand
+heavy_tests:
+  script: pytest -m "docker or ssh"
+  timeout: 30m
+  only:
+    - schedules
+    - manual
+```
+
+### Timeout Budget
+
+| Suite | Max Duration | Notes |
+|-------|--------------|-------|
+| V1 tests | 2 minutes | Must pass on every push |
+| Parser tests | 30 seconds | Fast, no I/O |
+| CLI tests | 2 minutes | Uses temp dirs |
+| Docker SSH | 10 minutes | Container startup overhead |
+| Cross-env | 5 minutes | Per platform |
+
+### Skip Messaging
+
+Tests should provide clear skip messages:
+
+```python
+@pytest.mark.docker
+def test_ssh_connection():
+    """
+    SKIPPED: Requires Docker. Run with RUN_HEAVY_TESTS=1
+    or use: pytest -m docker
+    """
+```
 
 ---
 
