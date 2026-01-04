@@ -5,14 +5,15 @@ Draft strategy for behavior-driven testing based on specifications.
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Test Philosophy](#test-philosophy)
-3. [Environment Strategy](#environment-strategy)
-4. [Fixture Architecture](#fixture-architecture)
-5. [Mocking Strategy](#mocking-strategy)
-6. [Test Categories](#test-categories)
-7. [Parameterization Strategy](#parameterization-strategy)
-8. [Test Data Generation](#test-data-generation)
-9. [Open Questions](#open-questions)
+2. [V1 Minimal Slice](#v1-minimal-slice)
+3. [Test Philosophy](#test-philosophy)
+4. [Environment Strategy](#environment-strategy)
+5. [Fixture Architecture](#fixture-architecture)
+6. [Mocking Strategy](#mocking-strategy)
+7. [Test Categories](#test-categories)
+8. [Parameterization Strategy](#parameterization-strategy)
+9. [Test Data Generation](#test-data-generation)
+10. [Open Questions](#open-questions)
 
 ---
 
@@ -32,6 +33,109 @@ Draft strategy for behavior-driven testing based on specifications.
 - Generating real session files via agent automation
 - Testing network-dependent features (SSH remotes, web sessions)
 - Performance benchmarking
+
+---
+
+## V1 Minimal Slice
+
+**Priority:** Get a minimal test suite green before expanding to combinatorial matrices.
+
+### V1 Scope
+
+| Layer | In V1 | Deferred |
+|-------|-------|----------|
+| **Parsers** | Golden fixtures per agent | Edge cases, malformed input |
+| **CLI** | Happy paths only | All flag combinations |
+| **Scope** | Single workspace, local home | Combinatorial matrices |
+| **Stats** | Basic counts + goldens | All groupings, time tracking |
+| **Cross-env** | Skip in V1 | Windows ↔ WSL |
+| **Docker SSH** | Skip in V1 | Remote operations |
+
+### V1 Parser Golden Fixtures
+
+Each agent needs a single "golden" session file covering core record types:
+
+| Record Type | Claude | Codex | Gemini |
+|-------------|:------:|:-----:|:------:|
+| User message | ✓ | ✓ | ✓ |
+| Assistant message | ✓ | ✓ | ✓ |
+| Tool use | ✓ | ✓ | ✓ |
+| Tool result | ✓ | ✓ | ✓ |
+| Tool error | ✓ | ✓ | ✓ |
+| Interruption | ✓ | ✓ | ✓ |
+| Rejection | ✓ | — | — |
+| Compaction | ✓ | ✓ | — |
+| Thinking/reasoning | ✓ | ✓ | ✓ |
+| Token usage | ✓ | ✓ | ✓ |
+
+### V1 CLI Happy Paths
+
+| Command | V1 Test |
+|---------|---------|
+| `ws list` | Lists workspaces, shows session count |
+| `session list` | Lists sessions in current workspace |
+| `session export` | Exports to markdown, correct filename |
+| `session export --json` | Exports to NDJSON unified format |
+| `session stats` | Shows aggregate counts |
+
+### V1 Stats Golden Dataset
+
+**Three sessions with known totals:**
+
+```
+Session 1 (Claude): 6 messages, 500 input tokens, 200 output tokens, 2 tool calls (Read, Edit)
+Session 2 (Codex):  4 messages, 300 input tokens, 150 output tokens, 1 tool call (shell)
+Session 3 (Gemini): 4 messages, 400 input tokens, 180 output tokens, 1 tool call (read_file)
+─────────────────────────────────────────────────────────────────────────────────────────────
+Total:              14 messages, 1200 input tokens, 530 output tokens, 4 tool calls
+```
+
+**Expected stats output:**
+```
+sessions:           3
+messages:           14
+user_messages:      7
+assistant_messages: 7
+input_tokens:       1200
+output_tokens:      530
+tools:              Read: 1, Edit: 1, shell: 1, read_file: 1
+```
+
+### V1 Test Files
+
+```
+tests/
+├── v1/
+│   ├── test_claude_parser.py      # Parse golden fixture
+│   ├── test_codex_parser.py       # Parse golden fixture
+│   ├── test_gemini_parser.py      # Parse golden fixture
+│   ├── test_unified_export.py     # Export all 3 to NDJSON
+│   ├── test_cli_happy_paths.py    # ws list, session list, export, stats
+│   └── test_stats_golden.py       # Validate against known totals
+├── fixtures/
+│   └── v1/
+│       ├── claude_golden.jsonl
+│       ├── codex_golden.jsonl
+│       └── gemini_golden.json
+```
+
+### V1 Success Criteria
+
+- [ ] All 3 agent parsers parse golden fixtures without error
+- [ ] Unified export produces valid NDJSON for all 3 agents
+- [ ] `ws list` shows correct workspace count
+- [ ] `session list` shows correct session count
+- [ ] `session export` creates correctly-named markdown file
+- [ ] `session stats` totals match golden dataset exactly
+
+### V1 Timeline
+
+1. **Create golden fixtures** (Agent 1 partial)
+2. **Parser tests** (Agent 3 partial)
+3. **CLI happy paths** (Agent 4 partial)
+4. **Stats golden validation** (Agent 6 partial)
+
+Only after V1 is green: expand to combinatorial scope, cross-env, Docker SSH.
 
 ---
 
@@ -267,6 +371,238 @@ class ClaudeSessionBuilder:
 
     def write_to(self, path: Path) -> None:
         """Write session to file."""
+```
+
+### Telemetry Fixtures (Context Clearing)
+
+Context clearing is recorded in telemetry files, not session files. Tests need these fixtures:
+
+**Claude - `~/.claude/history.jsonl`:**
+```json
+{"display": "/clear ", "timestamp": 1762870614075, "project": "/home/user/myproject", "sessionId": "9d6909e3-aaea-454d-ab21-15c939e865b1"}
+```
+
+**Codex - `~/.codex/history.jsonl`:**
+```json
+{"session_id": "0199bf0a-f9b4-7de3-8628-f1ab7b42b75c", "ts": 1759848429, "text": "/clear"}
+```
+
+**Gemini - `~/.gemini/tmp/<hash>/logs.json`:**
+```json
+[
+  {"sessionId": "sess-1", "messageId": 5, "type": "user", "message": "/clear", "timestamp": "2025-11-07T11:34:04.247Z"},
+  {"sessionId": "sess-2", "messageId": 0, "type": "user", "message": "New session after clear", "timestamp": "2025-11-07T12:00:00.000Z"}
+]
+```
+
+**Test Fixture Structure:**
+```
+tests/fixtures/telemetry/
+├── claude_history.jsonl      # Contains /clear commands
+├── codex_history.jsonl       # Contains /clear commands
+└── gemini_logs.json          # Shows sessionId change after /clear
+```
+
+**Tests:**
+```python
+def test_detect_claude_clear(telemetry_fixtures):
+    """Detect /clear in Claude history.jsonl."""
+    clears = detect_context_clears("claude", telemetry_fixtures["claude_history"])
+    assert len(clears) == 2
+    assert clears[0].session_id == "9d6909e3-aaea-454d-ab21-15c939e865b1"
+
+def test_gemini_clear_creates_new_session(telemetry_fixtures):
+    """Gemini /clear creates new sessionId."""
+    clears = detect_context_clears("gemini", telemetry_fixtures["gemini_logs"])
+    assert clears[0].old_session_id == "sess-1"
+    assert clears[0].new_session_id == "sess-2"
+```
+
+### Compaction Fixtures
+
+**Claude - Dual-Layer Compaction:**
+
+1. **Inline marker** in session JSONL:
+```json
+{
+  "type": "system",
+  "subtype": "compact_boundary",
+  "content": "Conversation compacted",
+  "uuid": "db0953ca-b5ae-4e37-a85c-7884b9d2cc5e",
+  "parentUuid": null,
+  "logicalParentUuid": "9f8cc203-0e27-444f-88e7-b3eb9eef86d1",
+  "timestamp": "2025-12-16T10:37:04.233Z",
+  "compactMetadata": {"trigger": "auto", "preTokens": 155116}
+}
+```
+
+2. **Session memory file** at `<session-id>/session-memory/summary.md`:
+```markdown
+# Session Summary
+
+## Current State
+Working on feature X...
+
+## Files Modified
+- src/main.py
+- tests/test_main.py
+
+## Learnings
+- Pattern A works better than B
+```
+
+**Codex - Inline Compaction:**
+```json
+{
+  "timestamp": "2025-10-28T05:26:42.667Z",
+  "type": "compacted",
+  "payload": {
+    "message": "**Progress + Plan Status**\n- Completed X\n- In progress Y\n\n**Outstanding TODOs**\n- Task 1"
+  }
+}
+```
+
+**Fixture Structure:**
+```
+tests/fixtures/compaction/
+├── claude/
+│   ├── session_with_compaction.jsonl
+│   └── abc123-def456/
+│       └── session-memory/
+│           └── summary.md
+├── codex/
+│   └── session_with_compaction.jsonl
+└── gemini/
+    └── (none - Gemini has no compaction)
+```
+
+**Tests:**
+```python
+def test_claude_compaction_boundary(compaction_fixtures):
+    """Parse Claude compact_boundary and link to summary.md."""
+    session = parse_session(compaction_fixtures["claude"])
+    boundaries = [m for m in session.messages if m.type == "compact_boundary"]
+    assert len(boundaries) == 1
+    assert boundaries[0].pre_tokens == 155116
+    assert boundaries[0].summary_path.exists()
+
+def test_codex_compaction_inline(compaction_fixtures):
+    """Parse Codex inline compaction with payload.message."""
+    session = parse_session(compaction_fixtures["codex"])
+    compacted = [r for r in session.records if r.type == "compacted"]
+    assert len(compacted) == 1
+    assert "Progress + Plan Status" in compacted[0].message
+```
+
+### Rejection Fixtures
+
+**Claude - Explicit Rejection:**
+```json
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": [{
+      "type": "tool_result",
+      "tool_use_id": "toolu_01CCX4pcawRMsHndU7hn4d8K",
+      "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nHold.",
+      "is_error": true
+    }]
+  },
+  "uuid": "3a7fb54f-a20b-4e93-92f1-21b64b16a22e"
+}
+```
+
+**Codex - Inferred Rejection (missing output):**
+```json
+// Request with escalation
+{"type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": {"command": "rm -rf /", "sandbox_permissions": "require_escalated"}, "call_id": "call_abc"}}
+// NO matching function_call_output for call_abc = rejection
+```
+
+**Gemini - Tool Error (not explicit rejection):**
+```json
+{
+  "type": "gemini",
+  "toolCalls": [{
+    "name": "edit_file",
+    "status": "error",
+    "error": "Failed to edit, 0 occurrences found..."
+  }]
+}
+```
+
+**Fixture Structure:**
+```
+tests/fixtures/rejections/
+├── claude_with_rejection.jsonl    # Explicit rejection with user reason
+├── codex_with_escalation.jsonl    # Escalation request, no output = rejected
+└── gemini_with_tool_error.jsonl   # Tool error (not user rejection)
+```
+
+**Tests:**
+```python
+def test_claude_rejection_detection(rejection_fixtures):
+    """Detect Claude rejection and extract user reason."""
+    session = parse_session(rejection_fixtures["claude"])
+    rejections = detect_rejections(session)
+    assert len(rejections) == 1
+    assert rejections[0].tool_use_id == "toolu_01CCX4pcawRMsHndU7hn4d8K"
+    assert rejections[0].user_reason == "Hold."
+
+def test_codex_rejection_inference(rejection_fixtures):
+    """Infer Codex rejection from missing function_call_output."""
+    session = parse_session(rejection_fixtures["codex"])
+    rejections = detect_rejections(session)
+    assert len(rejections) == 1
+    assert rejections[0].call_id == "call_abc"
+    assert rejections[0].inferred == True
+```
+
+### Fork/Branch Fixtures (Claude Only)
+
+Claude supports conversation forks via `parentUuid` chains.
+
+**Fixture - Forked Conversation:**
+```json
+{"type": "user", "uuid": "msg-1", "parentUuid": null, "message": {"content": [{"text": "Start"}]}}
+{"type": "assistant", "uuid": "msg-2", "parentUuid": "msg-1", "message": {"content": [{"text": "Response A"}]}}
+{"type": "user", "uuid": "msg-3", "parentUuid": "msg-2", "message": {"content": [{"text": "Continue A"}]}}
+{"type": "user", "uuid": "msg-4", "parentUuid": "msg-2", "message": {"content": [{"text": "Fork: try B instead"}]}}
+{"type": "assistant", "uuid": "msg-5", "parentUuid": "msg-4", "message": {"content": [{"text": "Response B"}]}}
+```
+
+**Graph Structure:**
+```
+msg-1 (user: Start)
+  └── msg-2 (assistant: Response A)
+        ├── msg-3 (user: Continue A)          <- Branch 1
+        └── msg-4 (user: Fork: try B instead) <- Branch 2
+              └── msg-5 (assistant: Response B)
+```
+
+**Fixture Structure:**
+```
+tests/fixtures/forks/
+└── claude_forked_session.jsonl
+```
+
+**Tests:**
+```python
+def test_fork_detection(fork_fixtures):
+    """Detect fork point where parentUuid has multiple children."""
+    session = parse_session(fork_fixtures["claude"])
+    forks = detect_forks(session)
+    assert len(forks) == 1
+    assert forks[0].parent_uuid == "msg-2"
+    assert set(forks[0].child_uuids) == {"msg-3", "msg-4"}
+
+def test_export_graph_field(fork_fixtures):
+    """Unified export includes graph field for forked sessions."""
+    ndjson = export_unified(fork_fixtures["claude"])
+    session_record = json.loads(ndjson.split("\n")[1])
+    assert session_record["session"]["graph"]["has_forks"] == True
+    assert len(session_record["session"]["graph"]["fork_points"]) == 1
 ```
 
 ### Mock Boundary Diagram

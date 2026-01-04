@@ -10,7 +10,18 @@ Use this document to initialize a fresh Claude session for implementing the test
 
 **Key Documents:**
 - `docs/testing/testing-strategy.md` - Full testing strategy (READ FIRST)
+- `docs/testing/testing-review.md` - Review feedback and gaps
 - `docs/specs/` - All specifications
+
+## V1 First Principle
+
+**Get V1 green before expanding.** The strategy defines a minimal V1 slice:
+- Golden fixtures per agent (not comprehensive)
+- CLI happy paths only (not all flag combinations)
+- Single workspace, local home (not combinatorial)
+- Stats with exact golden totals (not all groupings)
+
+**Defer until V1 green:** Cross-env, Docker SSH, combinatorial scope matrices.
 
 ## Constraints
 
@@ -27,50 +38,75 @@ Use this document to initialize a fresh Claude session for implementing the test
 
 Use focused sub-agents for each testing domain. Each agent should read only the relevant specs and strategy sections.
 
+**V1 agents run first (1-4). Later agents (5-8) run only after V1 is green.**
+
 ---
 
-### Agent 1: Fixture Library
+### Agent 1: V1 Golden Fixtures
 
-**Focus:** Build synthetic session generators for all three agents.
+**Focus:** Create golden fixture files for V1 parser tests.
 
 **Read:**
 - `docs/specs/agents/formats/claude-code-format.md`
 - `docs/specs/agents/formats/codex-cli-format.md`
 - `docs/specs/agents/formats/gemini-cli-format.md`
-- `docs/testing/testing-strategy.md` → "Synthetic Session Generation" section
+- `docs/testing/testing-strategy.md` → "V1 Parser Golden Fixtures" section
 
 **Deliverables:**
 ```
-tests/
-├── fixtures/
-│   ├── builders/
-│   │   ├── __init__.py
-│   │   ├── base.py              # BaseSessionBuilder
-│   │   ├── claude.py            # ClaudeSessionBuilder
-│   │   ├── codex.py             # CodexSessionBuilder
-│   │   └── gemini.py            # GeminiSessionBuilder
-│   ├── static/
-│   │   ├── claude/              # Pre-built JSONL files
-│   │   ├── codex/
-│   │   └── gemini/
-│   └── conftest.py              # Fixture factory functions
+tests/fixtures/v1/
+├── claude_golden.jsonl          # User, assistant, tool_use, tool_result, interruption, rejection, compaction, thinking
+├── codex_golden.jsonl           # User, assistant, function_call, function_call_output, turn_aborted, compacted, reasoning
+├── gemini_golden.json           # User, gemini, toolCalls with result, info (cancelled), thoughts
+└── expected_values.json         # Pre-computed expected parse results
 ```
 
-**Key Methods:**
-```python
-class ClaudeSessionBuilder:
-    def with_workspace(self, name: str) -> Self
-    def add_user_message(self, content: str) -> Self
-    def add_assistant_message(self, content: str, model: str = None) -> Self
-    def add_tool_use(self, tool: str, input: dict) -> Self
-    def add_tool_result(self, tool_use_id: str, output: str, is_error: bool = False) -> Self
-    def add_interruption(self) -> Self
-    def add_compaction(self, summary: str, pre_tokens: int) -> Self
-    def add_rejection(self, tool_use_id: str, reason: str) -> Self
-    def with_timestamps(self, start: datetime, gap_seconds: int = 60) -> Self
-    def with_tokens(self, input: int, output: int) -> Self
-    def build(self) -> list[dict]
-    def write_to(self, path: Path) -> Path
+**V1 Stats Golden Dataset (3 sessions):**
+```
+Session 1 (Claude): 6 messages, 500 input, 200 output, tools: Read, Edit
+Session 2 (Codex):  4 messages, 300 input, 150 output, tools: shell
+Session 3 (Gemini): 4 messages, 400 input, 180 output, tools: read_file
+───────────────────────────────────────────────────────────────────────
+Expected totals:    14 messages, 1200 input, 530 output, 4 tool calls
+```
+
+---
+
+### Agent 1b: Extended Fixtures (Post-V1)
+
+**Focus:** Build fixture library for telemetry, compaction, rejection, and forks.
+
+**Read:**
+- `docs/specs/agents/features/clearing.md`
+- `docs/specs/agents/features/compaction.md`
+- `docs/specs/agents/features/rejections.md`
+- `docs/testing/testing-strategy.md` → "Telemetry Fixtures", "Compaction Fixtures", "Rejection Fixtures", "Fork/Branch Fixtures"
+
+**Deliverables:**
+```
+tests/fixtures/
+├── telemetry/
+│   ├── claude_history.jsonl     # /clear commands
+│   ├── codex_history.jsonl      # /clear commands
+│   └── gemini_logs.json         # /clear with new sessionId
+├── compaction/
+│   ├── claude/
+│   │   ├── session_with_compaction.jsonl
+│   │   └── <session-id>/session-memory/summary.md
+│   └── codex/
+│       └── session_with_compaction.jsonl
+├── rejections/
+│   ├── claude_with_rejection.jsonl
+│   ├── codex_with_escalation.jsonl
+│   └── gemini_with_tool_error.jsonl
+├── forks/
+│   └── claude_forked_session.jsonl
+└── builders/
+    ├── __init__.py
+    ├── base.py
+    ├── claude.py
+    ├── codex.py
+    └── gemini.py
 ```
 
 ---
@@ -122,11 +158,12 @@ pytest.mark.linux_only
 pytest.mark.docker
 pytest.mark.ssh
 pytest.mark.slow
+pytest.mark.v1          # V1 minimal slice tests
 ```
 
 ---
 
-### Agent 3: Parser Tests
+### Agent 3: V1 Parser Tests
 
 **Focus:** Test parsing of each agent's native session format.
 
@@ -317,20 +354,34 @@ tests/docker/
 
 ## Execution Order
 
-**Phase 1: Foundation**
-1. Agent 1 (Fixtures) + Agent 2 (Infrastructure) - Can run in parallel
-2. Agent 3 (Parsers) - Depends on fixtures
+**V1 agents run first (1-4). Later agents (5-8) run only after V1 is green.**
 
-**Phase 2: CLI & Core**
-3. Agent 4 (CLI) - Depends on infrastructure
-4. Agent 5 (Scope) - Depends on multi-home fixtures
+### V1 Phase (Get Green First)
 
-**Phase 3: Validation**
-5. Agent 6 (Stats) - Depends on fixtures with known values
+**Step 1: Foundation (Parallel)**
+- Agent 1 (V1 Golden Fixtures) - Create minimal fixtures per agent
+- Agent 2 (Core Infrastructure) - Set up pytest, conftest, markers
 
-**Phase 4: Integration**
-6. Agent 7 (Cross-Env) - Run on each platform
-7. Agent 8 (Docker SSH) - Run on Ubuntu with Docker
+**Step 2: Parsing (Depends on Step 1)**
+- Agent 3 (V1 Parser Tests) - Test basic parsing with golden fixtures
+
+**Step 3: CLI (Depends on Steps 1-2)**
+- Agent 4 (CLI Tests) - Happy paths only (ws list, session list, export, stats)
+
+**V1 Success Gate:** All V1 tests pass before proceeding.
+
+### Post-V1 Phase (Expand After Green)
+
+**Step 4: Extended Fixtures**
+- Agent 1b (Extended Fixtures) - Telemetry, compaction, rejection, fork fixtures
+
+**Step 5: Comprehensive Coverage (Parallel)**
+- Agent 5 (Scope Resolution) - Combinatorial workspace/home/filter tests
+- Agent 6 (Stats Validation) - Deep validation with groupings and invariants
+
+**Step 6: Integration (Platform-Specific)**
+- Agent 7 (Cross-Env) - Run on each platform (Windows, WSL, Ubuntu)
+- Agent 8 (Docker SSH) - Run on Ubuntu with Docker
 
 ---
 
@@ -339,18 +390,28 @@ tests/docker/
 ```
 Read docs/testing/testing-strategy.md first.
 
-Then spawn sub-agents for each testing domain:
+V1 Phase (run these first):
+1. "Create V1 golden fixtures" → Agent 1 scope
+2. "Set up pytest infrastructure" → Agent 2 scope (parallel with 1)
+3. "Implement V1 parser tests" → Agent 3 scope
+4. "Implement CLI happy path tests" → Agent 4 scope
 
-1. "Implement fixture library" → Agent 1 scope
-2. "Set up pytest infrastructure" → Agent 2 scope
-3. "Implement parser tests" → Agent 3 scope
-...
+Run tests: pytest -m v1
+If all pass, proceed to Post-V1 Phase.
+
+Post-V1 Phase (only after V1 is green):
+5. "Create extended fixtures" → Agent 1b scope
+6. "Implement scope resolution tests" → Agent 5 scope
+7. "Implement stats validation tests" → Agent 6 scope
+8. "Implement cross-env tests" → Agent 7 scope
+9. "Implement Docker SSH tests" → Agent 8 scope
 
 Each agent should:
 - Read only the specified docs
 - Create the specified files
 - Follow the testing strategy decisions
 - Use synthetic fixtures, not real agent sessions
+- Mark V1 tests with @pytest.mark.v1
 ```
 
 ---
@@ -371,13 +432,20 @@ Each agent should:
 
 ## Validation Checklist
 
-Before considering testing complete:
+### V1 Gate (Must Pass First)
 
-- [ ] All agent formats parse correctly (Claude, Codex, Gemini)
+- [ ] Golden fixtures created for all 3 agents (Claude, Codex, Gemini)
+- [ ] Parser tests pass with golden fixtures
+- [ ] CLI happy paths work (ws list, session list, export, stats)
+- [ ] Stats totals match expected values from V1 golden dataset
+
+### Post-V1 Complete
+
+- [ ] Telemetry fixtures (context clearing) created and tested
+- [ ] Compaction/fork fixtures created and tested
 - [ ] All CLI commands work with all flag combinations
 - [ ] Scope resolution handles all dimension combinations
-- [ ] Stats values match expected from known fixtures
-- [ ] Invariants hold (grouped sums = totals, effort <= calendar)
+- [ ] Stats groupings and invariants validated
 - [ ] Cross-env works on Windows, WSL, Ubuntu
 - [ ] Docker SSH tests pass on Ubuntu
 - [ ] Edge cases handled (empty, unicode, long paths, etc.)
