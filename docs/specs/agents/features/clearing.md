@@ -32,8 +32,10 @@ Context clearing is fundamentally different from compaction:
 ```json
 {
   "display": "/clear ",
-  "sessionId": "9d6909e3-aaea-454d-ab21-15c939e865b1",
-  "timestamp": 1762870614075
+  "pastedContents": {},
+  "timestamp": 1762870614075,
+  "project": "/home/user/myproject",
+  "sessionId": "9d6909e3-aaea-454d-ab21-15c939e865b1"
 }
 ```
 
@@ -54,6 +56,20 @@ Context clearing is fundamentally different from compaction:
 ## Codex CLI - Similar Pattern
 
 **Location:** `~/.codex/history.jsonl`
+
+**Format:**
+```json
+{
+  "session_id": "0199bf0a-f9b4-7de3-8628-f1ab7b42b75c",
+  "ts": 1759848429,
+  "text": "/clear"
+}
+```
+
+**Key Differences from Claude:**
+- Uses `ts` (Unix timestamp in seconds) instead of `timestamp` (ISO 8601)
+- Uses `text` instead of `display`
+- Uses `session_id` instead of `sessionId`
 
 **Behavior:**
 - `/clear` recorded in telemetry file
