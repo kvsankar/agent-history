@@ -1,0 +1,72 @@
+[
+  {
+    "sessionId": "telemetry-gemini-001",
+    "messageId": 0,
+    "type": "user",
+    "message": "Help me understand this codebase",
+    "timestamp": "2025-11-07T11:30:00.000Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-001",
+    "messageId": 1,
+    "type": "gemini",
+    "message": "I'll help you understand the codebase structure.",
+    "timestamp": "2025-11-07T11:30:10.000Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-001",
+    "messageId": 2,
+    "type": "user",
+    "message": "What's in the src folder?",
+    "timestamp": "2025-11-07T11:31:00.000Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-001",
+    "messageId": 3,
+    "type": "gemini",
+    "message": "The src folder contains the main application code.",
+    "timestamp": "2025-11-07T11:31:15.000Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-001",
+    "messageId": 4,
+    "type": "user",
+    "message": "Let me think about this more",
+    "timestamp": "2025-11-07T11:33:50.000Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-001",
+    "messageId": 5,
+    "type": "user",
+    "message": "/clear",
+    "timestamp": "2025-11-07T11:34:04.247Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-002",
+    "messageId": 0,
+    "type": "user",
+    "message": "Starting with README.md - fresh context",
+    "timestamp": "2025-11-07T12:00:00.000Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-002",
+    "messageId": 1,
+    "type": "gemini",
+    "message": "I'll read the README.md for you.",
+    "timestamp": "2025-11-07T12:00:15.000Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-002",
+    "messageId": 2,
+    "type": "user",
+    "message": "/clear",
+    "timestamp": "2025-11-07T12:30:00.000Z"
+  },
+  {
+    "sessionId": "telemetry-gemini-003",
+    "messageId": 0,
+    "type": "user",
+    "message": "Third attempt - let's focus on testing",
+    "timestamp": "2025-11-07T12:45:00.000Z"
+  }
+]

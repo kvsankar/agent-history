@@ -30,9 +30,9 @@ def run_cli_in_temp(args: list, timeout: int = None) -> subprocess.CompletedProc
         env = os.environ.copy()
         env["HOME"] = str(tmp_path)
         env["USERPROFILE"] = str(tmp_path)  # Windows uses USERPROFILE
-        # Skip WSL and Windows scanning in tests to avoid timeouts
-        env["CLAUDE_SKIP_WSL_SCAN"] = "1"
-        env["CLAUDE_SKIP_WINDOWS_SCAN"] = "1"
+        # Point WSL and Windows home to temp path to avoid external scanning
+        env["AGENT_HISTORY_HOME_WSL"] = str(tmp_path)
+        env["AGENT_HISTORY_HOME_WINDOWS"] = str(tmp_path)
 
         # Create required directories
         (tmp_path / ".claude" / "projects").mkdir(parents=True)
@@ -217,7 +217,8 @@ class TestExportCombinations:
             env = os.environ.copy()
             env["HOME"] = str(tmp_path)
             env["USERPROFILE"] = str(tmp_path)
-            env["CLAUDE_SKIP_WSL_SCAN"] = "1"
+            env["AGENT_HISTORY_HOME_WSL"] = str(tmp_path)
+            env["AGENT_HISTORY_HOME_WINDOWS"] = str(tmp_path)
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
             (tmp_path / ".agent-history").mkdir(parents=True)
@@ -272,7 +273,8 @@ class TestExportCombinations:
             env = os.environ.copy()
             env["HOME"] = str(tmp_path)
             env["USERPROFILE"] = str(tmp_path)
-            env["CLAUDE_SKIP_WSL_SCAN"] = "1"
+            env["AGENT_HISTORY_HOME_WSL"] = str(tmp_path)
+            env["AGENT_HISTORY_HOME_WINDOWS"] = str(tmp_path)
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
             (tmp_path / ".agent-history").mkdir(parents=True)
@@ -403,7 +405,8 @@ class TestCrossCommandConsistency:
             env = os.environ.copy()
             env["HOME"] = str(tmp_path)
             env["USERPROFILE"] = str(tmp_path)
-            env["CLAUDE_SKIP_WSL_SCAN"] = "1"
+            env["AGENT_HISTORY_HOME_WSL"] = str(tmp_path)
+            env["AGENT_HISTORY_HOME_WINDOWS"] = str(tmp_path)
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
             (tmp_path / ".agent-history").mkdir(parents=True)
@@ -449,7 +452,8 @@ class TestCrossCommandConsistency:
             env = os.environ.copy()
             env["HOME"] = str(tmp_path)
             env["USERPROFILE"] = str(tmp_path)
-            env["CLAUDE_SKIP_WSL_SCAN"] = "1"
+            env["AGENT_HISTORY_HOME_WSL"] = str(tmp_path)
+            env["AGENT_HISTORY_HOME_WINDOWS"] = str(tmp_path)
 
             (tmp_path / ".claude" / "projects").mkdir(parents=True)
             (tmp_path / ".agent-history").mkdir(parents=True)

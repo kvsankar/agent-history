@@ -1,0 +1,154 @@
+{
+  "telemetry": {
+    "claude_history": {
+      "description": "Claude Code telemetry/history file with /clear commands",
+      "file": "telemetry/claude_history.jsonl",
+      "clear_commands": 2,
+      "clear_timestamps": [1762870614075, 1762870700000],
+      "session_id": "telemetry-claude-001",
+      "project": "/home/testuser/telemetry-project",
+      "total_entries": 7
+    },
+    "codex_history": {
+      "description": "Codex CLI telemetry/history file with /clear commands",
+      "file": "telemetry/codex_history.jsonl",
+      "clear_commands": 1,
+      "clear_timestamps": [1759848429],
+      "session_id": "telemetry-codex-001",
+      "total_entries": 5
+    },
+    "gemini_logs": {
+      "description": "Gemini CLI logs file showing /clear creates new sessionId",
+      "file": "telemetry/gemini_logs.json",
+      "clear_commands": 2,
+      "session_transitions": [
+        {"from": "telemetry-gemini-001", "to": "telemetry-gemini-002", "clear_message_id": 5},
+        {"from": "telemetry-gemini-002", "to": "telemetry-gemini-003", "clear_message_id": 2}
+      ],
+      "total_sessions": 3,
+      "total_messages": 10
+    }
+  },
+  "compaction": {
+    "claude": {
+      "description": "Claude session with compact_boundary marker and session-memory summary",
+      "session_file": "compaction/claude/session_with_compaction.jsonl",
+      "summary_file": "compaction/claude/compact-session-001/session-memory/summary.md",
+      "session_id": "compact-session-001",
+      "compaction_boundaries": 1,
+      "compaction_details": {
+        "uuid": "compact-boundary-001",
+        "logical_parent_uuid": "ca4-compact",
+        "trigger": "auto",
+        "pre_tokens": 155116
+      },
+      "message_count_before_compaction": 8,
+      "message_count_after_compaction": 4,
+      "total_messages": 13,
+      "has_summary_type": true
+    },
+    "codex": {
+      "description": "Codex session with inline compacted record",
+      "session_file": "compaction/codex/session_with_compaction.jsonl",
+      "session_id": "compact-codex-001",
+      "compacted_records": 1,
+      "compacted_summary_sections": ["Progress + Plan Status", "Outstanding TODOs", "Testing Gaps", "Open quirks / setup notes"],
+      "total_records": 18,
+      "tool_calls": {
+        "shell": 2
+      }
+    }
+  },
+  "rejections": {
+    "claude": {
+      "description": "Claude session with user rejections (is_error + doesn't want to proceed)",
+      "file": "rejections/claude_with_rejection.jsonl",
+      "session_id": "rejection-claude-001",
+      "rejections": 2,
+      "rejection_details": [
+        {
+          "tool_use_id": "toolu_r002",
+          "tool_name": "Edit",
+          "user_reason": "Hold. I want to keep it simple - no connection pooling for now."
+        },
+        {
+          "tool_use_id": "toolu_r004",
+          "tool_name": "Bash",
+          "user_reason": "Will this technique work in GitHub CI? I want to understand before running locally."
+        }
+      ],
+      "successful_tool_uses": 2,
+      "total_messages": 12
+    },
+    "codex": {
+      "description": "Codex session with escalation requests (some without matching output = rejected)",
+      "file": "rejections/codex_with_escalation.jsonl",
+      "session_id": "rejection-codex-001",
+      "escalation_requests": 2,
+      "escalation_details": [
+        {
+          "call_id": "call_esc_002",
+          "command": "printf 'Goodbye World\\n' > test.txt",
+          "has_output": false,
+          "inferred_rejected": true
+        },
+        {
+          "call_id": "call_esc_004",
+          "command": "rm test.txt",
+          "has_output": false,
+          "turn_aborted": true,
+          "abort_reason": "user_cancelled"
+        }
+      ],
+      "successful_shell_calls": 2,
+      "total_records": 17
+    },
+    "gemini": {
+      "description": "Gemini session with tool errors (status: error)",
+      "file": "rejections/gemini_with_tool_error.jsonl",
+      "session_id": "rejection-gemini-001",
+      "tool_errors": 1,
+      "tool_error_details": [
+        {
+          "tool_call_id": "edit_file-002",
+          "tool_name": "edit_file",
+          "error": "Failed to edit, 0 occurrences found for old_string"
+        }
+      ],
+      "successful_tool_calls": 3,
+      "total_messages": 9
+    }
+  },
+  "forks": {
+    "claude": {
+      "description": "Claude session with conversation fork (multiple children of same parent)",
+      "file": "forks/claude_forked_session.jsonl",
+      "session_id": "fork-session-001",
+      "fork_points": 1,
+      "fork_details": [
+        {
+          "parent_uuid": "fa1-fork",
+          "child_uuids": ["fu2a-fork", "fu2b-fork"],
+          "fork_type": "user_choice"
+        }
+      ],
+      "branches": {
+        "branch_a": {
+          "description": "QuickSort implementation",
+          "start_uuid": "fu2a-fork",
+          "message_count": 4
+        },
+        "branch_b": {
+          "description": "MergeSort implementation with type hints",
+          "start_uuid": "fu2b-fork",
+          "message_count": 8
+        }
+      },
+      "total_messages": 14,
+      "tool_calls": {
+        "Write": 2,
+        "Edit": 1
+      }
+    }
+  }
+}
