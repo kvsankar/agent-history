@@ -446,7 +446,6 @@ class TestScopePrecedence:
     | --agent claude + Codex-only workspace | Empty result |
     """
 
-    @pytest.mark.skip(reason="Project infrastructure not implemented")
     def test_this_overrides_project(self, project_config_setup: Dict[str, Any]) -> None:
         """--this should override --project.
 
@@ -555,13 +554,7 @@ class TestStatsScopeCombinations:
             ("all", "all", "none", "day"),
             ("all", "all", "none", "agent"),
             # Multi-group
-            pytest.param(
-                "all",
-                "all",
-                "none",
-                "model,tool",
-                marks=pytest.mark.skip(reason="CLI bug: database schema error with multi-group"),
-            ),
+            ("all", "all", "none", "model,tool"),
             # With filters + grouping
             ("all", "local", "agent_claude", "model"),
             ("all", "all", "range", "day"),
@@ -744,7 +737,6 @@ class TestScopeCombinationEdgeCases:
 
         # Should either error with message or return empty
 
-    @pytest.mark.skip(reason="--no-web flag not implemented")
     def test_all_exclusions(self, multi_home_setup: Dict[str, Any]) -> None:
         """Excluding all home types should result in empty or error."""
         run_cli_subprocess(
@@ -764,7 +756,6 @@ class TestScopeCombinationEdgeCases:
 
         # Should succeed with local-only results
 
-    @pytest.mark.skip(reason="Project infrastructure not implemented")
     def test_deeply_nested_combination(self, project_config_setup: Dict[str, Any]) -> None:
         """Complex combination with all scope types."""
         result = run_cli_subprocess(

@@ -344,6 +344,42 @@ gemini-index --full-hash          # Show full SHA-256 hashes
 
 ---
 
+## Environment Variables
+
+Environment variables for testing, automation, and overriding default behavior.
+
+### Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `AGENT_HISTORY_CONFIG_DIR` | Override config directory (`~/.agent-history/`). Bypasses migration logic. Used for test isolation. |
+
+### Session Data Paths
+
+| Variable | Description |
+|----------|-------------|
+| `AGENT_HISTORY_HOME` | Override local home directory for session discovery |
+| `AGENT_HISTORY_HOME_WSL` | Override WSL home path (skips real WSL probing) |
+| `AGENT_HISTORY_HOME_WINDOWS` | Override Windows home path (skips real Windows probing) |
+| `CLAUDE_PROJECTS_DIR` | Override Claude Code projects directory |
+| `CODEX_SESSIONS_DIR` | Override Codex CLI sessions directory |
+| `GEMINI_SESSIONS_DIR` | Override Gemini CLI sessions directory |
+
+### Usage Examples
+
+```bash
+# Test isolation: use temporary config directory
+AGENT_HISTORY_CONFIG_DIR=/tmp/test-config agent-history session stats
+
+# Testing with mock session data
+AGENT_HISTORY_HOME=/tmp/mock-home agent-history session list
+
+# Skip WSL probing in tests
+AGENT_HISTORY_HOME_WSL=/tmp/mock-wsl agent-history ws --wsl
+```
+
+---
+
 ## Examples
 
 ### Basic Usage

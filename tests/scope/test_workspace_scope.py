@@ -36,34 +36,20 @@ pytestmark = [pytest.mark.scope, pytest.mark.workspace_scope]
 class TestCurrentWorkspaceScope:
     """Tests for default current workspace scope (from cwd)."""
 
-    @pytest.mark.skip(
-        reason="Requires running from actual workspace with matching sessions in projects dir"
-    )
     def test_session_list_defaults_to_current_workspace(
-        self, multi_workspace_home: Dict[str, Any]
+        self, current_workspace_setup: Dict[str, Any]
     ) -> None:
         """session list with no args shows only current workspace sessions.
 
         Spec: "No args = current workspace (from cwd)"
-
-        Note: This test requires running from a directory that has a matching
-        workspace in the Claude projects directory. Test fixtures create workspaces
-        for virtual paths like /home/user/project-alpha, not the temp directory.
         """
-        # Use the fixture's home path as cwd - it's a real directory
-        # that serves as a valid workspace directory
         result = run_cli_subprocess(
             ["session", "list"],
-            env=multi_workspace_home["env"],
-            cwd=multi_workspace_home["path"],
+            env=current_workspace_setup["env"],
+            cwd=current_workspace_setup["workspace_dir"],
         )
 
-        # Should succeed
         assert_cli_success(result, "session list should succeed")
-
-        # Note: The actual assertion depends on implementation
-        # This test verifies the command runs without error
-        # Full validation requires the implementation to be working
 
     def test_ws_list_shows_all_workspaces(self, multi_workspace_home: Dict[str, Any]) -> None:
         """ws list shows all workspaces (not filtered by cwd).
@@ -77,28 +63,12 @@ class TestCurrentWorkspaceScope:
 
         assert_cli_success(result, "ws list should succeed")
 
-    @pytest.mark.skip(
-        reason="Requires running from actual workspace with matching sessions in projects dir"
-    )
-    def test_current_workspace_isolation(self, multi_workspace_home: Dict[str, Any]) -> None:
-        """Current workspace scope should not include other workspaces.
-
-        Note: This test requires running from a directory that has a matching
-        workspace in the Claude projects directory. Test fixtures create workspaces
-        for virtual paths like /home/user/project-alpha, not the temp directory.
-        """
-        # This test validates that the scope isolation works
-        # Sessions from other workspaces should not appear
-        multi_workspace_home["workspaces"]["project-alpha"]
-        multi_workspace_home["workspaces"]["project-beta"]
-
-        # When querying project-alpha, project-beta sessions should not appear
-        # (This is a behavioral validation for when implementation supports it)
-
+    def test_current_workspace_isolation(self, current_workspace_setup: Dict[str, Any]) -> None:
+        """Current workspace scope should not include other workspaces."""
         result = run_cli_subprocess(
             ["session", "list", "--format", "json"],
-            env=multi_workspace_home["env"],
-            cwd=multi_workspace_home["path"],
+            env=current_workspace_setup["env"],
+            cwd=current_workspace_setup["workspace_dir"],
         )
 
         assert_cli_success(result, "session list with json format should succeed")
@@ -311,7 +281,6 @@ class TestAllWorkspacesScope:
 class TestProjectScope:
     """Tests for --project flag and project auto-detection."""
 
-    @pytest.mark.skip(reason="Project infrastructure not implemented")
     def test_project_flag_filters_to_project_workspaces(
         self, project_config_setup: Dict[str, Any]
     ) -> None:
@@ -348,7 +317,6 @@ class TestProjectScope:
 
         assert_cli_success(result, "project list should succeed")
 
-    @pytest.mark.skip(reason="Project infrastructure not implemented")
     def test_project_show_displays_project_details(
         self, project_config_setup: Dict[str, Any]
     ) -> None:
@@ -372,20 +340,19 @@ class TestProjectScope:
 class TestThisOverride:
     """Tests for --this flag to override project auto-detection."""
 
-    @pytest.mark.skip(reason="Project infrastructure not implemented")
-    def test_this_flag_overrides_project(self, project_config_setup: Dict[str, Any]) -> None:
+    def test_this_flag_overrides_project(self, current_workspace_setup: Dict[str, Any]) -> None:
         """--this forces current workspace only, ignoring project scope.
 
         Spec: "--this - Current workspace only (override project auto-detection)"
         """
         result = run_cli_subprocess(
             ["session", "list", "--this"],
-            env=project_config_setup["env"],
+            env=current_workspace_setup["env"],
+            cwd=current_workspace_setup["workspace_dir"],
         )
 
         assert_cli_success(result, "--this should succeed")
 
-    @pytest.mark.skip(reason="Project infrastructure not implemented")
     def test_this_with_project_flag(self, project_config_setup: Dict[str, Any]) -> None:
         """--this should override --project.
 
@@ -398,20 +365,12 @@ class TestThisOverride:
 
         assert_cli_success(result, "--this with --project should succeed")
 
-    @pytest.mark.skip(
-        reason="Requires running from actual workspace with matching sessions in projects dir"
-    )
-    def test_this_limits_to_single_workspace(self, multi_workspace_home: Dict[str, Any]) -> None:
-        """--this should only show sessions from current workspace.
-
-        Note: This test requires running from a directory that has a matching
-        workspace in the Claude projects directory. Test fixtures create workspaces
-        for virtual paths like /home/user/project-alpha, not the temp directory.
-        """
+    def test_this_limits_to_single_workspace(self, current_workspace_setup: Dict[str, Any]) -> None:
+        """--this should only show sessions from current workspace."""
         result = run_cli_subprocess(
             ["session", "list", "--this", "--format", "json"],
-            env=multi_workspace_home["env"],
-            cwd=multi_workspace_home["path"],
+            env=current_workspace_setup["env"],
+            cwd=current_workspace_setup["workspace_dir"],
         )
 
         assert_cli_success(result, "--this with json format should succeed")
@@ -561,29 +520,20 @@ class TestWorkspaceScopePrecedence:
 
 
 @pytest.mark.parametrize(
-    "workspace_scope,description,needs_cwd",
+    "workspace_scope,description",
     [
-        pytest.param(
-            [],
-            "current workspace (default)",
-            True,
-            marks=pytest.mark.skip(
-                reason="Requires running from actual workspace with matching sessions in projects dir"
-            ),
-        ),
-        (["project-alpha"], "single named workspace", False),
-        (["project-alpha", "project-beta"], "multiple named workspaces", False),
-        (["-n", "alpha"], "single pattern", False),
-        (["-n", "alpha", "-n", "beta"], "multiple patterns", False),
-        (["--aw"], "all workspaces short flag", False),
-        (["--all-workspaces"], "all workspaces long flag", False),
-        (["-n", "*"], "wildcard pattern", False),
+        (["project-alpha"], "single named workspace"),
+        (["project-alpha", "project-beta"], "multiple named workspaces"),
+        (["-n", "alpha"], "single pattern"),
+        (["-n", "alpha", "-n", "beta"], "multiple patterns"),
+        (["--aw"], "all workspaces short flag"),
+        (["--all-workspaces"], "all workspaces long flag"),
+        (["-n", "*"], "wildcard pattern"),
     ],
 )
 def test_workspace_scope_variants(
     workspace_scope: List[str],
     description: str,
-    needs_cwd: bool,
     multi_workspace_home: Dict[str, Any],
 ) -> None:
     """Parameterized test for various workspace scope configurations.
@@ -591,16 +541,11 @@ def test_workspace_scope_variants(
     Args:
         workspace_scope: CLI arguments for workspace scope
         description: Human-readable description
-        needs_cwd: Whether this test needs to run from a workspace directory
         multi_workspace_home: Test fixture
     """
-    # When testing "current workspace (default)", we need to run from a valid workspace directory
-    cwd = multi_workspace_home["path"] if needs_cwd else None
-
     result = run_cli_subprocess(
         ["session", "list", *workspace_scope],
         env=multi_workspace_home["env"],
-        cwd=cwd,
     )
 
     assert_cli_success(result, f"Workspace scope '{description}' should succeed")

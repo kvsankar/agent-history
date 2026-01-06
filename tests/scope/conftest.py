@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import sys
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
@@ -541,28 +542,36 @@ def project_config_setup(multi_home_setup: Dict[str, Any]) -> Generator[Dict[str
     Creates projects.json with:
     - "myproject": workspaces from local and wsl
     - "services": auth-service and api-gateway workspaces
+
+    Format: {"version": 2, "projects": {"name": {"source_key": ["encoded-ws", ...]}}}
     """
-    # Create projects config
+    # Create projects config in CLI's expected format:
+    # source_key -> list of encoded workspace paths
     projects = {
         "myproject": {
-            "workspaces": [
-                {"home": "local", "path": "/home/user/project-alpha"},
-                {"home": "wsl", "path": "/home/user/project-alpha"},
-            ]
+            "local": [
+                encode_workspace_path("/home/user/project-alpha"),
+            ],
+            "wsl": [
+                encode_workspace_path("/home/user/project-alpha"),
+            ],
         },
         "services": {
-            "workspaces": [
-                {"home": "local", "path": "/home/user/services/auth-service"},
-                {"home": "remote_vm01", "path": "/home/user/services/api-gateway"},
-            ]
+            "local": [
+                encode_workspace_path("/home/user/services/auth-service"),
+            ],
+            "remote:user@vm01": [
+                encode_workspace_path("/home/user/services/api-gateway"),
+            ],
         },
     }
 
     # Write projects.json to local home
     local_history_dir = multi_home_setup["homes"]["local"]["path"] / ".agent-history"
     projects_file = local_history_dir / "projects.json"
+    projects_data = {"version": 2, "projects": projects}
     with open(projects_file, "w", encoding="utf-8") as f:
-        json.dump(projects, f, indent=2)
+        json.dump(projects_data, f, indent=2)
 
     yield {
         **multi_home_setup,
@@ -751,6 +760,94 @@ def scope_combo_setup(tmp_path: Path) -> Generator[Dict[str, Any], None, None]: 
         "env": env,
         "session_matrix": session_matrix,
         "compute_totals": compute_totals,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fixture: Current Workspace Setup
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def current_workspace_setup(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
+    """Create a workspace at an actual filesystem path for current-workspace tests.
+
+    Unlike other fixtures that use virtual paths like /home/user/project-alpha,
+    this fixture creates sessions for the actual tmp_path, allowing tests to
+    run from that directory and have the CLI detect it as the current workspace.
+
+    Yields:
+        Dict with:
+        - workspace_dir: the actual workspace directory to run from
+        - env: environment variables for test isolation
+        - session_count: number of sessions created
+    """
+    # Create the workspace directory
+    workspace_dir = tmp_path / "test-workspace"
+    workspace_dir.mkdir(parents=True)
+
+    # Create agent directories
+    claude_dir = tmp_path / ".claude" / "projects"
+    codex_dir = tmp_path / ".codex" / "sessions"
+    history_dir = tmp_path / ".agent-history"
+
+    claude_dir.mkdir(parents=True)
+    codex_dir.mkdir(parents=True)
+    history_dir.mkdir(parents=True)
+
+    # Create Claude sessions for the ACTUAL workspace path
+    workspace_path = str(workspace_dir)
+    workspace_encoded = encode_workspace_path(workspace_path)
+    session_dir = claude_dir / workspace_encoded
+    session_dir.mkdir(parents=True)
+
+    base_date = datetime(2025, 1, 15, 10, 0, 0)
+    sessions_created = []
+
+    # Create 2 Claude sessions
+    for i in range(2):
+        session_id = f"session-{uuid.uuid4()}"
+        session_file = session_dir / f"{session_id}.jsonl"
+        timestamp = (base_date + timedelta(hours=i)).isoformat() + "Z"
+
+        messages = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": f"Test message {i}"},
+                "timestamp": timestamp,
+                "uuid": f"user-{i}",
+                "sessionId": session_id,
+                "cwd": workspace_path,
+            },
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": f"Response {i}"}]},
+                "timestamp": timestamp,
+                "uuid": f"asst-{i}",
+                "sessionId": session_id,
+                "model": "claude-sonnet-4-20250514",
+            },
+        ]
+
+        with open(session_file, "w", encoding="utf-8") as f:
+            for msg in messages:
+                f.write(json.dumps(msg) + "\n")
+
+        sessions_created.append(session_id)
+
+    # Environment variables for test isolation
+    env = os.environ.copy()
+    env["CLAUDE_PROJECTS_DIR"] = str(claude_dir)
+    env["CODEX_SESSIONS_DIR"] = str(codex_dir)
+    env["HOME"] = str(tmp_path)
+    env["AGENT_HISTORY_CONFIG_DIR"] = str(history_dir)
+
+    yield {
+        "workspace_dir": workspace_dir,
+        "workspace_path": workspace_path,
+        "env": env,
+        "session_count": len(sessions_created),
+        "sessions": sessions_created,
     }
 
 

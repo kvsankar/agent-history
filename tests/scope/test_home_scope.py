@@ -431,7 +431,6 @@ class TestSourceExclusions:
 
         assert_cli_success(result, "--ah --no-remote should succeed")
 
-    @pytest.mark.skip(reason="--no-web not implemented")
     def test_no_web_excludes_web(self, multi_home_setup: Dict[str, Any]) -> None:
         """--ah --no-web excludes web sessions.
 
@@ -750,9 +749,7 @@ def test_home_scope_variants(
         (["--no-wsl"], "exclude WSL"),
         (["--no-windows"], "exclude Windows"),
         (["--no-remote"], "exclude remotes"),
-        pytest.param(
-            ["--no-web"], "exclude web", marks=pytest.mark.skip(reason="--no-web not implemented")
-        ),
+        (["--no-web"], "exclude web"),
         (["--no-wsl", "--no-windows"], "exclude WSL and Windows"),
         (["--no-wsl", "--no-remote"], "exclude WSL and remotes"),
         (["--local"], "local only"),

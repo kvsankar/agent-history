@@ -7234,6 +7234,10 @@ def _migrate_legacy_config_dir(new_dir: Path, legacy_dir: Path) -> Path:
 
 def get_config_dir() -> Path:
     """Get the config storage directory (~/.agent-history/, migrates legacy on first use)."""
+    # Check for test/override env var first
+    override = os.environ.get("AGENT_HISTORY_CONFIG_DIR")
+    if override:
+        return Path(override)
     new_dir, legacy_dir = _get_config_dirs()
     return _migrate_legacy_config_dir(new_dir, legacy_dir)
 
@@ -8669,7 +8673,18 @@ def cmd_project_list(args):
 
 
 def cmd_project_show(args):
-    """Show details of a single project (flat format)."""
+    """Show details of a single project.
+
+    Output format matches spec:
+        Project: myproject
+
+        Workspaces:
+          local             /home/user/myproject
+          wsl:Ubuntu        /home/user/myproject
+
+        Sessions: 45
+        Last Modified: 2025-01-03 18:15
+    """
     aliases_data = load_aliases()
     aliases = aliases_data.get("projects", {})
 
@@ -8680,18 +8695,100 @@ def cmd_project_show(args):
 
     sources = aliases[alias_name]
 
-    # Collect all data for flat output
-    rows = []
+    # Collect workspace info and compute totals
+    total_sessions = 0
+    last_modified = None
+    workspace_lines = []
+
     for source_key, workspaces in sorted(sources.items()):
         for workspace in workspaces:
             sessions = get_sessions_for_source(source_key, workspace)
             ws_readable = normalize_workspace_name(workspace)
-            rows.append((source_key, ws_readable, len(sessions)))
+            session_count = len(sessions)
+            total_sessions += session_count
+            workspace_lines.append((source_key, ws_readable, session_count))
 
-    # Print flat output
-    print("SOURCE\tWORKSPACE\tSESSIONS")
-    for source, workspace, count in rows:
-        print(f"{source}\t{workspace}\t{count}")
+            # Track latest modified time
+            for session in sessions:
+                mod_time = session.get("modified")
+                if mod_time:
+                    if last_modified is None or mod_time > last_modified:
+                        last_modified = mod_time
+
+    # Print project details in spec format
+    print(f"Project: {alias_name}")
+    print()
+    print("Workspaces:")
+    for source_key, workspace, count in workspace_lines:
+        print(f"  {source_key:16}  {workspace}")
+    print()
+    print(f"Sessions: {total_sessions}")
+    if last_modified:
+        # Format as YYYY-MM-DD HH:MM
+        try:
+            if isinstance(last_modified, str):
+                dt = datetime.fromisoformat(last_modified.replace("Z", "+00:00"))
+                formatted = dt.strftime("%Y-%m-%d %H:%M")
+            else:
+                formatted = str(last_modified)[:16]
+            print(f"Last Modified: {formatted}")
+        except (ValueError, AttributeError):
+            print(f"Last Modified: {last_modified}")
+
+
+def get_workspaces_for_project(project_name: str) -> list:
+    """Get list of (source_key, workspace) tuples for a project.
+
+    Returns empty list if project not found.
+    """
+    aliases_data = load_aliases()
+    aliases = aliases_data.get("projects", {})
+
+    if project_name not in aliases:
+        return []
+
+    sources = aliases[project_name]
+    result = []
+    for source_key, workspaces in sources.items():
+        for workspace in workspaces:
+            result.append((source_key, workspace))
+    return result
+
+
+def _list_project_workspaces(project_names: list, output_format: Optional[str] = None):
+    """List workspaces belonging to specified projects in ws list format.
+
+    Output format:
+        HOME	WORKSPACE
+        local	my-project
+        wsl:Ubuntu	my-project
+    """
+    if not project_names:
+        return
+
+    # Collect all workspaces from all specified projects
+    rows = []
+    for project_name in project_names:
+        project_workspaces = get_workspaces_for_project(project_name)
+        if not project_workspaces:
+            sys.stderr.write(f"Error: Project '{project_name}' not found\n")
+            continue
+        for source_key, workspace in project_workspaces:
+            ws_readable = normalize_workspace_name(workspace)
+            rows.append((source_key, ws_readable))
+
+    if not rows:
+        return
+
+    if output_format == "json":
+        data = [{"home": source, "workspace": ws} for source, ws in rows]
+        print(json.dumps(data, indent=2))
+        return
+
+    # Print in standard ws list format
+    print("HOME\tWORKSPACE")
+    for source_key, workspace in rows:
+        print(f"{source_key}\t{workspace}")
 
 
 def cmd_project_create(args):
@@ -11960,6 +12057,9 @@ def display_grouped_stats(
     from_clause = "sessions s"
     if requires_tools:
         from_clause = "tool_uses t LEFT JOIN sessions s ON t.file_path = s.file_path"
+        # If we also need messages (e.g., for model dimension), join messages table too
+        if requires_messages:
+            from_clause += " LEFT JOIN messages m ON t.file_path = m.file_path"
     elif requires_messages or "model" in dimensions:
         from_clause += " LEFT JOIN messages m ON s.file_path = m.file_path"
         # Add token aggregation subquery
@@ -15866,6 +15966,7 @@ def _add_home_scope_flags(parser):
         "--no-windows", action="store_true", help="Exclude Windows sources (with --ah)"
     )
     parser.add_argument("--no-remote", action="store_true", help="Exclude SSH remotes (with --ah)")
+    parser.add_argument("--no-web", action="store_true", help="Exclude web sessions (with --ah)")
     parser.add_argument(
         "--local",
         action="store_true",
@@ -16643,12 +16744,13 @@ def _dispatch_ws(args):
     _apply_home_flags_from_names(args, getattr(args, "homes", []) or [])
     workspace_inputs = getattr(args, "workspace", []) or []
     name_patterns = getattr(args, "name_patterns", []) or []
+    output_format = getattr(args, "format", None)
 
     project_names = getattr(args, "projects", None) or []
     project_only = False
     if project_names:
-        for project_name in project_names:
-            cmd_project_show(SimpleNamespace(name=project_name))
+        # For ws list --project, list workspaces belonging to the project
+        _list_project_workspaces(project_names, output_format=output_format)
         project_only = not (
             workspace_inputs or name_patterns or getattr(args, "all_workspaces", False)
         )
@@ -16680,7 +16782,7 @@ def _dispatch_ws(args):
                 sys.stderr.write(
                     f"Using project {alias_for_ws} (use --this for current workspace only)\n"
                 )
-                cmd_project_show(SimpleNamespace(name=alias_for_ws))
+                _list_project_workspaces([alias_for_ws], output_format=output_format)
                 return
 
     combined = _combine_workspace_inputs(
