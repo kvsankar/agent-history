@@ -42,8 +42,9 @@ claude-conversations/
 temptest-*/
 test-*/
 
-# Claude Code session data
-.claude/
+# Claude Code session data (but keep agents)
+.claude/*
+!.claude/agents/
 docs/learning/
 docs/reviews/
 
