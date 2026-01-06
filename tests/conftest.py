@@ -2,12 +2,254 @@
 
 import json
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, Generator
 from unittest.mock import patch
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Pytest CLI Options
+# ---------------------------------------------------------------------------
+
+
+def pytest_addoption(parser):
+    """Add custom CLI options."""
+    parser.addoption(
+        "--docker",
+        action="store_true",
+        default=False,
+        help="Run Docker E2E tests (starts containers and runs tests inside Docker)",
+    )
+
+
+def pytest_configure(config):
+    """Store docker flag in config for access by fixtures."""
+    config.addinivalue_line("markers", "e2e_docker: marks tests as Docker E2E tests")
+
+    # If --docker flag is passed and we're not inside Docker, run tests in Docker
+    if config.getoption("--docker", default=False):
+        if not (
+            os.environ.get("NODE_ALPHA") is not None
+            or os.environ.get("NODE_BETA") is not None
+            or Path("/.dockerenv").exists()
+        ):
+            # We're on the host, need to run inside Docker
+            _run_docker_tests_and_exit(config)
+
+
+def _run_docker_tests_and_exit(config):
+    """Run Docker E2E tests inside the Docker container and exit.
+
+    This is called when --docker is passed from the host.
+    """
+    docker_dir = Path(__file__).parent.parent / "docker"
+
+    print("=" * 60)
+    print("Running Docker E2E tests inside container...")
+    print("=" * 60)
+
+    try:
+        # Build containers
+        print("\n[1/4] Building Docker containers...")
+        result = subprocess.run(
+            ["docker", "compose", "build"],
+            cwd=docker_dir,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            print("ERROR: Docker build failed")
+            sys.exit(1)
+
+        # Start SSH nodes
+        print("\n[2/4] Starting SSH nodes...")
+        result = subprocess.run(
+            ["docker", "compose", "up", "-d", "node-alpha", "node-beta"],
+            cwd=docker_dir,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print("ERROR: Failed to start Docker containers")
+            sys.exit(1)
+
+        # Wait for SSH to be ready
+        print("\n[3/4] Waiting for SSH nodes...")
+        time.sleep(5)
+
+        # Run tests inside Docker
+        print("\n[4/4] Running tests inside Docker container...")
+        print("-" * 60)
+
+        # Pass through any extra pytest args
+        extra_args = []
+        if config.option.verbose:
+            extra_args.append("-v")
+        if hasattr(config.option, "tb") and config.option.tb:
+            extra_args.extend(["--tb", config.option.tb])
+
+        result = subprocess.run(
+            ["docker", "compose", "run", "--rm", "test-runner",
+             "pytest", "tests/e2e_docker/", *extra_args],
+            cwd=docker_dir,
+        )
+
+        print("-" * 60)
+        exit_code = result.returncode
+
+    finally:
+        # Cleanup
+        print("\nCleaning up Docker containers...")
+        subprocess.run(
+            ["docker", "compose", "down", "-v"],
+            cwd=docker_dir,
+            capture_output=True,
+            timeout=60,
+        )
+
+    # Use os._exit to avoid pytest's exception handling
+    os._exit(exit_code)
+
+
+# ---------------------------------------------------------------------------
+# Docker Infrastructure
+# ---------------------------------------------------------------------------
+
+
+def _get_docker_compose_dir() -> Path:
+    """Get path to docker/ directory."""
+    return Path(__file__).parent.parent / "docker"
+
+
+def _is_docker_running() -> bool:
+    """Check if Docker daemon is running."""
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _start_docker_containers() -> bool:
+    """Start Docker containers for E2E tests.
+
+    Returns:
+        True if containers started successfully
+    """
+    docker_dir = _get_docker_compose_dir()
+
+    # Build containers
+    result = subprocess.run(
+        ["docker", "compose", "build"],
+        cwd=docker_dir,
+        capture_output=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        print(f"Docker build failed: {result.stderr.decode()}")
+        return False
+
+    # Start SSH nodes
+    result = subprocess.run(
+        ["docker", "compose", "up", "-d", "node-alpha", "node-beta"],
+        cwd=docker_dir,
+        capture_output=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        print(f"Docker start failed: {result.stderr.decode()}")
+        return False
+
+    # Wait for SSH to be ready
+    time.sleep(3)
+
+    # Verify connectivity
+    for attempt in range(5):
+        result = subprocess.run(
+            ["docker", "compose", "run", "--rm", "test-runner",
+             "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+             "alice@node-alpha", "echo", "ready"],
+            cwd=docker_dir,
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return True
+        time.sleep(2)
+
+    return False
+
+
+def _stop_docker_containers():
+    """Stop Docker containers."""
+    docker_dir = _get_docker_compose_dir()
+    subprocess.run(
+        ["docker", "compose", "down", "-v"],
+        cwd=docker_dir,
+        capture_output=True,
+        timeout=60,
+    )
+
+
+@pytest.fixture(scope="session")
+def docker_containers(request):
+    """Session-scoped fixture to manage Docker containers.
+
+    Only starts containers if --docker flag is passed.
+    """
+    if not request.config.getoption("--docker"):
+        yield None
+        return
+
+    if not _is_docker_running():
+        pytest.skip("Docker daemon not running")
+
+    print("\nStarting Docker containers for E2E tests...")
+    if not _start_docker_containers():
+        pytest.fail("Failed to start Docker containers")
+
+    yield {
+        "node_alpha": "node-alpha",
+        "node_beta": "node-beta",
+        "alpha_users": ["alice", "bob"],
+        "beta_users": ["charlie", "dave"],
+        "docker_dir": _get_docker_compose_dir(),
+    }
+
+    print("\nStopping Docker containers...")
+    _stop_docker_containers()
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip e2e_docker tests unless --docker flag is passed or inside Docker."""
+    if config.getoption("--docker"):
+        # --docker passed, don't skip
+        return
+
+    # Check if we're inside Docker
+    if (
+        os.environ.get("NODE_ALPHA") is not None
+        or os.environ.get("NODE_BETA") is not None
+        or Path("/.dockerenv").exists()
+    ):
+        # Inside Docker, don't skip
+        return
+
+    # Skip all e2e_docker tests
+    skip_docker = pytest.mark.skip(
+        reason="Docker E2E tests require --docker flag or running inside Docker"
+    )
+    for item in items:
+        if "e2e_docker" in item.nodeid:
+            item.add_marker(skip_docker)
+
 
 # ---------------------------------------------------------------------------
 # Platform Detection
