@@ -119,6 +119,22 @@ A workspace corresponds to a project directory where the user invoked the AI ass
 | Codex CLI | Extracted from `cwd` field in session metadata |
 | Gemini CLI | SHA-256 hash of path, resolved via index |
 
+#### Hierarchical Workspaces
+
+Workspaces at different levels of a directory hierarchy are treated as **separate workspaces**. A parent directory and its subdirectory can each have their own sessions, and they are listed independently.
+
+**Example:**
+- `/home/user/projects/monorepo` - workspace with 3 sessions
+- `/home/user/projects/monorepo/packages/api` - separate workspace with 5 sessions
+- `/home/user/projects/monorepo/packages/web` - separate workspace with 2 sessions
+
+Each workspace is listed separately in `ws list` output. Users can combine related workspaces into a single **project** using `project add` if they want unified access.
+
+**Rationale:**
+- Users may work on different parts of a codebase independently
+- Parent and child directories often have different concerns (e.g., root for CI/docs, subdirs for code)
+- Merging would lose the distinction and make history harder to navigate
+
 #### Workspace Path Decoding (Claude Code)
 
 Claude Code encodes workspace paths by replacing `/` with `-`. Decoding these paths back to human-readable form is ambiguous when folder names contain dashes.
