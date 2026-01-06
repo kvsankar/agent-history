@@ -40,11 +40,11 @@ CURRENT_PLATFORM = get_current_platform()
 
 # Skip marker for tests that require WSL or Windows cross-platform access
 # On Linux: neither --wsl nor --windows available
-# On WSL: --wsl works but --windows may hang if no Windows access
-# On Windows: --windows works but --wsl may hang if no WSL access
+# On WSL: both --wsl and --windows work (can access Windows filesystem)
+# On Windows: --windows works, --wsl works if WSL installed
 skip_cross_platform = pytest.mark.skipif(
-    CURRENT_PLATFORM in ("linux", "wsl"),
-    reason="Cross-platform tests (--wsl/--windows) require Docker infrastructure - may timeout",
+    CURRENT_PLATFORM == "linux",
+    reason="Cross-platform tests (--wsl/--windows) not available on pure Linux",
 )
 
 from tests.helpers.cli import (

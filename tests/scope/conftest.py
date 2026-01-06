@@ -330,6 +330,9 @@ def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None
     env["CODEX_SESSIONS_DIR"] = str(codex_dir)
     env["GEMINI_SESSIONS_DIR"] = str(gemini_dir)
     env["HOME"] = str(tmp_path)
+    env["AGENT_HISTORY_HOME"] = str(tmp_path)
+    env["AGENT_HISTORY_HOME_WSL"] = str(tmp_path)
+    env["AGENT_HISTORY_HOME_WINDOWS"] = str(tmp_path)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
 
@@ -821,7 +824,10 @@ def current_workspace_setup(tmp_path: Path) -> Generator[Dict[str, Any], None, N
             },
             {
                 "type": "assistant",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": f"Response {i}"}]},
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": f"Response {i}"}],
+                },
                 "timestamp": timestamp,
                 "uuid": f"asst-{i}",
                 "sessionId": session_id,
