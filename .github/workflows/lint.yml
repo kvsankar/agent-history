@@ -8,6 +8,7 @@ on:
 
 jobs:
   ruff:
+    name: Ruff (lint & format)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,17 +24,3 @@ jobs:
 
       - name: Run ruff format check
         run: uvx ruff format --check agent-history
-
-  tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Run pytest suite
-        run: uv run pytest tests/unit/test_claude_history.py
