@@ -119,6 +119,54 @@ A workspace corresponds to a project directory where the user invoked the AI ass
 | Codex CLI | Extracted from `cwd` field in session metadata |
 | Gemini CLI | SHA-256 hash of path, resolved via index |
 
+#### Workspace Path Decoding (Claude Code)
+
+Claude Code encodes workspace paths by replacing `/` with `-`. Decoding these paths back to human-readable form is ambiguous when folder names contain dashes.
+
+**Example ambiguity:**
+- Encoded: `-home-alice-alice-projects-api`
+- Could decode to:
+  - `/home/alice/alice/projects/api` (correct)
+  - `/home/alice/alice-projects-api` (incorrect)
+  - `/home/alice/alice/projects-api` (incorrect)
+
+**Decoding algorithm:**
+
+1. **Filesystem probing:** Incrementally test path segments from left to right
+   - For encoded `-home-alice-alice-projects-api`:
+   - Test `/home` → exists → continue
+   - Test `/home/alice` → exists → continue
+   - Test `/home/alice/alice` → exists → continue
+   - Test `/home/alice/alice/projects` → exists → continue
+   - Test `/home/alice/alice/projects/api` → exists → return this path
+
+2. **Greedy matching:** When a segment doesn't exist, try progressively longer dash-joined combinations
+   - If `/home/alice/alice/projects/todo` doesn't exist:
+   - Try `/home/alice/alice/projects/todo-app` → if exists, continue
+   - Otherwise treat `todo-app` as a single segment (possibly non-existent leaf)
+
+3. **Non-existent paths:** When the final path doesn't exist on filesystem:
+   - The algorithm should still resolve parent segments correctly using filesystem probing
+   - Only the non-existent leaf portion remains ambiguous
+   - Prefer keeping the deepest resolvable parent structure
+
+**Expected behavior examples:**
+
+| Encoded Name | Filesystem State | Expected Decoded Path |
+|--------------|------------------|----------------------|
+| `-home-user-projects-my-app` | `/home/user/projects/my-app/` exists | `/home/user/projects/my-app` |
+| `-home-user-projects-my-app` | `/home/user/projects/` exists, `my-app/` doesn't | `/home/user/projects/my-app` |
+| `-home-alice-alice-projects-api` | Full path exists | `/home/alice/alice/projects/api` |
+| `-home-alice-alice-projects-api` | `/home/alice/alice/projects/` exists, `api/` doesn't | `/home/alice/alice/projects/api` |
+| `-home-alice-alice-projects-web-v2` | `/home/alice/alice/projects/web-v2/` exists | `/home/alice/alice/projects/web-v2` |
+
+**Non-goal behaviors (bugs):**
+
+| Encoded Name | Incorrect Decode | Reason |
+|--------------|-----------------|--------|
+| `-home-alice-alice-projects-api` | `/home/alice/alice-projects-api` | Merged segments incorrectly |
+| `-home-user-projects-my-app` | `/home/user/projects/my/app` | Split dashed folder name |
+
 ### Session
 
 A session is a single conversation file containing messages.
