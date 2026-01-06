@@ -179,11 +179,11 @@ class TestStatsGolden:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            # Count by role
-            cursor = conn.execute("SELECT role, COUNT(*) FROM messages GROUP BY role")
+            # Count by type (user/assistant)
+            cursor = conn.execute("SELECT type, COUNT(*) FROM messages GROUP BY type")
             counts = dict(cursor.fetchall())
         except sqlite3.OperationalError as e:
-            pytest.skip(f"messages table or role column not found: {e}")
+            pytest.skip(f"messages table or type column not found: {e}")
         finally:
             conn.close()
 
@@ -222,13 +222,16 @@ class TestStatsGolden:
         conn = sqlite3.connect(str(db_path))
         try:
             # Get all counts for invariant checking
+            # Only count user+assistant messages for the invariant (excludes system, tool, etc.)
             stats = {}
-            stats["messages"] = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            stats["messages"] = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE type IN ('user', 'assistant')"
+            ).fetchone()[0]
             stats["user_messages"] = conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE role = 'user'"
+                "SELECT COUNT(*) FROM messages WHERE type = 'user'"
             ).fetchone()[0]
             stats["assistant_messages"] = conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE role = 'assistant'"
+                "SELECT COUNT(*) FROM messages WHERE type = 'assistant'"
             ).fetchone()[0]
             stats["input_tokens"] = conn.execute(
                 "SELECT COALESCE(SUM(input_tokens), 0) FROM messages"
