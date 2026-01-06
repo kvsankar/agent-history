@@ -42,10 +42,10 @@ class TestToolCallCounts:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            cursor = conn.execute("SELECT name, COUNT(*) FROM tool_calls GROUP BY name")
+            cursor = conn.execute("SELECT tool_name, COUNT(*) FROM tool_uses GROUP BY tool_name")
             actual_tools = dict(cursor.fetchall())
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -76,10 +76,10 @@ class TestToolCallCounts:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            cursor = conn.execute("SELECT name, COUNT(*) FROM tool_calls GROUP BY name")
+            cursor = conn.execute("SELECT tool_name, COUNT(*) FROM tool_uses GROUP BY tool_name")
             actual_tools = dict(cursor.fetchall())
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -110,10 +110,10 @@ class TestToolCallCounts:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            cursor = conn.execute("SELECT name, COUNT(*) FROM tool_calls GROUP BY name")
+            cursor = conn.execute("SELECT tool_name, COUNT(*) FROM tool_uses GROUP BY tool_name")
             actual_tools = dict(cursor.fetchall())
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -144,10 +144,10 @@ class TestToolCallCounts:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            cursor = conn.execute("SELECT name, COUNT(*) FROM tool_calls GROUP BY name")
+            cursor = conn.execute("SELECT tool_name, COUNT(*) FROM tool_uses GROUP BY tool_name")
             actual_tools = dict(cursor.fetchall())
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -178,9 +178,9 @@ class TestToolCallCounts:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            total = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM tool_uses").fetchone()[0]
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -213,10 +213,10 @@ class TestMultiToolSession:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            cursor = conn.execute("SELECT name, COUNT(*) FROM tool_calls GROUP BY name")
+            cursor = conn.execute("SELECT tool_name, COUNT(*) FROM tool_uses GROUP BY tool_name")
             actual_tools = dict(cursor.fetchall())
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -247,9 +247,9 @@ class TestMultiToolSession:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            total = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM tool_uses").fetchone()[0]
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -281,10 +281,10 @@ class TestToolNormalization:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            cursor = conn.execute("SELECT DISTINCT name FROM tool_calls")
+            cursor = conn.execute("SELECT DISTINCT tool_name FROM tool_uses")
             tool_names = {row[0] for row in cursor}
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -313,10 +313,10 @@ class TestToolNormalization:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            cursor = conn.execute("SELECT DISTINCT name FROM tool_calls")
+            cursor = conn.execute("SELECT DISTINCT tool_name FROM tool_uses")
             tool_names = {row[0] for row in cursor}
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -344,10 +344,10 @@ class TestToolNormalization:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            cursor = conn.execute("SELECT DISTINCT name FROM tool_calls")
+            cursor = conn.execute("SELECT DISTINCT tool_name FROM tool_uses")
             tool_names = {row[0] for row in cursor}
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -382,12 +382,12 @@ class TestToolCallsBySession:
         try:
             cursor = conn.execute(
                 """SELECT session_id, COUNT(*)
-                FROM tool_calls
+                FROM tool_uses
                 GROUP BY session_id"""
             )
             session_tool_counts = dict(cursor.fetchall())
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 

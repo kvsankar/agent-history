@@ -400,10 +400,10 @@ class TestToolInvariants:
         conn = sqlite3.connect(str(db_path))
         try:
             null_names = conn.execute(
-                "SELECT COUNT(*) FROM tool_calls WHERE name IS NULL"
+                "SELECT COUNT(*) FROM tool_uses WHERE tool_name IS NULL"
             ).fetchone()[0]
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 
@@ -453,16 +453,16 @@ class TestToolInvariants:
 
         conn = sqlite3.connect(str(db_path))
         try:
-            total = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM tool_uses").fetchone()[0]
 
             grouped_sum = (
                 conn.execute(
-                    "SELECT SUM(cnt) FROM (SELECT COUNT(*) as cnt FROM tool_calls GROUP BY name)"
+                    "SELECT SUM(cnt) FROM (SELECT COUNT(*) as cnt FROM tool_uses GROUP BY tool_name)"
                 ).fetchone()[0]
                 or 0
             )
         except sqlite3.OperationalError as e:
-            pytest.skip(f"tool_calls table not found: {e}")
+            pytest.skip(f"tool_uses table not found: {e}")
         finally:
             conn.close()
 

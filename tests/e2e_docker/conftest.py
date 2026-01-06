@@ -1,0 +1,185 @@
+"""Fixtures for Docker-based E2E tests.
+
+These tests run inside the test-runner container with SSH access to node-alpha and node-beta.
+
+Usage:
+    cd docker
+    docker compose up -d --build
+    docker compose run --rm test-runner pytest tests/e2e_docker/ -v
+    docker compose down -v
+"""
+
+import os
+import subprocess
+from pathlib import Path
+from typing import Any, Dict, Generator
+
+import pytest
+
+# Mark all tests in this directory as e2e_docker
+pytestmark = pytest.mark.e2e_docker
+
+
+def is_docker_environment() -> bool:
+    """Check if we're running inside the Docker test environment."""
+    # Check for environment variables set by docker-compose
+    return (
+        os.environ.get("NODE_ALPHA") is not None
+        or os.environ.get("NODE_BETA") is not None
+        or Path("/.dockerenv").exists()
+    )
+
+
+def skip_if_not_docker():
+    """Skip test if not running in Docker environment."""
+    if not is_docker_environment():
+        pytest.skip("Requires Docker test environment (run via docker compose)")
+
+
+@pytest.fixture(scope="session")
+def docker_env() -> Dict[str, str]:
+    """Get Docker environment configuration."""
+    skip_if_not_docker()
+    return {
+        "node_alpha": os.environ.get("NODE_ALPHA", "node-alpha"),
+        "node_beta": os.environ.get("NODE_BETA", "node-beta"),
+        "alpha_users": os.environ.get("ALPHA_USERS", "alice,bob").split(","),
+        "beta_users": os.environ.get("BETA_USERS", "charlie,dave").split(","),
+    }
+
+
+@pytest.fixture(scope="session")
+def cli_path() -> Path:
+    """Get path to agent-history CLI."""
+    # In Docker, the project is mounted at /app
+    cli = Path("/app/agent-history")
+    if not cli.exists():
+        # Fallback for local development
+        cli = Path(__file__).parent.parent.parent / "agent-history"
+    return cli
+
+
+def run_cli(
+    args: list,
+    cli_path: Path = None,
+    env: Dict[str, str] = None,
+    timeout: int = 30,
+) -> subprocess.CompletedProcess:
+    """Run agent-history CLI command.
+
+    Args:
+        args: CLI arguments (without the script name)
+        cli_path: Path to agent-history script
+        env: Additional environment variables
+        timeout: Command timeout in seconds
+
+    Returns:
+        CompletedProcess with stdout, stderr, returncode
+    """
+    if cli_path is None:
+        cli_path = Path("/app/agent-history")
+
+    cmd = ["python3", str(cli_path)] + args
+
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=run_env,
+    )
+
+
+def ssh_run(
+    host: str,
+    user: str,
+    command: str,
+    timeout: int = 30,
+) -> subprocess.CompletedProcess:
+    """Run command on remote host via SSH.
+
+    Args:
+        host: SSH hostname (e.g., node-alpha)
+        user: SSH username (e.g., alice)
+        command: Command to execute remotely
+        timeout: Command timeout in seconds
+
+    Returns:
+        CompletedProcess with stdout, stderr, returncode
+    """
+    ssh_cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=ERROR",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=10",
+        f"{user}@{host}",
+        command,
+    ]
+
+    return subprocess.run(
+        ssh_cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+@pytest.fixture
+def run_remote_cli(docker_env, cli_path):
+    """Factory fixture for running CLI with remote host.
+
+    Returns a function that runs agent-history with -r flag.
+    """
+    def _run(args: list, user: str, host: str = None, env: Dict = None) -> subprocess.CompletedProcess:
+        if host is None:
+            host = docker_env["node_alpha"]
+        remote_args = ["-r", f"{user}@{host}"] + args
+        return run_cli(remote_args, cli_path, env)
+
+    return _run
+
+
+@pytest.fixture
+def ssh_to_alpha(docker_env):
+    """Factory fixture for SSH to node-alpha."""
+    def _ssh(user: str, command: str) -> subprocess.CompletedProcess:
+        return ssh_run(docker_env["node_alpha"], user, command)
+    return _ssh
+
+
+@pytest.fixture
+def ssh_to_beta(docker_env):
+    """Factory fixture for SSH to node-beta."""
+    def _ssh(user: str, command: str) -> subprocess.CompletedProcess:
+        return ssh_run(docker_env["node_beta"], user, command)
+    return _ssh
+
+
+@pytest.fixture
+def alice_remote(docker_env) -> str:
+    """Get alice@node-alpha remote string."""
+    return f"alice@{docker_env['node_alpha']}"
+
+
+@pytest.fixture
+def bob_remote(docker_env) -> str:
+    """Get bob@node-alpha remote string."""
+    return f"bob@{docker_env['node_alpha']}"
+
+
+@pytest.fixture
+def charlie_remote(docker_env) -> str:
+    """Get charlie@node-beta remote string."""
+    return f"charlie@{docker_env['node_beta']}"
+
+
+@pytest.fixture
+def dave_remote(docker_env) -> str:
+    """Get dave@node-beta remote string."""
+    return f"dave@{docker_env['node_beta']}"
