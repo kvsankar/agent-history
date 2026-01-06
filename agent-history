@@ -4661,6 +4661,9 @@ def _resolve_path_segments(parts: list[str], base_path: Path) -> list[str]:
     Tries progressively longer combinations of parts to handle directory
     names that contain dashes (e.g., 'my-project' encoded as 'my-project').
 
+    When a path segment doesn't exist but the parent does, remaining parts
+    are joined with dashes to preserve potential dashed folder names.
+
     Args:
         parts: List of dash-split path components
         base_path: Base path to verify against filesystem
@@ -4681,9 +4684,23 @@ def _resolve_path_segments(parts: list[str], base_path: Path) -> list[str]:
             path_segments.append(match)
             i += consumed
         else:
-            # No match - use single part as-is
-            path_segments.append(parts[i])
-            i += 1
+            # No filesystem match found - check if this is a non-existent leaf
+            # If the current path exists (parent found) but the next segment doesn't,
+            # join all remaining parts as a single dashed segment (preserves folder names with dashes)
+            try:
+                parent_exists = current_path.exists() and current_path.is_dir()
+            except OSError:
+                parent_exists = False
+
+            if parent_exists and i < len(parts):
+                # Parent exists, join remaining parts as a single leaf segment
+                remaining = "-".join(parts[i:])
+                path_segments.append(remaining)
+                break
+            else:
+                # No parent context, use single part as-is
+                path_segments.append(parts[i])
+                i += 1
 
     return path_segments
 
@@ -4872,14 +4889,17 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Optional[P
     if not verify_local:
         return "/" + encoded.replace("-", "/")
 
-    effective_base = base_path if base_path else Path("/")
+    # Use AGENT_HISTORY_HOME as base for filesystem probing if set (for testing)
+    # This allows verifying paths against a mock filesystem
+    agent_home = os.environ.get("AGENT_HISTORY_HOME")
+    if agent_home and not base_path:
+        effective_base = Path(agent_home)
+    else:
+        effective_base = base_path if base_path else Path("/")
     path_segments = _resolve_path_segments(parts, effective_base)
 
-    # If resolution found no real merges (pure fallback), keep hyphens in the last segment
-    if path_segments == parts:
-        path_segments = (
-            [*parts[:2], "-".join(parts[2:])] if len(parts) > MIN_WINDOWS_PATH_LEN else parts
-        )
+    # path_segments now contains the best resolution based on filesystem probing
+    # If no directories matched, each part becomes a separate segment (correct behavior)
 
     path_segments, partial_marker = _apply_windows_base_resolution(parts, base_path, path_segments)
 
