@@ -114,12 +114,7 @@ CRITICAL_SCOPE_COMBOS = [
     ("pattern", "all", "agent_claude"),
     # Multi-home
     pytest.param("all", "wsl", "none", marks=skip_cross_platform),
-    pytest.param(
-        "all",
-        "remote",
-        "none",
-        marks=pytest.mark.skip(reason="Requires Docker SSH infrastructure - Agent 8"),
-    ),
+    # Note: Remote SSH tests are in tests/e2e_docker/
     ("all", "all_no_wsl", "none"),
     # Project scope
     ("project", "local", "none"),
@@ -198,13 +193,10 @@ class TestWorkspaceHomeMatrix:
             [],  # local (default)
             pytest.param(["--wsl"], marks=skip_cross_platform),
             pytest.param(["--windows"], marks=skip_cross_platform),
-            pytest.param(
-                ["-r", "user@example.com"],
-                marks=pytest.mark.skip(reason="Requires Docker SSH infrastructure - Agent 8"),
-            ),
+            # Note: Remote SSH tests (-r) are in tests/e2e_docker/
             ["--ah"],
         ],
-        ids=["local", "wsl", "windows", "remote", "all_homes"],
+        ids=["local", "wsl", "windows", "all_homes"],
     )
     def test_all_workspaces_basic_with_homes(
         self,
@@ -229,13 +221,9 @@ class TestWorkspaceHomeMatrix:
             [],
             pytest.param(["--wsl"], marks=skip_cross_platform),
             pytest.param(["--windows"], marks=skip_cross_platform),
-            pytest.param(
-                ["-r", "user@example.com"],
-                marks=pytest.mark.skip(reason="Requires Docker SSH infrastructure - Agent 8"),
-            ),
             ["--ah"],
         ],
-        ids=["local", "wsl", "windows", "remote", "all_homes"],
+        ids=["local", "wsl", "windows", "all_homes"],
     )
     def test_named_workspace_with_homes(
         self,
@@ -255,13 +243,9 @@ class TestWorkspaceHomeMatrix:
             [],
             pytest.param(["--wsl"], marks=skip_cross_platform),
             pytest.param(["--windows"], marks=skip_cross_platform),
-            pytest.param(
-                ["-r", "user@example.com"],
-                marks=pytest.mark.skip(reason="Requires Docker SSH infrastructure - Agent 8"),
-            ),
             ["--ah"],
         ],
-        ids=["local", "wsl", "windows", "remote", "all_homes"],
+        ids=["local", "wsl", "windows", "all_homes"],
     )
     def test_pattern_workspace_with_homes(
         self,
@@ -281,13 +265,9 @@ class TestWorkspaceHomeMatrix:
             [],
             pytest.param(["--wsl"], marks=skip_cross_platform),
             pytest.param(["--windows"], marks=skip_cross_platform),
-            pytest.param(
-                ["-r", "user@example.com"],
-                marks=pytest.mark.skip(reason="Requires Docker SSH infrastructure - Agent 8"),
-            ),
             ["--ah"],
         ],
-        ids=["local", "wsl", "windows", "remote", "all_homes"],
+        ids=["local", "wsl", "windows", "all_homes"],
     )
     def test_all_workspaces_with_homes(
         self,
@@ -307,13 +287,9 @@ class TestWorkspaceHomeMatrix:
             [],
             pytest.param(["--wsl"], marks=skip_cross_platform),
             pytest.param(["--windows"], marks=skip_cross_platform),
-            pytest.param(
-                ["-r", "user@example.com"],
-                marks=pytest.mark.skip(reason="Requires Docker SSH infrastructure - Agent 8"),
-            ),
             ["--ah"],
         ],
-        ids=["local", "wsl", "windows", "remote", "all_homes"],
+        ids=["local", "wsl", "windows", "all_homes"],
     )
     def test_project_scope_with_homes(
         self,
