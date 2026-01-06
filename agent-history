@@ -5376,7 +5376,15 @@ def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
 
     Returns:
         Path to Windows home directory, or None if not found.
+
+    If AGENT_HISTORY_HOME_WINDOWS is set, uses that path instead of probing
+    the real Windows filesystem (for testing).
     """
+    # Check for test override - use injected Windows home path
+    windows_home_override = os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
+    if windows_home_override:
+        return Path(windows_home_override)
+
     cache_key = username or "_default_"
     cache = _get_windows_home_cache()
 
@@ -5432,9 +5440,11 @@ def _scan_users_in_drive(drive: Path, results: list):
 def get_windows_users_with_claude():
     """Get list of all Windows users with Claude Code installed.
 
-    If CLAUDE_SKIP_WINDOWS_SCAN=1 is set, skip Windows scanning entirely (for fast tests).
+    If AGENT_HISTORY_HOME_WINDOWS is set, returns empty list to skip real
+    Windows filesystem scanning (for testing with injected fixtures).
     """
-    if os.environ.get("CLAUDE_SKIP_WINDOWS_SCAN") == "1":
+    # If Windows home is overridden for testing, skip real drive scanning
+    if os.environ.get("AGENT_HISTORY_HOME_WINDOWS"):
         return []
 
     results = []
@@ -5683,10 +5693,11 @@ def get_wsl_distributions() -> list:
         then return a single entry using those values. This enables real
         filesystem E2E tests without mocking wsl.exe.
 
-        If CLAUDE_SKIP_WSL_SCAN=1 is set, skip WSL scanning entirely (for fast tests).
+        If AGENT_HISTORY_HOME_WSL is set, skip WSL scanning entirely (for testing
+        with injected fixtures).
     """
-    # Skip WSL scanning if requested (for fast tests)
-    if os.environ.get("CLAUDE_SKIP_WSL_SCAN") == "1":
+    # Skip WSL scanning if WSL home is overridden for testing
+    if os.environ.get("AGENT_HISTORY_HOME_WSL"):
         return []
 
     # Test override
@@ -6082,9 +6093,19 @@ def get_agent_windows_dir(username: Optional[str], agent: str):
     Returns:
         Path to agent's sessions directory, or None if not found.
 
-    If CLAUDE_SKIP_WINDOWS_SCAN=1 is set, skip Windows scanning entirely (for fast tests).
+    If AGENT_HISTORY_HOME_WINDOWS is set, uses that path to construct the agent
+    directory instead of probing real Windows filesystem (for testing).
     """
-    if os.environ.get("CLAUDE_SKIP_WINDOWS_SCAN") == "1":
+    # Check for test override - use injected Windows home path
+    windows_home_override = os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
+    if windows_home_override:
+        home = Path(windows_home_override)
+        if agent == AGENT_CLAUDE:
+            return home / ".claude" / "projects"
+        elif agent == AGENT_CODEX:
+            return home / ".codex" / "sessions"
+        elif agent == AGENT_GEMINI:
+            return home / ".gemini" / "tmp"
         return None
 
     if agent == AGENT_CLAUDE:
@@ -9226,8 +9247,8 @@ def cmd_project_lss(
             )
         else:
             agent_msg = f" for agent '{agent}'" if agent != "auto" else ""
-            sys.stderr.write(f"Error: No sessions found in project '{alias_name}'{agent_msg}\n")
-        sys.exit(1)
+            sys.stderr.write(f"No sessions found in project '{alias_name}'{agent_msg}\n")
+        return
 
     _print_alias_sessions(all_sessions)
 
@@ -12587,7 +12608,8 @@ def _list_ssh_remote_sessions(args, patterns: list, since_date, until_date):
             remote_host, patterns, since_date, until_date, agent
         )
         if not sessions:
-            exit_with_error("No sessions found")
+            sys.stderr.write("No sessions found\n")
+            return
         print_sessions_output(
             sessions,
             f"Remote ({remote_host})",
@@ -12629,8 +12651,7 @@ def _list_local_sessions(args, patterns: list, since_date, until_date):
                     date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
                 sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
             else:
-                sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
-            sys.exit(1)
+                sys.stderr.write(f"No sessions found matching '{pattern_str}'\n")
         return
 
     in_wsl = is_running_in_wsl()
@@ -12875,8 +12896,8 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
         )
 
     if not sessions:
-        sys.stderr.write(f"Error: No sessions found in WSL '{distro_name}'\n")
-        sys.exit(1)
+        sys.stderr.write(f"No sessions found in WSL '{distro_name}'\n")
+        return []
 
     return sessions
 
@@ -13469,7 +13490,7 @@ def _handle_empty_sessions(patterns: list, since_date, until_date, lenient: bool
             date_range.append(f"until {until_date.strftime('%Y-%m-%d')}")
         sys.stderr.write(f"No sessions found {' '.join(date_range)}\n")
     else:
-        sys.stderr.write(f"Error: No sessions found matching '{pattern_str}'\n")
+        sys.stderr.write(f"No sessions found matching '{pattern_str}'\n")
     return False
 
 
@@ -17438,8 +17459,7 @@ def _route_export(args, output_dir: Union[str, Path], final_patterns: list, fina
             _dispatch_export_web(args, output_dir)
     else:
         final_remote = final_remotes[0] if final_remotes else None
-        if not cmd_batch(_build_export_config(args, output_dir, final_patterns, final_remote)):
-            sys.exit(1)
+        cmd_batch(_build_export_config(args, output_dir, final_patterns, final_remote))
 
 
 def _export_single_web_session(
