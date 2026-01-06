@@ -229,64 +229,9 @@ class TestWindowsHomeScope:
 
 
 # ---------------------------------------------------------------------------
-# Remote Home (-r user@host)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skip(reason="SSH tests require Docker infrastructure - see Agent 8: Docker SSH Tests")
-class TestRemoteHomeScope:
-    """Tests for -r/--remote home scope."""
-
-    def test_remote_flag_syntax(self, multi_home_setup: Dict[str, Any]) -> None:
-        """Remote flag accepts user@host format.
-
-        Spec: "-r <user@host> - SSH remote (repeatable)"
-        """
-        run_cli_subprocess(
-            ["session", "list", "-r", "user@example.com", "--aw"],
-            env=multi_home_setup["env"],
-        )
-
-        # Will fail to connect (no real SSH), but syntax should be valid
-
-    def test_remote_flag_multiple_hosts(self, multi_home_setup: Dict[str, Any]) -> None:
-        """Multiple -r flags for multiple remotes.
-
-        Spec: "-r is repeatable"
-        """
-        run_cli_subprocess(
-            ["session", "list", "-r", "user@host1", "-r", "user@host2", "--aw"],
-            env=multi_home_setup["env"],
-        )
-
-        # Syntax should be valid even if connection fails
-
-    def test_remote_flag_with_ws_list(self, multi_home_setup: Dict[str, Any]) -> None:
-        """ws list with remote shows remote workspaces."""
-        run_cli_subprocess(
-            ["ws", "list", "-r", "user@example.com"],
-            env=multi_home_setup["env"],
-        )
-
-        # Will fail to connect but syntax valid
-
-    def test_remote_connection_failure_handling(self, multi_home_setup: Dict[str, Any]) -> None:
-        """Remote connection failure should error gracefully.
-
-        Spec: "SSH connection failed: Connection refused"
-        """
-        run_cli_subprocess(
-            ["session", "list", "-r", "user@nonexistent-host-12345"],
-            env=multi_home_setup["env"],
-            timeout=10,  # Short timeout for connection failure
-        )
-
-        # Should error but not hang
-
-
-# ---------------------------------------------------------------------------
 # Named Home (--home <name>)
 # ---------------------------------------------------------------------------
+# Note: Remote SSH tests (-r user@host) are in tests/e2e_docker/
 
 
 class TestNamedHomeScope:
@@ -677,17 +622,6 @@ class TestHomeScopeEdgeCases:
 
         # Should complete, possibly with warnings
 
-    @pytest.mark.skip(reason="SSH tests require Docker infrastructure - see Agent 8")
-    def test_home_unreachable_specific(self, multi_home_setup: Dict[str, Any]) -> None:
-        """Specific unreachable home should error."""
-        run_cli_subprocess(
-            ["session", "list", "-r", "user@nonexistent-host", "--aw"],
-            env=multi_home_setup["env"],
-            timeout=10,
-        )
-
-        # Should error for specific unreachable home
-
     def test_empty_home(self, multi_home_setup: Dict[str, Any]) -> None:
         """Home with no sessions should return empty, not error."""
         run_cli_subprocess(
@@ -710,11 +644,7 @@ class TestHomeScopeEdgeCases:
         (["--home", "local"], "named local home"),
         (["--wsl"], "WSL home"),
         (["--windows"], "Windows home"),
-        pytest.param(
-            ["-r", "user@example.com"],
-            "remote home",
-            marks=pytest.mark.skip(reason="SSH tests require Docker"),
-        ),
+        # Note: Remote SSH tests (-r user@host) are in tests/e2e_docker/
         (["--ah"], "all homes short"),
         (["--all-homes"], "all homes long"),
         (["--home", "local", "--home", "wsl"], "multiple named homes"),
