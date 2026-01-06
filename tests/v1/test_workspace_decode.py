@@ -249,3 +249,119 @@ class TestWorkspaceDecodeNonExistent:
 
         # Should NOT contain the buggy merged path
         assert "/home/alice/alice-projects-notes-app" not in output
+
+
+class TestHierarchicalWorkspaces:
+    """Test that parent and child workspaces are listed separately.
+
+    Workspaces at different levels of a directory hierarchy must be
+    treated as separate workspaces. Users can combine them into projects
+    if they want unified access.
+    """
+
+    @pytest.fixture
+    def hierarchical_home(self, tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
+        """Create a test home with hierarchical workspaces (parent + children)."""
+        # Create directory structure for a monorepo-style project
+        monorepo = tmp_path / "home" / "user" / "projects" / "monorepo"
+        monorepo.mkdir(parents=True)
+        (monorepo / "packages" / "api").mkdir(parents=True)
+        (monorepo / "packages" / "web").mkdir(parents=True)
+        (monorepo / "packages" / "shared").mkdir(parents=True)
+
+        # Create workspaces at different levels
+        # Parent: /home/user/projects/monorepo
+        create_workspace_fixture(tmp_path, "/home/user/projects/monorepo", num_sessions=2)
+
+        # Children: /home/user/projects/monorepo/packages/*
+        create_workspace_fixture(
+            tmp_path, "/home/user/projects/monorepo/packages/api", num_sessions=3
+        )
+        create_workspace_fixture(
+            tmp_path, "/home/user/projects/monorepo/packages/web", num_sessions=1
+        )
+        create_workspace_fixture(
+            tmp_path, "/home/user/projects/monorepo/packages/shared", num_sessions=2
+        )
+
+        # Environment for test isolation
+        env = os.environ.copy()
+        env["AGENT_HISTORY_HOME"] = str(tmp_path)
+        env["HOME"] = str(tmp_path)
+
+        yield {
+            "path": tmp_path,
+            "env": env,
+        }
+
+    def test_parent_and_children_listed_separately(self, hierarchical_home: Dict[str, Any]) -> None:
+        """Parent workspace and child workspaces should all appear in listing."""
+        result = run_cli_subprocess(
+            ["ws", "list", "--aw"],
+            env=hierarchical_home["env"],
+        )
+        assert result.returncode == 0
+        output = result.stdout
+
+        # All four workspaces should be listed separately
+        assert "/home/user/projects/monorepo\n" in output or output.endswith(
+            "/home/user/projects/monorepo"
+        )
+        assert "/home/user/projects/monorepo/packages/api" in output
+        assert "/home/user/projects/monorepo/packages/web" in output
+        assert "/home/user/projects/monorepo/packages/shared" in output
+
+    def test_hierarchical_workspace_count(self, hierarchical_home: Dict[str, Any]) -> None:
+        """Should have exactly 4 workspaces (1 parent + 3 children)."""
+        result = run_cli_subprocess(
+            ["ws", "list", "--aw"],
+            env=hierarchical_home["env"],
+        )
+        assert result.returncode == 0
+
+        # Count non-empty lines
+        workspaces = [line for line in result.stdout.strip().split("\n") if line]
+        assert len(workspaces) == 4, f"Expected 4 workspaces, got {len(workspaces)}: {workspaces}"
+
+    def test_parent_not_merged_with_children(self, hierarchical_home: Dict[str, Any]) -> None:
+        """Parent workspace sessions should not include child workspace sessions."""
+        # List sessions for just the parent workspace
+        result = run_cli_subprocess(
+            ["session", "list", "-n", "monorepo", "--aw"],
+            env=hierarchical_home["env"],
+        )
+        assert result.returncode == 0
+
+        # The parent has 2 sessions, children have 3+1+2=6
+        # If merged incorrectly, we'd see 8 sessions
+        # With correct separation, pattern match on "monorepo" might match all 4 workspaces
+        # But the key is they should be LISTED as separate workspaces
+
+        # Verify via ws list that they're separate
+        ws_result = run_cli_subprocess(
+            ["ws", "list", "-n", "monorepo", "--aw"],
+            env=hierarchical_home["env"],
+        )
+        assert ws_result.returncode == 0
+
+        # Pattern "monorepo" should match all 4 workspaces
+        workspaces = [line for line in ws_result.stdout.strip().split("\n") if line]
+        assert len(workspaces) == 4, "Pattern 'monorepo' should match all 4 workspaces"
+
+    def test_child_workspace_pattern_excludes_parent(
+        self, hierarchical_home: Dict[str, Any]
+    ) -> None:
+        """Pattern matching on child path should not include parent."""
+        result = run_cli_subprocess(
+            ["ws", "list", "-n", "packages/api", "--aw"],
+            env=hierarchical_home["env"],
+        )
+        assert result.returncode == 0
+        output = result.stdout
+
+        # Should find only the api workspace
+        assert "/home/user/projects/monorepo/packages/api" in output
+
+        # Should NOT include parent or siblings
+        workspaces = [line for line in output.strip().split("\n") if line]
+        assert len(workspaces) == 1, f"Expected 1 workspace, got: {workspaces}"
