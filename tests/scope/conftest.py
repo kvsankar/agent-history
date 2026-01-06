@@ -7,6 +7,7 @@ homes for testing scope modifiers (--aw, --ah, -n, --project, --wsl, --windows, 
 import hashlib
 import json
 import os
+import shutil
 import sys
 import uuid
 from datetime import datetime, timedelta
@@ -14,6 +15,29 @@ from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Platform Detection
+# ---------------------------------------------------------------------------
+
+
+def is_wsl() -> bool:
+    """Check if running in WSL."""
+    try:
+        return "microsoft" in os.uname().release.lower()
+    except AttributeError:
+        return False
+
+
+def get_windows_tmp_path() -> Optional[Path]:
+    """Get a temp path on Windows filesystem accessible from WSL."""
+    if not is_wsl():
+        return None
+    windows_tmp = Path("/mnt/c/tmp")
+    if windows_tmp.exists() or windows_tmp.parent.exists():
+        return windows_tmp
+    return None
+
 
 from tests.helpers.session_builders import (
     ClaudeSessionBuilder,
@@ -249,7 +273,7 @@ def create_gemini_sessions(
 
 
 @pytest.fixture
-def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
+def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:  # noqa: PLR0915
     """Create a single home with multiple workspaces for workspace scope testing.
 
     Creates workspaces:
@@ -332,22 +356,51 @@ def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None
     env["HOME"] = str(tmp_path)
     env["AGENT_HISTORY_HOME"] = str(tmp_path)
     env["AGENT_HISTORY_HOME_WSL"] = str(tmp_path)
-    env["AGENT_HISTORY_HOME_WINDOWS"] = str(tmp_path)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
 
-    yield {
-        "path": tmp_path,
-        "env": env,
-        "claude_dir": claude_dir,
-        "codex_dir": codex_dir,
-        "gemini_dir": gemini_dir,
-        "workspaces": workspaces,
-        "session_counts": session_counts,
-        "agent_counts": agent_counts,
-        "total_sessions": len(all_sessions),
-        "all_sessions": all_sessions,
-    }
+    # For Windows home on WSL, use actual Windows filesystem
+    windows_home_path = None
+    if is_wsl():
+        windows_tmp = get_windows_tmp_path()
+        if windows_tmp:
+            windows_home_path = windows_tmp / f"agent-history-test-{uuid.uuid4().hex[:8]}"
+            windows_home_path.mkdir(parents=True, exist_ok=True)
+            # Create Claude/Codex/Gemini dirs on Windows
+            win_claude = windows_home_path / ".claude" / "projects"
+            win_codex = windows_home_path / ".codex" / "sessions"
+            win_gemini = windows_home_path / ".gemini" / "tmp"
+            win_claude.mkdir(parents=True)
+            win_codex.mkdir(parents=True)
+            win_gemini.mkdir(parents=True)
+            # Create a test session on Windows home
+            create_claude_sessions(
+                win_claude, "win-project", "/mnt/c/projects/win-project", 1, base_date
+            )
+            env["AGENT_HISTORY_HOME_WINDOWS"] = str(windows_home_path)
+
+    # Fallback if not on WSL or can't access Windows
+    if "AGENT_HISTORY_HOME_WINDOWS" not in env:
+        env["AGENT_HISTORY_HOME_WINDOWS"] = str(tmp_path)
+
+    try:
+        yield {
+            "path": tmp_path,
+            "env": env,
+            "claude_dir": claude_dir,
+            "codex_dir": codex_dir,
+            "gemini_dir": gemini_dir,
+            "workspaces": workspaces,
+            "session_counts": session_counts,
+            "agent_counts": agent_counts,
+            "total_sessions": len(all_sessions),
+            "all_sessions": all_sessions,
+            "windows_home": windows_home_path,
+        }
+    finally:
+        # Cleanup Windows home if created
+        if windows_home_path and windows_home_path.exists():
+            shutil.rmtree(windows_home_path, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
