@@ -7,7 +7,7 @@ import pytest
 import tempfile
 from pathlib import Path
 
-from .conftest import run_cli, skip_if_not_docker
+from .conftest import run_cli
 
 
 class TestRemoteWorkspaceList:
@@ -15,7 +15,6 @@ class TestRemoteWorkspaceList:
 
     def test_ws_remote_lists_workspaces(self, docker_env, cli_path):
         """ws -r lists workspaces from remote host."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(["ws", "-r", f"alice@{node}"], cli_path)
 
@@ -25,7 +24,6 @@ class TestRemoteWorkspaceList:
 
     def test_ws_remote_different_users(self, docker_env, cli_path):
         """ws -r shows different workspaces for different users."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
 
         # Alice's workspaces
@@ -42,7 +40,6 @@ class TestRemoteWorkspaceList:
 
     def test_ws_remote_pattern_filter(self, docker_env, cli_path):
         """ws -r with pattern filters workspaces."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(["ws", "-r", f"alice@{node}", "-n", "myproject"], cli_path)
 
@@ -54,7 +51,6 @@ class TestRemoteSessionList:
 
     def test_session_list_remote(self, docker_env, cli_path):
         """session list -r shows sessions from remote host."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(
             ["session", "list", "-r", f"alice@{node}", "--aw"],
@@ -69,7 +65,6 @@ class TestRemoteSessionList:
 
     def test_session_list_remote_with_workspace(self, docker_env, cli_path):
         """session list -r with workspace pattern."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(
             ["session", "list", "-r", f"alice@{node}", "myproject"],
@@ -80,7 +75,6 @@ class TestRemoteSessionList:
 
     def test_session_list_remote_claude_agent(self, docker_env, cli_path):
         """session list -r --agent claude filters to Claude sessions."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(
             ["session", "list", "-r", f"alice@{node}", "--aw", "--agent", "claude"],
@@ -91,7 +85,6 @@ class TestRemoteSessionList:
 
     def test_session_list_remote_codex_agent(self, docker_env, cli_path):
         """session list -r --agent codex filters to Codex sessions."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(
             ["session", "list", "-r", f"alice@{node}", "--aw", "--agent", "codex"],
@@ -102,7 +95,6 @@ class TestRemoteSessionList:
 
     def test_session_list_remote_gemini_agent(self, docker_env, cli_path):
         """session list -r --agent gemini filters to Gemini sessions."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(
             ["session", "list", "-r", f"alice@{node}", "--aw", "--agent", "gemini"],
@@ -117,7 +109,6 @@ class TestRemoteExport:
 
     def test_export_remote_creates_files(self, docker_env, cli_path):
         """session export -r creates markdown files locally."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -142,7 +133,6 @@ class TestRemoteExport:
 
     def test_export_remote_with_agent_filter(self, docker_env, cli_path):
         """session export -r --agent filters exports."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -165,7 +155,6 @@ class TestRemoteStats:
 
     def test_stats_remote_basic(self, docker_env, cli_path):
         """session stats -r shows stats from remote host."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(
             ["session", "stats", "-r", f"alice@{node}", "--aw"],
@@ -178,7 +167,6 @@ class TestRemoteStats:
 
     def test_stats_remote_by_model(self, docker_env, cli_path):
         """session stats -r --by model groups by model."""
-        skip_if_not_docker()
         node = docker_env["node_alpha"]
         result = run_cli(
             ["session", "stats", "-r", f"alice@{node}", "--aw", "--by", "model"],
@@ -193,7 +181,6 @@ class TestCrossNodeOperations:
 
     def test_ws_multiple_remotes(self, docker_env, cli_path):
         """ws with multiple -r flags lists from all remotes."""
-        skip_if_not_docker()
         alpha = docker_env["node_alpha"]
         beta = docker_env["node_beta"]
 
@@ -206,7 +193,6 @@ class TestCrossNodeOperations:
 
     def test_session_list_multiple_remotes(self, docker_env, cli_path):
         """session list with multiple -r flags lists from all remotes."""
-        skip_if_not_docker()
         alpha = docker_env["node_alpha"]
         beta = docker_env["node_beta"]
 

@@ -1,18 +1,22 @@
 """Fixtures for Docker-based E2E tests.
 
-These tests run inside the test-runner container with SSH access to node-alpha and node-beta.
+These tests run inside the test-runner Docker container.
 
 Usage:
+    # Option 1: Via docker compose directly
     cd docker
     docker compose up -d --build
     docker compose run --rm test-runner pytest tests/e2e_docker/ -v
     docker compose down -v
+
+    # Option 2: Via pytest --docker flag (handles container lifecycle)
+    uv run pytest --docker -v
 """
 
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Generator
+from typing import Any, Dict
 
 import pytest
 
@@ -20,26 +24,9 @@ import pytest
 pytestmark = pytest.mark.e2e_docker
 
 
-def is_docker_environment() -> bool:
-    """Check if we're running inside the Docker test environment."""
-    # Check for environment variables set by docker-compose
-    return (
-        os.environ.get("NODE_ALPHA") is not None
-        or os.environ.get("NODE_BETA") is not None
-        or Path("/.dockerenv").exists()
-    )
-
-
-def skip_if_not_docker():
-    """Skip test if not running in Docker environment."""
-    if not is_docker_environment():
-        pytest.skip("Requires Docker test environment (run via docker compose)")
-
-
 @pytest.fixture(scope="session")
-def docker_env() -> Dict[str, str]:
+def docker_env() -> Dict[str, Any]:
     """Get Docker environment configuration."""
-    skip_if_not_docker()
     return {
         "node_alpha": os.environ.get("NODE_ALPHA", "node-alpha"),
         "node_beta": os.environ.get("NODE_BETA", "node-beta"),
@@ -128,6 +115,15 @@ def ssh_run(
         text=True,
         timeout=timeout,
     )
+
+
+@pytest.fixture
+def cli_runner(docker_env, cli_path):
+    """Factory fixture for running CLI commands."""
+    def _run(args: list, env: Dict = None, timeout: int = 30) -> subprocess.CompletedProcess:
+        return run_cli(args, cli_path, env, timeout)
+
+    return _run
 
 
 @pytest.fixture
