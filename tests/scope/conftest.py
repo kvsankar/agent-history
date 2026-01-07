@@ -280,7 +280,7 @@ def create_gemini_sessions(
 
 
 @pytest.fixture
-def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:  # noqa: PLR0915
+def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:  # noqa: PLR0915,C901
     """Create a single home with multiple workspaces for workspace scope testing.
 
     Creates workspaces:
@@ -505,6 +505,8 @@ def multi_home_setup(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
     env["CODEX_SESSIONS_DIR"] = str(homes["local"]["codex_dir"])
     env["GEMINI_SESSIONS_DIR"] = str(homes["local"]["gemini_dir"])
     env["HOME"] = str(local_home)
+    # Keep config/metrics co-located with the synthetic local home (CI sets AGENT_HISTORY_CONFIG_DIR).
+    env["AGENT_HISTORY_CONFIG_DIR"] = str(homes["local"]["path"] / ".agent-history")
     if sys.platform == "win32":
         env["USERPROFILE"] = str(local_home)
 
