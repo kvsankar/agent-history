@@ -74,6 +74,10 @@ Web sessions provide limited metadata compared to CLI agents:
 - Conversation content and timestamps
 - No token usage or tool execution details
 - GitHub repository association (if available)
+- Workspace resolution:
+  - Prefer GitHub repo mapping (`owner/repo`) to a known local workspace
+  - Fallback to `session_context.cwd` when no repo is present
+  - If neither is available, workspace may remain unresolved
 
 ### Home Configuration
 
@@ -188,6 +192,11 @@ Claude Code encodes workspace paths by replacing `/` with `-`. Decoding these pa
 |--------------|-----------------|--------|
 | `-home-alice-alice-projects-api` | `/home/alice/alice-projects-api` | Merged segments incorrectly |
 | `-home-user-projects-my-app` | `/home/user/projects/my/app` | Split dashed folder name |
+
+#### Windows and WSL Path Encoding
+
+- Windows paths encode the drive and separators: `C:\Users\me\project` → `C--Users-me-project`
+- WSL UNC prefixes are normalized before decoding: `//wsl.localhost/Ubuntu/home/me` → `/home/me`
 
 ### Session
 
