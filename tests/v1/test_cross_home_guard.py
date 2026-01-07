@@ -15,6 +15,7 @@ The guard applies to all session verbs: list, export, and stats.
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, Generator
 
@@ -51,6 +52,8 @@ def cross_home_test_setup(tmp_path: Path) -> Generator[Dict[str, Any], None, Non
     env = os.environ.copy()
     env["AGENT_HISTORY_HOME"] = str(tmp_path)
     env["HOME"] = str(tmp_path)
+    if sys.platform == "win32":
+        env["USERPROFILE"] = str(tmp_path)
 
     yield {
         "path": tmp_path,
@@ -98,6 +101,8 @@ def cross_home_with_project(tmp_path: Path) -> Generator[Dict[str, Any], None, N
     env = os.environ.copy()
     env["AGENT_HISTORY_HOME"] = str(tmp_path)
     env["HOME"] = str(tmp_path)
+    if sys.platform == "win32":
+        env["USERPROFILE"] = str(tmp_path)
     env["AGENT_HISTORY_CONFIG_DIR"] = str(config_dir)
 
     yield {
