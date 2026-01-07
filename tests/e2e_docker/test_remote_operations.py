@@ -165,6 +165,16 @@ class TestRemoteStats:
         # Just shouldn't crash
         assert result.returncode in [0, 1], f"Unexpected error: {result.stderr}"
 
+    def test_stats_remote_with_sync(self, docker_env, cli_path):
+        """session stats --sync -r should run without crashing."""
+        node = docker_env["node_alpha"]
+        result = run_cli(
+            ["session", "stats", "--sync", "-r", f"alice@{node}", "--aw"],
+            cli_path,
+        )
+
+        assert result.returncode in [0, 1], f"Unexpected error: {result.stderr}"
+
     def test_stats_remote_by_model(self, docker_env, cli_path):
         """session stats -r --by model groups by model."""
         node = docker_env["node_alpha"]
