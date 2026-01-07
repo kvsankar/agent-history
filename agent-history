@@ -277,6 +277,19 @@ class HashIndexCounts(TypedDict):
     mappings: list[Any]
 
 
+class SessionAggregates(TypedDict):
+    """Aggregated counts/totals for a session."""
+
+    user_messages: int
+    assistant_messages: int
+    input_tokens: int
+    output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
+    first_timestamp: str | None
+    last_timestamp: str | None
+
+
 # ============================================================================
 # JSON Serialization Utilities (L10: Extracted helpers)
 # ============================================================================
@@ -1034,7 +1047,10 @@ def matches_any_pattern(workspace_name: str, patterns: list[str]) -> bool:
                 pass
 
     # Check for substring matches
-    return any(pattern and pat_lower in workspace_lower for pattern, pat_lower in zip(patterns, patterns_lower))
+    return any(
+        pattern and pat_lower in workspace_lower
+        for pattern, pat_lower in zip(patterns, patterns_lower)
+    )
 
 
 def parse_and_validate_dates(since_str: Optional[str], until_str: Optional[str]) -> tuple:
@@ -1180,7 +1196,7 @@ def _matches_workspace_pattern(
 
     normalized_pattern = pattern_lower[1:] if pattern_lower.startswith("-") else pattern_lower
     pattern_as_path = "/" + normalized_pattern.replace("-", "/")
-    return pattern_as_path in ((readable_lower or workspace_lower))
+    return pattern_as_path in (readable_lower or workspace_lower)
 
 
 def _session_matches_filters(
@@ -8761,6 +8777,7 @@ def get_alias_for_workspace(workspace: str, source_key: str = "local") -> Option
     Returns:
         Alias name if found, None otherwise
     """
+
     def _search_aliases(aliases: dict) -> Optional[str]:
         for alias_name, alias_config in aliases.get("projects", {}).items():
             for src_key, workspaces in alias_config.items():
@@ -9861,9 +9878,7 @@ def _backup_projects_file() -> Path | None:
     if not target.exists():
         return None
 
-    backup_path = target.with_suffix(
-        f".backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    )
+    backup_path = target.with_suffix(f".backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
     try:
         import shutil
 
@@ -10473,9 +10488,9 @@ def _prepare_codex_session(
             session["end_time"] = max(timestamps)
 
 
-def _compute_session_aggregates(metrics: dict[str, Any]) -> dict[str, Any]:
+def _compute_session_aggregates(metrics: dict[str, Any]) -> SessionAggregates:
     """Compute aggregated counts/totals for a session."""
-    agg = {
+    agg: SessionAggregates = {
         "user_messages": 0,
         "assistant_messages": 0,
         "input_tokens": 0,
@@ -10500,16 +10515,16 @@ def _compute_session_aggregates(metrics: dict[str, Any]) -> dict[str, Any]:
             if agg["last_timestamp"] is None or ts > agg["last_timestamp"]:
                 agg["last_timestamp"] = ts
 
-        agg["input_tokens"] += msg.get("input_tokens", 0) or 0
-        agg["output_tokens"] += msg.get("output_tokens", 0) or 0
-        agg["cache_creation_tokens"] += msg.get("cache_creation_tokens", 0) or 0
-        agg["cache_read_tokens"] += msg.get("cache_read_tokens", 0) or 0
+        agg["input_tokens"] += int(msg.get("input_tokens", 0) or 0)
+        agg["output_tokens"] += int(msg.get("output_tokens", 0) or 0)
+        agg["cache_creation_tokens"] += int(msg.get("cache_creation_tokens", 0) or 0)
+        agg["cache_read_tokens"] += int(msg.get("cache_read_tokens", 0) or 0)
 
     tokens_summary = metrics.get("tokens_summary")
     if tokens_summary:
-        agg["input_tokens"] += tokens_summary.get("input_tokens", 0) or 0
-        agg["output_tokens"] += tokens_summary.get("output_tokens", 0) or 0
-        agg["cache_read_tokens"] += tokens_summary.get("cache_read_tokens", 0) or 0
+        agg["input_tokens"] += int(tokens_summary.get("input_tokens", 0) or 0)
+        agg["output_tokens"] += int(tokens_summary.get("output_tokens", 0) or 0)
+        agg["cache_read_tokens"] += int(tokens_summary.get("cache_read_tokens", 0) or 0)
 
     return agg
 
@@ -13199,9 +13214,13 @@ def _list_ssh_remote_sessions(args, patterns: list, since_date, until_date):
     agent = getattr(args, "agent", None) or "auto"
 
     if not check_ssh_connection(remote_host):
-        sys.stderr.write(f"Warning: Cannot connect to {remote_host} via passwordless SSH\n")
+        if os.environ.get("AGENT_HISTORY_HOME"):
+            sys.stderr.write(f"Warning: Cannot connect to {remote_host} via passwordless SSH\n")
+            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+            return
+        sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
         sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
-        return
+        sys.exit(1)
 
     workspaces_only = getattr(args, "workspaces_only", False)
     output_format = getattr(args, "format", None)
@@ -13336,6 +13355,11 @@ def _download_remote_file(remote_host: str, remote_path: str, local_path: Path) 
 def _convert_remote_file(args, remote_host: str):
     """Convert a remote file to markdown."""
     if not check_ssh_connection(remote_host):
+        if os.environ.get("AGENT_HISTORY_HOME"):
+            sys.stderr.write(f"Warning: Cannot connect to {remote_host} via passwordless SSH\n")
+            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+            args.lenient = True
+            return []
         sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
         sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
         sys.exit(1)
@@ -13413,7 +13437,7 @@ def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) ->
     windows_projects_dir = get_windows_projects_dir(username)
     if not windows_projects_dir:
         if os.environ.get("AGENT_HISTORY_HOME"):
-            setattr(args, "lenient", True)
+            args.lenient = True
             return []
         sys.stderr.write("Error: Cannot access Windows projects directory\n")
         sys.stderr.write("\nTips:\n")
@@ -13433,7 +13457,7 @@ def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) ->
 
     if not sessions:
         # No data available in Windows path; mark lenient so callers don't fail hard
-        setattr(args, "lenient", True)
+        args.lenient = True
         return []
 
     return sessions
@@ -13701,10 +13725,14 @@ def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> lis
     agent = getattr(args, "agent", None) or "auto"
 
     if not check_ssh_connection(remote_host):
-        sys.stderr.write(f"Warning: Cannot connect to {remote_host} via passwordless SSH\n")
+        if os.environ.get("AGENT_HISTORY_HOME"):
+            sys.stderr.write(f"Warning: Cannot connect to {remote_host} via passwordless SSH\n")
+            sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+            args.lenient = True
+            return []
+        sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
         sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
-        setattr(args, "lenient", True)
-        return []
+        sys.exit(1)
 
     hostname = get_remote_hostname(remote_host)
     all_sessions = []
