@@ -16,6 +16,24 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+def _in_docker_environment() -> bool:
+    """Detect if we're running inside the Docker test environment."""
+    return (
+        os.environ.get("NODE_ALPHA") is not None
+        or os.environ.get("NODE_BETA") is not None
+        or Path("/.dockerenv").exists()
+    )
+
+
+def _is_e2e_docker_path(path: Path) -> bool:
+    """Check if a path lives under tests/e2e_docker."""
+    parts = path.parts
+    for i in range(len(parts) - 1):
+        if parts[i] == "tests" and parts[i + 1] == "e2e_docker":
+            return True
+    return False
+
+
 def pytest_addoption(parser):
     """Add custom CLI options."""
     parser.addoption(
@@ -32,11 +50,7 @@ def pytest_configure(config):
 
     # If --docker flag is passed and we're not inside Docker, run tests in Docker
     if config.getoption("--docker", default=False):
-        if not (
-            os.environ.get("NODE_ALPHA") is not None
-            or os.environ.get("NODE_BETA") is not None
-            or Path("/.dockerenv").exists()
-        ):
+        if not _in_docker_environment():
             # We're on the host, need to run inside Docker
             _run_docker_tests_and_exit(config)
 
@@ -262,11 +276,7 @@ def pytest_collection_modifyitems(config, items):
         return
 
     # Check if we're inside Docker
-    if (
-        os.environ.get("NODE_ALPHA") is not None
-        or os.environ.get("NODE_BETA") is not None
-        or Path("/.dockerenv").exists()
-    ):
+    if _in_docker_environment():
         # Inside Docker, don't skip
         return
 
@@ -277,6 +287,16 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "e2e_docker" in item.nodeid:
             item.add_marker(skip_docker)
+
+
+def pytest_ignore_collect(path, config):
+    """Ignore Docker E2E tests unless --docker or inside Docker."""
+    if config.getoption("--docker"):
+        return False
+    if _in_docker_environment():
+        return False
+    candidate = Path(str(path))
+    return _is_e2e_docker_path(candidate)
 
 
 # ---------------------------------------------------------------------------
