@@ -31,12 +31,19 @@ def is_wsl() -> bool:
 
 def get_windows_tmp_path() -> Optional[Path]:
     """Get a temp path on Windows filesystem accessible from WSL."""
+    override = os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
+    if override:
+        return Path(override)
     if not is_wsl():
         return None
     windows_tmp = Path("/mnt/c/tmp")
-    if windows_tmp.exists() or windows_tmp.parent.exists():
-        return windows_tmp
-    return None
+    parent = windows_tmp.parent
+    if not (windows_tmp.exists() or parent.exists()):
+        return None
+    # Skip if not writable (common in CI/WSL without Windows drives mounted)
+    if not (os.access(windows_tmp, os.W_OK) or os.access(parent, os.W_OK)):
+        return None
+    return windows_tmp
 
 
 from tests.helpers.session_builders import (
@@ -356,6 +363,7 @@ def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None
     env["HOME"] = str(tmp_path)
     env["AGENT_HISTORY_HOME"] = str(tmp_path)
     env["AGENT_HISTORY_HOME_WSL"] = str(tmp_path)
+    env["AGENT_HISTORY_CONFIG_DIR"] = str(history_dir)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
 
@@ -364,20 +372,23 @@ def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None
     if is_wsl():
         windows_tmp = get_windows_tmp_path()
         if windows_tmp:
-            windows_home_path = windows_tmp / f"agent-history-test-{uuid.uuid4().hex[:8]}"
-            windows_home_path.mkdir(parents=True, exist_ok=True)
-            # Create Claude/Codex/Gemini dirs on Windows
-            win_claude = windows_home_path / ".claude" / "projects"
-            win_codex = windows_home_path / ".codex" / "sessions"
-            win_gemini = windows_home_path / ".gemini" / "tmp"
-            win_claude.mkdir(parents=True)
-            win_codex.mkdir(parents=True)
-            win_gemini.mkdir(parents=True)
-            # Create a test session on Windows home
-            create_claude_sessions(
-                win_claude, "win-project", "/mnt/c/projects/win-project", 1, base_date
-            )
-            env["AGENT_HISTORY_HOME_WINDOWS"] = str(windows_home_path)
+            try:
+                windows_home_path = windows_tmp / f"agent-history-test-{uuid.uuid4().hex[:8]}"
+                windows_home_path.mkdir(parents=True, exist_ok=True)
+                # Create Claude/Codex/Gemini dirs on Windows
+                win_claude = windows_home_path / ".claude" / "projects"
+                win_codex = windows_home_path / ".codex" / "sessions"
+                win_gemini = windows_home_path / ".gemini" / "tmp"
+                win_claude.mkdir(parents=True)
+                win_codex.mkdir(parents=True)
+                win_gemini.mkdir(parents=True)
+                # Create a test session on Windows home
+                create_claude_sessions(
+                    win_claude, "win-project", "/mnt/c/projects/win-project", 1, base_date
+                )
+                env["AGENT_HISTORY_HOME_WINDOWS"] = str(windows_home_path)
+            except (PermissionError, OSError):
+                windows_home_path = None
 
     # Fallback if not on WSL or can't access Windows
     if "AGENT_HISTORY_HOME_WINDOWS" not in env:
@@ -622,10 +633,10 @@ def project_config_setup(multi_home_setup: Dict[str, Any]) -> Generator[Dict[str
         },
     }
 
-    # Write projects.json to local home
+    # Write config.json (projects) to local home
     local_history_dir = multi_home_setup["homes"]["local"]["path"] / ".agent-history"
-    projects_file = local_history_dir / "projects.json"
-    projects_data = {"version": 2, "projects": projects}
+    projects_file = local_history_dir / "config.json"
+    projects_data = {"version": 2, "projects": projects, "sources": []}
     with open(projects_file, "w", encoding="utf-8") as f:
         json.dump(projects_data, f, indent=2)
 

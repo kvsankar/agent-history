@@ -183,7 +183,7 @@ Use pytest to run unit and integration tests. By default, `pytest` runs everythi
 Quick commands:
 
 ```bash
-# All tests
+# Default suite (excludes legacy tests)
 uv run pytest
 
 # Unit only
@@ -196,6 +196,9 @@ uv run pytest -m integration tests/integration
 make test
 make test-unit
 make test-integration
+
+# Legacy tests (opt-in)
+uv run pytest tests/legacy
 
 # Windows PowerShell helper
 scripts\run-tests.ps1              # all

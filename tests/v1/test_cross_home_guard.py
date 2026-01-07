@@ -74,23 +74,25 @@ def cross_home_with_project(tmp_path: Path) -> Generator[Dict[str, Any], None, N
     # Create local workspace with sessions
     create_workspace_fixture(tmp_path, "/home/user/myproject", num_sessions=2)
 
-    # Create project configuration
-    projects_dir = tmp_path / ".claude" / "projects"
-    projects_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create project file that ties workspaces together
-    project_config = {
-        "name": "myproj",
-        "workspaces": [
-            {"path": "/home/user/myproject", "home": "local"},
-            {"path": "/home/user/myproject", "home": "windows"},
-            {"path": "/home/user/myproject", "home": "remote:vm01"},
-        ],
+    # Create project configuration in the agent-history config store
+    config_dir = tmp_path / ".agent-history"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    encoded_ws = "/home/user/myproject".replace("/", "-")
+    if not encoded_ws.startswith("-"):
+        encoded_ws = "-" + encoded_ws
+    projects_config = {
+        "version": 2,
+        "projects": {
+            "myproj": {
+                "local": [encoded_ws],
+                "windows": [encoded_ws],
+                "remote:vm01": [encoded_ws],
+            }
+        },
     }
-
-    project_file = projects_dir / "myproj.json"
+    project_file = config_dir / "config.json"
     with open(project_file, "w") as f:
-        json.dump(project_config, f)
+        json.dump(projects_config, f)
 
     # Environment for test isolation
     env = os.environ.copy()

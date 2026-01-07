@@ -16,8 +16,8 @@ For convenience, short aliases are available:
 
 | Primary | Aliases |
 |---------|---------|
-| `ws` | `workspaces`, `lsw` |
-| `session` | `sessions`, `ss`, `lss` |
+| `ws` | - |
+| `session` | - |
 | `home` | `homes`, `lsh` |
 | `project` | `projects`, `alias` |
 
