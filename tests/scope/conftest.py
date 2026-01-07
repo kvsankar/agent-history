@@ -7,6 +7,7 @@ homes for testing scope modifiers (--aw, --ah, -n, --project, --wsl, --windows, 
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import uuid
@@ -64,8 +65,26 @@ def encode_workspace_path(path: str) -> str:
     Example: /home/user/project -> -home-user-project
     """
     # Normalize path separators
-    path = path.replace("\\", "/")
-    # Replace slashes with dashes and ensure leading dash
+    path = path.replace("\\", "/").rstrip("/")
+
+    # Handle Windows drive paths (C:\Users\me\project -> C--Users-me-project)
+    windows_drive_match = re.match(r"^[A-Za-z]:", path)
+    if windows_drive_match:
+        drive = windows_drive_match.group(0)[0].upper()
+        remainder = path[len(windows_drive_match.group(0)) :].lstrip("/").replace("/", "-")
+        return f"{drive}--{remainder}"
+
+    # Handle WSL-mounted Windows paths like /mnt/c/Users/me/project
+    wsl_prefix = "/mnt/"
+    if path.startswith(wsl_prefix) and len(path) > len(wsl_prefix):
+        drive_letter = path[len(wsl_prefix)]
+        if drive_letter.isalpha():
+            drive = drive_letter.upper()
+            remainder = path[len(wsl_prefix) + 1 :].lstrip("/").replace("/", "-")
+            return f"{drive}--{remainder}"
+        return f"{drive}--{remainder}"
+
+    # Default POSIX encoding
     encoded = path.replace("/", "-")
     if not encoded.startswith("-"):
         encoded = "-" + encoded
