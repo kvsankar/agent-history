@@ -289,13 +289,13 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_docker)
 
 
-def pytest_ignore_collect(path, config):
+def pytest_ignore_collect(collection_path, config):
     """Ignore Docker E2E tests unless --docker or inside Docker."""
     if config.getoption("--docker"):
         return False
     if _in_docker_environment():
         return False
-    candidate = Path(str(path))
+    candidate = Path(str(collection_path))
     return _is_e2e_docker_path(candidate)
 
 
