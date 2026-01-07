@@ -48,14 +48,20 @@ def translate_legacy_args(args: list[str]) -> list[str]:  # noqa: C901
             return ["project", "list", *tail]
         return ["project", subcmd, *tail]
 
+    agent_overridden = any(tok == "--agent" for tok in prefix)
+
     if cmd == "export":
         mapped = ["session", "export", *rest]
     elif cmd == "stats":
         mapped = ["session", "stats", *rest]
     elif cmd == "lss":
         mapped = ["session", *rest]
+        if not agent_overridden:
+            mapped = ["--agent", "claude", *mapped]
     elif cmd == "lsw":
         mapped = ["ws", *rest]
+        if not agent_overridden:
+            mapped = ["--agent", "claude", *mapped]
     elif cmd == "lsh":
         mapped = ["home", *rest]
     elif cmd == "alias":

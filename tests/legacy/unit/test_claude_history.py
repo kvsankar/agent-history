@@ -123,7 +123,6 @@ def test_matches_workspace_pattern_exact_and_readable(monkeypatch):
 def test_load_empty_aliases(temp_config_dir, monkeypatch):
     monkeypatch.setattr(ch, "get_aliases_dir", lambda: temp_config_dir)
     monkeypatch.setattr(ch, "get_config_dir", lambda: temp_config_dir)
-    monkeypatch.setattr(ch, "get_projects_file", lambda: temp_config_dir / "projects.json")
     aliases = ch.load_aliases()
     assert aliases == {"version": 2, "projects": {}}
 
@@ -131,8 +130,6 @@ def test_load_empty_aliases(temp_config_dir, monkeypatch):
 def test_save_and_load_aliases(temp_config_dir, monkeypatch):
     monkeypatch.setattr(ch, "get_aliases_dir", lambda: temp_config_dir)
     monkeypatch.setattr(ch, "get_config_dir", lambda: temp_config_dir)
-    projects_file = temp_config_dir / "projects.json"
-    monkeypatch.setattr(ch, "get_projects_file", lambda: projects_file)
 
     data = {"version": 2, "projects": {"p": {"local": ["-home-user-proj"]}}}
     assert ch.save_aliases(data)
@@ -143,8 +140,8 @@ def test_save_and_load_aliases(temp_config_dir, monkeypatch):
 def test_alias_import_replace_creates_backup(monkeypatch, temp_config_dir, tmp_path):
     monkeypatch.setattr(ch, "get_aliases_dir", lambda: temp_config_dir)
     monkeypatch.setattr(ch, "get_config_dir", lambda: temp_config_dir)
-    projects_file = temp_config_dir / "projects.json"
-    projects_file.write_text(json.dumps({"version": 1, "projects": {"old": {"local": ["ws1"]}}}))
+    config_file = temp_config_dir / "config.json"
+    config_file.write_text(json.dumps({"version": 1, "projects": {"old": {"local": ["ws1"]}}}))
 
     import_file = tmp_path / "import.json"
     new_aliases = {"version": 1, "projects": {"new": {"local": ["ws2"]}}}
@@ -153,7 +150,7 @@ def test_alias_import_replace_creates_backup(monkeypatch, temp_config_dir, tmp_p
     args = SimpleNamespace(file=str(import_file), replace=True)
     ch.cmd_project_config_import(args)
 
-    backups = list(temp_config_dir.glob("projects.backup.*.json"))
+    backups = list(temp_config_dir.glob("config.backup.*.json"))
     assert backups, "Expected backup before replace"
-    loaded = json.loads(projects_file.read_text())
+    loaded = json.loads(config_file.read_text())
     assert "new" in loaded.get("projects", {})

@@ -84,6 +84,8 @@ Homes are explicitly configured via `home add`:
 
 The `--ah` (all homes) flag operates on configured homes only.
 
+Projects/aliases share the same configuration file. Legacy `projects.json`/`aliases.json` files are auto-imported into `config.json` at load time (non-destructive). For test isolation or sandboxed runs, set `AGENT_HISTORY_CONFIG_DIR` to point the tool at a temporary config directory so the real `~/.agent-history/config.json` is untouched.
+
 ### Home Storage
 
 Configuration stored in `~/.agent-history/config.json`:
@@ -93,7 +95,13 @@ Configuration stored in `~/.agent-history/config.json`:
     {"type": "wsl", "distro": "Ubuntu"},
     {"type": "windows", "user": "alice"},
     {"type": "remote", "host": "user@vm01"}
-  ]
+  ],
+  "projects": {
+    "myproj": {
+      "local": ["-home-user-myproject"],
+      "remote:vm01": ["-home-user-myproject"]
+    }
+  }
 }
 ```
 
