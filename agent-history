@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
-from typing import Any, Callable, Optional, TypedDict, Union, cast
+from typing import Any, Callable, ClassVar, Optional, TypedDict, Union, cast
 
 __version__ = "1.5.1"
 
@@ -1438,6 +1438,215 @@ def _format_message_count(session: dict) -> str:
     return str(session.get("message_count", 0))
 
 
+# ============================================================================
+# Table Printer - Unified output formatting
+# ============================================================================
+
+
+# Global table width setting (set from CLI --width/-w)
+_table_width: Optional[int] = None
+
+
+def set_table_width(width: Optional[int]) -> None:
+    """Set global table width for all TablePrinter instances."""
+    global _table_width  # noqa: PLW0603
+    _table_width = width
+
+
+class TablePrinter:
+    """Unified table printer supporting multiple output formats.
+
+    Handles console (aligned columns), TSV, and JSON output formats.
+    For console output, automatically calculates column widths and
+    truncates long values with ellipsis to fit within screen width.
+    """
+
+    # Columns that contain paths - truncate from left to preserve unique part
+    PATH_COLUMNS: ClassVar[set[str]] = {"WORKSPACE", "FILE", "PATH"}
+
+    # Columns with fixed/small widths - don't trim these
+    FIXED_COLUMNS: ClassVar[set[str]] = {
+        "AGENT",
+        "DATE",
+        "MESSAGES",
+        "SESSIONS",
+        "STATUS",
+        "WORKSPACES",
+    }
+
+    # Numeric columns - right-justify these
+    NUMERIC_COLUMNS: ClassVar[set[str]] = {"MESSAGES", "SESSIONS", "WORKSPACES"}
+
+    DEFAULT_WIDTH = 120  # Default screen width
+
+    def __init__(
+        self,
+        columns: list[str],
+        max_width: Optional[int] = None,
+        min_col_width: int = 6,
+        output_format: Optional[str] = None,
+    ):
+        """Initialize table printer.
+
+        Args:
+            columns: List of column names (headers)
+            max_width: Maximum total table width (None=use global or default, 0=no limit)
+            min_col_width: Minimum width for any column
+            output_format: 'tsv', 'json', or None (console/table)
+        """
+        self.columns = columns
+        # Priority: explicit param > global setting > default
+        if max_width is not None:
+            self.max_width = max_width
+        elif _table_width is not None:
+            self.max_width = _table_width
+        else:
+            self.max_width = self.DEFAULT_WIDTH
+        self.min_col_width = min_col_width
+        self.output_format = output_format
+        self.rows: list[dict[str, str]] = []
+
+    def add_row(self, row: dict[str, Any]) -> None:
+        """Add a row to the table.
+
+        Args:
+            row: Dict mapping column names to values
+        """
+        # Convert all values to strings
+        str_row = {k: str(v) if v is not None else "" for k, v in row.items()}
+        self.rows.append(str_row)
+
+    def _truncate(self, text: str, width: int, from_left: bool = False) -> str:
+        """Truncate text to width, adding ellipsis if needed.
+
+        Args:
+            text: Text to truncate
+            width: Maximum width
+            from_left: If True, truncate from left (for paths where end is important)
+        """
+        if len(text) <= width:
+            return text
+        if width <= 3:
+            return text[:width] if not from_left else text[-width:]
+        if from_left:
+            return "..." + text[-(width - 3) :]
+        return text[: width - 3] + "..."
+
+    def _calculate_col_widths(self) -> list[int]:
+        """Calculate optimal column widths for console output.
+
+        Algorithm:
+        1. Find max width per column by scanning all rows
+        2. If total fits in screen width, use max widths
+        3. If not, trim variable columns (paths) to fit, preserve fixed columns
+        """
+        # Step 1: Find max width per column (header or data)
+        widths = [len(col) for col in self.columns]
+        for row in self.rows:
+            for i, col in enumerate(self.columns):
+                widths[i] = max(widths[i], len(row.get(col, "")))
+
+        # Step 2: Check if we fit
+        spacing = (len(self.columns) - 1) * 2  # 2 spaces between cols
+        total = sum(widths) + spacing
+
+        # max_width=0 means no trimming
+        if self.max_width == 0 or total <= self.max_width:
+            return widths
+
+        # Step 3: Trim variable columns (not fixed) to fit
+        excess = total - self.max_width
+
+        # Find variable columns (not in FIXED_COLUMNS), sorted by width desc
+        variable_cols = [
+            (i, widths[i])
+            for i, col in enumerate(self.columns)
+            if col not in self.FIXED_COLUMNS and widths[i] > self.min_col_width
+        ]
+        variable_cols.sort(key=lambda x: -x[1])  # widest first
+
+        # Distribute the trim across variable columns
+        for idx, width in variable_cols:
+            if excess <= 0:
+                break
+            can_trim = width - self.min_col_width
+            trim_by = min(excess, can_trim)
+            widths[idx] -= trim_by
+            excess -= trim_by
+
+        return widths
+
+    def print(self) -> None:
+        """Print the table in the configured format.
+
+        If no format is specified and stdout is not a TTY (piped),
+        automatically uses TSV for machine-readable output.
+        """
+        if self.output_format == "json":
+            self._print_json()
+        elif self.output_format == "tsv":
+            self._print_tsv()
+        elif self.output_format is None and not sys.stdout.isatty():
+            # Auto-detect: use TSV when piped
+            self._print_tsv()
+        else:
+            self._print_table()
+
+    def _print_json(self) -> None:
+        """Print as JSON array."""
+        # Convert string values back to appropriate types where possible
+        output = []
+        for row in self.rows:
+            typed_row = {}
+            for col in self.columns:
+                val = row.get(col, "")
+                # Try to convert to int
+                if val.isdigit():
+                    typed_row[col.lower()] = int(val)
+                else:
+                    typed_row[col.lower()] = val
+            output.append(typed_row)
+        print(json.dumps(output, indent=2))
+
+    def _print_tsv(self) -> None:
+        """Print as tab-separated values."""
+        print("\t".join(self.columns))
+        for row in self.rows:
+            values = [row.get(col, "") for col in self.columns]
+            print("\t".join(values))
+
+    def _print_table(self) -> None:
+        """Print as aligned console table."""
+        if not self.rows:
+            return
+
+        widths = self._calculate_col_widths()
+
+        # Print header (right-justify numeric column headers)
+        header_parts = []
+        for i, col in enumerate(self.columns):
+            if col in self.NUMERIC_COLUMNS:
+                header_parts.append(col.rjust(widths[i]))
+            else:
+                header_parts.append(col.ljust(widths[i]))
+        print("  ".join(header_parts))
+
+        # Print data rows
+        for row in self.rows:
+            row_parts = []
+            for i, col in enumerate(self.columns):
+                val = row.get(col, "")
+                # Truncate paths from left to preserve unique suffix
+                from_left = col in self.PATH_COLUMNS
+                truncated = self._truncate(val, widths[i], from_left=from_left)
+                # Right-justify numeric columns
+                if col in self.NUMERIC_COLUMNS:
+                    row_parts.append(truncated.rjust(widths[i]))
+                else:
+                    row_parts.append(truncated.ljust(widths[i]))
+            print("  ".join(row_parts))
+
+
 def format_session_line(session: dict, source_label: str) -> str:
     """Format a session as a tab-separated output line.
 
@@ -1455,82 +1664,140 @@ def format_session_line(session: dict, source_label: str) -> str:
     )
 
 
+def _aggregate_workspaces(sessions: list) -> dict:
+    """Aggregate sessions by workspace to compute counts and last modified.
+
+    Returns:
+        Dict mapping workspace_readable to {sessions: count, last_modified: datetime}
+    """
+    workspaces = {}
+    for s in sessions:
+        ws = s.get("workspace_readable") or s.get("workspace")
+        if ws not in workspaces:
+            workspaces[ws] = {"sessions": 0, "last_modified": None}
+        workspaces[ws]["sessions"] += 1
+        modified = s.get("modified")
+        if modified:
+            if (
+                workspaces[ws]["last_modified"] is None
+                or modified > workspaces[ws]["last_modified"]
+            ):
+                workspaces[ws]["last_modified"] = modified
+    return workspaces
+
+
+def _check_workspace_status(workspace_path: str, source_label: str) -> str:
+    """Check if workspace path exists on filesystem.
+
+    Args:
+        workspace_path: Decoded workspace path
+        source_label: Source label to determine base path
+
+    Returns:
+        'ok' if exists, 'missing' if not, 'unknown' if path cannot be determined
+    """
+    # Clean path (remove any existing markers)
+    clean_path = workspace_path.replace(" [missing]", "").strip()
+
+    # For hashed paths, we don't know the original path
+    if clean_path.startswith("[hash:"):
+        return "unknown"
+
+    # For remote sources, we can't easily check - assume ok
+    if source_label.startswith("remote:") or source_label == "web":
+        return "ok"
+
+    # Use AGENT_HISTORY_HOME if set (for testing)
+    agent_home = os.environ.get("AGENT_HISTORY_HOME")
+    if agent_home:
+        # In test mode, check under AGENT_HISTORY_HOME
+        check_path = Path(agent_home) / clean_path.lstrip("/")
+    else:
+        check_path = Path(clean_path)
+
+    try:
+        return "ok" if check_path.exists() else "missing"
+    except OSError:
+        return "missing"
+
+
+def _normalize_home_label(source_label: str) -> str:
+    """Normalize source label to short home identifier."""
+    if source_label in ("Local (WSL)", "Local"):
+        return "local"
+    if source_label.startswith("Windows"):
+        return "windows"
+    if source_label.startswith("Remote"):
+        # Extract hostname from "Remote (hostname)"
+        if "(" in source_label and ")" in source_label:
+            host = source_label.split("(")[1].split(")")[0]
+            return f"remote:{host}"
+        return "remote"
+    if source_label.startswith("WSL"):
+        if "(" in source_label and ")" in source_label:
+            distro = source_label.split("(")[1].split(")")[0]
+            return f"wsl:{distro}"
+        return "wsl"
+    return source_label
+
+
 def print_sessions_output(
-    sessions: list, source_label: str, workspaces_only: bool, output_format: Optional[str] = None
+    sessions: list,
+    source_label: str,
+    workspaces_only: bool,
+    output_format: Optional[str] = None,
+    max_width: Optional[int] = None,
 ):
     """Print sessions in appropriate format (workspaces-only or full details).
 
     Args:
         sessions: List of session dictionaries
         source_label: Source label for output
-        workspaces_only: If True, print only unique workspace names
-        output_format: table, tsv, or json (default: existing TSV output)
+        workspaces_only: If True, print workspace summary (HOME, WORKSPACE, SESSIONS, STATUS, LAST MODIFIED)
+        output_format: table, tsv, or json (default: table)
+        max_width: Maximum table width (None=default, 0=no limit)
     """
-
-    # M3: Extracted Windows path filtering for testability
-    def _should_skip_windows_workspace(workspace: str) -> bool:
-        """Check if Windows workspace should be skipped (non-existent path)."""
-        if sys.platform != "win32" or not source_label.startswith("Windows"):
-            return False
-        path_str = workspace.replace(" [missing]", "")
-        try:
-            return not Path(path_str).exists()
-        except OSError:
-            return True  # Skip on error
-
-    if output_format == "json":
-        if workspaces_only:
-            seen = set()
-            ordered = []
-            for s in sessions:
-                key = s.get("workspace_readable") or s.get("workspace")
-                if key in seen:
-                    continue
-                seen.add(key)
-                ordered.append(
-                    {
-                        "home": source_label,
-                        "workspace": s.get("workspace_readable") or s.get("workspace"),
-                    }
-                )
-            print(json.dumps(ordered, indent=2))
-            return
-
-        json_rows = []
-        for session in sessions:
-            json_rows.append(
-                {
-                    "agent": session.get("agent", AGENT_CLAUDE),
-                    "home": source_label,
-                    "workspace": session.get("workspace_readable") or session.get("workspace"),
-                    "file": session.get("filename") or session.get("file"),
-                    "messages": session.get("message_count"),
-                    "date": session.get("modified").strftime("%Y-%m-%d")
-                    if session.get("modified")
-                    else None,
-                }
-            )
-        print(json.dumps(json_rows, indent=2))
-        return
+    home_label = _normalize_home_label(source_label)
 
     if workspaces_only:
-        seen = set()
-        ordered = []
-        for s in sessions:
-            # Use workspace_readable for dedup - it's consistent across agents
-            key = s.get("workspace_readable") or s.get("workspace")
-            if key in seen:
-                continue
-            seen.add(key)
-            ordered.append(s["workspace_readable"])
-        for ws in sorted(ordered):
-            if _should_skip_windows_workspace(ws):
-                continue
-            print(ws)
+        columns = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
+        printer = TablePrinter(columns, output_format=output_format, max_width=max_width)
+
+        workspaces = _aggregate_workspaces(sessions)
+        for ws in sorted(workspaces.keys()):
+            data = workspaces[ws]
+            status = _check_workspace_status(ws, source_label)
+            last_mod = (
+                data["last_modified"].strftime("%Y-%m-%d %H:%M") if data["last_modified"] else ""
+            )
+            printer.add_row(
+                {
+                    "HOME": home_label,
+                    "WORKSPACE": ws,
+                    "SESSIONS": data["sessions"],
+                    "STATUS": status,
+                    "LAST_MODIFIED": last_mod,
+                }
+            )
+        printer.print()
     else:
-        print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+        columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+        printer = TablePrinter(columns, output_format=output_format, max_width=max_width)
+
         for session in sessions:
-            print(format_session_line(session, source_label))
+            printer.add_row(
+                {
+                    "AGENT": session.get("agent", AGENT_CLAUDE),
+                    "HOME": home_label,
+                    "WORKSPACE": session.get("workspace_readable") or session.get("workspace"),
+                    "FILE": session.get("filename") or session.get("file"),
+                    "MESSAGES": _format_message_count(session),
+                    "DATE": session["modified"].strftime("%Y-%m-%d")
+                    if session.get("modified")
+                    else "",
+                }
+            )
+        printer.print()
 
 
 # ============================================================================
@@ -4967,17 +5234,17 @@ def get_folder_short_name(workspace: str) -> str:
     just the final directory name (basename).
 
     Args:
-        workspace: Encoded workspace name (e.g., '-home-sankar-projects-foo')
-                   or decoded path (e.g., '/home/sankar/projects/foo')
+        workspace: Encoded workspace name (e.g., '-home-alice-projects-foo')
+                   or decoded path (e.g., '/home/alice/projects/foo')
 
     Returns:
         Short name (e.g., 'foo')
 
     Examples:
-        - '-home-sankar-projects-foo' → 'foo'
-        - 'C--Users-sankar-projects-bar' → 'bar'
-        - '/home/sankar/projects/foo' → 'foo'
-        - '-home-sankar-projects-foo-feature' → 'foo-feature'
+        - '-home-alice-projects-foo' → 'foo'
+        - 'C--Users-alice-projects-bar' → 'bar'
+        - '/home/alice/projects/foo' → 'foo'
+        - '-home-alice-projects-foo-feature' → 'foo-feature'
     """
     if not workspace:
         return workspace
@@ -9314,16 +9581,22 @@ def _collect_non_claude_alias_sessions(
     return sessions
 
 
-def _print_alias_sessions(sessions: list):
+def _print_alias_sessions(sessions: list, output_format: Optional[str] = None):
     """Print alias sessions in tabular format."""
-    print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+    columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+    printer = TablePrinter(columns, output_format=output_format)
     for session in sessions:
-        session_agent = session.get("agent", AGENT_CLAUDE)
-        print(
-            f"{session_agent}\t{session['source']}\t{session['workspace_readable']}\t"
-            f"{session['filename']}\t{session['message_count']}\t"
-            f"{session['modified'].strftime('%Y-%m-%d')}"
+        printer.add_row(
+            {
+                "AGENT": session.get("agent", AGENT_CLAUDE),
+                "HOME": session["source"],
+                "WORKSPACE": session["workspace_readable"],
+                "FILE": session["filename"],
+                "MESSAGES": session["message_count"],
+                "DATE": session["modified"].strftime("%Y-%m-%d"),
+            }
         )
+    printer.print()
 
 
 def cmd_project_lss(
@@ -9367,7 +9640,8 @@ def cmd_project_lss(
             sys.stderr.write(f"No sessions found in project '{alias_name}'{agent_msg}\n")
         return
 
-    _print_alias_sessions(all_sessions)
+    output_format = getattr(args, "format", None)
+    _print_alias_sessions(all_sessions, output_format=output_format)
 
 
 def _get_alias_export_options(args) -> dict:
@@ -12328,21 +12602,12 @@ def _scan_codex_gemini_sessions(
     return sessions
 
 
-def _show_no_sessions_error(agent: str, location: str, platform_flag: str):
-    """Show error message when no sessions are found."""
+def _show_no_sessions_message(agent: str, location: str):
+    """Show message when no sessions are found."""
     if agent == "auto":
-        sys.stderr.write(f"Error: No matching sessions found in {location}\n")
-        sys.stderr.write("\nTips:\n")
-        sys.stderr.write("  • Check that Claude/Codex/Gemini is installed\n")
-        sys.stderr.write(f"  • Try: agent-history lsh {platform_flag}\n")
-        sys.stderr.write("  • Try: agent-history lss --aw (all workspaces)\n")
+        sys.stderr.write(f"No sessions found in {location}\n")
     else:
-        sys.stderr.write(f"Error: No matching {agent} sessions found in {location}\n")
-        sys.stderr.write("\nTips:\n")
-        sys.stderr.write(f"  • Check that {agent} is installed\n")
-        sys.stderr.write(f"  • Try: agent-history --agent auto lss {platform_flag}\n")
-        sys.stderr.write("  • Try: agent-history lss --aw (all workspaces)\n")
-    sys.exit(1)
+        sys.stderr.write(f"No {agent} sessions found in {location}\n")
 
 
 def _list_windows_sessions(args, patterns: list, since_date, until_date):
@@ -12385,7 +12650,8 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
             )
 
     if not all_sessions:
-        _show_no_sessions_error(agent, "Windows", "--windows")
+        _show_no_sessions_message(agent, "Windows")
+        return
 
     source_label = f"Windows ({username})" if username else "Windows"
     print_sessions_output(
@@ -12467,7 +12733,8 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
             )
 
     if not all_sessions:
-        _show_no_sessions_error(agent, f"WSL '{distro_name}'", "--wsl")
+        _show_no_sessions_message(agent, f"WSL '{distro_name}'")
+        return
 
     source_label = f"WSL ({distro_name})"
     print_sessions_output(
@@ -12652,7 +12919,12 @@ def _collect_remote_codex_session_details(
 # ============================================================================
 
 
-def _list_remote_workspaces_only(remote_host: Optional[str], patterns: list, agent: str = "auto"):
+def _list_remote_workspaces_only(
+    remote_host: Optional[str],
+    patterns: list,
+    agent: str = "auto",
+    output_format: Optional[str] = None,
+):
     """List workspaces for remote host, dispatching by agent type."""
     all_workspaces = []
 
@@ -12670,15 +12942,32 @@ def _list_remote_workspaces_only(remote_host: Optional[str], patterns: list, age
         pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
         exit_with_error(f"No workspaces matching pattern '{pattern_str}' on {remote_host}")
 
-    # Deduplicate across agents. In auto mode, the same workspace can appear in multiple backends.
-    # Since lsw output is just workspace names (no agent column), duplicates are confusing.
+    # Deduplicate across agents and collect unique workspaces
     seen = set()
+    unique_workspaces = []
     for ws_info in sorted(all_workspaces, key=lambda x: x["decoded"]):
         decoded = ws_info["decoded"]
         if decoded in seen:
             continue
         seen.add(decoded)
-        print(decoded)
+        unique_workspaces.append(decoded)
+
+    # Use TablePrinter for consistent output
+    home_label = f"remote:{remote_host}" if remote_host else "remote"
+    columns = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
+    printer = TablePrinter(columns, output_format=output_format)
+
+    for ws in unique_workspaces:
+        printer.add_row(
+            {
+                "HOME": home_label,
+                "WORKSPACE": ws,
+                "SESSIONS": "-",  # Not available for remote workspace-only listing
+                "STATUS": "ok",  # Can't check remote existence
+                "LAST_MODIFIED": "",
+            }
+        )
+    printer.print()
 
 
 def _collect_remote_session_details(
@@ -12720,15 +13009,16 @@ def _list_ssh_remote_sessions(args, patterns: list, since_date, until_date):
         exit_with_error(f"Setup: ssh-copy-id {remote_host}")
 
     workspaces_only = getattr(args, "workspaces_only", False)
+    output_format = getattr(args, "format", None)
 
     if workspaces_only:
-        _list_remote_workspaces_only(remote_host, patterns, agent)
+        _list_remote_workspaces_only(remote_host, patterns, agent, output_format=output_format)
     else:
         sessions = _collect_remote_session_details(
             remote_host, patterns, since_date, until_date, agent
         )
         if not sessions:
-            sys.stderr.write("No sessions found\n")
+            sys.stderr.write(f"No sessions found on remote '{remote_host}'\n")
             return
         print_sessions_output(
             sessions,
@@ -13968,13 +14258,16 @@ def _collect_all_remote_sessions(remotes, patterns, since_date, until_date, agen
     return results
 
 
-def _print_all_homes_results(all_results, workspaces_only, use_uris: bool = True):
+def _print_all_homes_results(
+    all_results, workspaces_only, use_uris: bool = True, output_format: Optional[str] = None
+):
     """Print results from all homes listing.
 
     Args:
         all_results: List of (source_label, sessions) tuples
-        workspaces_only: If True, only show unique workspaces
+        workspaces_only: If True, only show unique workspaces with counts
         use_uris: If True, show workspace URIs (default). If False, show legacy format.
+        output_format: 'tsv', 'json', or None (table)
     """
     if not all_results:
         msg = "No workspaces found.\n" if workspaces_only else "No sessions found.\n"
@@ -13982,19 +14275,50 @@ def _print_all_homes_results(all_results, workspaces_only, use_uris: bool = True
         return
 
     if workspaces_only:
-        # Print flat tab-separated format with HOME column for consistency
-        print("HOME\tWORKSPACE")
+        columns = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
+        printer = TablePrinter(columns, output_format=output_format)
+
         for source_label, sessions in all_results:
-            # Derive short home label from source_label
             home_label = _source_label_to_home(source_label)
-            workspaces = sorted({s["workspace_readable"] for s in sessions})
-            for ws in workspaces:
-                print(f"{home_label}\t{ws}")
+            workspaces = _aggregate_workspaces(sessions)
+            for ws in sorted(workspaces.keys()):
+                data = workspaces[ws]
+                status = _check_workspace_status(ws, source_label)
+                last_mod = (
+                    data["last_modified"].strftime("%Y-%m-%d %H:%M")
+                    if data["last_modified"]
+                    else ""
+                )
+                printer.add_row(
+                    {
+                        "HOME": home_label,
+                        "WORKSPACE": ws,
+                        "SESSIONS": data["sessions"],
+                        "STATUS": status,
+                        "LAST_MODIFIED": last_mod,
+                    }
+                )
+        printer.print()
     else:
-        print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+        columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+        printer = TablePrinter(columns, output_format=output_format)
+
         for source_label, sessions in all_results:
+            home_label = _source_label_to_home(source_label)
             for session in sessions:
-                print(format_session_line(session, source_label))
+                printer.add_row(
+                    {
+                        "AGENT": session.get("agent", AGENT_CLAUDE),
+                        "HOME": home_label,
+                        "WORKSPACE": session.get("workspace_readable") or session.get("workspace"),
+                        "FILE": session.get("filename") or session.get("file"),
+                        "MESSAGES": _format_message_count(session),
+                        "DATE": session["modified"].strftime("%Y-%m-%d")
+                        if session.get("modified")
+                        else "",
+                    }
+                )
+        printer.print()
 
 
 def _source_label_to_home(source_label: str) -> str:
@@ -14095,7 +14419,8 @@ def cmd_list_all_homes(args):
             _collect_all_remote_sessions(ssh_remotes, patterns, since_date, until_date, agent)
         )
 
-    _print_all_homes_results(all_results, workspaces_only)
+    output_format = getattr(args, "format", None)
+    _print_all_homes_results(all_results, workspaces_only, output_format=output_format)
 
 
 def _lsh_get_local() -> Optional[dict]:
@@ -14258,11 +14583,20 @@ def cmd_lsh(args):
 
     homes = _gather_homes(args)
 
-    # Print flat output
+    # Print using TablePrinter
     if homes:
-        print("HOME\tPATH\tSESSIONS")
+        output_format = getattr(args, "format", None)
+        columns = ["HOME", "PATH", "WORKSPACES"]
+        printer = TablePrinter(columns, output_format=output_format)
         for home in homes:
-            print(f"{home['home']}\t{home['path']}\t{home['workspaces']}")
+            printer.add_row(
+                {
+                    "HOME": home["home"],
+                    "PATH": home["path"],
+                    "WORKSPACES": home["workspaces"],
+                }
+            )
+        printer.print()
 
 
 def _resolve_wsl_distro(distro_arg: Optional[str]) -> Optional[str]:
@@ -14465,9 +14799,18 @@ def _cmd_home_show(args):
     matches = [h for h in homes if h.get("home") == args.name]
     if not matches:
         exit_with_error(f"Home '{args.name}' not found.")
-    print("HOME\tPATH\tSESSIONS")
+    output_format = getattr(args, "format", None)
+    columns = ["HOME", "PATH", "WORKSPACES"]
+    printer = TablePrinter(columns, output_format=output_format)
     for home in matches:
-        print(f"{home['home']}\t{home['path']}\t{home['workspaces']}")
+        printer.add_row(
+            {
+                "HOME": home["home"],
+                "PATH": home["path"],
+                "WORKSPACES": home["workspaces"],
+            }
+        )
+    printer.print()
 
 
 def _cmd_home_export(args):
@@ -16045,12 +16388,20 @@ def _add_date_filters(parser):
 
 
 def _add_output_format(parser):
-    """Add --format for table/tsv/json."""
+    """Add --format and --width for table output control."""
     parser.add_argument(
         "--format",
         choices=["table", "tsv", "json"],
         default=None,
         help="Output format (default: table for TTY, tsv for pipes)",
+    )
+    parser.add_argument(
+        "-w",
+        "--width",
+        type=int,
+        default=None,
+        metavar="COLS",
+        help="Table width in columns (default: 120, 0=no limit)",
     )
 
 
@@ -16666,62 +17017,55 @@ def _get_remote_workspaces_for_lsw(remote: str, patterns: list, agent: str = "au
 def _print_lsw_results(
     all_results: list, workspaces_only: bool, output_format: Optional[str] = None
 ):
-    """Print lsw results in flat tab-separated format."""
+    """Print lsw results using TablePrinter with HOME, WORKSPACE, SESSIONS, STATUS, LAST_MODIFIED."""
     if not all_results:
         return
 
-    if output_format == "json":
-        data = []
-        if workspaces_only:
-            seen = set()
-            for source_label, sessions in all_results:
-                home_label = _source_label_to_home(source_label)
-                for session in sessions:
-                    ws = session["workspace_readable"]
-                    if ws in seen:
-                        continue
-                    seen.add(ws)
-                    data.append({"home": home_label, "workspace": ws})
-        else:
-            for source_label, sessions in all_results:
-                home_label = _source_label_to_home(source_label)
-                for session in sessions:
-                    data.append(
-                        {
-                            "agent": session.get("agent", AGENT_CLAUDE),
-                            "home": home_label,
-                            "workspace": session.get("workspace_readable")
-                            or session.get("workspace"),
-                        }
-                    )
-        print(json.dumps(data, indent=2))
-        return
-
     if workspaces_only:
-        print("HOME\tWORKSPACE")
+        columns = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
+        printer = TablePrinter(columns, output_format=output_format)
+
         for source_label, sessions in all_results:
             home_label = _source_label_to_home(source_label)
-            seen_workspaces = set()
-            for session in sessions:
-                ws = session["workspace_readable"]
-                # On Windows, only show paths that actually exist to avoid stale/invalid entries
-                if sys.platform == "win32":
-                    try:
-                        p = Path(ws)
-                        # Only filter for Windows and WSL sources
-                        if (
-                            source_label.startswith("Windows") or source_label.startswith("WSL ")
-                        ) and not p.exists():
-                            continue
-                    except Exception:
-                        pass
-                if ws not in seen_workspaces:
-                    seen_workspaces.add(ws)
-                    print(f"{home_label}\t{ws}")
+            workspaces = _aggregate_workspaces(sessions)
+            for ws in sorted(workspaces.keys()):
+                ws_data = workspaces[ws]
+                status = _check_workspace_status(ws, source_label)
+                last_mod = (
+                    ws_data["last_modified"].strftime("%Y-%m-%d %H:%M")
+                    if ws_data["last_modified"]
+                    else ""
+                )
+                printer.add_row(
+                    {
+                        "HOME": home_label,
+                        "WORKSPACE": ws,
+                        "SESSIONS": ws_data["sessions"],
+                        "STATUS": status,
+                        "LAST_MODIFIED": last_mod,
+                    }
+                )
+        printer.print()
     else:
+        columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+        printer = TablePrinter(columns, output_format=output_format)
+
         for source_label, sessions in all_results:
+            home_label = _source_label_to_home(source_label)
             for session in sessions:
-                print(format_session_line(session, source_label))
+                printer.add_row(
+                    {
+                        "AGENT": session.get("agent", AGENT_CLAUDE),
+                        "HOME": home_label,
+                        "WORKSPACE": session.get("workspace_readable") or session.get("workspace"),
+                        "FILE": session.get("filename") or session.get("file"),
+                        "MESSAGES": _format_message_count(session),
+                        "DATE": session["modified"].strftime("%Y-%m-%d")
+                        if session.get("modified")
+                        else "",
+                    }
+                )
+        printer.print()
 
 
 def _dispatch_lsw_additive(args):
@@ -16864,6 +17208,7 @@ def _dispatch_lss_additive(args):
     since_date = getattr(args, "since_date", None)
     until_date = getattr(args, "until_date", None)
     agent = getattr(args, "agent", None) or "auto"
+    output_format = getattr(args, "format", None)
 
     all_results = []
     local_result = _collect_local_sessions_for_additive(patterns, since_date, until_date, agent)
@@ -16874,10 +17219,24 @@ def _dispatch_lss_additive(args):
     )
 
     if all_results:
-        print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
+        columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+        printer = TablePrinter(columns, output_format=output_format)
         for source_label, sessions in all_results:
+            home_label = _normalize_home_label(source_label)
             for session in sessions:
-                print(format_session_line(session, source_label))
+                printer.add_row(
+                    {
+                        "AGENT": session.get("agent", AGENT_CLAUDE),
+                        "HOME": home_label,
+                        "WORKSPACE": session.get("workspace_readable") or session.get("workspace"),
+                        "FILE": session.get("filename") or session.get("file"),
+                        "MESSAGES": _format_message_count(session),
+                        "DATE": session["modified"].strftime("%Y-%m-%d")
+                        if session.get("modified")
+                        else "",
+                    }
+                )
+        printer.print()
 
 
 def _dispatch_lsw(args):
@@ -16889,9 +17248,11 @@ def _dispatch_lsw(args):
     show_web = getattr(args, "web", False)
     all_homes = getattr(args, "all_homes", False)
 
+    output_format = getattr(args, "format", None)
+
     # If --web alone (without --all-homes), only show web sessions
     if show_web and not all_homes:
-        _dispatch_lsw_web()
+        _dispatch_lsw_web(output_format=output_format)
         return
 
     if all_homes:
@@ -16900,10 +17261,11 @@ def _dispatch_lsw(args):
             workspaces_only=True,
             remotes=remotes,
             agent=agent,
+            format=output_format,
         )
         cmd_list_all_homes(list_args)
-        # Also include web sessions with --all-homes (header already printed)
-        _dispatch_lsw_web(print_header=False)
+        # Also include web sessions with --all-homes
+        _dispatch_lsw_web(output_format=output_format)
     elif local_flag and remotes:
         # --local with -r: show both local and remotes (additive)
         list_args = ListCommandArgs(
@@ -16912,8 +17274,8 @@ def _dispatch_lsw(args):
             remotes=remotes,
             local_only=True,
             agent=agent,
+            format=output_format,
         )
-        list_args.format = getattr(args, "format", None)
         _dispatch_lsw_additive(list_args)
     else:
         list_args = ListCommandArgs(
@@ -16921,16 +17283,16 @@ def _dispatch_lsw(args):
             workspaces_only=True,
             remote=_resolve_remote_flag(args),
             agent=agent,
+            format=output_format,
         )
         cmd_list(list_args)
 
 
-def _dispatch_lsw_web(print_header: bool = True):
-    """List web workspaces in flat tab-separated format.
+def _dispatch_lsw_web(output_format: Optional[str] = None):
+    """List web workspaces using TablePrinter.
 
     Args:
-        print_header: If True, print HOME\tWORKSPACE header. Set False when
-            called after cmd_list_all_homes which already prints the header.
+        output_format: 'tsv', 'json', or None (table)
     """
     try:
         token, org_uuid = resolve_web_credentials()
@@ -16939,23 +17301,32 @@ def _dispatch_lsw_web(print_header: bool = True):
         if not sessions:
             return
 
-        if print_header:
-            print("HOME\tWORKSPACE")
+        columns = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
+        printer = TablePrinter(columns, output_format=output_format)
 
-        # Collect unique workspaces with their GitHub repos
-        workspaces = set()
+        # Count sessions per workspace
+        workspace_counts: dict = {}
         for session in sessions:
             github_repo = get_web_session_github_repo(session)
             if github_repo:
-                workspaces.add(github_repo)
+                ws = github_repo
             else:
-                # Web session without GitHub repo - show session ID
                 session_id = session.get("uuid", "unknown")
-                workspaces.add(f"session:{session_id}")
+                ws = f"session:{session_id}"
+            workspace_counts[ws] = workspace_counts.get(ws, 0) + 1
 
-        # Print in flat format
-        for ws in sorted(workspaces):
-            print(f"web\t{ws}")
+        for ws in sorted(workspace_counts.keys()):
+            printer.add_row(
+                {
+                    "HOME": "web",
+                    "WORKSPACE": ws,
+                    "SESSIONS": workspace_counts[ws],
+                    "STATUS": "-",  # Status not applicable for web
+                    "LAST_MODIFIED": "-",
+                }
+            )
+
+        printer.print()
 
     except WebSessionsError:
         # Silently skip if web auth not available
@@ -16972,8 +17343,41 @@ def _dispatch_lss_to_alias(alias_name: str, args):
     )
 
 
+def _require_project_or_pattern_for_cross_home(workspace_list: list, target: str) -> None:
+    """Exit with error if accessing non-local home without project or explicit pattern.
+
+    Only applies when there's a local workspace that would be implicitly matched.
+    If no local workspace exists, the user is explicitly accessing remote - allow it.
+
+    Args:
+        workspace_list: Explicit workspace patterns from command line
+        target: Description of the target (e.g., "remote", "Windows", "WSL")
+    """
+    if workspace_list:
+        return  # Explicit pattern provided, allow access
+
+    pattern, exists = check_current_workspace_exists()
+    if not exists:
+        return  # No local workspace context, no implicit matching would happen
+
+    alias_for_ws = get_alias_for_workspace(pattern, "local")
+    if not alias_for_ws:
+        sys.stderr.write(f"Error: Cannot access {target} without a project or explicit pattern.\n")
+        sys.stderr.write(
+            f"The current workspace is not part of a project that includes {target} workspaces.\n"
+        )
+        sys.stderr.write("Options:\n")
+        sys.stderr.write("  - Use -n <pattern> to specify a workspace pattern\n")
+        sys.stderr.write("  - Define a project that ties local and remote workspaces together\n")
+        sys.exit(1)
+
+
 def _dispatch_lss_local_additive(args, workspace_list: list, remotes: list):
     """Handle lss with --local and -r flags (additive mode)."""
+    # Guard: require project or explicit pattern for cross-home access
+    remote_desc = f"remote ({', '.join(remotes)})" if len(remotes) <= 2 else "remotes"
+    _require_project_or_pattern_for_cross_home(workspace_list, remote_desc)
+
     agent = getattr(args, "agent", None) or "auto"
     source_hint = _get_source_hint_from_args(args)
     patterns, _ = resolve_patterns_for_command(workspace_list, agent=agent, source_hint=source_hint)
@@ -16998,6 +17402,10 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
     lss_remotes = getattr(args, "remotes", None) or []
     agent = getattr(args, "agent", None) or "auto"
     source_hint = _get_source_hint_from_args(args)
+
+    # Guard: require project or explicit pattern for cross-home access
+    if not all_workspaces_flag:
+        _require_project_or_pattern_for_cross_home(workspace_list, "all homes")
 
     if all_workspaces_flag and not workspace_list:
         patterns = [""]
@@ -17032,9 +17440,20 @@ def _dispatch_lss_local(args, workspace_list: list):
     this_only = getattr(args, "this_only", False)
     all_workspaces_flag = getattr(args, "all_workspaces", False)
     remote_value = _resolve_remote_flag(args)
-    needs_remote_scope = bool(
-        remote_value or getattr(args, "windows", False) or getattr(args, "wsl", False)
-    )
+    has_windows = getattr(args, "windows", False)
+    has_wsl = getattr(args, "wsl", False)
+    needs_remote_scope = bool(remote_value or has_windows or has_wsl)
+
+    # Guard: require project or explicit pattern for cross-home access
+    if needs_remote_scope and not all_workspaces_flag:
+        if has_windows:
+            target = "Windows"
+        elif has_wsl:
+            target = "WSL"
+        else:
+            target = f"remote ({remote_value})"
+        _require_project_or_pattern_for_cross_home(workspace_list, target)
+
     error_msg = (
         "Not in a Claude Code workspace.\n\n"
         "To list sessions, either:\n"
@@ -17202,7 +17621,6 @@ def _dispatch_lss(args):
 
     # If --web alone (without --all-homes), only show web sessions
     if show_web and not all_homes:
-        print("AGENT\tHOME\tWORKSPACE\tFILE\tMESSAGES\tDATE")
         _dispatch_lss_web(args)
         return
 
@@ -17216,8 +17634,13 @@ def _dispatch_lss(args):
         _dispatch_lss_local(args, workspace_list)
 
 
-def _dispatch_lss_web(args):
-    """List web sessions from Claude.ai (resolved to local paths when possible)."""
+def _dispatch_lss_web(args, print_header: bool = False):
+    """List web sessions from Claude.ai (resolved to local paths when possible).
+
+    Args:
+        args: Command arguments
+        print_header: If True, print column headers. Set False when appending to other output.
+    """
     try:
         token, org_uuid = resolve_web_credentials()
         sessions = fetch_web_sessions(token, org_uuid)
@@ -17228,6 +17651,10 @@ def _dispatch_lss_web(args):
         # Build map of GitHub repos to local workspace paths
         projects_dir = get_claude_projects_dir()
         github_map = build_github_to_workspace_map(projects_dir) if projects_dir else {}
+
+        output_format = getattr(args, "format", None)
+        columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+        printer = TablePrinter(columns, output_format=output_format)
 
         for session in sessions:
             session_id = session.get("uuid", session.get("id", "unknown"))
@@ -17243,14 +17670,22 @@ def _dispatch_lss_web(args):
             if created_raw:
                 try:
                     dt = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
-                    # Match lss output: date-only column
                     created = dt.strftime("%Y-%m-%d")
                 except (ValueError, AttributeError):
                     created = created_raw
 
-            # Print in same format: AGENT HOME WORKSPACE FILE MESSAGES DATE
-            # For web: agent=web, home=web, workspace=local path or repo
-            print(f"web\tweb\t{workspace}\t{session_id}\t{msg_count}\t{created}")
+            printer.add_row(
+                {
+                    "AGENT": "web",
+                    "HOME": "web",
+                    "WORKSPACE": workspace,
+                    "FILE": session_id,
+                    "MESSAGES": msg_count,
+                    "DATE": created,
+                }
+            )
+
+        printer.print()
 
     except WebSessionsError:
         # Silently skip if web auth not available (e.g., not on macOS)
@@ -17565,11 +18000,32 @@ def _route_export(args, output_dir: Union[str, Path], final_patterns: list, fina
     show_web = getattr(args, "web", False)
     no_web = getattr(args, "no_web", False)
     all_homes = getattr(args, "all_homes", False)
+    all_workspaces = getattr(args, "all_workspaces", False)
+    has_windows = getattr(args, "windows", False)
+    has_wsl = getattr(args, "wsl", False)
 
     # If --web alone (without --all-homes), only export web sessions
     if show_web and not all_homes:
         _dispatch_export_web(args, output_dir)
         return
+
+    # Guard: require project or explicit pattern for cross-home access
+    raw_targets = args.target if hasattr(args, "target") and args.target else []
+    name_patterns = getattr(args, "name_patterns", None) or []
+    explicit_patterns = raw_targets + name_patterns
+    needs_cross_home = bool(final_remotes or has_windows or has_wsl or all_homes)
+    if needs_cross_home and not all_workspaces and not explicit_patterns:
+        if has_windows:
+            target = "Windows"
+        elif has_wsl:
+            target = "WSL"
+        elif all_homes:
+            target = "all homes"
+        else:
+            target = (
+                f"remote ({', '.join(final_remotes[:2])})" if len(final_remotes) <= 2 else "remotes"
+            )
+        _require_project_or_pattern_for_cross_home([], target)
 
     local_flag = getattr(args, "local", False)
     if local_flag and final_remotes:
@@ -17795,6 +18251,24 @@ def _dispatch_stats(args):
         getattr(args, "all_workspaces", False),
     )
     args.workspace = combined
+
+    # Guard: require project or explicit pattern for cross-home access
+    has_windows = getattr(args, "windows", False)
+    has_wsl = getattr(args, "wsl", False)
+    has_remotes = bool(getattr(args, "remotes", None))
+    all_homes = getattr(args, "all_homes", False)
+    all_workspaces = getattr(args, "all_workspaces", False)
+    needs_cross_home = bool(has_windows or has_wsl or has_remotes or all_homes)
+    if needs_cross_home and not all_workspaces and not combined:
+        if has_windows:
+            target = "Windows"
+        elif has_wsl:
+            target = "WSL"
+        elif all_homes:
+            target = "all homes"
+        else:
+            target = "remote"
+        _require_project_or_pattern_for_cross_home([], target)
 
     remotes = _get_stats_remotes(args)
 
@@ -18026,6 +18500,10 @@ def main():
     if not hasattr(args, "command") or args.command is None:
         parser.print_help()
         sys.exit(0)
+
+    # Set global table width from --width/-w option
+    if hasattr(args, "width") and args.width is not None:
+        set_table_width(args.width)
 
     # Progressively build Gemini hash→path index from current directory
     # This learns the mapping as the user runs agent-history from different directories
