@@ -334,6 +334,7 @@ def test_e2e_stats_top_ws_limit(tmp_path: Path):
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
     env["USERPROFILE"] = str(home_dir)
+    env["AGENT_HISTORY_CONFIG_DIR"] = str(config_dir)
 
     # Use --no-sync since we already populated the database directly
     # Note: --top-ws N limits total rows globally, not per-home
