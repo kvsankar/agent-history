@@ -145,6 +145,7 @@ def setup_env(tmp_path: Path):
     # Set HOME for the metrics DB location (~/.agent-history/)
     # Note: Set HOME on all platforms since _get_config_dirs() checks HOME first
     env["HOME"] = str(tmp_path)
+    env["AGENT_HISTORY_CONFIG_DIR"] = str(history_dir)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
 
