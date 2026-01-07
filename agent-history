@@ -5319,6 +5319,9 @@ def get_current_workspace_pattern():
     else:
         cwd_str = str(cwd)
 
+    # Normalize Windows backslashes to forward slashes before encoding
+    cwd_str = cwd_str.replace("\\", "/")
+
     # Handle Windows paths (C:\path\to\project -> C--path-to-project)
     if sys.platform == "win32" and len(cwd_str) >= MIN_WINDOWS_PATH_LEN and cwd_str[1] == ":":
         # Extract drive letter and path
