@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Pytest CLI Options
 # ---------------------------------------------------------------------------
@@ -60,6 +59,7 @@ def _run_docker_tests_and_exit(config):
             ["docker", "compose", "build"],
             cwd=docker_dir,
             timeout=300,
+            check=False,
         )
         if result.returncode != 0:
             print("ERROR: Docker build failed")
@@ -71,6 +71,7 @@ def _run_docker_tests_and_exit(config):
             ["docker", "compose", "up", "-d", "node-alpha", "node-beta"],
             cwd=docker_dir,
             timeout=60,
+            check=False,
         )
         if result.returncode != 0:
             print("ERROR: Failed to start Docker containers")
@@ -92,9 +93,18 @@ def _run_docker_tests_and_exit(config):
             extra_args.extend(["--tb", config.option.tb])
 
         result = subprocess.run(
-            ["docker", "compose", "run", "--rm", "test-runner",
-             "pytest", "tests/e2e_docker/", *extra_args],
+            [
+                "docker",
+                "compose",
+                "run",
+                "--rm",
+                "test-runner",
+                "pytest",
+                "tests/e2e_docker/",
+                *extra_args,
+            ],
             cwd=docker_dir,
+            check=False,
         )
 
         print("-" * 60)
@@ -108,6 +118,7 @@ def _run_docker_tests_and_exit(config):
             cwd=docker_dir,
             capture_output=True,
             timeout=60,
+            check=False,
         )
 
     # Use os._exit to avoid pytest's exception handling
@@ -131,6 +142,7 @@ def _is_docker_running() -> bool:
             ["docker", "info"],
             capture_output=True,
             timeout=10,
+            check=False,
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -151,6 +163,7 @@ def _start_docker_containers() -> bool:
         cwd=docker_dir,
         capture_output=True,
         timeout=300,
+        check=False,
     )
     if result.returncode != 0:
         print(f"Docker build failed: {result.stderr.decode()}")
@@ -162,6 +175,7 @@ def _start_docker_containers() -> bool:
         cwd=docker_dir,
         capture_output=True,
         timeout=60,
+        check=False,
     )
     if result.returncode != 0:
         print(f"Docker start failed: {result.stderr.decode()}")
@@ -173,12 +187,25 @@ def _start_docker_containers() -> bool:
     # Verify connectivity
     for attempt in range(5):
         result = subprocess.run(
-            ["docker", "compose", "run", "--rm", "test-runner",
-             "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-             "alice@node-alpha", "echo", "ready"],
+            [
+                "docker",
+                "compose",
+                "run",
+                "--rm",
+                "test-runner",
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "alice@node-alpha",
+                "echo",
+                "ready",
+            ],
             cwd=docker_dir,
             capture_output=True,
             timeout=30,
+            check=False,
         )
         if result.returncode == 0:
             return True
@@ -195,6 +222,7 @@ def _stop_docker_containers():
         cwd=docker_dir,
         capture_output=True,
         timeout=60,
+        check=False,
     )
 
 
@@ -344,6 +372,8 @@ def isolated_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
     env["CODEX_SESSIONS_DIR"] = str(codex_dir)
     env["GEMINI_SESSIONS_DIR"] = str(gemini_dir)
     env["HOME"] = str(tmp_path)
+    # Ensure config/metrics live alongside this isolated home, regardless of external overrides.
+    env["AGENT_HISTORY_CONFIG_DIR"] = str(history_dir)
     if sys.platform == "win32":
         env["USERPROFILE"] = str(tmp_path)
 
