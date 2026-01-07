@@ -25,9 +25,9 @@
 
 **Environment details:**
 - **Primary platform:** Linux (WSL2 on Windows)
-- **Working directory pattern:** `/home/alex/alex/projects/`
+- **Working directory pattern:** `/home/<user>/projects/`
 - **Git usage:** Always working on `master` branch
-- **Multiple development environments:** Windows (C:\alex\projects), WSL, and SSH remotes (node-alpha)
+- **Multiple development environments:** Windows (C:\Users\<user>\projects), WSL, and SSH remotes
 
 **Project context:**
 - This is a **single-file Python CLI tool** called `claude-history`
@@ -86,7 +86,7 @@
 - Tool use inputs and outputs must be complete (full JSON, not summaries)
 
 **Cross-platform compatibility:**
-- Windows compatibility is critical (working directory pattern: `C:\alex\projects\`)
+- Windows compatibility is critical (working directory pattern: `C:\Users\<user>\projects\`)
 - Must handle both forward slashes (Linux/WSL) and backslashes (Windows)
 - Use `pathlib.Path` for all path operations
 
@@ -269,9 +269,9 @@
 - **Time period:** November 20 - December 1, 2025 (12 days)
 - **Largest conversation:** 2,666 messages (6c073d8e - comprehensive testing session)
 - **Working environments:**
-  - Linux/WSL: `/home/alex/alex/projects/`
-  - Windows: `C:\alex\projects\`
-  - SSH remote: `node-alpha`
+  - Linux/WSL: `/home/<user>/projects/`
+  - Windows: `C:\Users\<user>\projects\`
+  - SSH remote: various hosts
 
 **Project focus areas:**
 1. Testing and quality assurance (comprehensive TESTING.md with 8 sections)

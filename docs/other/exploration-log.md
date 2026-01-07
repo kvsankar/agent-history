@@ -24,32 +24,32 @@ Successful runs (expected behavior)
 - `python .\agent-history --agent gemini lss --wsl --aw`
 - `python .\agent-history --agent gemini lss --ah --aw`
 - `python .\agent-history --agent codex lss --ah --aw`
-- `python .\agent-history --agent gemini lss -r alex@node-alpha --aw`
-- `python .\agent-history stats --agent gemini --source remote:node-alpha --no-sync`
+- `python .\agent-history --agent gemini lss -r user@remotehost --aw`
+- `python .\agent-history stats --agent gemini --source remote:remotehost --no-sync`
 - `python .\agent-history stats --agent codex --source wsl:Ubuntu --no-sync`
-- `python .\agent-history stats --tools --source remote:node-alpha --no-sync`
-- `python .\agent-history stats --sync --ah --jobs 4 -r alex@node-alpha --no-windows`
+- `python .\agent-history stats --tools --source remote:remotehost --no-sync`
+- `python .\agent-history stats --sync --ah --jobs 4 -r user@remotehost --no-windows`
 - `python .\agent-history --agent gemini export --ah --aw --no-remote --quiet --jobs 4 -o .\tmp-export`
-- `python .\agent-history --agent gemini export claude-history -r alex@node-alpha --quiet -o .\tmp-export-remote`
-- `python .\agent-history --agent codex export claude-history -r alex@node-alpha --quiet -o .\tmp-export-remote`
-- `python .\agent-history lsw --local -r alex@node-alpha`
+- `python .\agent-history --agent gemini export claude-history -r user@remotehost --quiet -o .\tmp-export-remote`
+- `python .\agent-history --agent codex export claude-history -r user@remotehost --quiet -o .\tmp-export-remote`
+- `python .\agent-history lsw --local -r user@remotehost`
 - `python .\agent-history lss claude-history --wsl --aw`
-- `python C:\alex\projects\claude-history\agent-history stats --aw --no-sync` (outside workspace)
-- `python C:\alex\projects\claude-history\agent-history stats --source remote:node-alpha --no-sync` (outside workspace)
-- `python C:\alex\projects\claude-history\agent-history lss --aw` (from `C:\`)
-- `python C:\alex\projects\claude-history\agent-history lsw --ah` (from `C:\`)
-- `python C:\alex\projects\claude-history\agent-history stats --aw --no-sync` (from `C:\`)
-- `python C:\alex\projects\claude-history\agent-history stats --source remote:node-alpha --no-sync` (from `C:\`)
-- `python C:\alex\projects\claude-history\agent-history export --aw --no-remote --quiet -o C:\alex\projects\claude-history\tmp-export-matrix-2` (from `C:\`)
-- `python .\agent-history stats --sync --ah --jobs 4 -r alex@node-alpha --no-wsl`
+- `python C:\Users\user\projects\claude-history\agent-history stats --aw --no-sync` (outside workspace)
+- `python C:\Users\user\projects\claude-history\agent-history stats --source remote:remotehost --no-sync` (outside workspace)
+- `python C:\Users\user\projects\claude-history\agent-history lss --aw` (from `C:\`)
+- `python C:\Users\user\projects\claude-history\agent-history lsw --ah` (from `C:\`)
+- `python C:\Users\user\projects\claude-history\agent-history stats --aw --no-sync` (from `C:\`)
+- `python C:\Users\user\projects\claude-history\agent-history stats --source remote:remotehost --no-sync` (from `C:\`)
+- `python C:\Users\user\projects\claude-history\agent-history export --aw --no-remote --quiet -o C:\Users\user\projects\claude-history\tmp-export-matrix-2` (from `C:\`)
+- `python .\agent-history stats --sync --ah --jobs 4 -r user@remotehost --no-wsl`
 
 Observations
 ------------
-- `python C:\alex\projects\claude-history\agent-history lss --this` (from `C:\`) correctly errors with "Not in a Claude Code workspace."
-- `python C:\alex\projects\claude-history\agent-history lss --ah` (from `C:\`) timed out at 30s (likely large data; no error besides timeout).
+- `python C:\Users\user\projects\claude-history\agent-history lss --this` (from `C:\`) correctly errors with "Not in a Claude Code workspace."
+- `python C:\Users\user\projects\claude-history\agent-history lss --ah` (from `C:\`) timed out at 30s (likely large data; no error besides timeout).
 - Cross-env sanity for `claude-history` (Windows stats, `--no-sync`):
-  - Codex: local 7 sessions, wsl:Ubuntu 4 sessions, remote:node-alpha 3 sessions.
-  - Claude: local 40 sessions, wsl:Ubuntu 98 sessions, remote:node-alpha 35 sessions.
+  - Codex: local 7 sessions, wsl:Ubuntu 4 sessions, remote:remotehost 3 sessions.
+  - Claude: local 40 sessions, wsl:Ubuntu 98 sessions, remote:remotehost 35 sessions.
 - Timing (Windows, C:\, output discarded):
   - `lss --local --aw`: ~2.6s
   - `lss --windows --aw`: ~2.7s
@@ -76,7 +76,7 @@ WSL runs (expected behavior)
 - `./agent-history lsw --local`
 - `./agent-history lsw --windows --agent claude`
 - `./agent-history lsw --ah`
-- `./agent-history lsw --local -r alex@node-alpha`
+- `./agent-history lsw --local -r user@remotehost`
 - `./agent-history lss --agent claude`
 - `./agent-history lss --agent codex`
 - `./agent-history lss --agent gemini`
@@ -98,29 +98,29 @@ WSL runs (expected behavior)
 - `./agent-history stats --agent gemini --this`
 - `./agent-history stats --agent claude --source windows --aw`
 - `./agent-history stats --agent claude --source windows --aw --no-sync`
-- `./agent-history stats --agent claude --source remote:node-alpha --aw --no-sync`
+- `./agent-history stats --agent claude --source remote:remotehost --aw --no-sync`
 - `./agent-history stats --agent claude --source wsl:Ubuntu --aw --no-sync` (0 sessions, expected with no `wsl:Ubuntu` sources)
 - `./agent-history stats --agent claude --source windows:alex --aw --no-sync`
-- `./agent-history stats --agent gemini --source remote:node-alpha --no-sync`
+- `./agent-history stats --agent gemini --source remote:remotehost --no-sync`
 - `./agent-history stats --agent codex --source wsl:Ubuntu --no-sync`
-- `./agent-history stats --tools --source remote:node-alpha --no-sync`
+- `./agent-history stats --tools --source remote:remotehost --no-sync`
 - `./agent-history stats --tools --source wsl --aw --no-sync`
 - `./agent-history stats --models --source wsl --aw --no-sync`
-- `./agent-history stats --agent codex --source remote:node-alpha --aw --no-sync` (0 sessions; no remote sync yet)
-- `./agent-history stats --sync --agent codex --source remote:node-alpha --aw` (syncs local only without `-r`)
-- `./agent-history stats --sync -r alex@node-alpha --agent codex --source remote:node-alpha --aw`
-- `./agent-history stats --sync --ah --jobs 4 -r alex@node-alpha --no-windows`
-- `./agent-history stats --sync --ah --jobs 4 -r alex@node-alpha --no-wsl`
-- `./agent-history stats --agent codex --source remote:node-alpha --aw --no-sync` (after sync)
+- `./agent-history stats --agent codex --source remote:remotehost --aw --no-sync` (0 sessions; no remote sync yet)
+- `./agent-history stats --sync --agent codex --source remote:remotehost --aw` (syncs local only without `-r`)
+- `./agent-history stats --sync -r user@remotehost --agent codex --source remote:remotehost --aw`
+- `./agent-history stats --sync --ah --jobs 4 -r user@remotehost --no-windows`
+- `./agent-history stats --sync --ah --jobs 4 -r user@remotehost --no-wsl`
+- `./agent-history stats --agent codex --source remote:remotehost --aw --no-sync` (after sync)
 - `./agent-history stats --by-day --source wsl --aw --no-sync`
 - `./agent-history stats --by-workspace --source wsl --aw --no-sync`
 - `./agent-history stats --time --source wsl --aw --no-sync`
 - `./agent-history stats --by-day --source windows --aw --no-sync`
 - `./agent-history stats --by-workspace --source windows --aw --no-sync`
 - `./agent-history stats --time --source windows --aw --no-sync`
-- `./agent-history stats --by-day --source remote:node-alpha --aw --no-sync`
-- `./agent-history stats --by-workspace --source remote:node-alpha --aw --no-sync`
-- `./agent-history stats --time --source remote:node-alpha --aw --no-sync`
+- `./agent-history stats --by-day --source remote:remotehost --aw --no-sync`
+- `./agent-history stats --by-workspace --source remote:remotehost --aw --no-sync`
+- `./agent-history stats --time --source remote:remotehost --aw --no-sync`
 - `./agent-history export --by-day --source wsl --aw --no-sync` (expected error: unsupported flags)
 - `./agent-history stats --by-day --source wsl --this --no-sync`
 - `./agent-history lss --alias claude-history`
@@ -130,30 +130,30 @@ WSL runs (expected behavior)
 - `./agent-history lsw claude-history`
 - `./agent-history stats --by-workspace --source wsl --this --no-sync`
 - `./agent-history stats --by-day --source windows --this --no-sync`
-- `./agent-history stats --by-day --source remote:node-alpha --this --no-sync`
+- `./agent-history stats --by-day --source remote:remotehost --this --no-sync`
 - `./agent-history lss --alias claude-history --wsl --agent claude` (no sessions; alias has no WSL entries)
 - `./agent-history lss --alias claude-history --windows --agent claude`
 - `./agent-history export --alias claude-history --windows --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history export --alias claude-history --wsl --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no WSL entries)
 - `./agent-history lss --alias claude-history --local --agent claude` (piped to `head`; BrokenPipeError on stdout flush)
 - `./agent-history stats --agent codex --source windows --aw --no-sync`
-- `./agent-history lss --alias claude-history -r alex@node-alpha --agent claude`
-- `./agent-history export --alias claude-history -r alex@node-alpha --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no remote entries in range)
+- `./agent-history lss --alias claude-history -r user@remotehost --agent claude`
+- `./agent-history export --alias claude-history -r user@remotehost --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no remote entries in range)
 - `./agent-history stats --agent codex --source windows --this --no-sync`
 - `./agent-history stats --agent gemini --source windows --this --no-sync` (no sessions)
-- `./agent-history stats --agent gemini --source remote:node-alpha --this --no-sync`
+- `./agent-history stats --agent gemini --source remote:remotehost --this --no-sync`
 - `./agent-history lss --alias claude-history --agent gemini`
 - `./agent-history stats --agent claude --source windows --this --no-sync`
 - `./agent-history stats --agent codex --source wsl --this --no-sync`
 - `./agent-history stats --agent gemini --source wsl --this --no-sync`
 - `./agent-history lss --alias claude-history --windows --agent codex --since 2025-12-18`
-- `./agent-history stats --agent codex --source remote:node-alpha --this --no-sync`
-- `./agent-history lss //wsl$/Ubuntu/home/alex/alex/projects/claude-history --agent claude`
+- `./agent-history stats --agent codex --source remote:remotehost --this --no-sync`
+- `./agent-history lss //wsl$/Ubuntu/home/user/projects/claude-history --agent claude`
 - `./agent-history stats --alias claude-history --agent gemini --source wsl --by-day` (expected error: `--alias` not supported for stats)
 - `./agent-history stats @claude-history --agent gemini --source wsl --by-day`
 - `./agent-history stats @claude-history --agent gemini --source windows --by-day`
 - `./agent-history stats @claude-history --agent codex --source wsl --by-day`
-- `./agent-history lsw //wsl$/Ubuntu/home/alex/alex/projects/claude-history --agent claude`
+- `./agent-history lsw //wsl$/Ubuntu/home/user/projects/claude-history --agent claude`
 - `./agent-history lss @claude-history --agent codex --wsl` (no sessions found)
 - `./agent-history lss @claude-history --agent codex`
 - `./agent-history lss @claude-history --agent codex --windows`
@@ -161,20 +161,20 @@ WSL runs (expected behavior)
 - `./agent-history lsw claude-history --agent codex --windows`
 - `./agent-history lsw claude-history --agent codex --wsl`
 - `./agent-history lss --alias claude-history --local --agent codex`
-- `./agent-history lss --alias claude-history -r alex@node-alpha --agent codex`
+- `./agent-history lss --alias claude-history -r user@remotehost --agent codex`
 - `./agent-history stats @claude-history --source wsl --no-sync`
 - `./agent-history stats @claude-history --source windows --no-sync`
-- `./agent-history stats @claude-history --source remote:node-alpha --no-sync`
+- `./agent-history stats @claude-history --source remote:remotehost --no-sync`
 - `./agent-history stats @claude-history --source windows --agent codex --no-sync`
 - `./agent-history stats @claude-history --agent codex --source windows --by-workspace`
 - `./agent-history stats @claude-history --agent codex --source windows --by-workspace --no-sync`
-- `./agent-history stats @claude-history --agent codex --source remote:node-alpha --by-workspace -r alex@node-alpha`
-- `./agent-history stats @claude-history --agent codex --source remote:node-alpha --by-workspace --no-sync`
+- `./agent-history stats @claude-history --agent codex --source remote:remotehost --by-workspace -r user@remotehost`
+- `./agent-history stats @claude-history --agent codex --source remote:remotehost --by-workspace --no-sync`
 - `./agent-history stats @claude-history --agent codex --source wsl --by-workspace`
 - `./agent-history stats @claude-history --agent gemini --source windows --by-workspace`
 - `./agent-history stats @claude-history --agent gemini --source wsl --by-workspace`
-- `./agent-history stats @claude-history --agent gemini --source remote:node-alpha --by-workspace -r alex@node-alpha`
-- `./agent-history stats @claude-history --agent gemini --source remote:node-alpha --by-workspace --no-sync`
+- `./agent-history stats @claude-history --agent gemini --source remote:remotehost --by-workspace -r user@remotehost`
+- `./agent-history stats @claude-history --agent gemini --source remote:remotehost --by-workspace --no-sync`
 - `./agent-history stats @claude-history --agent codex --tools --source wsl`
 - `./agent-history stats @claude-history --agent gemini --models --source wsl`
 - `./agent-history stats @claude-history --agent codex --time --source windows --no-sync`
@@ -182,12 +182,12 @@ WSL runs (expected behavior)
 - `./agent-history lsw --agent codex --ah`
 - `./agent-history lsw --agent gemini --ah`
 - `./agent-history lsw --agent gemini --windows`
-- `./agent-history lss @claude-history --agent gemini --local -r alex@node-alpha`
-- `./agent-history lss @claude-history --agent codex --local -r alex@node-alpha`
+- `./agent-history lss @claude-history --agent gemini --local -r user@remotehost`
+- `./agent-history lss @claude-history --agent codex --local -r user@remotehost`
 - `./agent-history export --alias claude-history --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history export --alias claude-history --split 200 --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history export --alias claude-history --windows --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (temp dir created and deleted)
-- `./agent-history export --alias claude-history -r alex@node-alpha --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no remote entries in range)
+- `./agent-history export --alias claude-history -r user@remotehost --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no remote entries in range)
 - `./agent-history export --alias claude-history --wsl --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (no output; no WSL entries)
 - `./agent-history export --alias claude-history --agent codex --since 2025-12-18 --quiet -o /tmp/<temp>` (permission error on codex index; fixed later)
 - `./agent-history export --alias claude-history --agent codex --flat --since 2025-12-18 --quiet -o /tmp/<temp>` (no output before fix)
@@ -201,17 +201,17 @@ WSL runs (expected behavior)
 - `./agent-history export --agent gemini --ah --aw --quiet -o /tmp/<temp>` (export-all summary printed)
 - `./agent-history export claude-history --agent codex --windows --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent codex --wsl --quiet -o /tmp/<temp>` (no output; quiet mode)
-- `./agent-history export claude-history --agent codex -r alex@node-alpha --quiet -o /tmp/<temp>` (no output; quiet mode)
-- `./agent-history export claude-history --agent gemini -r alex@node-alpha --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export claude-history --agent codex -r user@remotehost --quiet -o /tmp/<temp>` (no output; quiet mode)
+- `./agent-history export claude-history --agent gemini -r user@remotehost --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export --agent gemini --ah --aw --no-remote --quiet --jobs 4 -o /tmp/<temp>` (export-all summary printed)
 - `./agent-history export --aw --no-remote --quiet -o /tmp/<temp>` (no output; quiet mode)
-- `./agent-history export --agent gemini --source remote:node-alpha --quiet -o /tmp/<temp>` (expected error: `--source` not supported for export)
+- `./agent-history export --agent gemini --source remote:remotehost --quiet -o /tmp/<temp>` (expected error: `--source` not supported for export)
 - `./agent-history export @claude-history --agent gemini --windows --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent codex --split 200 --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export claude-history --agent gemini --minimal --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export --agent codex --ah --aw --no-windows --quiet -o /tmp/<temp>` (after fix: Windows skipped)
 - `./agent-history export --agent gemini --ah --aw --no-windows --quiet -o /tmp/<temp>` (after fix: Windows skipped)
-- `./agent-history export --agent codex --ah --aw --no-remote -r alex@node-alpha --quiet -o /tmp/<temp>` (warns; remotes skipped)
+- `./agent-history export --agent codex --ah --aw --no-remote -r user@remotehost --quiet -o /tmp/<temp>` (warns; remotes skipped)
 - `./agent-history export --agent codex --this --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export --agent gemini --this --quiet -o /tmp/<temp>` (no output; quiet mode)
 - `./agent-history export --minimal -o /tmp/<temp>` (temp dir created and deleted)
@@ -230,8 +230,8 @@ WSL runs (expected behavior)
 - `./agent-history lss --agent gemini --counts`
 - `./agent-history stats --agent codex --source windows --aw --no-sync`
 - `./agent-history stats --agent codex --source windows --aw --sync`
-- `/home/alex/alex/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
-- `/home/alex/alex/projects/claude-history/agent-history stats --source remote:node-alpha --no-sync` (from `/`)
+- `/home/user/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
+- `/home/user/projects/claude-history/agent-history stats --source remote:remotehost --no-sync` (from `/`)
 - `./agent-history lss --wsl --agent codex`
 - `./agent-history lss --wsl --agent gemini`
 - `./agent-history lss --wsl --agent codex --since 2025-12-18`
@@ -265,21 +265,21 @@ WSL runs (expected behavior)
 - `./agent-history export --wsl --agent gemini --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history export --flat --wsl --agent codex --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
 - `./agent-history export --wsl --agent claude --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
-- `./agent-history lss -r alex@node-alpha --aw`
-- `./agent-history lss -r alex@node-alpha --aw --agent codex`
-- `./agent-history export -r alex@node-alpha --agent codex --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
-- `./agent-history lss -r alex@node-alpha --local --this --agent codex`
+- `./agent-history lss -r user@remotehost --aw`
+- `./agent-history lss -r user@remotehost --aw --agent codex`
+- `./agent-history export -r user@remotehost --agent codex --this --quiet -o /tmp/<temp>` (temp dir created and deleted)
+- `./agent-history lss -r user@remotehost --local --this --agent codex`
 - `uv run pytest tests/unit/test_claude_history.py -k "agent_flag_after_subcommand or windows_this_only"`
-- `python3 /home/alex/alex/projects/claude-history/agent-history lss --aw` (from `/`)
-- `python3 /home/alex/alex/projects/claude-history/agent-history lsw --ah` (from `/`)
-- `python3 /home/alex/alex/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
-- `python3 /home/alex/alex/projects/claude-history/agent-history stats --source remote:node-alpha --no-sync` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history lss --aw` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history lsw --ah` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history stats --source remote:remotehost --no-sync` (from `/`)
 - `python3 ./agent-history stats --sync`
-- `python3 /home/alex/alex/projects/claude-history/agent-history export --aw --no-remote --quiet -o /tmp/agent-history-export-matrix` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history export --aw --no-remote --quiet -o /tmp/agent-history-export-matrix` (from `/`)
 
 Observations
 ------------
-- `python3 /home/alex/alex/projects/claude-history/agent-history lss --this` (from `/`) correctly errors with "Not in a Claude Code workspace."
+- `python3 /home/user/projects/claude-history/agent-history lss --this` (from `/`) correctly errors with "Not in a Claude Code workspace."
 - `stats` does not accept `--alias`; use `stats @alias` instead.
 - `./agent-history stats --aw --no-sync` (from `/`) fails because the relative path isn't available; use the absolute path instead.
 - WSL export emitted: `Warning: Couldn't parse line in 2c4ad1bc-7ce9-405c-9b8c-d369178c901e.jsonl: Extra data: line 1 column 2 (char 1)` (left data unchanged).
@@ -294,20 +294,20 @@ Successful runs (expected behavior)
 - `python3 ./agent-history lsw --ah`
 - `python3 ./agent-history --agent codex lss --aw`
 - `python3 ./agent-history --agent gemini lss --aw`
-- `python3 /home/alex/alex/projects/claude-history/agent-history stats --no-sync` from `/` (expected error because no DB)
-- `python3 /home/alex/alex/projects/claude-history/agent-history lss --aw` (from `/`)
-- `python3 /home/alex/alex/projects/claude-history/agent-history lsw --ah` (from `/`)
-- `python3 /home/alex/alex/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history stats --no-sync` from `/` (expected error because no DB)
+- `python3 /home/user/projects/claude-history/agent-history lss --aw` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history lsw --ah` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history stats --aw --no-sync` (from `/`)
 - `python3 ./agent-history stats --sync`
-- `python3 /home/alex/alex/projects/claude-history/agent-history export --aw --no-remote --quiet -o /tmp/agent-history-export-matrix` (from `/`)
+- `python3 /home/user/projects/claude-history/agent-history export --aw --no-remote --quiet -o /tmp/agent-history-export-matrix` (from `/`)
 
 Observations
 ------------
-- `python3 /home/alex/alex/projects/claude-history/agent-history lss --this` (from `/`) correctly errors with "Not in a Claude Code workspace."
+- `python3 /home/user/projects/claude-history/agent-history lss --this` (from `/`) correctly errors with "Not in a Claude Code workspace."
 
 Unexpected behavior and fixes
 -----------------------------
-- `stats --agent gemini --source remote:node-alpha` returned 0 sessions because it scoped to the current workspace when no pattern was provided.
+- `stats --agent gemini --source remote:remotehost` returned 0 sessions because it scoped to the current workspace when no pattern was provided.
   - Fix: `stats --source` now defaults to all workspaces for that source unless `--this` is set.
   - Added unit test and doc note.
 - `uv run pytest tests/unit/test_claude_history.py -k "alias_export_uses_non_claude_sessions"` failed with `Permission denied` on `~/.cache/uv/sdists-v9/.git`.
@@ -389,8 +389,8 @@ Temporary directories created and deleted
 ----------------------------------------
 - `.\\tmp-export`
 - `.\\tmp-export-remote`
-- `C:\\alex\\projects\\claude-history\\tmp-export-matrix`
-- `C:\\alex\\projects\\claude-history\\tmp-export-matrix-2`
+- `C:\\Users\\user\\projects\\claude-history\\tmp-export-matrix`
+- `C:\\Users\\user\\projects\\claude-history\\tmp-export-matrix-2`
 - `/tmp/agent-history-export-matrix` (WSL and remote)
 - `/tmp/<temp>`
 

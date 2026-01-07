@@ -309,10 +309,8 @@ class TestWebCredentials:
             == "owner/repo"
         )
         assert (
-            agent_history.extract_github_repo_from_git_url(
-                "git@github-kvsankar:kvsankar/skyfield-ts.git"
-            )
-            == "kvsankar/skyfield-ts"
+            agent_history.extract_github_repo_from_git_url("git@github-alice:alice/my-repo.git")
+            == "alice/my-repo"
         )
 
     def test_extract_github_repo_non_github(self):

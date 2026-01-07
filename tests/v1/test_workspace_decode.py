@@ -191,8 +191,9 @@ class TestWorkspaceDecodeDeepHierarchy:
 
     def test_nested_path_decodes_correctly(self, decode_test_home: Dict[str, Any]) -> None:
         """Nested path in deep hierarchy should decode correctly."""
+        # Use TSV format to get full, non-truncated paths
         result = run_cli_subprocess(
-            ["ws", "list", "--aw"],
+            ["ws", "list", "--aw", "--format", "tsv"],
             env=decode_test_home["env"],
         )
         assert result.returncode == 0
@@ -205,8 +206,9 @@ class TestWorkspaceDecodeDeepHierarchy:
 
     def test_deeply_nested_path_decodes_correctly(self, decode_test_home: Dict[str, Any]) -> None:
         """Deeply nested path should decode correctly."""
+        # Use TSV format to get full, non-truncated paths
         result = run_cli_subprocess(
-            ["ws", "list", "--aw"],
+            ["ws", "list", "--aw", "--format", "tsv"],
             env=decode_test_home["env"],
         )
         assert result.returncode == 0
@@ -296,17 +298,16 @@ class TestHierarchicalWorkspaces:
 
     def test_parent_and_children_listed_separately(self, hierarchical_home: Dict[str, Any]) -> None:
         """Parent workspace and child workspaces should all appear in listing."""
+        # Use TSV format to get full, non-truncated paths
         result = run_cli_subprocess(
-            ["ws", "list", "--aw"],
+            ["ws", "list", "--aw", "--format", "tsv"],
             env=hierarchical_home["env"],
         )
         assert result.returncode == 0
         output = result.stdout
 
         # All four workspaces should be listed separately
-        assert "/home/user/projects/monorepo\n" in output or output.endswith(
-            "/home/user/projects/monorepo"
-        )
+        assert "/home/user/projects/monorepo\t" in output  # Parent with tab after (TSV)
         assert "/home/user/projects/monorepo/packages/api" in output
         assert "/home/user/projects/monorepo/packages/web" in output
         assert "/home/user/projects/monorepo/packages/shared" in output
@@ -319,41 +320,36 @@ class TestHierarchicalWorkspaces:
         )
         assert result.returncode == 0
 
-        # Count non-empty lines
-        workspaces = [line for line in result.stdout.strip().split("\n") if line]
+        # Count non-empty lines (excluding header)
+        lines = [line for line in result.stdout.strip().split("\n") if line]
+        # First line is header, rest are workspaces
+        assert lines[0].startswith("HOME"), "First line should be header"
+        workspaces = lines[1:]  # Skip header
         assert len(workspaces) == 4, f"Expected 4 workspaces, got {len(workspaces)}: {workspaces}"
 
     def test_parent_not_merged_with_children(self, hierarchical_home: Dict[str, Any]) -> None:
         """Parent workspace sessions should not include child workspace sessions."""
-        # List sessions for just the parent workspace
-        result = run_cli_subprocess(
-            ["session", "list", "-n", "monorepo", "--aw"],
-            env=hierarchical_home["env"],
-        )
-        assert result.returncode == 0
-
-        # The parent has 2 sessions, children have 3+1+2=6
-        # If merged incorrectly, we'd see 8 sessions
-        # With correct separation, pattern match on "monorepo" might match all 4 workspaces
-        # But the key is they should be LISTED as separate workspaces
-
-        # Verify via ws list that they're separate
+        # Verify via ws list that workspaces are separate
         ws_result = run_cli_subprocess(
             ["ws", "list", "-n", "monorepo", "--aw"],
             env=hierarchical_home["env"],
         )
         assert ws_result.returncode == 0
 
-        # Pattern "monorepo" should match all 4 workspaces
-        workspaces = [line for line in ws_result.stdout.strip().split("\n") if line]
-        assert len(workspaces) == 4, "Pattern 'monorepo' should match all 4 workspaces"
+        # Pattern "monorepo" should match all 4 workspaces (header + 4 data lines)
+        lines = [line for line in ws_result.stdout.strip().split("\n") if line]
+        workspaces = lines[1:]  # Skip header
+        assert (
+            len(workspaces) == 4
+        ), f"Pattern 'monorepo' should match all 4 workspaces, got: {workspaces}"
 
     def test_child_workspace_pattern_excludes_parent(
         self, hierarchical_home: Dict[str, Any]
     ) -> None:
         """Pattern matching on child path should not include parent."""
+        # Use TSV format to get full, non-truncated paths
         result = run_cli_subprocess(
-            ["ws", "list", "-n", "packages/api", "--aw"],
+            ["ws", "list", "-n", "packages/api", "--aw", "--format", "tsv"],
             env=hierarchical_home["env"],
         )
         assert result.returncode == 0
@@ -362,6 +358,7 @@ class TestHierarchicalWorkspaces:
         # Should find only the api workspace
         assert "/home/user/projects/monorepo/packages/api" in output
 
-        # Should NOT include parent or siblings
-        workspaces = [line for line in output.strip().split("\n") if line]
+        # Should NOT include parent or siblings (header + 1 data line)
+        lines = [line for line in output.strip().split("\n") if line]
+        workspaces = lines[1:]  # Skip header
         assert len(workspaces) == 1, f"Expected 1 workspace, got: {workspaces}"

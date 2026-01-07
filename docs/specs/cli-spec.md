@@ -176,6 +176,36 @@ session list --this             # Current workspace only, no project expansion
 session list --project other    # Explicit project selection
 ```
 
+### Cross-Home Access Guard
+
+When accessing non-local homes (`--windows`, `--wsl`, `-r user@host`, `--ah`) from within a local workspace, all session verbs (`list`, `export`, `stats`) require either:
+1. An explicit workspace pattern (`-n <pattern>`)
+2. A project that ties the local workspace to remote workspaces
+3. The `--aw` flag (explicitly requesting all workspaces)
+
+**Rationale:** The same path on different machines (e.g., `/home/user/myproject` on local vs remote) may be completely unrelated codebases. Implicit path matching across homes would show misleading results.
+
+```
+# In ~/myproject (no project defined)
+session list --windows              # ERROR: requires project or pattern
+session list --windows -n myproject # OK: explicit pattern
+session list -r vm01                # ERROR: requires project or pattern
+session list -r vm01 -n myproject   # OK: explicit pattern
+session list --ah                   # ERROR: requires project or pattern
+session list --ah -n myproject      # OK: explicit pattern
+session list --ah --aw              # OK: explicitly requesting all workspaces
+
+# In ~/myproject (part of project "myproj" that includes remote workspaces)
+session list --windows              # OK: project ties homes together
+session list -r vm01                # OK: project ties homes together
+session list --ah                   # OK: project ties homes together
+```
+
+**When guard is skipped:**
+- Not in a local workspace (no implicit path to match)
+- Using `--aw` (explicitly requesting all workspaces)
+- Project exists that ties workspaces together
+
 ### Agent Filter
 
 | Flag | Description |
@@ -542,25 +572,42 @@ Lists workspaces with session counts.
 
 **Table (default):**
 ```
-WORKSPACE               SESSIONS  LAST MODIFIED
-claude-history               144  2025-01-03 18:15
-my-project                    23  2025-01-02 10:30
-api-server                    12  2024-12-28 14:22
+HOME    WORKSPACE                    SESSIONS  STATUS   LAST MODIFIED
+local   /home/user/projects/api           144  ok       2025-01-03 18:15
+local   /home/user/projects/my-app         23  ok       2025-01-02 10:30
+local   /home/user/projects/deleted        12  missing  2024-12-28 14:22
 ```
+
+**With multi-home (`--ah` or `-r`):**
+```
+HOME              WORKSPACE                    SESSIONS  STATUS   LAST MODIFIED
+local             /home/user/projects/api           144  ok       2025-01-03 18:15
+remote:vm01       /home/user/projects/api            89  ok       2025-01-02 10:30
+wsl:Ubuntu        /home/user/projects/my-app         34  ok       2025-01-01 09:15
+```
+
+**Columns:**
+| Column | Description |
+|--------|-------------|
+| HOME | Source identifier: `local`, `wsl:<distro>`, `windows`, `remote:<host>`, `web` |
+| WORKSPACE | Decoded workspace path (full path, not short name) |
+| SESSIONS | Number of session files in workspace (or `-` if not available) |
+| STATUS | `ok` if path exists, `missing` if not, `unknown` for hashed/unresolvable paths |
+| LAST MODIFIED | Timestamp of most recent session |
 
 **TSV (`--format tsv`):**
 ```
-WORKSPACE	SESSIONS	LAST_MODIFIED
-claude-history	144	2025-01-03T18:15:00
-my-project	23	2025-01-02T10:30:00
-api-server	12	2024-12-28T14:22:00
+HOME	WORKSPACE	SESSIONS	STATUS	LAST_MODIFIED
+local	/home/user/projects/api	144	ok	2025-01-03T18:15:00
+local	/home/user/projects/my-app	23	ok	2025-01-02T10:30:00
+local	/home/user/projects/deleted	12	missing	2024-12-28T14:22:00
 ```
 
 **JSON (`--format json`):**
 ```json
 [
-  {"workspace": "claude-history", "sessions": 144, "last_modified": "2025-01-03T18:15:00"},
-  {"workspace": "my-project", "sessions": 23, "last_modified": "2025-01-02T10:30:00"}
+  {"home": "local", "workspace": "/home/user/projects/api", "sessions": 144, "status": "ok", "last_modified": "2025-01-03T18:15:00"},
+  {"home": "local", "workspace": "/home/user/projects/my-app", "sessions": 23, "status": "ok", "last_modified": "2025-01-02T10:30:00"}
 ]
 ```
 
