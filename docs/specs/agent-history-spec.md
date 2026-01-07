@@ -77,12 +77,12 @@ Web sessions provide limited metadata compared to CLI agents:
 
 ### Home Configuration
 
-Homes are explicitly configured via `home add`:
-- `home add --wsl` - Add default WSL distribution
-- `home add --windows` - Add Windows home
-- `home add user@hostname` - Add SSH remote
+Homes are discovered as follows:
+- Local is always present.
+- WSL/Windows/web are implicitly included when available; no explicit `home add` is required.
+- SSH remotes must be added explicitly via `home add user@hostname` (repeatable).
 
-The `--ah` (all homes) flag operates on configured homes only.
+The `--ah` (all homes) flag automatically includes local + detected WSL/Windows/web + configured SSH remotes. Use `--no-wsl`, `--no-windows`, or `--no-web` to exclude those implicit sources.
 
 Projects/aliases share the same configuration file. Legacy `projects.json`/`aliases.json` files are auto-imported into `config.json` at load time (non-destructive). For test isolation or sandboxed runs, set `AGENT_HISTORY_CONFIG_DIR` to point the tool at a temporary config directory so the real `~/.agent-history/config.json` is untouched.
 
@@ -91,10 +91,8 @@ Projects/aliases share the same configuration file. Legacy `projects.json`/`alia
 Configuration stored in `~/.agent-history/config.json`:
 ```json
 {
-  "homes": [
-    {"type": "wsl", "distro": "Ubuntu"},
-    {"type": "windows", "user": "alice"},
-    {"type": "remote", "host": "user@vm01"}
+  "sources": [
+    "user@vm01"
   ],
   "projects": {
     "myproj": {

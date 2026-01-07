@@ -112,14 +112,14 @@ options:
 EXAMPLES:
 
   List workspaces:
-    agent-history lsw                        # all local workspaces
-    agent-history lsw myproject              # filter by pattern
-    agent-history lsw -r user@server         # remote workspaces
+    agent-history ws list                    # all local workspaces
+    agent-history ws list myproject          # filter by pattern
+    agent-history ws list -r user@server     # remote workspaces
 
   List sessions:
-    agent-history lss                        # current workspace
-    agent-history lss myproject              # specific workspace
-    agent-history lss myproject -r user@server    # remote sessions
+    agent-history session list               # current workspace
+    agent-history session list myproject     # specific workspace
+    agent-history session list myproject -r user@server    # remote sessions
 
   Export (unified interface with orthogonal flags):
     agent-history export                     # current workspace, local home
@@ -148,15 +148,15 @@ EXAMPLES:
 
   WSL access (Windows):
     agent-history lsh --wsl                        # list WSL distributions
-    agent-history lsw --wsl                        # list WSL workspaces
-    agent-history lsw --wsl Ubuntu                 # list from specific distro
-    agent-history lss myproject --wsl              # list WSL sessions
+    agent-history ws list --wsl                    # list WSL workspaces
+    agent-history ws list --wsl Ubuntu             # list from specific distro
+    agent-history session list myproject --wsl     # list WSL sessions
     agent-history export myproject --wsl           # export from WSL
 
   Windows access (from WSL):
     agent-history lsh --windows                    # list Windows users with Claude
-    agent-history lsw --windows                    # list Windows workspaces
-    agent-history lss myproject --windows          # list Windows sessions
+    agent-history ws list --windows                # list Windows workspaces
+    agent-history session list myproject --windows # list Windows sessions
     agent-history export myproject --windows       # export from Windows
 
   Notes:
