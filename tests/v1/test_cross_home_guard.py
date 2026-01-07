@@ -98,6 +98,7 @@ def cross_home_with_project(tmp_path: Path) -> Generator[Dict[str, Any], None, N
     env = os.environ.copy()
     env["AGENT_HISTORY_HOME"] = str(tmp_path)
     env["HOME"] = str(tmp_path)
+    env["AGENT_HISTORY_CONFIG_DIR"] = str(config_dir)
 
     yield {
         "path": tmp_path,
