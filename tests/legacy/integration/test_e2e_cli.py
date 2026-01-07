@@ -62,12 +62,18 @@ def make_workspace(root: Path, encoded_name: str, files: int = 1):
 
 
 def test_e2e_local_lsh_lsw_lss(tmp_path: Path):
-    projects = tmp_path
+    projects = tmp_path / ".claude" / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
     make_workspace(projects, "-home-user-e2e-one", files=2)
     make_workspace(projects, "-home-user-e2e-two", files=1)
 
+    # Create the actual directory structure for filesystem probing
+    (tmp_path / "home" / "user" / "e2e-one").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "home" / "user" / "e2e-two").mkdir(parents=True, exist_ok=True)
+
     env = os.environ.copy()
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env["AGENT_HISTORY_HOME"] = str(tmp_path)
 
     # lsh local
     r1 = run_cli(["lsh", "--local"], env=env)
