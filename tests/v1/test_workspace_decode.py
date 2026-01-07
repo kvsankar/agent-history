@@ -291,6 +291,7 @@ class TestHierarchicalWorkspaces:
         env = os.environ.copy()
         env["AGENT_HISTORY_HOME"] = str(tmp_path)
         env["HOME"] = str(tmp_path)
+        env["USERPROFILE"] = str(tmp_path)
 
         yield {
             "path": tmp_path,
