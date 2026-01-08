@@ -378,7 +378,7 @@ File contents here...
 **Parallel export (`--jobs <n>`):**
 - Processes multiple sessions concurrently
 - Useful for large exports or remote sources
-- Default: 1 (sequential)
+- Default: auto (up to 2 workers, based on CPU count)
 
 **Single file conversion:**
 - Export accepts a single `.jsonl` or `.json` file path
