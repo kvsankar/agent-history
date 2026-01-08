@@ -90,7 +90,7 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 <!-- help-snippet:start -->
 ```
 usage: agent-history [options] command
-Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)
+Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI)
 
 positional arguments:
   COMMAND                     Command to execute

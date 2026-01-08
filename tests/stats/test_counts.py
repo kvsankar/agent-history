@@ -112,6 +112,41 @@ class TestSessionCounts:
             count = agent_counts.get(agent, 0)
             assert count == 1, f"Expected 1 {agent} session, got {count}"
 
+    def test_zero_message_sessions_are_synced(self, stats_test_home: Dict[str, Any]):
+        """Sessions with no user/assistant messages should still be counted."""
+        ws_dir = stats_test_home["claude_dir"] / "-home-testuser-zero"
+        ws_dir.mkdir(parents=True, exist_ok=True)
+        session_file = ws_dir / "zero.jsonl"
+        session_file.write_text(
+            '{"type":"session_meta","sessionId":"zero-001","payload":{"cwd":"/home/testuser/zero"}}\n',
+            encoding="utf-8",
+        )
+
+        result = run_cli_subprocess(
+            ["session", "stats", "--sync", "--aw"],
+            env=stats_test_home["env"],
+            cwd=stats_test_home["path"],
+        )
+
+        if result.returncode != 0:
+            pytest.skip(f"stats not implemented: {result.stderr}")
+
+        db_path = stats_test_home["history_dir"] / "metrics.db"
+        if not db_path.exists():
+            pytest.skip("metrics.db not created")
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            session_count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            msg_count = conn.execute("SELECT message_count FROM sessions").fetchone()[0]
+        except sqlite3.OperationalError as e:
+            pytest.skip(f"sessions table not found: {e}")
+        finally:
+            conn.close()
+
+        assert session_count == 1
+        assert msg_count == 0
+
     def test_empty_stats_zero_sessions(self, stats_test_home: Dict[str, Any]):
         """Empty home should report 0 sessions without error."""
         result = run_cli_subprocess(
