@@ -75,8 +75,9 @@ Web sessions provide limited metadata compared to CLI agents:
 - No token usage or tool execution details
 - GitHub repository association (if available)
 - Workspace resolution:
-  - Build a GitHub→workspace map by scanning local Claude workspaces for git remotes; if a web session repo (`owner/repo`) matches that map, the local path is used.
-  - Otherwise fall back to the GitHub repo string itself.
+  - Build a GitHub→workspace map by scanning **local Claude workspaces only** for git remotes (origin) that point to GitHub; if a web session repo (`owner/repo`) matches, the corresponding local path is used.
+  - This mapping is automatic and best-effort; there is no user config for repo→workspace mapping, and only GitHub remotes are considered.
+  - If no local match, fall back to the GitHub repo string itself.
   - If no repo, fall back to `session_context.cwd` when present.
   - If none are available, workspace may remain unresolved.
 
