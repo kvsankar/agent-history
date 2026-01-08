@@ -92,9 +92,12 @@ Projects/aliases share the same configuration file. Legacy `projects.json`/`alia
 
 ### Home Storage
 
-Configuration stored in `~/.agent-history/config.json`:
+Configuration stored in `~/.agent-history/config.json` (canonical key: `homes`; `sources` is maintained for backward compatibility and mirrors `homes`):
 ```json
 {
+  "homes": [
+    "user@vm01"
+  ],
   "sources": [
     "user@vm01"
   ],
