@@ -19,7 +19,7 @@ ls ~/.claude/projects/
 
 Or try a partial match:
 ```bash
-agent-history lss projects  # Match any workspace with "projects"
+agent-history session projects  # Match any workspace with "projects"
 ```
 
 ---
@@ -54,7 +54,7 @@ Both are extracted and converted.
 
 Use `--since` and `--until`:
 ```bash
-agent-history lss myproject --since 2025-11-01 --until 2025-11-30
+agent-history session myproject --since 2025-11-01 --until 2025-11-30
 agent-history export myproject --since 2025-11-01
 ```
 
@@ -84,11 +84,11 @@ agent-history export --ah --quiet
 
 Use the `--wsl` flag:
 ```powershell
-python agent-history lsh --wsl              # Find WSL distributions
-python agent-history lss myproject --wsl    # List sessions
+python agent-history home --wsl              # Find WSL distributions
+python agent-history session myproject --wsl    # List sessions
 python agent-history export myproject --wsl # Export
-python agent-history lss --wsl --agent codex
-python agent-history lss --wsl --agent gemini
+python agent-history session --wsl --agent codex
+python agent-history session --wsl --agent gemini
 ```
 
 No SSH or rsync needed - uses direct filesystem access.
@@ -100,9 +100,9 @@ No SSH or rsync needed - uses direct filesystem access.
 Yes! Combine flags:
 ```bash
 agent-history lsw --ah                    # All homes
-agent-history lss myproject --wsl         # WSL
-agent-history lss myproject --windows     # Windows (from WSL)
-agent-history lss myproject -r user@host  # SSH remote
+agent-history session myproject --wsl         # WSL
+agent-history session myproject --windows     # Windows (from WSL)
+agent-history session myproject -r user@host  # SSH remote
 ```
 
 ---
@@ -251,7 +251,7 @@ If `wsl -d <distro> whoami` fails or hangs, `agent-history` falls back to UNC ho
 **Solution:**
 1. Ensure the UNC path is accessible in File Explorer
 2. Restart WSL: `wsl --shutdown` then `wsl -d Ubuntu`
-3. Re-run `agent-history lsh --wsl`
+3. Re-run `agent-history home --wsl`
 
 ---
 

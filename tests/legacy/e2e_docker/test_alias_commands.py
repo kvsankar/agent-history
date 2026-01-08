@@ -9,43 +9,43 @@ class TestAliasLifecycle:
     def test_alias_create_and_list(self):
         """Test creating an alias and listing it."""
         # Create alias
-        result = run_cli(["alias", "create", "test-project"])
+        result = run_cli(["project", "add", "test-project", "--allow-empty"])
         assert result.returncode == 0
 
         # List aliases
-        result = run_cli(["alias", "list"])
+        result = run_cli(["project", "list"])
         assert result.returncode == 0
         assert "test-project" in result.stdout
 
         # Delete alias
-        result = run_cli(["alias", "delete", "test-project"])
+        result = run_cli(["project", "remove", "test-project"])
         assert result.returncode == 0
 
     def test_alias_show_empty(self):
         """Test showing an empty alias."""
         # Create empty alias
-        run_cli(["alias", "create", "empty-alias"])
+        run_cli(["project", "add", "empty-alias", "--allow-empty"])
 
         # Show it
-        result = run_cli(["alias", "show", "empty-alias"])
+        result = run_cli(["project", "show", "empty-alias"])
         assert result.returncode == 0
         # Should indicate it's empty or show no workspaces
 
         # Cleanup
-        run_cli(["alias", "delete", "empty-alias"])
+        run_cli(["project", "remove", "empty-alias"])
 
     def test_alias_list_with_counts(self):
         """Test alias list with --counts flag."""
         # Create alias
-        run_cli(["alias", "create", "counted-alias"])
+        run_cli(["project", "add", "counted-alias", "--allow-empty"])
 
         # List with counts
-        result = run_cli(["alias", "list", "--counts"])
+        result = run_cli(["project", "list", "--counts"])
         assert result.returncode == 0
         assert "counted-alias" in result.stdout
 
         # Cleanup
-        run_cli(["alias", "delete", "counted-alias"])
+        run_cli(["project", "remove", "counted-alias"])
 
 
 class TestAliasWithRemote:
@@ -58,13 +58,13 @@ class TestAliasWithRemote:
         user = env["alpha_users"][0]
 
         # Create alias
-        result = run_cli(["alias", "create", "remote-test"])
+        result = run_cli(["project", "add", "remote-test", "--allow-empty"])
         assert result.returncode == 0
 
         # Add workspace from remote - use '*' to match any workspace
         result = run_cli(
             [
-                "alias",
+                "project",
                 "add",
                 "remote-test",
                 "-r",
@@ -76,11 +76,11 @@ class TestAliasWithRemote:
         assert "Traceback" not in result.stderr
 
         # Show alias
-        result = run_cli(["alias", "show", "remote-test"])
+        result = run_cli(["project", "show", "remote-test"])
         assert result.returncode == 0
 
         # Cleanup
-        run_cli(["alias", "delete", "remote-test"])
+        run_cli(["project", "remove", "remote-test"])
 
 
 class TestAliasLss:
@@ -89,7 +89,7 @@ class TestAliasLss:
     def test_lss_with_alias_syntax(self):
         """Test lss @alias syntax."""
         # Create alias first
-        run_cli(["alias", "create", "lss-test"])
+        run_cli(["project", "add", "lss-test", "--allow-empty"])
 
         # Use @alias syntax
         result = run_cli(["lss", "@lss-test"])
@@ -98,17 +98,17 @@ class TestAliasLss:
         assert "Traceback" not in result.stderr
 
         # Cleanup
-        run_cli(["alias", "delete", "lss-test"])
+        run_cli(["project", "remove", "lss-test"])
 
     def test_lss_with_alias_flag(self):
         """Test lss --alias flag."""
-        run_cli(["alias", "create", "flag-test"])
+        run_cli(["project", "add", "flag-test", "--allow-empty"])
 
         result = run_cli(["lss", "--alias", "flag-test"])
         assert result.returncode in (0, 1)
         assert "Traceback" not in result.stderr
 
-        run_cli(["alias", "delete", "flag-test"])
+        run_cli(["project", "remove", "flag-test"])
 
 
 class TestAliasExport:
@@ -116,22 +116,22 @@ class TestAliasExport:
 
     def test_export_with_alias(self, tmp_path):
         """Test export @alias syntax."""
-        run_cli(["alias", "create", "export-test"])
+        run_cli(["project", "add", "export-test", "--allow-empty"])
 
         result = run_cli(["export", "@export-test", "-o", "/tmp/alias-export"])
         # Should work even if empty
         assert result.returncode in (0, 1)
         assert "Traceback" not in result.stderr
 
-        run_cli(["alias", "delete", "export-test"])
+        run_cli(["project", "remove", "export-test"])
 
 
 class TestSourceManagement:
-    """Test lsh (list homes) source management."""
+    """Test home (list homes) source management."""
 
     def test_lsh_list(self):
         """Test listing homes."""
-        result = run_cli(["lsh"])
+        result = run_cli(["home"])
         assert result.returncode == 0
         assert "Traceback" not in result.stderr
 
@@ -143,19 +143,19 @@ class TestSourceManagement:
         remote = f"{user}@{node}"
 
         # Add remote
-        result = run_cli(["lsh", "add", remote])
+        result = run_cli(["home", "add", remote])
         assert result.returncode == 0
         assert "Traceback" not in result.stderr
 
         # Verify it's listed
-        result = run_cli(["lsh"])
+        result = run_cli(["home"])
         assert result.returncode == 0
 
         # Remove remote
-        result = run_cli(["lsh", "remove", remote])
+        result = run_cli(["home", "remove", remote])
         assert result.returncode == 0
 
     def test_lsh_clear(self):
         """Test clearing all sources."""
-        result = run_cli(["lsh", "clear"])
+        result = run_cli(["home", "clear"])
         assert result.returncode == 0

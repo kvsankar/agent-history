@@ -12,14 +12,7 @@ Command-line interface specification for `agent-history`.
 
 ## Command Aliases
 
-For convenience, short aliases are available:
-
-| Primary | Aliases |
-|---------|---------|
-| `ws` | - |
-| `session` | - |
-| `home` | `homes`, `lsh` |
-| `project` | `projects`, `alias` |
+Aliases are disabled; use the canonical command names (`home`, `ws`, `session`, `project`).
 
 ---
 
