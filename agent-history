@@ -4755,13 +4755,10 @@ def get_unified_sessions(
 def get_claude_projects_dir():
     """Get the Claude projects directory, with error handling.
 
-    Exits with error if directory doesn't exist.
+    Creates the directory if it doesn't exist to avoid hard exits in clean environments.
     """
     projects_dir = _get_claude_projects_path()
-
-    if not projects_dir.exists():
-        sys.stderr.write(f"Error: Claude projects directory not found at {projects_dir}\n")
-        sys.exit(1)
+    projects_dir.mkdir(parents=True, exist_ok=True)
 
     return projects_dir
 
