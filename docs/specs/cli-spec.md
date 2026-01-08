@@ -206,6 +206,12 @@ session list --ah                   # OK: project ties homes together
 - Using `--aw` (explicitly requesting all workspaces)
 - Project exists that ties workspaces together
 
+**Allowed examples (guard skipped):**
+- Outside any workspace (e.g., in `~/`): `session list --windows --aw`
+- In a workspace but explicitly all workspaces: `session list --ah --aw`
+- With a project that links homes: `session list --wsl --project myproj`
+- Explicit patterns without a project: `session list --windows -n myproj`
+
 ### Agent Filter
 
 | Flag | Description |
