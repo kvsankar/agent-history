@@ -112,11 +112,19 @@ DEFAULT_SKILL_NAME = "agent-history"
 DEFAULT_BIN_DIR = Path.home() / ".local/bin"
 DEFAULT_SKILL_DIR = Path.home() / ".claude/skills" / DEFAULT_SKILL_NAME
 DEFAULT_CLEANUP_DAYS = 99999
+DEFAULT_MAX_JOBS = 2
 
 # Agent backend identifiers
 AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
 AGENT_GEMINI = "gemini"
+
+
+def _default_jobs() -> int:
+    """Return default worker count for parallel operations."""
+    cpu = os.cpu_count() or 1
+    return max(1, min(cpu, DEFAULT_MAX_JOBS))
+
 
 # Codex content types for text extraction
 CODEX_TEXT_TYPES = frozenset(["input_text", "output_text"])
@@ -548,6 +556,7 @@ class StatsCommandArgs:
     top_ws: Optional[int] = None
     this_only: bool = False
     agent: str = "auto"
+    jobs: int = field(default_factory=_default_jobs)
     # Output formatting
     format: Optional[str] = None  # table, tsv, json
     human: bool = False  # Human-readable numbers and time
@@ -582,7 +591,7 @@ class ExportAllConfig:
     minimal: bool = False
     split: Optional[int] = None
     agent: str = "auto"
-    jobs: int = 1
+    jobs: int = field(default_factory=_default_jobs)
     quiet: bool = False
     index: bool = True
     no_wsl: bool = False
@@ -11598,7 +11607,8 @@ def cmd_stats_sync(args):
     if not patterns:
         patterns = [""]
     patterns = _expand_patterns_for_sync(patterns)
-    jobs = max(1, int(getattr(args, "jobs", 1) or 1))
+    jobs_arg = getattr(args, "jobs", None)
+    jobs = max(1, int(jobs_arg if jobs_arg is not None else _default_jobs()))
     no_remote = getattr(args, "no_remote", False)
     no_wsl = getattr(args, "no_wsl", False)
     no_windows = getattr(args, "no_windows", False)
@@ -14381,7 +14391,8 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):
     quiet = getattr(args, "quiet", False)
     include_source = getattr(args, "include_source", False)
     export_json = getattr(args, "export_json", False)
-    jobs = max(1, int(getattr(args, "jobs", 1) or 1))
+    jobs_arg = getattr(args, "jobs", None)
+    jobs = max(1, int(jobs_arg if jobs_arg is not None else _default_jobs()))
     total_sessions = len(sessions)
     progress_interval = 0
 
@@ -16720,8 +16731,8 @@ def _add_export_parser(subparsers):
     parser.add_argument(
         "--jobs",
         type=int,
-        default=1,
-        help="Parallelism for exports (default: 1)",
+        default=None,
+        help="Parallelism for exports (default: auto, up to 2)",
     )
     parser.add_argument(
         "--quiet",
@@ -17188,8 +17199,8 @@ def _add_export_options(parser):
     parser.add_argument(
         "--jobs",
         type=int,
-        default=1,
-        help="Parallelism for exports (default: 1)",
+        default=None,
+        help="Parallelism for exports (default: auto, up to 2)",
     )
     parser.add_argument(
         "--quiet",
@@ -18867,6 +18878,7 @@ def _dispatch_export_all_homes(args, output_dir: Union[str, Path], patterns: lis
         args.no_remote = True
         args.no_web = getattr(args, "no_web", False) or False
 
+    jobs_arg = getattr(args, "jobs", None)
     export_config = ExportAllConfig(
         output_dir=str(output_dir),
         patterns=patterns,
@@ -18877,7 +18889,7 @@ def _dispatch_export_all_homes(args, output_dir: Union[str, Path], patterns: lis
         minimal=args.minimal,
         split=args.split,
         agent=getattr(args, "agent", None) or "auto",
-        jobs=getattr(args, "jobs", 1),
+        jobs=jobs_arg if jobs_arg is not None else _default_jobs(),
         quiet=getattr(args, "quiet", False),
         no_wsl=getattr(args, "no_wsl", False),
         no_windows=getattr(args, "no_windows", False),
