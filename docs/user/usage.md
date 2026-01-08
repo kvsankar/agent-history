@@ -4,17 +4,17 @@ Detailed documentation for all `agent-history` commands and options.
 
 ## Commands Overview
 
-| Command | Aliases | Description |
-|---------|---------|-------------|
-| `home` | `homes`, `lsh` | List homes and manage sources (WSL, Windows, SSH) |
-| `workspaces` | `ws`, `lsw` | List workspaces |
-| `sessions` | `ss`, `lss` | List sessions |
-| `export` | | Export sessions to markdown |
-| `project` | `projects`, `alias` | Manage workspace projects |
-| `stats` | | Show usage statistics and metrics |
-| `reset` | | Reset stored data (database, settings, projects) |
-| `install` | | Install CLI + Claude skill and update retention settings |
-| `gemini-index` | | Add project paths to Gemini hash→path index |
+| Command | Description |
+|---------|-------------|
+| `home` | List homes and manage sources (WSL, Windows, SSH) |
+| `ws` | List workspaces |
+| `session` | List sessions |
+| `export` | Export sessions to markdown |
+| `project` | Manage workspace projects |
+| `stats` | Show usage statistics and metrics |
+| `reset` | Reset stored data (database, settings, projects) |
+| `install` | Install CLI + Claude skill and update retention settings |
+| `gemini-index` | Add project paths to Gemini hash→path index |
 
 ---
 
@@ -77,12 +77,11 @@ Removed source: alice@server.example.com
 
 ---
 
-## `workspaces` - List Workspaces
+## `ws` - List Workspaces
 
-List all workspaces matching a pattern. Aliases: `ws`, `lsw`
+List all workspaces matching a pattern.
 
 ```bash
-agent-history workspaces [PATTERN...] [OPTIONS]
 agent-history ws [PATTERN...] [OPTIONS]
 ```
 
@@ -112,13 +111,12 @@ agent-history ws --ah -r user@vm01
 
 ---
 
-## `sessions` - List Sessions
+## `session` - List Sessions
 
-Show all sessions for a workspace. Aliases: `ss`, `lss`
+Show all sessions for a workspace.
 
 ```bash
-agent-history sessions [PATTERN] [OPTIONS]
-agent-history ss [PATTERN] [OPTIONS]
+agent-history session [PATTERN] [OPTIONS]
 ```
 
 **Arguments:**
@@ -146,23 +144,23 @@ agent-history ss [PATTERN] [OPTIONS]
 **Examples:**
 ```bash
 # List sessions from current workspace (or project if in a project)
-agent-history ss
+agent-history session
 
 # Force current workspace only (not project)
-agent-history ss --this
+agent-history session --this
 
 # List sessions from WSL
-agent-history ss myproject --wsl
+agent-history session myproject --wsl
 
 # List sessions from Windows
-agent-history ss myproject --windows
+agent-history session myproject --windows
 
 # List sessions from SSH remote
-agent-history ss myproject -r user@hostname
+agent-history session myproject -r user@hostname
 
 # Date filtering
-agent-history ss myproject --since 2025-11-01
-agent-history ss myproject --since 2025-11-01 --until 2025-11-30
+agent-history session myproject --since 2025-11-01
+agent-history session myproject --since 2025-11-01 --until 2025-11-30
 ```
 
 **Output:**
@@ -257,7 +255,7 @@ agent-history export myproject --jobs 4 --quiet
 
 ## `project` - Manage Workspace Projects
 
-Group related workspaces across environments. Aliases: `projects`, `alias`
+Group related workspaces across environments.
 
 ```bash
 agent-history project <subcommand> [OPTIONS]
@@ -313,7 +311,7 @@ agent-history project add myproject -r user@vm01 myproject
 agent-history project add myproject --ah -r user@vm myproject
 
 # Use projects with @ prefix
-agent-history ss @myproject
+agent-history session @myproject
 agent-history export @myproject -o ./backup
 
 # Sync projects across machines
@@ -325,12 +323,12 @@ agent-history project import projects.json
 
 When running commands without arguments from a project workspace:
 ```bash
-agent-history ss         # Uses project automatically
+agent-history session    # Uses project automatically
 agent-history export     # Uses project automatically
 agent-history stats      # Uses project automatically
 
 # Force current workspace only
-agent-history ss --this
+agent-history session --this
 ```
 
 ---
@@ -475,7 +473,7 @@ agent-history export myproject --split 500
 agent-history ws -r user@server
 
 # List sessions from remote
-agent-history ss myproject -r user@server
+agent-history session myproject -r user@server
 
 # Export from remote
 agent-history export myproject -r user@server
@@ -489,17 +487,17 @@ agent-history export myproject -r user@server
 
 ```bash
 python agent-history ws --wsl
-python agent-history ss myproject --wsl
+python agent-history session myproject --wsl
 python agent-history export myproject --wsl
-python agent-history ss --wsl --agent codex
-python agent-history ss --wsl --agent gemini
+python agent-history session --wsl --agent codex
+python agent-history session --wsl --agent gemini
 ```
 
 ### Windows Access (from WSL)
 
 ```bash
 agent-history ws --windows
-agent-history ss myproject --windows
+agent-history session myproject --windows
 agent-history export myproject --windows
 ```
 

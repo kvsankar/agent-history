@@ -31,23 +31,6 @@ def translate_legacy_args(args: list[str]) -> list[str]:  # noqa: C901
     cmd = normalized[i]
     rest = normalized[i + 1 :]
 
-    def _alias_mapping(subcmd: str, tail: list[str]) -> list[str]:
-        if subcmd == "export":
-            return ["project", "config-export", *tail]
-        if subcmd == "import":
-            return ["project", "config-import", *tail]
-        if subcmd == "create":
-            return ["project", "add", *tail, "--allow-empty"]
-        if subcmd == "add":
-            return ["project", "add", *tail]
-        if subcmd == "remove":
-            return ["project", "remove", *tail]
-        if subcmd == "show":
-            return ["project", "show", *tail]
-        if subcmd == "list":
-            return ["project", "list", *tail]
-        return ["project", subcmd, *tail]
-
     agent_overridden = any(tok == "--agent" for tok in prefix)
 
     if cmd == "export":
@@ -63,12 +46,7 @@ def translate_legacy_args(args: list[str]) -> list[str]:  # noqa: C901
         if not agent_overridden:
             mapped = ["--agent", "claude", *mapped]
     elif cmd == "lsh":
-        mapped = ["home", *rest]
-    elif cmd == "alias":
-        if rest:
-            mapped = _alias_mapping(rest[0], rest[1:])
-        else:
-            mapped = ["project", "list"]
+        mapped = ["lsh", *rest]
     else:
         mapped = [cmd, *rest]
 

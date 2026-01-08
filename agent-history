@@ -16634,67 +16634,6 @@ def _add_lss_parser(subparsers):
     return parser
 
 
-def _add_lsh_parser(subparsers):
-    """Add home (list/manage homes) subparser with aliases."""
-    parser = subparsers.add_parser(
-        "home",
-        help="List homes and manage sources",
-        description="List all Claude Code installations (local, WSL, Windows, web, SSH remotes)",
-    )
-    # Add hidden aliases
-    for alias in ["homes", "lsh"]:
-        subparsers._name_parser_map[alias] = parser
-
-    lsh_subparsers = parser.add_subparsers(dest="lsh_action")
-
-    # lsh add
-    parser_add = lsh_subparsers.add_parser(
-        "add",
-        help="Add a home (SSH remote, Windows, or WSL)",
-        description="Add a home: user@host for SSH, --windows for Windows, --wsl for WSL",
-    )
-    parser_add.add_argument("source", nargs="?", help="SSH remote (user@hostname)")
-    parser_add.add_argument("--windows", action="store_true", help="Add Windows as a home")
-    parser_add.add_argument(
-        "--wsl",
-        nargs="?",
-        const="auto",
-        metavar="DISTRO",
-        help="Add WSL as a home (auto-detect distro if not specified)",
-    )
-
-    # lsh remove
-    parser_remove = lsh_subparsers.add_parser(
-        "remove",
-        help="Remove a home",
-        description="Remove a home from configuration",
-    )
-    parser_remove.add_argument(
-        "source", nargs="?", help="Source to remove (e.g., user@host, windows, wsl:Ubuntu)"
-    )
-    parser_remove.add_argument("--windows", action="store_true", help="Remove Windows")
-    parser_remove.add_argument(
-        "--wsl",
-        nargs="?",
-        const="auto",
-        metavar="DISTRO",
-        help="Remove WSL (auto-detect distro if not specified)",
-    )
-
-    # lsh clear
-    lsh_subparsers.add_parser(
-        "clear", help="Clear all SSH remotes", description="Remove all saved SSH remotes"
-    )
-
-    # Filter flags for listing (default action)
-    parser.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
-    parser.add_argument("--windows", action="store_true", help="Show Windows users only")
-    parser.add_argument("--web", action="store_true", help="Show web (Claude.ai) status only")
-    parser.add_argument("--local", action="store_true", help="Show local home folder only")
-    parser.add_argument("--remotes", action="store_true", help="Show SSH remotes only")
-    return parser
-
-
 def _add_export_parser(subparsers):
     """Add export subparser."""
     parser = subparsers.add_parser(
@@ -19448,7 +19387,7 @@ def _dispatch_command(args):
         args: Parsed argparse.Namespace object
     """
     cmd = getattr(args, "command", None)
-    if cmd in ("home", "homes", "lsh"):
+    if cmd == "home":
         cmd_lsh(args)
     elif cmd == "ws":
         verb = getattr(args, "ws_verb", None) or "list"
@@ -19458,7 +19397,7 @@ def _dispatch_command(args):
             _dispatch_stats(args)
         else:
             _dispatch_ws(args)
-    elif cmd in ("session", "ss"):
+    elif cmd == "session":
         verb = getattr(args, "session_verb", None) or "list"
         if verb == "show":
             _dispatch_session_show(args)
@@ -19468,7 +19407,7 @@ def _dispatch_command(args):
             _dispatch_stats(args)
         else:
             _dispatch_lss(args)
-    elif cmd in ("project", "projects", "alias"):
+    elif cmd == "project":
         _dispatch_project(args)
     elif cmd == "stats":
         _dispatch_stats(args)
