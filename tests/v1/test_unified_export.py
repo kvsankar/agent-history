@@ -65,19 +65,26 @@ class TestUnifiedExportClaude:
         if not json_files:
             pytest.skip("No NDJSON files created")
 
-        # Read first file and check schema
+        # Read first non-schema record and check schema
         with open(json_files[0], encoding="utf-8") as f:
-            first_line = f.readline()
-            if not first_line.strip():
-                pytest.skip("Empty NDJSON file")
+            record = None
+            for line in f:
+                if not line.strip():
+                    continue
+                candidate = json.loads(line)
+                if candidate.get("type") in ("schema", "header"):
+                    continue
+                record = candidate
+                break
 
-            record = json.loads(first_line)
+        if record is None:
+            pytest.skip("No message records found in NDJSON file")
 
-            # Check for unified schema fields
-            # These are the minimum fields expected in unified format
-            required_fields = ["timestamp", "role", "content"]
-            for field in required_fields:
-                assert field in record, f"Missing required field: {field}"
+        # Check for unified schema fields
+        # These are the minimum fields expected in unified format
+        required_fields = ["timestamp", "role", "content"]
+        for field in required_fields:
+            assert field in record, f"Missing required field: {field}"
 
 
 class TestUnifiedExportCodex:
