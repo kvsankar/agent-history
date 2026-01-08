@@ -16865,6 +16865,7 @@ def _add_project_parser(subparsers):
         "show", help="Show project details", description="Show details of a single project"
     )
     parser_show.add_argument("name", help="Project name")
+    _add_output_format(parser_show)
 
     # create - deprecated, use 'add' instead (which auto-creates)
     parser_create = add_subparser(
@@ -17553,6 +17554,7 @@ def _create_argument_parser():
     proj_show = proj_sub.add_parser("show", help="Show project details")
     proj_show.set_defaults(command="project", project_command="show")
     proj_show.add_argument("name", nargs="?", help="Project name (defaults to current project)")
+    _add_output_format(proj_show)
 
     proj_add = proj_sub.add_parser("add", help="Add workspace to project")
     proj_add.set_defaults(command="project", project_command="add")
