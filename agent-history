@@ -2,8 +2,8 @@
 """
 agent-history - Manage and export AI coding assistant conversation sessions
 
-A unified tool to list, filter, and export conversation sessions from Claude Code
-and Codex CLI, organized by workspace. Supports both agents with auto-detection.
+A unified tool to list, filter, and export conversation sessions from Claude Code,
+Codex CLI, and Gemini CLI, organized by workspace. Supports all agents with auto-detection.
 
 Author: Built with Claude Code
 License: MIT
@@ -1467,6 +1467,17 @@ def _format_message_count(session: dict) -> str:
     return str(session.get("message_count", 0))
 
 
+def _format_size_kb(session: dict) -> str:
+    """Format size in KB with one decimal place."""
+    size_kb = session.get("size_kb")
+    if size_kb is None:
+        return "-"
+    try:
+        return f"{float(size_kb):.1f} KB"
+    except (TypeError, ValueError):
+        return "-"
+
+
 # ============================================================================
 # Table Printer - Unified output formatting
 # ============================================================================
@@ -1731,6 +1742,9 @@ def _check_workspace_status(workspace_path: str, source_label: str) -> str:
     # For hashed paths, we don't know the original path
     if clean_path.startswith("[hash:"):
         return "unknown"
+    # Heuristic: Gemini-style hash (no slashes, long hex string)
+    if "/" not in clean_path and re.fullmatch(r"[0-9a-fA-F]{16,64}", clean_path):
+        return "unknown"
 
     # For remote sources, we can't easily check - assume ok
     if source_label.startswith("remote:") or source_label == "web":
@@ -1744,10 +1758,26 @@ def _check_workspace_status(workspace_path: str, source_label: str) -> str:
     else:
         check_path = Path(clean_path)
 
-    try:
-        return "ok" if check_path.exists() else "missing"
-    except OSError:
-        return "missing"
+    candidates: list[Path] = [check_path]
+
+    # If encoded workspace, try decoded path as well to avoid false "missing"
+    if clean_path.startswith("-") or _is_windows_encoded_path(clean_path):
+        try:
+            decoded = normalize_workspace_name(clean_path, verify_local=True)
+        except Exception:
+            decoded = normalize_workspace_name(clean_path, verify_local=False)
+        if decoded:
+            decoded_path = Path(agent_home) / decoded.lstrip("/") if agent_home else Path(decoded)
+            candidates.append(decoded_path)
+
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return "ok"
+        except OSError:
+            continue
+
+    return "missing"
 
 
 def _normalize_home_label(source_label: str) -> str:
@@ -1810,18 +1840,16 @@ def print_sessions_output(
             )
         printer.print()
     else:
-        columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+        columns = ["SESSION", "MESSAGES", "SIZE", "MODIFIED"]
         printer = TablePrinter(columns, output_format=output_format, max_width=max_width)
 
         for session in sessions:
             printer.add_row(
                 {
-                    "AGENT": session.get("agent", AGENT_CLAUDE),
-                    "HOME": home_label,
-                    "WORKSPACE": session.get("workspace_readable") or session.get("workspace"),
-                    "FILE": session.get("filename") or session.get("file"),
+                    "SESSION": session.get("filename") or session.get("file"),
                     "MESSAGES": _format_message_count(session),
-                    "DATE": session["modified"].strftime("%Y-%m-%d")
+                    "SIZE": _format_size_kb(session),
+                    "MODIFIED": session["modified"].strftime("%Y-%m-%d %H:%M")
                     if session.get("modified")
                     else "",
                 }
@@ -7637,7 +7665,7 @@ def load_config() -> dict:
         return {}
 
     if not config_file.exists():
-        return {"version": 1, "sources": [], "projects": _load_legacy_projects()}
+        return {"version": 1, "homes": [], "sources": [], "projects": _load_legacy_projects()}
 
     try:
         with open(config_file, encoding="utf-8") as f:
@@ -7655,10 +7683,14 @@ def load_config() -> dict:
                     if name not in existing:
                         existing[name] = cfg
                 data["projects"] = existing
+            # Normalize homes vs sources (use homes as canonical, keep sources for compatibility)
+            homes = data.get("homes") or data.get("sources") or []
+            data["homes"] = homes
+            data["sources"] = homes
             return data
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Warning: Could not load config file: {e}\n")
-        return {"version": 1, "sources": [], "projects": _load_legacy_projects()}
+        return {"version": 1, "homes": [], "sources": [], "projects": _load_legacy_projects()}
 
 
 def save_config(data: dict) -> bool:
@@ -7683,6 +7715,10 @@ def save_config(data: dict) -> bool:
         os.chmod(config_dir, 0o700)
         if "version" not in data:
             data["version"] = 1
+        homes = data.get("homes") or data.get("sources") or []
+        data["homes"] = homes
+        # Keep sources in sync for backward compatibility
+        data["sources"] = homes
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         # Set secure permissions on config file (owner read/write only)
@@ -7696,7 +7732,12 @@ def save_config(data: dict) -> bool:
 def get_saved_sources() -> list:
     """Get list of saved remote sources."""
     config = load_config()
-    return config.get("sources", [])
+    return config.get("homes") or config.get("sources", [])
+
+
+def get_saved_homes() -> list:
+    """Get list of saved homes (preferred over sources for clarity)."""
+    return get_saved_sources()
 
 
 # ============================================================================
@@ -8897,6 +8938,211 @@ def get_sessions_for_source(
         return []
 
 
+def _build_workspace_matcher(workspace: str) -> Callable[[dict], bool]:
+    """Build a predicate to check whether a session belongs to the target workspace."""
+    targets = {workspace}
+    # Add both verified and unverified normalized forms (avoid hyphen loss for local paths)
+    for verify_local in (True, False):
+        try:
+            normalized = normalize_workspace_name(workspace, verify_local=verify_local)
+        except Exception:
+            normalized = None
+        if normalized:
+            targets.add(normalized)
+    base = get_workspace_name_from_path(workspace)
+    if base:
+        targets.add(base)
+    for t in list(targets):
+        norm_base = get_workspace_name_from_path(t)
+        if norm_base:
+            targets.add(norm_base)
+    targets = {str(t) for t in targets if t}
+
+    def matches(session: dict) -> bool:
+        ws = str(session.get("workspace") or "")
+        readable = str(session.get("workspace_readable") or "")
+
+        # Direct match against known variants
+        if ws in targets or readable in targets:
+            return True
+
+        # Match decoded/normalized forms
+        decoded_ws = normalize_workspace_name(ws, verify_local=False) if ws else ""
+        if decoded_ws in targets:
+            return True
+
+        base_ws = get_workspace_name_from_path(ws) if ws else ""
+        if base_ws in targets:
+            return True
+
+        if readable:
+            readable_base = get_workspace_name_from_path(readable)
+            if readable_base in targets:
+                return True
+
+        return False
+
+    return matches
+
+
+def _get_all_agent_sessions_for_source(
+    source_key: str, workspace: str, since_date=None, until_date=None
+) -> list:
+    """Gather sessions for all agents for a given source/workspace."""
+    sessions: list[dict] = []
+    agents = [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+    matches_target = _build_workspace_matcher(workspace)
+
+    # Build pattern variants to catch encoded/decoded/basename forms
+    patterns: list[str] = []
+    for candidate in [workspace, normalize_workspace_name(workspace, verify_local=False)]:
+        if candidate and candidate not in patterns:
+            patterns.append(candidate)
+            base = get_workspace_name_from_path(candidate)
+            if base and base not in patterns:
+                patterns.append(base)
+
+    seen_files: set[str] = set()
+
+    def _seen(session: dict) -> bool:
+        """Deduplicate by file path/filename."""
+        key = str(session.get("file") or session.get("filename") or "")
+        if not key:
+            return False
+        if key in seen_files:
+            return True
+        seen_files.add(key)
+        return False
+
+    for agent_name in agents:
+        try:
+            if source_key == "local":
+                for pattern in patterns:
+                    for s in collect_sessions_with_dedup(
+                        [pattern],
+                        since_date=since_date,
+                        until_date=until_date,
+                        include_cached=False,
+                        agent=agent_name,
+                    ):
+                        if not matches_target(s):
+                            continue
+                        if _seen(s):
+                            continue
+                        sessions.append(s)
+            elif source_key.startswith("wsl:"):
+                distro = source_key.split(":", 1)[1]
+                sessions_dir = get_agent_wsl_dir(distro, agent_name)
+                if not sessions_dir or not sessions_dir.exists():
+                    continue
+                if agent_name == AGENT_CLAUDE:
+                    for pattern in patterns:
+                        for s in get_workspace_sessions(
+                            pattern,
+                            quiet=True,
+                            since_date=since_date,
+                            until_date=until_date,
+                            projects_dir=sessions_dir,
+                        ):
+                            if not matches_target(s):
+                                continue
+                            if _seen(s):
+                                continue
+                            sessions.append(s)
+                else:
+                    for s in _scan_codex_gemini_sessions(
+                        agent_name,
+                        patterns,
+                        since_date,
+                        until_date,
+                        sessions_dir,
+                        source_key,
+                        skip_message_count=False,
+                    ):
+                        if not matches_target(s):
+                            continue
+                        if _seen(s):
+                            continue
+                        sessions.append(s)
+            elif source_key.startswith("windows"):
+                user = source_key.split(":", 1)[1] if ":" in source_key else None
+                sessions_dir = get_agent_windows_dir(user, agent_name)
+                if not sessions_dir or not sessions_dir.exists():
+                    continue
+                if agent_name == AGENT_CLAUDE:
+                    for pattern in patterns:
+                        for s in get_workspace_sessions(
+                            pattern,
+                            quiet=True,
+                            since_date=since_date,
+                            until_date=until_date,
+                            projects_dir=sessions_dir,
+                        ):
+                            if not matches_target(s):
+                                continue
+                            if _seen(s):
+                                continue
+                            sessions.append(s)
+                else:
+                    for s in _scan_codex_gemini_sessions(
+                        agent_name,
+                        patterns,
+                        since_date,
+                        until_date,
+                        sessions_dir,
+                        source_key,
+                        skip_message_count=False,
+                    ):
+                        if not matches_target(s):
+                            continue
+                        if _seen(s):
+                            continue
+                        sessions.append(s)
+            elif source_key.startswith("remote:") or "@" in source_key:
+                remote_spec = (
+                    source_key.split(":", 1)[1] if source_key.startswith("remote:") else source_key
+                )
+                if agent_name == AGENT_CLAUDE:
+                    for s in _collect_remote_claude_sessions_simple(
+                        remote_spec, patterns, since_date, until_date
+                    ):
+                        if not matches_target(s):
+                            continue
+                        if _seen(s):
+                            continue
+                        sessions.append(s)
+                elif agent_name == AGENT_CODEX:
+                    for s in _collect_remote_codex_sessions_simple(
+                        remote_spec, patterns, since_date, until_date
+                    ):
+                        if not matches_target(s):
+                            continue
+                        if _seen(s):
+                            continue
+                        sessions.append(s)
+                elif agent_name == AGENT_GEMINI:
+                    for s in _collect_remote_gemini_sessions_simple(
+                        remote_spec, patterns, since_date, until_date
+                    ):
+                        if not matches_target(s):
+                            continue
+                        if _seen(s):
+                            continue
+                        sessions.append(s)
+            elif source_key == "web":
+                # Web sessions are only Claude-format; reuse existing helper
+                for s in get_sessions_for_source(source_key, workspace):
+                    if not matches_target(s):
+                        continue
+                    if _seen(s):
+                        continue
+                    sessions.append(s)
+        except Exception:
+            continue
+
+    return sessions
+
+
 # ============================================================================
 # Alias Commands
 # ============================================================================
@@ -8981,6 +9227,15 @@ def cmd_project_show(args):
     aliases = aliases_data.get("projects", {})
 
     alias_name = args.name
+    if alias_name is None:
+        # Derive from current workspace if possible
+        pattern, exists = check_current_workspace_exists()
+        if exists:
+            guessed = get_alias_for_workspace(pattern, "local")
+            if guessed:
+                alias_name = guessed
+    if alias_name is None:
+        exit_with_error("Project name not specified and current workspace is not in a project.")
     if alias_name not in aliases:
         sys.stderr.write(f"Error: Project '{alias_name}' not found\n")
         sys.exit(1)
@@ -8991,14 +9246,26 @@ def cmd_project_show(args):
     total_sessions = 0
     last_modified = None
     workspace_lines = []
+    per_source: dict[str, dict[str, int]] = {}
+    per_agent: dict[str, int] = {}
 
     for source_key, workspaces in sorted(sources.items()):
         for workspace in workspaces:
-            sessions = get_sessions_for_source(source_key, workspace)
+            sessions = _get_all_agent_sessions_for_source(
+                source_key, workspace, since_date=None, until_date=None
+            )
             ws_readable = normalize_workspace_name(workspace)
             session_count = len(sessions)
             total_sessions += session_count
             workspace_lines.append((source_key, ws_readable, session_count))
+            per_source.setdefault(source_key, {"sessions": 0, "messages": 0})
+            per_source[source_key]["sessions"] += session_count
+
+            for session in sessions:
+                agent_name = session.get("agent") or "claude"
+                per_agent[agent_name] = per_agent.get(agent_name, 0) + 1
+                msg_cnt = session.get("message_count", 0)
+                per_source[source_key]["messages"] += msg_cnt
 
             # Track latest modified time
             for session in sessions:
@@ -9026,6 +9293,37 @@ def cmd_project_show(args):
             print(f"Last Modified: {formatted}")
         except (ValueError, AttributeError):
             print(f"Last Modified: {last_modified}")
+
+    if per_source:
+        print("\nSessions by home:")
+        for source_key, stats in sorted(per_source.items()):
+            print(
+                f"  {source_key:16} {stats['sessions']:>5} sessions"
+                + (f", {stats['messages']} messages" if stats["messages"] else "")
+            )
+
+    if per_agent:
+        print("\nSessions by agent:")
+        for agent_name, count in sorted(per_agent.items()):
+            print(f"  {agent_name:16} {count:>5} sessions")
+
+    output_format = getattr(args, "format", None)
+    if output_format == "json":
+        # Build JSON structure
+        out = {
+            "project": alias_name,
+            "workspaces": [
+                {"source": src, "workspace": ws, "sessions": cnt}
+                for src, ws, cnt in workspace_lines
+            ],
+            "sessions": total_sessions,
+            "last_modified": last_modified.isoformat() if last_modified else None,
+            "per_source": per_source,
+            "per_agent": per_agent,
+            "messages": sum(stats.get("messages", 0) for stats in per_source.values()),
+        }
+        print(json.dumps(out, indent=2))
+        return
 
 
 def get_workspaces_for_project(project_name: str) -> list:
@@ -10773,10 +11071,6 @@ def sync_file_to_db(
         metrics = extract_metrics_from_jsonl(jsonl_file, source)
         session = metrics["session"]
 
-    # Skip empty files
-    if session.get("message_count", 0) == 0 and len(metrics.get("messages", [])) == 0:
-        return False
-
     # Extract git remote info for project identification (local sources only)
     if source == "local":
         workspace_dir = jsonl_file.parent.name
@@ -11258,7 +11552,12 @@ def cmd_stats_sync(args):
     force = getattr(args, "force", False)
     all_homes = getattr(args, "all_homes", False)
     remotes = getattr(args, "remotes", None) or []
-    patterns = getattr(args, "patterns", [""])
+    patterns = getattr(args, "patterns", None)
+    if not patterns or patterns == [""]:
+        patterns = getattr(args, "workspace", None)
+    if not patterns:
+        patterns = [""]
+    patterns = _expand_patterns_for_sync(patterns)
     jobs = max(1, int(getattr(args, "jobs", 1) or 1))
     no_remote = getattr(args, "no_remote", False)
     no_wsl = getattr(args, "no_wsl", False)
@@ -11272,7 +11571,7 @@ def cmd_stats_sync(args):
                 sys.stderr.write("Warning: --no-remote set; ignoring explicit remotes\n")
             remotes = []
         else:
-            for src in get_saved_sources():
+            for src in get_saved_homes():
                 if src not in remotes:
                     remotes.append(src)
     elif no_remote and remotes:
@@ -11394,8 +11693,37 @@ def _expand_alias_to_conditions(alias_name: str, aliases: dict) -> tuple:
     for source_key, workspaces in aliases[alias_name].items():
         if isinstance(workspaces, list):
             for ws in workspaces:
-                conditions.append("s.workspace = ?")
-                params.append(get_workspace_name_from_path(ws))
+                # Tie workspace to its home/source to avoid cross-home collisions
+                ws_name = get_workspace_name_from_path(ws)
+                if source_key == "local":
+                    conditions.append(
+                        "(s.workspace = ? AND s.source IN ('local','codex','gemini'))"
+                    )
+                    params.extend([ws_name])
+                elif source_key.startswith("wsl:"):
+                    conditions.append("(s.workspace = ? AND s.source LIKE ?)")
+                    params.extend([ws_name, "wsl:%"])
+                elif source_key.startswith("windows"):
+                    conditions.append("(s.workspace = ? AND s.source LIKE ?)")
+                    params.extend([ws_name, "windows%"])
+                elif source_key.startswith("remote:") or "@" in source_key:
+                    # Normalize remote sources to match stored form (remote:<hostname>)
+                    remote_spec = (
+                        source_key.split(":", 1)[1]
+                        if source_key.startswith("remote:")
+                        else source_key
+                    )
+                    hostname = remote_spec.split("@")[-1]
+                    candidates = [f"remote:{remote_spec}"]
+                    if hostname and hostname != remote_spec:
+                        candidates.append(f"remote:{hostname}")
+                    placeholders = ",".join("?" for _ in candidates)
+                    conditions.append(f"(s.workspace = ? AND s.source IN ({placeholders}))")
+                    params.extend([ws_name, *candidates])
+                else:
+                    # local/web/etc.
+                    conditions.append("(s.workspace = ? AND s.source = ?)")
+                    params.extend([ws_name, source_key])
     return conditions, params
 
 
@@ -12790,7 +13118,8 @@ def _scan_codex_gemini_sessions(
     use_cached_counts: bool = False,
 ) -> list:
     """Scan Codex or Gemini sessions from a directory."""
-    pattern_str = patterns[0] if patterns else ""
+    # Prefer the shortest pattern to maximize substring matches across encodings (e.g., basename)
+    pattern_str: str = cast(str, sorted(patterns, key=len)[0]) if patterns else ""
     if scan_agent == AGENT_CODEX:
         sessions = codex_scan_sessions(
             pattern=pattern_str,
@@ -14531,7 +14860,7 @@ def _print_all_homes_results(
                 )
         printer.print()
     else:
-        columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+        columns = ["HOME", "WORKSPACE", "SESSION", "MESSAGES", "SIZE", "MODIFIED"]
         printer = TablePrinter(columns, output_format=output_format)
 
         for source_label, sessions in all_results:
@@ -14539,12 +14868,12 @@ def _print_all_homes_results(
             for session in sessions:
                 printer.add_row(
                     {
-                        "AGENT": session.get("agent", AGENT_CLAUDE),
                         "HOME": home_label,
                         "WORKSPACE": session.get("workspace_readable") or session.get("workspace"),
-                        "FILE": session.get("filename") or session.get("file"),
+                        "SESSION": session.get("filename") or session.get("file"),
                         "MESSAGES": _format_message_count(session),
-                        "DATE": session["modified"].strftime("%Y-%m-%d")
+                        "SIZE": _format_size_kb(session),
+                        "MODIFIED": session["modified"].strftime("%Y-%m-%d %H:%M")
                         if session.get("modified")
                         else "",
                     }
@@ -14605,7 +14934,7 @@ def cmd_list_all_homes(args):
     until_date = getattr(args, "until_date", None)
 
     # Get configured sources
-    saved_sources = get_saved_sources()
+    saved_sources = get_saved_homes()
 
     # Categorize sources
     windows_sources = [s for s in saved_sources if s.startswith("windows:")]
@@ -14737,7 +15066,7 @@ def _lsh_get_windows() -> list:
 
 def _lsh_get_configured() -> list:
     """Get configured homes (SSH remotes, Windows, WSL)."""
-    sources = get_saved_sources()
+    sources = get_saved_homes()
     results = []
     for source in sources:
         results.append({"home": source, "path": "-", "workspaces": "-"})
@@ -14942,14 +15271,15 @@ def cmd_lsh_add(args):
         sys.exit(1)
 
     config = load_config()
-    sources = config.get("sources", [])
+    homes = config.get("homes", [])
 
-    if source in sources:
+    if source in homes:
         print(f"Home '{source}' already configured.")
         return
 
-    sources.append(source)
-    config["sources"] = sources
+    homes.append(source)
+    config["homes"] = homes
+    config["sources"] = homes  # keep in sync for backward compatibility
 
     if save_config(config):
         print(f"Added home: {source}")
@@ -14965,14 +15295,14 @@ def cmd_lsh_remove(args):
     remove_web = getattr(args, "web", False)
 
     config = load_config()
-    sources = config.get("sources", [])
+    homes = config.get("homes", [])
 
     # Determine what to remove
     if remove_web:
         source = "web"
     elif remove_windows:
         # Find and remove any windows:* source
-        windows_sources = [s for s in sources if s.startswith("windows:")]
+        windows_sources = [s for s in homes if s.startswith("windows:")]
         if not windows_sources:
             sys.stderr.write("Error: No Windows home configured\n")
             sys.exit(1)
@@ -14980,7 +15310,7 @@ def cmd_lsh_remove(args):
     elif remove_wsl is not None:
         # Find and remove matching wsl:* source
         if remove_wsl == "auto":
-            wsl_sources = [s for s in sources if s.startswith("wsl:")]
+            wsl_sources = [s for s in homes if s.startswith("wsl:")]
             if not wsl_sources:
                 sys.stderr.write("Error: No WSL home configured\n")
                 sys.exit(1)
@@ -14991,13 +15321,14 @@ def cmd_lsh_remove(args):
         sys.stderr.write("Error: Specify a source to remove, --windows, --web, or --wsl\n")
         sys.exit(1)
 
-    if source not in sources:
+    if source not in homes:
         sys.stderr.write(f"Error: Home '{source}' not found.\n")
-        sys.stderr.write(f"Configured homes: {', '.join(sources) if sources else '(none)'}\n")
+        sys.stderr.write(f"Configured homes: {', '.join(homes) if homes else '(none)'}\n")
         sys.exit(1)
 
-    sources.remove(source)
-    config["sources"] = sources
+    homes.remove(source)
+    config["homes"] = homes
+    config["sources"] = homes  # keep in sync for backward compatibility
 
     if save_config(config):
         print(f"Removed home: {source}")
@@ -15008,6 +15339,7 @@ def cmd_lsh_remove(args):
 def cmd_lsh_clear(args):
     """Clear all saved remote sources."""
     config = load_config()
+    config["homes"] = []
     config["sources"] = []
 
     if save_config(config):
@@ -15017,7 +15349,7 @@ def cmd_lsh_clear(args):
 
 
 def _cmd_home_show(args):
-    """Show a single home entry."""
+    """Show a single home entry with summary details."""
     all_args = SimpleNamespace(
         wsl=True,
         windows=True,
@@ -15030,18 +15362,67 @@ def _cmd_home_show(args):
     matches = [h for h in homes if h.get("home") == args.name]
     if not matches:
         exit_with_error(f"Home '{args.name}' not found.")
+
+    home = matches[0]
+    agent = getattr(args, "agent", None) or "auto"
+    summary = _summarize_home(home["home"], agent)
+
     output_format = getattr(args, "format", None)
-    columns = ["HOME", "PATH", "WORKSPACES"]
-    printer = TablePrinter(columns, output_format=output_format)
-    for home in matches:
-        printer.add_row(
-            {
-                "HOME": home["home"],
-                "PATH": home["path"],
-                "WORKSPACES": home["workspaces"],
-            }
-        )
-    printer.print()
+    if output_format in (None, "table"):
+        print(f"Home: {home['home']}")
+        if summary["type"]:
+            print(f"Type: {summary['type']}")
+        if summary["host"]:
+            print(f"Host: {summary['host']}")
+        status = summary["status"] or home.get("status") or "unknown"
+        print(f"Status: {status}")
+        print()
+        print(f"Workspaces: {home.get('workspaces', '-')}")
+        print(f"Sessions: {summary['sessions']}")
+        if summary["last_modified"]:
+            print(f"Last Modified: {summary['last_modified'].strftime('%Y-%m-%d %H:%M')}")
+        if summary["top_workspaces"]:
+            print()
+            print("Top Workspaces:")
+            for ws, count in summary["top_workspaces"]:
+                print(f"  {ws:20} {count} sessions")
+    elif output_format == "tsv":
+        rows = [
+            ("Home", home["home"]),
+            ("Type", summary["type"] or ""),
+            ("Host", summary["host"] or ""),
+            ("Status", summary["status"] or home.get("status") or "unknown"),
+            ("Workspaces", str(home.get("workspaces", "-"))),
+            ("Sessions", str(summary["sessions"])),
+            (
+                "Last Modified",
+                summary["last_modified"].strftime("%Y-%m-%d %H:%M")
+                if summary["last_modified"]
+                else "",
+            ),
+        ]
+        for k, v in rows:
+            print(f"{k}\t{v}")
+        if summary["top_workspaces"]:
+            print("Top Workspaces\t")
+            for ws, count in summary["top_workspaces"]:
+                print(f"{ws}\t{count}")
+    elif output_format == "json":
+        out = {
+            "home": home["home"],
+            "type": summary["type"],
+            "host": summary["host"],
+            "status": summary["status"] or home.get("status") or "unknown",
+            "workspaces": home.get("workspaces"),
+            "sessions": summary["sessions"],
+            "last_modified": summary["last_modified"].isoformat()
+            if summary["last_modified"]
+            else None,
+            "top_workspaces": [
+                {"workspace": ws, "sessions": count} for ws, count in summary["top_workspaces"]
+            ],
+        }
+        print(json.dumps(out, indent=2))
 
 
 def _cmd_home_export(args):
@@ -15062,6 +15443,130 @@ def _cmd_home_stats(args):
     stats_args.all_homes = getattr(args, "all_homes", False)
     _apply_home_flags_from_names(stats_args, getattr(args, "names", []) or [])
     _dispatch_stats(stats_args)
+
+
+def _summarize_home(home_name: str, agent: str = "auto") -> dict:
+    """Summarize sessions for a given home."""
+    result = {
+        "type": None,
+        "host": None,
+        "status": None,
+        "sessions": 0,
+        "last_modified": None,
+        "top_workspaces": [],
+    }
+
+    # Determine type/host from name
+    if home_name == "local":
+        result["type"] = "local"
+        result["host"] = platform.node()
+    elif home_name.startswith("wsl:"):
+        result["type"] = "wsl"
+        result["host"] = home_name.split(":", 1)[1]
+    elif home_name.startswith("windows"):
+        result["type"] = "windows"
+    elif home_name == "web":
+        result["type"] = "web"
+    elif home_name.startswith("remote:"):
+        result["type"] = "ssh"
+        result["host"] = home_name.split(":", 1)[1]
+    elif "@" in home_name:
+        result["type"] = "ssh"
+        result["host"] = home_name
+
+    sessions = []
+
+    try:
+        if home_name == "local":
+            sessions = collect_sessions_with_dedup(
+                [""], include_cached=True, skip_message_count=True, agent=agent
+            )
+            result["status"] = "ok"
+        elif home_name.startswith("remote:") or "@" in home_name:
+            remote = home_name.split(":", 1)[1] if home_name.startswith("remote:") else home_name
+            remote_result = _collect_remote_sessions(remote, [""], None, None, agent)
+            if remote_result:
+                _, sessions = remote_result
+                result["status"] = "ok"
+            else:
+                result["status"] = "unreachable"
+        elif home_name.startswith("wsl:"):
+            distro = home_name.split(":", 1)[1]
+            target_agent = agent if agent != "auto" else AGENT_CLAUDE
+            sessions_dir = get_agent_wsl_dir(distro, target_agent)
+            if sessions_dir and sessions_dir.exists():
+                if target_agent == AGENT_CLAUDE:
+                    sessions = collect_sessions_with_dedup(
+                        [""],
+                        projects_dir=sessions_dir,
+                        skip_message_count=True,
+                        include_cached=False,
+                        agent=AGENT_CLAUDE,
+                    )
+                else:
+                    sessions = _scan_codex_gemini_sessions(
+                        target_agent,
+                        [""],
+                        None,
+                        None,
+                        sessions_dir,
+                        f"wsl:{distro}",
+                        skip_message_count=True,
+                    )
+                result["status"] = "ok"
+        elif home_name.startswith("windows"):
+            user = home_name.split(":", 1)[1] if ":" in home_name else None
+            target_agent = agent if agent != "auto" else AGENT_CLAUDE
+            sessions_dir = get_agent_windows_dir(user, target_agent)
+            if sessions_dir and sessions_dir.exists():
+                if target_agent == AGENT_CLAUDE:
+                    sessions = collect_sessions_with_dedup(
+                        [""],
+                        projects_dir=sessions_dir,
+                        skip_message_count=True,
+                        include_cached=False,
+                        agent=AGENT_CLAUDE,
+                    )
+                else:
+                    sessions = _scan_codex_gemini_sessions(
+                        target_agent,
+                        [""],
+                        None,
+                        None,
+                        sessions_dir,
+                        home_name,
+                        skip_message_count=True,
+                    )
+                result["status"] = "ok"
+        elif home_name == "web":
+            token = get_access_token()
+            org_uuid = get_org_uuid_from_claude_config()
+            if token and org_uuid:
+                web_sessions = fetch_web_sessions(token, org_uuid)
+                result["sessions"] = len(web_sessions)
+                result["status"] = "authenticated"
+                result["last_modified"] = None
+                return result
+            result["status"] = "not authenticated"
+            return result
+    except Exception:
+        # Gracefully degrade if inaccessible
+        result["status"] = result.get("status") or "unreachable"
+
+    if sessions:
+        result["sessions"] = len(sessions)
+        # Compute last modified and per-workspace counts
+        last_mod = None
+        counts: dict[str, int] = {}
+        for s in sessions:
+            ws = s.get("workspace_readable") or s.get("workspace") or ""
+            counts[ws] = counts.get(ws, 0) + 1
+            mod = s.get("modified")
+            if mod and (last_mod is None or mod > last_mod):
+                last_mod = mod
+        result["last_modified"] = last_mod
+        result["top_workspaces"] = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:3]
+    return result
 
 
 def _get_reset_items(what: Optional[str], config_dir: Path) -> list:
@@ -15617,7 +16122,7 @@ def cmd_export_all(args):
             print("Warning: --no-remote set; ignoring explicit remotes")
         remotes = []
     else:
-        for src in get_saved_sources():
+        for src in get_saved_homes():
             if src not in remotes:
                 remotes.append(src)
     args.remotes = remotes
@@ -16761,7 +17266,9 @@ def _create_argument_parser():
     """
     parser = argparse.ArgumentParser(
         prog="agent-history",
-        description="Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)",
+        description=(
+            "Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI)"
+        ),
         formatter_class=WrappedHelpFormatter,
         epilog=HELP_EPILOG,
     )
@@ -16967,7 +17474,7 @@ def _create_argument_parser():
 
     proj_show = proj_sub.add_parser("show", help="Show project details")
     proj_show.set_defaults(command="project", project_command="show")
-    proj_show.add_argument("name", help="Project name")
+    proj_show.add_argument("name", nargs="?", help="Project name (defaults to current project)")
 
     proj_add = proj_sub.add_parser("add", help="Add workspace to project")
     proj_add.set_defaults(command="project", project_command="add")
@@ -17148,7 +17655,11 @@ def _combine_workspace_inputs(
     for ws in workspaces or []:
         if ws is None:
             continue
-        combined.append(f"={ws}")
+        # Preserve project patterns (@project) to allow alias expansion downstream
+        if isinstance(ws, str) and ws.startswith("@"):
+            combined.append(ws)
+        else:
+            combined.append(f"={ws}")
     if name_patterns:
         combined.extend([p for p in name_patterns if p])
 
@@ -17182,6 +17693,42 @@ def _apply_home_flags_from_names(args, names: list[str]):
         else:
             remotes.append(home_name)
     args.remotes = remotes
+
+
+def _apply_project_sources_to_args(args, project_name: str) -> None:
+    """Mutate args with home/remote flags based on project sources."""
+    aliases = load_aliases().get("projects", {})
+    project = aliases.get(project_name)
+    if not project:
+        return
+
+    remotes = list(getattr(args, "remotes", None) or [])
+    # Track if we need WSL/Windows sources
+    windows_flag = getattr(args, "windows", False)
+    wsl_flag = getattr(args, "wsl", False)
+
+    for source_key in project.keys():
+        if source_key.startswith("remote:") or "@" in source_key:
+            host = source_key.split(":", 1)[1] if source_key.startswith("remote:") else source_key
+            if host not in remotes:
+                remotes.append(host)
+        elif source_key.startswith("wsl:"):
+            # Use wsl:// scheme for sync helper
+            distro = source_key.split(":", 1)[1]
+            target = f"wsl://{distro}"
+            if target not in remotes:
+                remotes.append(target)
+            wsl_flag = True
+        elif source_key.startswith("windows"):
+            # Use windows:<user> if provided
+            target = source_key if ":" in source_key else "windows"
+            if target not in remotes:
+                remotes.append(target)
+            windows_flag = True
+
+    args.remotes = remotes
+    args.windows = windows_flag
+    args.wsl = wsl_flag
 
 
 def _get_remote_workspaces_for_lsw(remote: str, patterns: list, agent: str = "auto") -> tuple:
@@ -17352,13 +17899,7 @@ def _dispatch_ws(args):
         )
 
     if verb == "show":
-        combined = _combine_workspace_inputs(
-            workspace_inputs,
-            name_patterns,
-            getattr(args, "all_workspaces", False),
-        )
-        args.workspace = combined
-        _dispatch_lss(args)
+        _dispatch_ws_show(args, workspace_inputs, name_patterns)
         return
 
     if project_only:
@@ -17389,6 +17930,119 @@ def _dispatch_ws(args):
     )
     args.pattern = combined
     _dispatch_lsw(args)
+
+
+def _dispatch_ws_show(args, workspace_inputs: list[str], name_patterns: list[str]) -> None:
+    """Show workspace summary and recent sessions."""
+    combined = _combine_workspace_inputs(
+        workspace_inputs,
+        name_patterns,
+        getattr(args, "all_workspaces", False),
+    )
+    if not combined:
+        exit_with_error("No workspace specified for ws show.")
+    # We only show the first resolved workspace to align with spec (single workspace)
+    pattern = combined[0]
+    # Reuse session listing to gather data
+    list_args = SimpleNamespace(**vars(args))
+    list_args.workspace = [pattern]
+    list_args.patterns = [pattern]
+    list_args.workspaces_only = False
+    list_args.name_patterns = []
+    list_args.all_workspaces = False
+    list_args.since_date = getattr(args, "since_date", None)
+    list_args.until_date = getattr(args, "until_date", None)
+    list_args.agent = getattr(args, "agent", None) or "auto"
+
+    sessions = collect_sessions_with_dedup(
+        list_args.patterns,
+        since_date=list_args.since_date,
+        until_date=list_args.until_date,
+        include_cached=True,
+        agent=list_args.agent,
+    )
+    if not sessions:
+        exit_with_error("No sessions found for the specified workspace.")
+
+    # Infer workspace/home from first session
+    first = sessions[0]
+    workspace_path = first.get("workspace_readable") or first.get("workspace", "")
+    home_label = first.get("source") or "local"
+
+    # Totals
+    total_sessions = len(sessions)
+    total_messages = 0
+    for s in sessions:
+        try:
+            total_messages += int(s.get("message_count") or 0)
+        except (TypeError, ValueError):
+            continue
+    last_modified = max((s.get("modified") for s in sessions if s.get("modified")), default=None)
+
+    # Recent sessions (top 3 by modified desc)
+    sorted_sessions = sorted(
+        sessions,
+        key=lambda s: s.get("modified") or datetime.min,
+        reverse=True,
+    )
+    recent = sorted_sessions[:3]
+
+    # Output (table or plaintext)
+    output_format = getattr(args, "format", None)
+    if output_format in (None, "table"):
+        print(f"Workspace: {get_folder_short_name(workspace_path) or workspace_path}")
+        print(f"Path: {workspace_path}")
+        print(f"Home: {home_label}")
+        print()
+        print(f"Sessions: {total_sessions}")
+        print(f"Messages: {total_messages}")
+        if last_modified:
+            print(f"Last Modified: {last_modified.strftime('%Y-%m-%d %H:%M')}")
+        print()
+        print("Recent Sessions:")
+        for s in recent:
+            mod = s.get("modified")
+            mod_str = mod.strftime("%Y-%m-%d %H:%M") if mod else ""
+            fname = s.get("filename") or s.get("file") or ""
+            msg_count = _format_message_count(s)
+            print(f"  {fname:20}  {msg_count:>4} messages  {mod_str}")
+    elif output_format == "tsv":
+        # Emit a simple TSV block: key\tvalue and then recent sessions
+        rows = [
+            ("Workspace", get_folder_short_name(workspace_path) or workspace_path),
+            ("Path", workspace_path),
+            ("Home", home_label),
+            ("Sessions", str(total_sessions)),
+            ("Messages", str(total_messages)),
+            ("Last Modified", last_modified.strftime("%Y-%m-%d %H:%M") if last_modified else ""),
+            ("Recent", ""),
+        ]
+        for s in recent:
+            mod = s.get("modified")
+            mod_str = mod.strftime("%Y-%m-%d %H:%M") if mod else ""
+            fname = s.get("filename") or s.get("file") or ""
+            msg_count = _format_message_count(s)
+            rows.append((fname, f"{msg_count} messages @ {mod_str}"))
+        for k, v in rows:
+            print(f"{k}\t{v}")
+    elif output_format == "json":
+        out = {
+            "workspace": get_folder_short_name(workspace_path) or workspace_path,
+            "path": workspace_path,
+            "home": home_label,
+            "sessions": total_sessions,
+            "messages": total_messages,
+            "last_modified": last_modified.isoformat() if last_modified else None,
+            "recent": [
+                {
+                    "session": s.get("filename") or s.get("file"),
+                    "messages": s.get("message_count"),
+                    "modified": s.get("modified").isoformat() if s.get("modified") else None,
+                }
+                for s in recent
+            ],
+        }
+        print(json.dumps(out, indent=2))
 
 
 def _filter_sessions_by_date(sessions: list, since_date, until_date) -> list:
@@ -18450,6 +19104,7 @@ def _dispatch_project(args):
         stats_args = SimpleNamespace(**vars(args))
         stats_args.workspace = [f"@{args.name}"]
         stats_args.all_workspaces = False
+        _apply_project_sources_to_args(stats_args, args.name)
         _dispatch_stats(stats_args)
     elif project_cmd == "config-export":
         cmd_project_config_export(args)
@@ -18483,6 +19138,42 @@ def _build_sync_args(args, remotes: list) -> SyncCommandArgs:
         no_windows=getattr(args, "no_windows", False),
         show_progress=getattr(args, "sync", False),
     )
+
+
+def _expand_patterns_for_sync(patterns: list[str]) -> list[str]:
+    """Expand @project patterns to concrete workspaces for sync."""
+    if not patterns:
+        return [""]
+
+    aliases = load_aliases().get("projects", {})
+    expanded: list[str] = []
+    for pat in patterns:
+        # Allow "=@project" (from exact matching) to behave like "@project"
+        pattern = pat[1:] if pat.startswith("=@") else pat
+        if pattern.startswith("@"):
+            proj = aliases.get(pattern[1:])
+            if proj:
+                for workspaces in proj.values():
+                    for ws in workspaces:
+                        expanded.append(ws)
+                        # Add decoded path using filesystem when available to preserve hyphens
+                        decoded_fs = normalize_workspace_name(ws, verify_local=True)
+                        if decoded_fs and decoded_fs not in expanded:
+                            expanded.append(decoded_fs)
+                        # Also add a best-effort decoded path without filesystem (fallback)
+                        decoded = normalize_workspace_name(ws, verify_local=False)
+                        if decoded and decoded not in expanded:
+                            expanded.append(decoded)
+                        # Add short workspace name for agents that store only the basename
+                        base = get_workspace_name_from_path(ws)
+                        if base and base not in expanded:
+                            expanded.append(base)
+            else:
+                expanded.append(pattern)
+        else:
+            expanded.append(pattern)
+
+    return expanded or [""]
 
 
 def _build_stats_args(args) -> StatsCommandArgs:
