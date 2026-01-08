@@ -37,6 +37,8 @@ from typing import Any, Callable, ClassVar, Optional, TypedDict, Union, cast
 
 __version__ = "1.5.1"
 
+UNIFIED_SCHEMA_VERSION = "2.0"
+
 
 class WrappedHelpFormatter(argparse.RawDescriptionHelpFormatter):
     """Custom formatter that wraps usage lines at reasonable width."""
@@ -4264,16 +4266,54 @@ def parse_to_unified_ndjson(
     return unified_records
 
 
-def write_unified_ndjson(records: list, output_file: Path, quiet: bool = False) -> None:
+def _infer_workspace_for_unified(session_file: Path, agent_type: str) -> Optional[str]:
+    """Best-effort workspace inference for unified export header."""
+    try:
+        if agent_type == AGENT_CLAUDE:
+            return normalize_workspace_name(session_file.parent.name, verify_local=True)
+        if agent_type == AGENT_CODEX:
+            return codex_get_workspace_from_session(session_file)
+        if agent_type == AGENT_GEMINI:
+            return gemini_get_workspace_from_session(session_file)
+    except Exception:
+        return None
+    return None
+
+
+def _build_unified_header(agent_type: str, workspace: Optional[str] = None) -> dict:
+    """Build header record for unified NDJSON export."""
+    agent_map = {
+        AGENT_CLAUDE: "claude-code",
+        AGENT_CODEX: "codex",
+        AGENT_GEMINI: "gemini",
+    }
+    return {
+        "type": "header",
+        "schema_version": UNIFIED_SCHEMA_VERSION,
+        "export_timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "exporter_version": __version__,
+        "agent_types": [agent_map.get(agent_type, agent_type)],
+        "homes": ["local"],
+        "workspaces": [workspace] if workspace else [],
+        "session_count": 1,
+    }
+
+
+def write_unified_ndjson(
+    records: list, output_file: Path, quiet: bool = False, header: Optional[dict] = None
+) -> None:
     """Write unified records to NDJSON file.
 
     Args:
         records: List of unified schema dicts
         output_file: Output file path (should have .ndjson extension)
+        header: Optional header record to write first
         quiet: If True, suppress output
     """
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
+        if header:
+            f.write(json.dumps(header, ensure_ascii=False) + "\n")
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     if not quiet:
@@ -14233,7 +14273,9 @@ def _export_single_session(
         if export_json:
             # Export as unified NDJSON
             records = parse_to_unified_ndjson(jsonl_file, agent_type, messages)
-            write_unified_ndjson(records, output_file, quiet)
+            workspace = _infer_workspace_for_unified(jsonl_file, agent_type)
+            header = _build_unified_header(agent_type, workspace)
+            write_unified_ndjson(records, output_file, quiet, header=header)
         # Codex/Gemini files don't support splitting yet; use direct export
         elif agent_type in (AGENT_CODEX, AGENT_GEMINI):
             _write_single_file(
