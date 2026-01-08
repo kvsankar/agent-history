@@ -64,6 +64,14 @@ Line N: Session record
 | `workspaces` | array | Yes | Workspace names included |
 | `session_count` | int | Yes | Total sessions in file |
 
+**Versioning:** `schema_version` is currently `2.0`. Increment this when backward-incompatible changes are introduced and document changes below.
+
+### Version History
+
+| Version | Notes |
+|---------|-------|
+| 2.0 | Current unified schema (header + session lines) |
+
 ---
 
 ## Session Record
