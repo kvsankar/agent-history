@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -8,7 +9,7 @@ def test_project_show_accepts_format_flag(tmp_path: Path):
     """project show should accept --format json from CLI parser."""
     script = Path(__file__).parents[2] / "agent-history"
     proc = subprocess.run(
-        ["python3", str(script), "project", "show", "dummy", "--format", "json"],
+        [sys.executable, str(script), "project", "show", "dummy", "--format", "json"],
         capture_output=True,
         text=True,
         cwd=tmp_path,
