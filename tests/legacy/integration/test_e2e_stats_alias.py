@@ -93,27 +93,24 @@ def test_e2e_alias_create_add_show_export(tmp_path: Path):
     if sys.platform == "win32":
         env["USERPROFILE"] = str(cfg)
 
-    # Create alias and add the encoded workspace dir
+    # Create project and add the encoded workspace dir
     alias = "mye2e"
-    r1 = run_cli(["alias", "create", alias], env=env)
+    r1 = run_cli(["project", "add", alias, "--allow-empty"], env=env)
     assert r1.returncode == 0, r1.stderr
 
-    r2 = run_cli(["alias", "add", alias, "--", "-home-user-alias"], env=env)
+    r2 = run_cli(["project", "add", alias, "--", "-home-user-alias"], env=env)
     assert r2.returncode == 0, r2.stderr
 
-    # Export alias config and verify structure contains our workspace
-    # Note: The new format uses "projects" key instead of "aliases"
-    r3 = run_cli(["alias", "export"], env=env)
+    # Export project config and verify structure contains our workspace
+    r3 = run_cli(["project", "config-export"], env=env)
     assert r3.returncode == 0, r3.stderr
-    data = json.loads(r3.stdout)
-    # Support both old and new key names for compatibility
-    projects = data.get("projects", data.get("aliases", {}))
+    projects = json.loads(r3.stdout).get("projects", {})
     assert alias in projects
     assert "local" in projects[alias]
     assert "-home-user-alias" in projects[alias]["local"]
 
     # Show should succeed (content may vary by platform setup)
-    r4 = run_cli(["alias", "show", alias], env=env)
+    r4 = run_cli(["project", "show", alias], env=env)
     assert r4.returncode == 0, r4.stderr
 
     # List sessions via alias using @alias in lss

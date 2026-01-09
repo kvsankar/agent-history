@@ -38,7 +38,7 @@ def translate_legacy_args(args: list[str]) -> list[str]:  # noqa: C901
     elif cmd == "stats":
         mapped = ["session", "stats", *rest]
     elif cmd == "lss":
-        mapped = ["session", *rest]
+        mapped = ["session", "--legacy-format", *rest]
         if not agent_overridden:
             mapped = ["--agent", "claude", *mapped]
     elif cmd == "lsw":
