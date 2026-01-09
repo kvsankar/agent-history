@@ -489,6 +489,7 @@ class ListCommandArgs:
     no_wsl: bool = False
     no_windows: bool = False
     format: Optional[str] = None
+    legacy_format: bool = False
 
     @property
     def workspace(self) -> str:
@@ -1817,6 +1818,7 @@ def print_sessions_output(
     workspaces_only: bool,
     output_format: Optional[str] = None,
     max_width: Optional[int] = None,
+    legacy_format: bool = False,
 ):
     """Print sessions in appropriate format (workspaces-only or full details).
 
@@ -1851,21 +1853,41 @@ def print_sessions_output(
             )
         printer.print()
     else:
-        columns = ["SESSION", "MESSAGES", "SIZE", "MODIFIED"]
-        printer = TablePrinter(columns, output_format=output_format, max_width=max_width)
+        if legacy_format:
+            columns = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+            printer = TablePrinter(columns, output_format=output_format, max_width=max_width)
+            home_label = _source_label_to_home(source_label)
 
-        for session in sessions:
-            printer.add_row(
-                {
-                    "SESSION": session.get("filename") or session.get("file"),
-                    "MESSAGES": _format_message_count(session),
-                    "SIZE": _format_size_kb(session),
-                    "MODIFIED": session["modified"].strftime("%Y-%m-%d %H:%M")
-                    if session.get("modified")
-                    else "",
-                }
-            )
-        printer.print()
+            for session in sessions:
+                printer.add_row(
+                    {
+                        "AGENT": session.get("agent", AGENT_CLAUDE),
+                        "HOME": home_label,
+                        "WORKSPACE": session.get("workspace_readable") or session.get("workspace"),
+                        "FILE": session.get("filename") or session.get("file"),
+                        "MESSAGES": _format_message_count(session),
+                        "DATE": session["modified"].strftime("%Y-%m-%d")
+                        if session.get("modified")
+                        else "",
+                    }
+                )
+            printer.print()
+        else:
+            columns = ["SESSION", "MESSAGES", "SIZE", "MODIFIED"]
+            printer = TablePrinter(columns, output_format=output_format, max_width=max_width)
+
+            for session in sessions:
+                printer.add_row(
+                    {
+                        "SESSION": session.get("filename") or session.get("file"),
+                        "MESSAGES": _format_message_count(session),
+                        "SIZE": _format_size_kb(session),
+                        "MODIFIED": session["modified"].strftime("%Y-%m-%d %H:%M")
+                        if session.get("modified")
+                        else "",
+                    }
+                )
+            printer.print()
 
 
 # ============================================================================
@@ -13279,7 +13301,11 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
 
     source_label = f"Windows ({username})" if username else "Windows"
     print_sessions_output(
-        all_sessions, source_label, workspaces_only, output_format=getattr(args, "format", None)
+        all_sessions,
+        source_label,
+        workspaces_only,
+        output_format=getattr(args, "format", None),
+        legacy_format=getattr(args, "legacy_format", False),
     )
 
 
@@ -13362,7 +13388,11 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
 
     source_label = f"WSL ({distro_name})"
     print_sessions_output(
-        all_sessions, source_label, workspaces_only, output_format=getattr(args, "format", None)
+        all_sessions,
+        source_label,
+        workspaces_only,
+        output_format=getattr(args, "format", None),
+        legacy_format=getattr(args, "legacy_format", False),
     )
 
 
@@ -13654,6 +13684,7 @@ def _list_ssh_remote_sessions(args, patterns: list, since_date, until_date):
             f"Remote ({remote_host})",
             workspaces_only=False,
             output_format=getattr(args, "format", None),
+            legacy_format=getattr(args, "legacy_format", False),
         )
 
 
@@ -13696,7 +13727,11 @@ def _list_local_sessions(args, patterns: list, since_date, until_date):
     in_wsl = is_running_in_wsl()
     source_label = "Local (WSL)" if in_wsl else "Local"
     print_sessions_output(
-        sessions, source_label, workspaces_only, output_format=getattr(args, "format", None)
+        sessions,
+        source_label,
+        workspaces_only,
+        output_format=getattr(args, "format", None),
+        legacy_format=getattr(args, "legacy_format", False),
     )
 
 
@@ -17450,6 +17485,11 @@ def _create_argument_parser():
         action="store_true",
         help="Count messages for WSL sessions on Windows (slower)",
     )
+    sess_list.add_argument(
+        "--legacy-format",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     _add_output_format(sess_list)
 
     sess_show = sess_sub.add_parser("show", help="Show session details")
@@ -18192,6 +18232,7 @@ def _dispatch_lsw(args):
             remotes=remotes,
             agent=agent,
             format=output_format,
+            legacy_format=getattr(args, "legacy_format", False),
         )
         cmd_list_all_homes(list_args)
         # Also include web sessions with --all-homes
@@ -18205,6 +18246,7 @@ def _dispatch_lsw(args):
             local_only=True,
             agent=agent,
             format=output_format,
+            legacy_format=getattr(args, "legacy_format", False),
         )
         _dispatch_lsw_additive(list_args)
     else:
@@ -18214,6 +18256,7 @@ def _dispatch_lsw(args):
             remote=_resolve_remote_flag(args),
             agent=agent,
             format=output_format,
+            legacy_format=getattr(args, "legacy_format", False),
         )
         cmd_list(list_args)
 
@@ -18360,6 +18403,7 @@ def _dispatch_lss_all_homes(args, workspace_list: list):
         wsl_counts=getattr(args, "wsl_counts", False),
         no_wsl=getattr(args, "no_wsl", False),
         no_windows=getattr(args, "no_windows", False),
+        legacy_format=getattr(args, "legacy_format", False),
     )
     cmd_list_all_homes(list_args)
 
@@ -18424,6 +18468,7 @@ def _dispatch_lss_local(args, workspace_list: list):
         wsl_counts=getattr(args, "wsl_counts", False),
         no_wsl=getattr(args, "no_wsl", False),
         no_windows=getattr(args, "no_windows", False),
+        legacy_format=getattr(args, "legacy_format", False),
     )
     cmd_list(list_args)
 
