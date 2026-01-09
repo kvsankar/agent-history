@@ -407,11 +407,11 @@ agent-history stats --sync --ah --jobs 4 --no-remote
 
 ## Date Filtering
 
-Both `lss` and `export` support date filtering:
+Both `session list` and `export` support date filtering:
 
 ```bash
 # Sessions modified on or after a date
-agent-history lss myproject --since 2025-11-01
+agent-history session list myproject --since 2025-11-01
 
 # Sessions within a date range
 agent-history export myproject --since 2025-11-01 --until 2025-11-30

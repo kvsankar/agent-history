@@ -12,7 +12,7 @@
 
 List all workspaces:
 ```bash
-agent-history lsw
+agent-history ws list
 # or
 ls ~/.claude/projects/
 ```
@@ -99,7 +99,7 @@ No SSH or rsync needed - uses direct filesystem access.
 
 Yes! Combine flags:
 ```bash
-agent-history lsw --ah                    # All homes
+agent-history ws list --ah                    # All homes
 agent-history session myproject --wsl         # WSL
 agent-history session myproject --windows     # Windows (from WSL)
 agent-history session myproject -r user@host  # SSH remote
@@ -121,7 +121,7 @@ agent-history session myproject -r user@host  # SSH remote
 
    ```bash
    export CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects
-   agent-history lsw
+   agent-history ws list
    ```
 
 ---
@@ -131,7 +131,7 @@ agent-history session myproject -r user@host  # SSH remote
 **Problem:** No workspaces match your pattern
 
 **Solution:**
-1. List all workspaces: `agent-history lsw`
+1. List all workspaces: `agent-history ws list`
 2. Try a partial match
 3. Check spelling and case-sensitivity
 
