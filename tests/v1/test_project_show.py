@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -35,7 +34,7 @@ def test_project_show_table_auto(monkeypatch, capsys):
         ],
     )
 
-    args = SimpleNamespace(name=None, format=None)
+    args = SimpleNamespace(name=None)
     ah.cmd_project_show(args)
     out = capsys.readouterr().out
     assert "Project: myproj" in out
@@ -44,8 +43,8 @@ def test_project_show_table_auto(monkeypatch, capsys):
     assert "claude" in out and "codex" in out and "gemini" in out
 
 
-def test_project_show_json(monkeypatch, capsys):
-    """project show with explicit name and json output."""
+def test_project_show_with_explicit_name(monkeypatch, capsys):
+    """project show with explicit name displays human-readable output."""
     ah = load_agent_history()
     monkeypatch.setattr(
         ah,
@@ -63,12 +62,11 @@ def test_project_show_json(monkeypatch, capsys):
         ],
     )
 
-    args = SimpleNamespace(name="sample", format="json")
+    args = SimpleNamespace(name="sample")
     ah.cmd_project_show(args)
-    out_str = capsys.readouterr().out
-    out = json.loads(out_str[out_str.index("{") :])
-    assert out["project"] == "sample"
-    assert out["sessions"] == 4
-    assert "per_agent" in out
-    assert out["per_agent"]["claude"] == 2
-    assert out["per_agent"]["codex"] == 2
+    out = capsys.readouterr().out
+    assert "Project: sample" in out
+    assert "Sessions: 4" in out
+    assert "Sessions by agent" in out
+    assert "claude" in out
+    assert "codex" in out
