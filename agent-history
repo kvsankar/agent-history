@@ -9775,16 +9775,19 @@ def _format_date_range_message(since_date, until_date) -> str:
 
 
 def _get_alias_workspace_patterns(alias_config: dict) -> list:
-    """Extract workspace patterns from alias config for multi-agent scanning."""
+    """Extract workspace patterns from alias config for multi-agent scanning.
+
+    Returns full workspace paths to enable exact matching and avoid substring
+    collisions (e.g., 'auth' matching 'auth-infra').
+    """
     patterns = set()
     for source_key, workspaces in alias_config.items():
         for workspace in workspaces:
-            # Convert encoded workspace back to pattern
+            # Convert encoded workspace back to readable path
             readable = normalize_workspace_name(workspace)
-            # Use the last path component as pattern
-            pattern = readable.split("/")[-1] if "/" in readable else readable
-            if pattern:
-                patterns.add(pattern)
+            # Use full workspace path for precise matching
+            if readable:
+                patterns.add(readable)
     return list(patterns)
 
 
@@ -9823,9 +9826,15 @@ def _collect_non_claude_alias_sessions(
     agent: str,
     source_keys: Optional[list] = None,
 ) -> list:
-    """Collect Codex and Gemini sessions for alias patterns."""
+    """Collect Codex and Gemini sessions for alias patterns.
+
+    Note: patterns should be full workspace paths from alias config for exact matching.
+    This prevents substring collisions (e.g., 'auth' matching 'auth-infra').
+    """
     source_keys = source_keys or ["local"]
     sessions = []
+    seen_files = set()  # Deduplicate across patterns
+
     for source_key in source_keys:
         if source_key == "local":
             for pattern in patterns:
@@ -9834,15 +9843,27 @@ def _collect_non_claude_alias_sessions(
                         pattern=pattern, since_date=since_date, until_date=until_date
                     )
                     for s in codex_sessions:
-                        s["source"] = "local"
-                    sessions.extend(codex_sessions)
+                        # Only include if workspace matches pattern exactly
+                        workspace = s.get("workspace_readable") or s.get("workspace", "")
+                        if workspace == pattern:
+                            file_key = str(s.get("file", ""))
+                            if file_key not in seen_files:
+                                seen_files.add(file_key)
+                                s["source"] = "local"
+                                sessions.append(s)
                 if agent in ("auto", AGENT_GEMINI):
                     gemini_sessions = gemini_scan_sessions(
                         pattern=pattern, since_date=since_date, until_date=until_date
                     )
                     for s in gemini_sessions:
-                        s["source"] = "local"
-                    sessions.extend(gemini_sessions)
+                        # Only include if workspace matches pattern exactly
+                        workspace = s.get("workspace_readable") or s.get("workspace", "")
+                        if workspace == pattern:
+                            file_key = str(s.get("file", ""))
+                            if file_key not in seen_files:
+                                seen_files.add(file_key)
+                                s["source"] = "local"
+                                sessions.append(s)
             continue
 
         if source_key.startswith("windows"):
