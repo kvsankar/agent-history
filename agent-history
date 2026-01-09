@@ -9232,6 +9232,7 @@ def cmd_project_list(args):
     aliases_data = load_aliases()
     aliases = aliases_data.get("projects", {})
     show_counts = getattr(args, "counts", False)
+    output_format = getattr(args, "format", None)
 
     if not aliases:
         sys.stderr.write("No projects defined.\n")
@@ -9250,31 +9251,43 @@ def cmd_project_list(args):
             sys.stderr.write("Accessing Windows/WSL sources...\n")
             sys.stderr.flush()
 
-    # Collect all data for flat output
-    rows = []
+    # Define columns based on whether counts are shown
+    if show_counts:
+        columns = ["PROJECT", "SOURCE", "WORKSPACE", "SESSIONS"]
+    else:
+        columns = ["PROJECT", "SOURCE", "WORKSPACE"]
+
+    # Create TablePrinter
+    printer = TablePrinter(columns, output_format=output_format)
+
+    # Collect all data and add to printer
     for alias_name, sources in sorted(aliases.items()):
         if not sources:
             # Empty project - show with empty source/workspace
-            rows.append((alias_name, "", "", 0 if show_counts else None))
+            row = {
+                "PROJECT": alias_name,
+                "SOURCE": "",
+                "WORKSPACE": "",
+            }
+            if show_counts:
+                row["SESSIONS"] = 0
+            printer.add_row(row)
         else:
             for source_key, workspaces in sorted(sources.items()):
                 for workspace in workspaces:
                     ws_readable = normalize_workspace_name(workspace)
+                    row = {
+                        "PROJECT": alias_name,
+                        "SOURCE": source_key,
+                        "WORKSPACE": ws_readable,
+                    }
                     if show_counts:
                         sessions = get_sessions_for_source(source_key, workspace)
-                        rows.append((alias_name, source_key, ws_readable, len(sessions)))
-                    else:
-                        rows.append((alias_name, source_key, ws_readable, None))
+                        row["SESSIONS"] = len(sessions)
+                    printer.add_row(row)
 
-    # Print flat output
-    if show_counts:
-        print("PROJECT\tSOURCE\tWORKSPACE\tSESSIONS")
-        for project, source, workspace, count in rows:
-            print(f"{project}\t{source}\t{workspace}\t{count}")
-    else:
-        print("PROJECT\tSOURCE\tWORKSPACE")
-        for project, source, workspace, _ in rows:
-            print(f"{project}\t{source}\t{workspace}")
+    # Print using TablePrinter
+    printer.print()
 
 
 def cmd_project_show(args):
@@ -9373,24 +9386,6 @@ def cmd_project_show(args):
         print("\nSessions by agent:")
         for agent_name, count in sorted(per_agent.items()):
             print(f"  {agent_name:16} {count:>5} sessions")
-
-    output_format = getattr(args, "format", None)
-    if output_format == "json":
-        # Build JSON structure
-        out = {
-            "project": alias_name,
-            "workspaces": [
-                {"source": src, "workspace": ws, "sessions": cnt}
-                for src, ws, cnt in workspace_lines
-            ],
-            "sessions": total_sessions,
-            "last_modified": last_modified.isoformat() if last_modified else None,
-            "per_source": per_source,
-            "per_agent": per_agent,
-            "messages": sum(stats.get("messages", 0) for stats in per_source.values()),
-        }
-        print(json.dumps(out, indent=2))
-        return
 
 
 def get_workspaces_for_project(project_name: str) -> list:
@@ -17436,7 +17431,6 @@ def _create_argument_parser():
     ws_show.set_defaults(command="ws", ws_verb="show")
     ws_show.add_argument("workspace", nargs="*", help="Workspace path(s)")
     _add_home_scope_flags(ws_show)
-    _add_output_format(ws_show)
 
     ws_export = ws_sub.add_parser("export", help="Export sessions from workspace")
     ws_export.set_defaults(command="ws", ws_verb="export")
@@ -17540,7 +17534,6 @@ def _create_argument_parser():
     proj_show = proj_sub.add_parser("show", help="Show project details")
     proj_show.set_defaults(command="project", project_command="show")
     proj_show.add_argument("name", nargs="?", help="Project name (defaults to current project)")
-    _add_output_format(proj_show)
 
     proj_add = proj_sub.add_parser("add", help="Add workspace to project")
     proj_add.set_defaults(command="project", project_command="add")
@@ -18053,62 +18046,23 @@ def _dispatch_ws_show(args, workspace_inputs: list[str], name_patterns: list[str
     )
     recent = sorted_sessions[:3]
 
-    # Output (table or plaintext)
-    output_format = getattr(args, "format", None)
-    if output_format in (None, "table"):
-        print(f"Workspace: {get_folder_short_name(workspace_path) or workspace_path}")
-        print(f"Path: {workspace_path}")
-        print(f"Home: {home_label}")
-        print()
-        print(f"Sessions: {total_sessions}")
-        print(f"Messages: {total_messages}")
-        if last_modified:
-            print(f"Last Modified: {last_modified.strftime('%Y-%m-%d %H:%M')}")
-        print()
-        print("Recent Sessions:")
-        for s in recent:
-            mod = s.get("modified")
-            mod_str = mod.strftime("%Y-%m-%d %H:%M") if mod else ""
-            fname = s.get("filename") or s.get("file") or ""
-            msg_count = _format_message_count(s)
-            print(f"  {fname:20}  {msg_count:>4} messages  {mod_str}")
-    elif output_format == "tsv":
-        # Emit a simple TSV block: key\tvalue and then recent sessions
-        rows = [
-            ("Workspace", get_folder_short_name(workspace_path) or workspace_path),
-            ("Path", workspace_path),
-            ("Home", home_label),
-            ("Sessions", str(total_sessions)),
-            ("Messages", str(total_messages)),
-            ("Last Modified", last_modified.strftime("%Y-%m-%d %H:%M") if last_modified else ""),
-            ("Recent", ""),
-        ]
-        for s in recent:
-            mod = s.get("modified")
-            mod_str = mod.strftime("%Y-%m-%d %H:%M") if mod else ""
-            fname = s.get("filename") or s.get("file") or ""
-            msg_count = _format_message_count(s)
-            rows.append((fname, f"{msg_count} messages @ {mod_str}"))
-        for k, v in rows:
-            print(f"{k}\t{v}")
-    elif output_format == "json":
-        out = {
-            "workspace": get_folder_short_name(workspace_path) or workspace_path,
-            "path": workspace_path,
-            "home": home_label,
-            "sessions": total_sessions,
-            "messages": total_messages,
-            "last_modified": last_modified.isoformat() if last_modified else None,
-            "recent": [
-                {
-                    "session": s.get("filename") or s.get("file"),
-                    "messages": s.get("message_count"),
-                    "modified": s.get("modified").isoformat() if s.get("modified") else None,
-                }
-                for s in recent
-            ],
-        }
-        print(json.dumps(out, indent=2))
+    # Output human-readable format
+    print(f"Workspace: {get_folder_short_name(workspace_path) or workspace_path}")
+    print(f"Path: {workspace_path}")
+    print(f"Home: {home_label}")
+    print()
+    print(f"Sessions: {total_sessions}")
+    print(f"Messages: {total_messages}")
+    if last_modified:
+        print(f"Last Modified: {last_modified.strftime('%Y-%m-%d %H:%M')}")
+    print()
+    print("Recent Sessions:")
+    for s in recent:
+        mod = s.get("modified")
+        mod_str = mod.strftime("%Y-%m-%d %H:%M") if mod else ""
+        fname = s.get("filename") or s.get("file") or ""
+        msg_count = _format_message_count(s)
+        print(f"  {fname:20}  {msg_count:>4} messages  {mod_str}")
 
 
 def _filter_sessions_by_date(sessions: list, since_date, until_date) -> list:
