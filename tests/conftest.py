@@ -111,6 +111,7 @@ def _run_docker_tests_and_exit(config):
                 "docker",
                 "compose",
                 "run",
+                "-T",  # Disable pseudo-TTY allocation (needed for subprocess)
                 "--rm",
                 "test-runner",
                 "pytest",
