@@ -94,11 +94,14 @@ Projects/aliases share the same configuration file. Legacy `projects.json`/`alia
 
 ### Home Storage
 
-Configuration stored in `~/.agent-history/config.json` (canonical key: `homes`; legacy `sources` may exist only for backwards compatibility and is no longer used):
+Configuration stored in `~/.agent-history/config.json` (canonical key: `homes`; legacy `sources` may exist only for backwards compatibility and is no longer used).
+
+**Simple format** (array of strings):
 ```json
 {
   "homes": [
-    "user@vm01"
+    "user@vm01",
+    "user@vm02"
   ],
   "projects": {
     "myproj": {
@@ -108,6 +111,33 @@ Configuration stored in `~/.agent-history/config.json` (canonical key: `homes`; 
   }
 }
 ```
+
+**Extended format** (array of objects with metadata):
+```json
+{
+  "version": 2,
+  "homes": [
+    {
+      "name": "vm01",
+      "type": "ssh",
+      "host": "user@vm01.example.com"
+    },
+    {
+      "name": "wsl:Ubuntu",
+      "type": "wsl",
+      "distro": "Ubuntu"
+    }
+  ],
+  "projects": {
+    "myproj": {
+      "local": ["-home-user-myproject"],
+      "remote:vm01": ["-home-user-myproject"]
+    }
+  }
+}
+```
+
+Both formats are supported for backward compatibility.
 
 ---
 
@@ -278,6 +308,28 @@ Claude Code sessions can have **forked conversations** where a single parent mes
 - Input: None
 - Output: Project name, workspace count, home list
 - Behavior: Read from projects configuration
+
+### Show Operations
+
+**`ws show`** - Display detailed workspace information
+- Input: Workspace pattern or path
+- Output: Workspace path, session count, recent sessions, aggregate statistics
+- Behavior: Read workspace metadata and compute statistics
+
+**`session show`** - Display detailed session information
+- Input: Session ID or file path
+- Output: Full conversation content with metadata, timestamps, tool usage
+- Behavior: Parse session file and format for display
+
+**`home show`** - Display detailed home information
+- Input: Home name or identifier
+- Output: Home type, connection status, workspace count, top workspaces
+- Behavior: Query home configuration and compute statistics
+
+**`project show`** - Display detailed project information
+- Input: Project name (optional, defaults to current project if in workspace)
+- Output: Project workspaces across all homes, session counts, last modified
+- Behavior: Read project configuration and aggregate workspace data
 
 ### Export Operations
 
@@ -699,11 +751,17 @@ When exporting from remote sources (SSH, WSL from Windows, Windows from WSL):
 
 | File | Purpose |
 |------|---------|
-| `~/.agent-history/config.json` | Home configuration |
-| `~/.agent-history/projects.json` | Project definitions |
+| `~/.agent-history/config.json` | Unified configuration (homes, projects, settings) |
 | `~/.agent-history/metrics.db` | Metrics cache database |
 | `~/.agent-history/gemini_index.json` | Gemini hash→path mappings |
 | `~/.agent-history/codex_index.json` | Codex session→workspace index |
+| `~/.agent-history/.env` | Web session credentials (optional, for Claude.ai web sessions) |
+| `~/.agent-history/remote_<hostname>/` | Cached remote session files |
+
+**Legacy files (auto-migrated on first use):**
+- `~/.agent-history/projects.json` → Merged into `config.json`
+- `~/.agent-history/aliases.json` → Merged into `config.json`
+- `~/.claude-history/` → Migrated to `~/.agent-history/`
 
 Default export directory: `./ai-chats/`
 

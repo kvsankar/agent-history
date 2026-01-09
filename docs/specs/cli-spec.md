@@ -12,7 +12,16 @@ Command-line interface specification for `agent-history`.
 
 ## Command Aliases
 
-Aliases are disabled; use the canonical command names (`home`, `ws`, `session`, `project`).
+Command aliases have been removed. Use the canonical command names: `home`, `ws`, `session`, `project`.
+
+**Previously supported aliases (now removed):**
+- `lsh` → Use `home list` instead
+- `lsw` → Use `ws list` instead
+- `lss` → Use `session list` instead
+- `homes` → Use `home` instead
+- `workspaces` → Use `ws` instead
+- `sessions` → Use `session` instead
+- `alias` → Use `project` instead
 
 ---
 

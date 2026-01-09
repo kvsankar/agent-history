@@ -13891,7 +13891,7 @@ def _get_batch_windows_sessions(args, patterns: list, since_date, until_date) ->
         sys.stderr.write("Error: Cannot access Windows projects directory\n")
         sys.stderr.write("\nTips:\n")
         sys.stderr.write("  • Make sure Claude Code is installed on Windows\n")
-        sys.stderr.write("  • Try: agent-history lsh --windows\n")
+        sys.stderr.write("  • Try: agent-history home --windows\n")
         sys.exit(1)
 
     agent = getattr(args, "agent", None) or "auto"
@@ -13941,7 +13941,7 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
                     sys.stderr.write(f"Error: Cannot access WSL distribution '{distro_name}'\n")
                     sys.stderr.write("\nTips:\n")
                     sys.stderr.write("  • Make sure Claude Code is installed in WSL\n")
-                    sys.stderr.write("  • Try: agent-history lsh --wsl\n")
+                    sys.stderr.write("  • Try: agent-history home --wsl\n")
                     sys.exit(1)
                 continue
             sessions.extend(
@@ -16396,7 +16396,7 @@ EXAMPLES:
     agent-history export --ah -r user@vm01   # current workspace, all homes + SSH
 
   Date filtering:
-    agent-history lss myproject --since 2025-11-01
+    agent-history session list myproject --since 2025-11-01
     agent-history export myproject --since 2025-11-01 --until 2025-11-30
 
   Export options:
@@ -16405,14 +16405,14 @@ EXAMPLES:
     agent-history export myproject --flat          # flat structure (no subdirs)
 
   WSL access (Windows):
-    agent-history lsh --wsl                        # list WSL distributions
+    agent-history home --wsl                       # list WSL distributions
     agent-history ws list --wsl                    # list WSL workspaces
     agent-history ws list --wsl Ubuntu             # list from specific distro
     agent-history session list myproject --wsl     # list WSL sessions
     agent-history export myproject --wsl           # export from WSL
 
   Windows access (from WSL):
-    agent-history lsh --windows                    # list Windows users with Claude
+    agent-history home --windows                   # list Windows users with Claude
     agent-history ws list --windows                # list Windows workspaces
     agent-history session list myproject --windows # list Windows sessions
     agent-history export myproject --windows       # export from Windows

@@ -8,9 +8,9 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 | Agent | Status | Format | Documentation |
 |-------|--------|--------|---------------|
-| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-format.md](docs/claude-format.md) |
-| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-format.md](docs/codex-format.md) |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-format.md](docs/gemini-format.md) |
+| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-code-format.md](docs/specs/agents/formats/claude-code-format.md) |
+| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-cli-format.md](docs/specs/agents/formats/codex-cli-format.md) |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-cli-format.md](docs/specs/agents/formats/gemini-cli-format.md) |
 
 Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
 
@@ -47,7 +47,7 @@ chmod +x /path/to/agent-history
 cd /path/to/project
 
 # List sessions from current project
-/path/to/agent-history lss
+/path/to/agent-history session list
 
 # Export to markdown
 /path/to/agent-history export
@@ -58,7 +58,7 @@ cd /path/to/project
 **Windows:**
 ```powershell
 cd \path\to\project
-python \path\to\agent-history lss
+python \path\to\agent-history session list
 python \path\to\agent-history export
 ```
 
@@ -138,7 +138,7 @@ EXAMPLES:
     agent-history export --ah -r user@vm01   # current workspace, all homes + SSH
 
   Date filtering:
-    agent-history lss myproject --since 2025-11-01
+    agent-history session list myproject --since 2025-11-01
     agent-history export myproject --since 2025-11-01 --until 2025-11-30
 
   Export options:
@@ -147,14 +147,14 @@ EXAMPLES:
     agent-history export myproject --flat          # flat structure (no subdirs)
 
   WSL access (Windows):
-    agent-history lsh --wsl                        # list WSL distributions
+    agent-history home --wsl                       # list WSL distributions
     agent-history ws list --wsl                    # list WSL workspaces
     agent-history ws list --wsl Ubuntu             # list from specific distro
     agent-history session list myproject --wsl     # list WSL sessions
     agent-history export myproject --wsl           # export from WSL
 
   Windows access (from WSL):
-    agent-history lsh --windows                    # list Windows users with Claude
+    agent-history home --windows                   # list Windows users with Claude
     agent-history ws list --windows                # list Windows workspaces
     agent-history session list myproject --windows # list Windows sessions
     agent-history export myproject --windows       # export from Windows
@@ -169,12 +169,12 @@ EXAMPLES:
 
 | Command | Remote/Home Options | Workspace Options | Default Scope |
 |---------|---------------------|-------------------|----------------|
-| `lss`   | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, aliases (`@name` / `--alias`), `--aw`, `--this` | Uses the current workspace (or its alias) even when you target other homes. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
-| `lsw`   | Same as `lss` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
-| `export`| `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), aliases, `--aw`, `--this` | Exports the current workspace (or alias) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
-| `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/aliases, `--aw`, `--this` | Defaults to the current workspace (or alias). If not in a workspace, pass a pattern or use `--aw`. Use `--aw` for every workspace in the metrics DB, or pass patterns/aliases to filter. `--source` limits results to a specific home and defaults to all workspaces for that source unless `--this` is set. |
+| `session list` | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, projects (`@name` / `--project`), `--aw`, `--this` | Uses the current workspace (or its project) even when you target other homes. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
+| `ws list` | Same as `session list` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
+| `export` | `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), projects, `--aw`, `--this` | Exports the current workspace (or project) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
+| `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/projects, `--aw`, `--this` | Defaults to the current workspace (or project). If not in a workspace, pass a pattern or use `--aw`. Use `--aw` for every workspace in the metrics DB, or pass patterns/projects to filter. `--source` limits results to a specific home and defaults to all workspaces for that source unless `--this` is set. |
 
-When in doubt: `--aw` means “all workspaces”; `--ah` means “all homes.” Without those switches the CLI sticks to the current workspace/alias, even if you add Windows/WSL/remote flags, so you get predictable, scoped results.
+When in doubt: `--aw` means "all workspaces"; `--ah` means "all homes." Without those switches the CLI sticks to the current workspace/project, even if you add Windows/WSL/remote flags, so you get predictable, scoped results.
 
 ## Testing
 
@@ -197,8 +197,8 @@ make test
 make test-unit
 make test-integration
 
-# Legacy tests (opt-in)
-uv run pytest tests/legacy
+# Legacy tests have been deprecated and removed
+# All tests ported to new architecture in tests/v1, tests/stats, tests/scope
 
 # Windows PowerShell helper
 scripts\run-tests.ps1              # all
@@ -273,22 +273,22 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 ## Commands
 
-| Command | Aliases | Description |
-|---------|---------|-------------|
-| `home` | `homes`, `lsh` | List homes and manage sources (WSL, Windows, SSH) |
-| `workspaces` | `ws`, `lsw` | List workspaces |
-| `sessions` | `ss`, `lss` | List sessions |
-| `export` | | Export to markdown |
-| `project` | `projects`, `alias` | Manage workspace projects |
-| `stats` | | Usage statistics |
-| `reset` | | Reset stored data |
-| `install` | | Install CLI + Claude skill and update retention settings |
+| Command | Description |
+|---------|-------------|
+| `home` | List homes and manage sources (WSL, Windows, SSH) |
+| `ws` | List workspaces |
+| `session` | List sessions |
+| `export` | Export to markdown |
+| `project` | Manage workspace projects |
+| `stats` | Usage statistics |
+| `reset` | Reset stored data |
+| `install` | Install CLI + Claude skill and update retention settings |
 
 ## Common Examples
 
 ```bash
 # List all workspaces
-agent-history ws
+agent-history ws list
 
 # Export specific project
 agent-history export myproject
@@ -297,7 +297,7 @@ agent-history export myproject
 agent-history export myproject --ah
 
 # Date filtering
-agent-history ss --since 2025-11-01
+agent-history session list --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
 agent-history export myproject --minimal
@@ -323,13 +323,13 @@ agent-history home add user@server        # add SSH remote
 agent-history home remove user@server     # remove a source
 
 # Access WSL (from Windows)
-agent-history ss --wsl
+agent-history session list --wsl
 
 # Access Windows (from WSL)
-agent-history ss --windows
+agent-history session list --windows
 
 # Access SSH remote
-agent-history ss -r user@server
+agent-history session list -r user@server
 
 # All homes at once (includes configured sources)
 agent-history export --ah
@@ -348,9 +348,11 @@ agent-history project add myproject myproject
 agent-history project add myproject --windows myproject
 agent-history project add myproject -r user@vm myproject
 
-# Use with @ prefix
-agent-history ss @myproject
+# Use with @ prefix or --project flag
+agent-history session list @myproject
+agent-history session list --project myproject
 agent-history export @myproject
+agent-history export --project myproject
 
 # Remove entries using paths from any home
 agent-history project remove myproject -r user@vm /home/user/myproject

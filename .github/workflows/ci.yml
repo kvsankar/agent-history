@@ -39,17 +39,8 @@ jobs:
           USERPROFILE: ${{ runner.temp }}\test-home
           AGENT_HISTORY_CONFIG_DIR: ${{ runner.temp }}/test-config
         run: |
-          # Default suite (excludes legacy tests by pytest.ini testpaths)
+          # Run all tests (legacy tests have been deprecated and removed)
           uv run pytest -v --tb=short -x
-
-      - name: Run legacy tests (opt-in matrix only)
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
-        env:
-          HOME: ${{ runner.temp }}/test-home
-          USERPROFILE: ${{ runner.temp }}\test-home
-          AGENT_HISTORY_CONFIG_DIR: ${{ runner.temp }}/test-config
-        run: |
-          uv run pytest tests/legacy -v --tb=short -x
 
   docker-e2e:
     name: Docker E2E Tests
