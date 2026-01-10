@@ -50,6 +50,17 @@ from agent_history.scope.types import (
     SessionSpec,
     WorkspaceSpec,
 )
+from agent_history.types import (
+    ContentBlock,
+    HomeDict,
+    MessageDict,
+    MetricsDict,
+    ProjectDict,
+    SessionDict,
+    StatsDict,
+    WorkspaceDict,
+    WorkspaceSessionsMap,
+)
 
 __all__ = [
     # Version
@@ -67,13 +78,23 @@ __all__ = [
     "ScopeArgs",
     # Resolver
     "ScopeResolver",
-    # Types
+    # Scope Types
     "ConcreteRecord",
     "ConcreteScope",
     "HomeSpec",
     "MatchType",
     "SessionSpec",
     "WorkspaceSpec",
+    # Dict Type Aliases
+    "ContentBlock",
+    "HomeDict",
+    "MessageDict",
+    "MetricsDict",
+    "ProjectDict",
+    "SessionDict",
+    "StatsDict",
+    "WorkspaceDict",
+    "WorkspaceSessionsMap",
     # Handlers
     "CommandResult",
     "DispatchError",

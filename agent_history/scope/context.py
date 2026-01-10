@@ -531,3 +531,17 @@ class ContextBuilder:
         gemini_dir = gemini_dir if gemini_dir.exists() else None
 
         return (claude_dir, codex_dir, gemini_dir)
+
+
+def build_resolution_context() -> ResolutionContext:
+    """Build resolution context from environment.
+
+    This is a convenience function that creates a ContextBuilder and
+    returns the built context.
+
+    Returns:
+        ResolutionContext with platform info, CWD detection,
+        available homes, and configuration loaded.
+    """
+    builder = ContextBuilder()
+    return builder.build()

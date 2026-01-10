@@ -18,6 +18,13 @@ from typing import Any, Dict, List, Optional
 
 from agent_history.handlers.base import CommandResult
 from agent_history.scope.context import OutputArgs
+from agent_history.types import (
+    HomeDict,
+    ProjectDict,
+    SessionDict,
+    StatsDict,
+    WorkspaceDict,
+)
 
 
 class FormatterError(Exception):
@@ -57,27 +64,27 @@ class TableFormatter(DataFormatter):
             width: Maximum table width in characters (None for no limit).
         """
         self.width = width
+        self._formatters = {
+            "session_list": self._format_session_list,
+            "workspace_list": self._format_workspace_list,
+            "home_list": self._format_home_list,
+            "stats": self._format_stats,
+            "project_list": self._format_project_list,
+            "project_details": self._format_project_details,
+            "exported_files": self._format_exported_files,
+        }
 
     def format(self, data: Any, data_type: str, metadata: Dict[str, Any]) -> str:
         """Format data as ASCII table."""
-        if data_type == "session_list":
-            return self._format_session_list(data)
-        elif data_type == "workspace_list":
-            return self._format_workspace_list(data)
-        elif data_type == "home_list":
-            return self._format_home_list(data)
-        elif data_type == "stats":
-            return self._format_stats(data, metadata)
-        elif data_type == "project_list":
-            return self._format_project_list(data)
-        elif data_type == "project_details":
-            return self._format_project_details(data, metadata)
-        elif data_type == "exported_files":
-            return self._format_exported_files(data, metadata)
-        else:
-            return str(data)
+        formatter = self._formatters.get(data_type)
+        if formatter:
+            # Some formatters need metadata, some don't
+            if data_type in ("stats", "project_details", "exported_files"):
+                return formatter(data, metadata)
+            return formatter(data)
+        return str(data)
 
-    def _format_session_list(self, sessions: List[Dict]) -> str:
+    def _format_session_list(self, sessions: List[SessionDict]) -> str:
         """Format session list as table."""
         if not sessions:
             return "No sessions found."
@@ -112,7 +119,7 @@ class TableFormatter(DataFormatter):
 
         return self._render_table(headers, rows)
 
-    def _format_workspace_list(self, workspaces: List[Dict]) -> str:
+    def _format_workspace_list(self, workspaces: List[WorkspaceDict]) -> str:
         """Format workspace list as table."""
         if not workspaces:
             return "No workspaces found."
@@ -148,7 +155,7 @@ class TableFormatter(DataFormatter):
 
         return self._render_table(headers, rows)
 
-    def _format_home_list(self, homes: List[Dict]) -> str:
+    def _format_home_list(self, homes: List[HomeDict]) -> str:
         """Format home list as table."""
         if not homes:
             return "No homes configured."
@@ -168,7 +175,7 @@ class TableFormatter(DataFormatter):
 
         return self._render_table(headers, rows)
 
-    def _format_stats(self, stats: Dict[str, Any], metadata: Dict[str, Any]) -> str:
+    def _format_stats(self, stats: StatsDict, metadata: Dict[str, Any]) -> str:
         """Format statistics as table."""
         lines = []
 
@@ -209,7 +216,7 @@ class TableFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_project_list(self, projects: List[Dict]) -> str:
+    def _format_project_list(self, projects: List[ProjectDict]) -> str:
         """Format project list as table."""
         if not projects:
             return "No projects configured."
@@ -248,7 +255,7 @@ class TableFormatter(DataFormatter):
 
         return self._render_table(headers, rows)
 
-    def _format_project_details(self, data: Dict[str, Any], metadata: Dict[str, Any]) -> str:
+    def _format_project_details(self, data: ProjectDict, metadata: Dict[str, Any]) -> str:
         """Format project details."""
         lines = []
         project_name = data.get("project", "")
@@ -351,21 +358,24 @@ class JsonFormatter(DataFormatter):
 class TsvFormatter(DataFormatter):
     """Format data as tab-separated values."""
 
+    def __init__(self):
+        """Initialize with dispatch dictionary."""
+        self._formatters = {
+            "session_list": self._format_session_list,
+            "workspace_list": self._format_workspace_list,
+            "home_list": self._format_home_list,
+            "project_list": self._format_project_list,
+        }
+
     def format(self, data: Any, data_type: str, metadata: Dict[str, Any]) -> str:
         """Format data as TSV."""
-        if data_type == "session_list":
-            return self._format_session_list(data)
-        elif data_type == "workspace_list":
-            return self._format_workspace_list(data)
-        elif data_type == "home_list":
-            return self._format_home_list(data)
-        elif data_type == "project_list":
-            return self._format_project_list(data)
-        else:
-            # Fallback to JSON for complex types
-            return json.dumps(data, default=str)
+        formatter = self._formatters.get(data_type)
+        if formatter:
+            return formatter(data)
+        # Fallback to JSON for complex types
+        return json.dumps(data, default=str)
 
-    def _format_session_list(self, sessions: List[Dict]) -> str:
+    def _format_session_list(self, sessions: List[SessionDict]) -> str:
         """Format session list as TSV."""
         if not sessions:
             return ""
@@ -392,7 +402,7 @@ class TsvFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_workspace_list(self, workspaces: List[Dict]) -> str:
+    def _format_workspace_list(self, workspaces: List[WorkspaceDict]) -> str:
         """Format workspace list as TSV."""
         if not workspaces:
             return ""
@@ -421,7 +431,7 @@ class TsvFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_home_list(self, homes: List[Dict]) -> str:
+    def _format_home_list(self, homes: List[HomeDict]) -> str:
         """Format home list as TSV."""
         headers = ["HOME", "TYPE", "STATUS", "SESSIONS"]
         lines = ["\t".join(headers)]
@@ -437,7 +447,7 @@ class TsvFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_project_list(self, projects: List[Dict]) -> str:
+    def _format_project_list(self, projects: List[ProjectDict]) -> str:
         """Format project list as TSV."""
         headers = ["PROJECT", "SOURCE", "WORKSPACE", "SESSIONS"]
         lines = ["\t".join(headers)]
