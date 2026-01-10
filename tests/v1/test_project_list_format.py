@@ -1,17 +1,13 @@
 """Tests for project list format support."""
 
 import json
-import subprocess
+
+from tests.helpers.cli import run_cli_subprocess
 
 
 def test_project_list_shows_projects():
     """Test that project list shows projects."""
-    result = subprocess.run(
-        ["python3", "agent-history", "project", "list"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_cli_subprocess(["project", "list"])
     assert result.returncode == 0
     # Should have tab-separated output
     if result.stdout.strip():
@@ -24,12 +20,7 @@ def test_project_list_shows_projects():
 
 def test_project_list_tsv_format():
     """Test project list TSV output."""
-    result = subprocess.run(
-        ["python3", "agent-history", "project", "list", "--format", "tsv"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_cli_subprocess(["project", "list", "--format", "tsv"])
     assert result.returncode == 0
     if result.stdout.strip():
         lines = result.stdout.strip().split("\n")
@@ -39,12 +30,7 @@ def test_project_list_tsv_format():
 
 def test_project_list_json_format():
     """Test project list JSON output."""
-    result = subprocess.run(
-        ["python3", "agent-history", "project", "list", "--format", "json"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_cli_subprocess(["project", "list", "--format", "json"])
     assert result.returncode == 0
     # Should be valid JSON
     if result.stdout.strip():
@@ -58,12 +44,7 @@ def test_project_list_json_format():
 
 def test_project_list_with_counts():
     """Test project list with session counts."""
-    result = subprocess.run(
-        ["python3", "agent-history", "project", "list", "--counts"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_cli_subprocess(["project", "list", "--counts"])
     assert result.returncode == 0
     if result.stdout.strip():
         lines = result.stdout.strip().split("\n")
