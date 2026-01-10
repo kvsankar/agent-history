@@ -89,79 +89,23 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 <!-- help-snippet:start -->
 ```
-usage: agent-history [options] command
+usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini}] COMMAND ...
+
 Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI)
 
 positional arguments:
   COMMAND                     Command to execute
-    reset                     Reset stored data (database, settings, projects)
-    install                   Install CLI and Claude skill
-    gemini-index              Manage Gemini hash→path index
-    home                      Manage homes
-    ws                        Workspace commands
     session                   Session commands
+    ws                        Workspace commands
     project                   Manage projects
+    home                      Manage homes
+    gemini-index              Manage Gemini session index
 
 options:
   -h, --help                  show this help message and exit
   --version                   show program's version number and exit
   --agent {auto,claude,codex,gemini}
-                              Agent backend to use (default: auto-detect based
-                              on available data)
-
-EXAMPLES:
-
-  List workspaces:
-    agent-history ws list                    # all local workspaces
-    agent-history ws list myproject          # filter by pattern
-    agent-history ws list -r user@server     # remote workspaces
-
-  List sessions:
-    agent-history session list               # current workspace
-    agent-history session list myproject     # specific workspace
-    agent-history session list myproject -r user@server    # remote sessions
-
-  Export (unified interface with orthogonal flags):
-    agent-history export                     # current workspace, local home
-    agent-history export --ah                # current workspace, all homes
-    agent-history export --aw                # all workspaces, local home
-    agent-history export --ah --aw           # all workspaces, all homes
-
-    agent-history export myproject           # specific workspace, local
-    agent-history export myproject --ah      # specific workspace, all homes
-    agent-history export file.jsonl         # export single file
-
-    agent-history export -o /tmp/backup      # current workspace, custom output
-    agent-history export myproject -o ./out  # specific workspace, custom output
-
-    agent-history export -r user@server      # current workspace, specific remote
-    agent-history export --ah -r user@vm01   # current workspace, all homes + SSH
-
-  Date filtering:
-    agent-history session list myproject --since 2025-11-01
-    agent-history export myproject --since 2025-11-01 --until 2025-11-30
-
-  Export options:
-    agent-history export myproject --minimal       # minimal mode
-    agent-history export myproject --split 500     # split long conversations
-    agent-history export myproject --flat          # flat structure (no subdirs)
-
-  WSL access (Windows):
-    agent-history home --wsl                       # list WSL distributions
-    agent-history ws list --wsl                    # list WSL workspaces
-    agent-history ws list --wsl Ubuntu             # list from specific distro
-    agent-history session list myproject --wsl     # list WSL sessions
-    agent-history export myproject --wsl           # export from WSL
-
-  Windows access (from WSL):
-    agent-history home --windows                   # list Windows users with Claude
-    agent-history ws list --windows                # list Windows workspaces
-    agent-history session list myproject --windows # list Windows sessions
-    agent-history export myproject --windows       # export from Windows
-
-  Notes:
-    - Outputs may show '[missing]' when a workspace directory no longer exists; the path
-      is the closest match based on the stored workspace name.
+                              Agent backend to use (default: auto-detect based on available data)
 ```
 <!-- help-snippet:end -->
 

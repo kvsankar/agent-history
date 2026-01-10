@@ -18,17 +18,61 @@ except ImportError:
 
 
 def get_script_path() -> Path:
-    """Find the agent-history script path."""
+    """Find the agent-history CLI script path.
+
+    By default, returns the new agent-history wrapper (v2 module).
+    Set AGENT_HISTORY_TEST_SCRIPT=v1 to use the old ah.py script instead.
+
+    This allows running the same test suite against both implementations:
+        # Test against new v2 module (default)
+        uv run pytest tests/v1/
+
+        # Test against old ah.py script
+        AGENT_HISTORY_TEST_SCRIPT=v1 uv run pytest tests/v1/
+    """
+    use_old_script = os.environ.get("AGENT_HISTORY_TEST_SCRIPT", "").lower() in (
+        "v1",
+        "old",
+        "ah.py",
+    )
+
+    if use_old_script:
+        # Use the old monolithic script
+        candidates = [
+            Path.cwd() / "ah.py",
+            Path(__file__).parent.parent.parent / "ah.py",
+        ]
+        script_name = "ah.py"
+    else:
+        # Use the new v2 wrapper (default)
+        candidates = [
+            Path.cwd() / "agent-history",
+            Path.cwd() / "claude-history",
+            Path(__file__).parent.parent.parent / "agent-history",
+            Path(__file__).parent.parent.parent / "claude-history",
+        ]
+        script_name = "agent-history"
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"Could not find {script_name} script")
+
+
+def get_module_path() -> Path:
+    """Find the old monolithic script (ah.py) for module import tests.
+
+    The v1 module tests need the old script which has internal functions
+    like is_running_in_wsl(), _looks_like_windows_drive(), etc.
+    """
     candidates = [
-        Path.cwd() / "agent-history",
-        Path.cwd() / "claude-history",
-        Path(__file__).parent.parent.parent / "agent-history",
-        Path(__file__).parent.parent.parent / "claude-history",
+        Path.cwd() / "ah.py",
+        Path(__file__).parent.parent.parent / "ah.py",
     ]
     for candidate in candidates:
         if candidate.exists():
             return candidate
-    raise FileNotFoundError("Could not find agent-history script")
+    raise FileNotFoundError("Could not find ah.py (old monolithic script)")
 
 
 def run_cli_subprocess(
