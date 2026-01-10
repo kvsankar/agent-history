@@ -12,6 +12,24 @@ import argparse
 from pathlib import Path
 from typing import Any, Dict, List
 
+from agent_history.cli.constants import (
+    AGENT_CHOICES,
+    DEFAULT_AGENT,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_VERB_INDEX,
+    DEFAULT_VERB_LIST,
+    FLAGS_WITH_VALUES,
+    GLOBAL_FLAGS_WITH_VALUES,
+    MIN_SPLIT_LINES,
+    OUTPUT_FORMAT_CHOICES,
+    RESOURCE_GEMINI_INDEX,
+    RESOURCE_HOME,
+    RESOURCE_PROJECT,
+    RESOURCE_SESSION,
+    RESOURCE_WS,
+    SESSION_SUBCOMMANDS,
+    WS_SUBCOMMANDS,
+)
 from agent_history.scope.context import CommandRequest, OutputArgs, ScopeArgs
 
 # Version - will be updated by package metadata
@@ -31,8 +49,8 @@ def _validate_split_lines(value: str) -> int:
     """Validate --split argument."""
     try:
         lines = int(value)
-        if lines < 10:
-            raise argparse.ArgumentTypeError("--split must be at least 10 lines")
+        if lines < MIN_SPLIT_LINES:
+            raise argparse.ArgumentTypeError(f"--split must be at least {MIN_SPLIT_LINES} lines")
         return lines
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid number: {value}")
@@ -84,10 +102,6 @@ class CLIParser:
         if not argv:
             return argv
 
-        # Known subcommands for each resource
-        ws_subcommands = {"list", "show", "export", "stats"}
-        session_subcommands = {"list", "show", "export", "stats"}
-
         result = list(argv)
 
         # Find the position of ws or session command (may be after global flags like --agent)
@@ -96,14 +110,14 @@ class CLIParser:
         i = 0
         while i < len(argv):
             arg = argv[i]
-            if arg in ("ws", "session"):
+            if arg in (RESOURCE_WS, RESOURCE_SESSION):
                 cmd_pos = i
                 cmd_type = arg
                 break
             # Skip global flag values (e.g., --agent gemini)
             if arg.startswith("--") and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
                 # Check if this is a flag that takes a value
-                if arg in ("--agent",):
+                if arg in GLOBAL_FLAGS_WITH_VALUES:
                     i += 2  # Skip flag and its value
                     continue
             i += 1
@@ -111,7 +125,7 @@ class CLIParser:
         if cmd_pos is None or cmd_type is None:
             return result
 
-        subcommands = ws_subcommands if cmd_type == "ws" else session_subcommands
+        subcommands = WS_SUBCOMMANDS if cmd_type == RESOURCE_WS else SESSION_SUBCOMMANDS
 
         # Case 1: Command followed directly by pattern (e.g., "session django" or "ws myproj")
         # Convert: [cmd, pattern, ...] -> [cmd, -n, pattern, ...]
@@ -150,26 +164,7 @@ class CLIParser:
                         # Keep flags as-is, including their values
                         new_result.append(arg)
                         # If this flag takes a value, include it
-                        if arg in (
-                            "-n",
-                            "--name",
-                            "--format",
-                            "--since",
-                            "--until",
-                            "--agent",
-                            "-w",
-                            "--width",
-                            "-o",
-                            "--output",
-                            "--split",
-                            "--jobs",
-                            "--home",
-                            "-r",
-                            "--remote",
-                            "--project",
-                            "--by",
-                            "--top-ws",
-                        ):
+                        if arg in FLAGS_WITH_VALUES:
                             if i + 1 < len(argv):
                                 i += 1
                                 new_result.append(argv[i])
@@ -194,8 +189,8 @@ class CLIParser:
         # Global agent selection flag (before subcommand)
         parser.add_argument(
             "--agent",
-            choices=["auto", "claude", "codex", "gemini"],
-            default="auto",
+            choices=AGENT_CHOICES,
+            default=DEFAULT_AGENT,
             help="Agent backend to use (default: auto-detect based on available data)",
         )
 
@@ -223,11 +218,11 @@ class CLIParser:
     def _add_session_parser(self, subparsers) -> None:
         """Add session subparser."""
         session_parser = subparsers.add_parser(
-            "session",
+            RESOURCE_SESSION,
             help="Session commands",
             description="Browse and export conversation sessions.",
         )
-        session_parser.set_defaults(command="session", session_verb="list")
+        session_parser.set_defaults(command=RESOURCE_SESSION, session_verb=DEFAULT_VERB_LIST)
         # Add flags to session top-level so session -n pattern, session --ah work
         # Note: include_positional=False to avoid conflict with subcommand selection
         self._add_workspace_scope_flags(session_parser, include_positional=False)
@@ -238,11 +233,11 @@ class CLIParser:
 
         sess_sub = session_parser.add_subparsers(dest="session_verb")
         sess_sub.required = False
-        sess_sub.default = "list"
+        sess_sub.default = DEFAULT_VERB_LIST
 
         # session list
-        sess_list = sess_sub.add_parser("list", help="List sessions")
-        sess_list.set_defaults(command="session", session_verb="list")
+        sess_list = sess_sub.add_parser(DEFAULT_VERB_LIST, help="List sessions")
+        sess_list.set_defaults(command=RESOURCE_SESSION, session_verb=DEFAULT_VERB_LIST)
         self._add_workspace_scope_flags(sess_list, positional_name="workspace")
         self._add_home_scope_flags(sess_list)
         self._add_date_filters(sess_list)
@@ -256,20 +251,20 @@ class CLIParser:
 
         # session show
         sess_show = sess_sub.add_parser("show", help="Show session details")
-        sess_show.set_defaults(command="session", session_verb="show")
+        sess_show.set_defaults(command=RESOURCE_SESSION, session_verb="show")
         sess_show.add_argument("session_id", help="Session identifier or path")
         self._add_home_scope_flags(sess_show)
         self._add_workspace_scope_flags(sess_show, positional_name="workspace")
 
         # session export
         sess_export = sess_sub.add_parser("export", help="Export sessions to markdown")
-        sess_export.set_defaults(command="session", session_verb="export")
+        sess_export.set_defaults(command=RESOURCE_SESSION, session_verb="export")
         self._add_workspace_scope_flags(sess_export, positional_name="target")
         sess_export.add_argument(
             "output_dir",
             nargs="?",
-            default="./ai-chats",
-            help="Output directory (default: ./ai-chats)",
+            default=DEFAULT_OUTPUT_DIR,
+            help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
         )
         self._add_export_options(sess_export)
         self._add_home_scope_flags(sess_export)
@@ -277,7 +272,7 @@ class CLIParser:
 
         # session stats
         sess_stats = sess_sub.add_parser("stats", help="Stats for sessions")
-        sess_stats.set_defaults(command="session", session_verb="stats")
+        sess_stats.set_defaults(command=RESOURCE_SESSION, session_verb="stats")
         self._add_workspace_scope_flags(sess_stats)
         self._add_stats_options(sess_stats)
         self._add_home_scope_flags(sess_stats)
@@ -290,11 +285,11 @@ class CLIParser:
     def _add_workspace_parser(self, subparsers) -> None:
         """Add workspace (ws) subparser."""
         ws_parser = subparsers.add_parser(
-            "ws",
+            RESOURCE_WS,
             help="Workspace commands",
             description="Browse workspaces (project directories with sessions).",
         )
-        ws_parser.set_defaults(command="ws", ws_verb="list")
+        ws_parser.set_defaults(command=RESOURCE_WS, ws_verb=DEFAULT_VERB_LIST)
         # Add flags to ws top-level so ws --local, ws -n pattern work
         # Note: include_positional=False to avoid conflict with subcommand selection
         self._add_workspace_scope_flags(ws_parser, include_positional=False)
@@ -304,11 +299,11 @@ class CLIParser:
 
         ws_sub = ws_parser.add_subparsers(dest="ws_verb")
         ws_sub.required = False
-        ws_sub.default = "list"
+        ws_sub.default = DEFAULT_VERB_LIST
 
         # ws list
-        ws_list = ws_sub.add_parser("list", help="List workspaces")
-        ws_list.set_defaults(command="ws", ws_verb="list")
+        ws_list = ws_sub.add_parser(DEFAULT_VERB_LIST, help="List workspaces")
+        ws_list.set_defaults(command=RESOURCE_WS, ws_verb=DEFAULT_VERB_LIST)
         self._add_workspace_scope_flags(ws_list)
         self._add_home_scope_flags(ws_list)
         self._add_agent_filter(ws_list)
@@ -316,20 +311,20 @@ class CLIParser:
 
         # ws show
         ws_show = ws_sub.add_parser("show", help="Show workspace details")
-        ws_show.set_defaults(command="ws", ws_verb="show")
+        ws_show.set_defaults(command=RESOURCE_WS, ws_verb="show")
         ws_show.add_argument("workspace", nargs="*", help="Workspace path(s)")
         self._add_home_scope_flags(ws_show)
         self._add_agent_filter(ws_show)
 
         # ws export
         ws_export = ws_sub.add_parser("export", help="Export sessions from workspace")
-        ws_export.set_defaults(command="ws", ws_verb="export")
+        ws_export.set_defaults(command=RESOURCE_WS, ws_verb="export")
         ws_export.add_argument("target", nargs="*", help="Workspace path(s)")
         ws_export.add_argument(
             "output_dir",
             nargs="?",
-            default="./ai-chats",
-            help="Output directory (default: ./ai-chats)",
+            default=DEFAULT_OUTPUT_DIR,
+            help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
         )
         self._add_export_options(ws_export)
         self._add_home_scope_flags(ws_export)
@@ -337,7 +332,7 @@ class CLIParser:
 
         # ws stats
         ws_stats = ws_sub.add_parser("stats", help="Stats for workspace")
-        ws_stats.set_defaults(command="ws", ws_verb="stats")
+        ws_stats.set_defaults(command=RESOURCE_WS, ws_verb="stats")
         self._add_workspace_scope_flags(ws_stats)
         self._add_stats_options(ws_stats)
         self._add_home_scope_flags(ws_stats)
@@ -350,18 +345,18 @@ class CLIParser:
     def _add_project_parser(self, subparsers) -> None:
         """Add project subparser."""
         project_parser = subparsers.add_parser(
-            "project",
+            RESOURCE_PROJECT,
             help="Manage projects",
             description="Manage named workspace groups (projects).",
         )
-        project_parser.set_defaults(command="project", project_command="list")
+        project_parser.set_defaults(command=RESOURCE_PROJECT, project_command=DEFAULT_VERB_LIST)
         proj_sub = project_parser.add_subparsers(dest="project_command")
         proj_sub.required = False
-        proj_sub.default = "list"
+        proj_sub.default = DEFAULT_VERB_LIST
 
         # project list
-        proj_list = proj_sub.add_parser("list", help="List projects")
-        proj_list.set_defaults(command="project", project_command="list")
+        proj_list = proj_sub.add_parser(DEFAULT_VERB_LIST, help="List projects")
+        proj_list.set_defaults(command=RESOURCE_PROJECT, project_command=DEFAULT_VERB_LIST)
         proj_list.add_argument(
             "-c",
             "--counts",
@@ -372,12 +367,12 @@ class CLIParser:
 
         # project show
         proj_show = proj_sub.add_parser("show", help="Show project details")
-        proj_show.set_defaults(command="project", project_command="show")
+        proj_show.set_defaults(command=RESOURCE_PROJECT, project_command="show")
         proj_show.add_argument("name", nargs="?", help="Project name (defaults to current project)")
 
         # project add
         proj_add = proj_sub.add_parser("add", help="Add workspace to project")
-        proj_add.set_defaults(command="project", project_command="add")
+        proj_add.set_defaults(command=RESOURCE_PROJECT, project_command="add")
         proj_add.add_argument("name", help="Project name")
         proj_add.add_argument("workspaces", nargs="*", help="Workspace paths to add")
         proj_add.add_argument("--pick", action="store_true", help="Interactive picker")
@@ -393,7 +388,7 @@ class CLIParser:
 
         # project remove
         proj_remove = proj_sub.add_parser("remove", help="Remove workspace or project")
-        proj_remove.set_defaults(command="project", project_command="remove")
+        proj_remove.set_defaults(command=RESOURCE_PROJECT, project_command="remove")
         proj_remove.add_argument("name", help="Project name")
         proj_remove.add_argument("workspace", nargs="?", help="Workspace to remove")
         proj_remove.add_argument("--wsl", action="store_true", help="Remove from WSL")
@@ -401,20 +396,20 @@ class CLIParser:
 
         # project export
         proj_export = proj_sub.add_parser("export", help="Export all sessions in project")
-        proj_export.set_defaults(command="project", project_command="export")
+        proj_export.set_defaults(command=RESOURCE_PROJECT, project_command="export")
         proj_export.add_argument("name", help="Project name")
         proj_export.add_argument(
             "output_dir",
             nargs="?",
-            default="./ai-chats",
-            help="Output directory (default: ./ai-chats)",
+            default=DEFAULT_OUTPUT_DIR,
+            help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
         )
         self._add_export_options(proj_export)
         self._add_home_scope_flags(proj_export)
 
         # project stats
         proj_stats = proj_sub.add_parser("stats", help="Stats for project")
-        proj_stats.set_defaults(command="project", project_command="stats")
+        proj_stats.set_defaults(command=RESOURCE_PROJECT, project_command="stats")
         proj_stats.add_argument("name", help="Project name")
         self._add_stats_options(proj_stats)
         self._add_home_scope_flags(proj_stats)
@@ -426,11 +421,11 @@ class CLIParser:
     def _add_home_parser(self, subparsers) -> None:
         """Add home subparser."""
         home_parser = subparsers.add_parser(
-            "home",
+            RESOURCE_HOME,
             help="Manage homes",
             description="Manage data sources (local, WSL, Windows, web, SSH remotes).",
         )
-        home_parser.set_defaults(command="home", home_verb="list")
+        home_parser.set_defaults(command=RESOURCE_HOME, home_verb=DEFAULT_VERB_LIST)
         # Add flags to home top-level so home --local, home --wsl work
         home_parser.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
         home_parser.add_argument("--windows", action="store_true", help="Show Windows users only")
@@ -441,11 +436,11 @@ class CLIParser:
 
         home_sub = home_parser.add_subparsers(dest="home_verb")
         home_sub.required = False
-        home_sub.default = "list"
+        home_sub.default = DEFAULT_VERB_LIST
 
         # home list
-        home_list = home_sub.add_parser("list", help="List homes")
-        home_list.set_defaults(command="home", home_verb="list")
+        home_list = home_sub.add_parser(DEFAULT_VERB_LIST, help="List homes")
+        home_list.set_defaults(command=RESOURCE_HOME, home_verb=DEFAULT_VERB_LIST)
         home_list.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
         home_list.add_argument("--windows", action="store_true", help="Show Windows users only")
         home_list.add_argument("--web", action="store_true", help="Show Claude.ai status only")
@@ -455,12 +450,12 @@ class CLIParser:
 
         # home show
         home_show = home_sub.add_parser("show", help="Show home details")
-        home_show.set_defaults(command="home", home_verb="show")
+        home_show.set_defaults(command=RESOURCE_HOME, home_verb="show")
         home_show.add_argument("name", help="Home name")
 
         # home add
         home_add = home_sub.add_parser("add", help="Add a home")
-        home_add.set_defaults(command="home", home_verb="add")
+        home_add.set_defaults(command=RESOURCE_HOME, home_verb="add")
         home_add.add_argument("source", nargs="?", help="SSH remote (user@hostname)")
         home_add.add_argument("--windows", action="store_true", help="Add Windows as a home")
         home_add.add_argument(
@@ -474,7 +469,7 @@ class CLIParser:
 
         # home remove
         home_remove = home_sub.add_parser("remove", help="Remove a home")
-        home_remove.set_defaults(command="home", home_verb="remove")
+        home_remove.set_defaults(command=RESOURCE_HOME, home_verb="remove")
         home_remove.add_argument("source", nargs="?", help="Source to remove")
         home_remove.add_argument("--windows", action="store_true", help="Remove Windows")
         home_remove.add_argument(
@@ -484,20 +479,20 @@ class CLIParser:
 
         # home export
         home_export = home_sub.add_parser("export", help="Export all sessions from home(s)")
-        home_export.set_defaults(command="home", home_verb="export")
+        home_export.set_defaults(command=RESOURCE_HOME, home_verb="export")
         home_export.add_argument("names", nargs="*", help="Home names (default: local)")
         home_export.add_argument(
             "output_dir",
             nargs="?",
-            default="./ai-chats",
-            help="Output directory (default: ./ai-chats)",
+            default=DEFAULT_OUTPUT_DIR,
+            help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
         )
         self._add_export_options(home_export)
         self._add_home_scope_flags(home_export)
 
         # home stats
         home_stats = home_sub.add_parser("stats", help="Stats for home(s)")
-        home_stats.set_defaults(command="home", home_verb="stats")
+        home_stats.set_defaults(command=RESOURCE_HOME, home_verb="stats")
         home_stats.add_argument("names", nargs="*", help="Home names (default: local)")
         self._add_stats_options(home_stats)
         self._add_home_scope_flags(home_stats)
@@ -509,11 +504,11 @@ class CLIParser:
     def _add_gemini_index_parser(self, subparsers) -> None:
         """Add gemini-index subparser."""
         gi_parser = subparsers.add_parser(
-            "gemini-index",
+            RESOURCE_GEMINI_INDEX,
             help="Manage Gemini session index",
             description="Build and manage the Gemini session index for faster lookups.",
         )
-        gi_parser.set_defaults(command="gemini-index", gemini_index_verb="list")
+        gi_parser.set_defaults(command=RESOURCE_GEMINI_INDEX, gemini_index_verb=DEFAULT_VERB_LIST)
         gi_parser.add_argument(
             "--add",
             action="store_true",
@@ -636,8 +631,8 @@ class CLIParser:
         """Add --agent filter flag to subparser."""
         parser.add_argument(
             "--agent",
-            choices=["auto", "claude", "codex", "gemini"],
-            default="auto",
+            choices=AGENT_CHOICES,
+            default=DEFAULT_AGENT,
             help="Agent backend to use (default: auto-detect)",
         )
 
@@ -645,7 +640,7 @@ class CLIParser:
         """Add --format and --width for table output control."""
         parser.add_argument(
             "--format",
-            choices=["table", "tsv", "json"],
+            choices=OUTPUT_FORMAT_CHOICES,
             default=None,
             help="Output format (default: table for TTY, tsv for pipes)",
         )
@@ -665,7 +660,7 @@ class CLIParser:
             "--output",
             metavar="DIR",
             dest="output_override",
-            help="Output directory (default: ./ai-chats)",
+            help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
         )
         parser.add_argument(
             "--force", action="store_true", help="Force re-export (default: incremental)"
@@ -786,19 +781,19 @@ class CLIParser:
         """Extract resource and verb from parsed args."""
         command = getattr(args, "command", None)
 
-        if command == "session":
-            return ("session", getattr(args, "session_verb", "list"))
-        elif command == "ws":
-            return ("ws", getattr(args, "ws_verb", "list"))
-        elif command == "project":
-            return ("project", getattr(args, "project_command", "list"))
-        elif command == "home":
-            return ("home", getattr(args, "home_verb", "list"))
-        elif command == "gemini-index":
-            return ("gemini-index", "index")
+        if command == RESOURCE_SESSION:
+            return (RESOURCE_SESSION, getattr(args, "session_verb", DEFAULT_VERB_LIST))
+        elif command == RESOURCE_WS:
+            return (RESOURCE_WS, getattr(args, "ws_verb", DEFAULT_VERB_LIST))
+        elif command == RESOURCE_PROJECT:
+            return (RESOURCE_PROJECT, getattr(args, "project_command", DEFAULT_VERB_LIST))
+        elif command == RESOURCE_HOME:
+            return (RESOURCE_HOME, getattr(args, "home_verb", DEFAULT_VERB_LIST))
+        elif command == RESOURCE_GEMINI_INDEX:
+            return (RESOURCE_GEMINI_INDEX, DEFAULT_VERB_INDEX)
         else:
             # Default to session list
-            return ("session", "list")
+            return (RESOURCE_SESSION, DEFAULT_VERB_LIST)
 
     def _build_scope_args(self, args: argparse.Namespace) -> ScopeArgs:
         """Build ScopeArgs from parsed arguments."""
@@ -842,7 +837,7 @@ class CLIParser:
 
         # Session filters
         agent = getattr(args, "agent", None)
-        if agent == "auto":
+        if agent == DEFAULT_AGENT:
             agent = None
         since = getattr(args, "since", None)
         until = getattr(args, "until", None)
@@ -914,7 +909,7 @@ class CLIParser:
             verb_args["output_dir"] = (
                 getattr(args, "output_override", None)
                 or getattr(args, "output_dir", None)
-                or "./ai-chats"
+                or DEFAULT_OUTPUT_DIR
             )
             verb_args["force"] = getattr(args, "force", False)
             verb_args["export_json"] = getattr(args, "export_json", False)
@@ -940,13 +935,13 @@ class CLIParser:
         # Show-specific args
         elif verb == "show":
             verb_args["session_id"] = getattr(args, "session_id", None)
-            if resource == "project":
+            if resource == RESOURCE_PROJECT:
                 verb_args["name"] = getattr(args, "name", None)
-            elif resource == "home":
+            elif resource == RESOURCE_HOME:
                 verb_args["name"] = getattr(args, "name", None)
 
         # Project management args
-        if resource == "project":
+        if resource == RESOURCE_PROJECT:
             verb_args["name"] = getattr(args, "name", None)
             if verb == "add":
                 verb_args["workspaces"] = getattr(args, "workspaces", [])
@@ -955,11 +950,11 @@ class CLIParser:
                 verb_args["workspace"] = getattr(args, "workspace", None)
 
         # Home management args
-        if resource == "home" and verb in ("add", "remove"):
+        if resource == RESOURCE_HOME and verb in ("add", "remove"):
             verb_args["source"] = getattr(args, "source", None)
 
         # Gemini-index args
-        if resource == "gemini-index":
+        if resource == RESOURCE_GEMINI_INDEX:
             verb_args["add"] = getattr(args, "add", False)
             verb_args["rebuild"] = getattr(args, "rebuild", False)
             verb_args["path"] = getattr(args, "path", None)

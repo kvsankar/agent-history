@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from agent_history.handlers.base import CommandResult, VerbHandler
+from agent_history.types import HomeDict, SessionDict, WorkspaceDict
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 
@@ -75,7 +76,7 @@ class SessionListHandler(VerbHandler):
             },
         )
 
-    def _flatten_sessions(self, scope: ConcreteScope) -> List[Dict[str, Any]]:
+    def _flatten_sessions(self, scope: ConcreteScope) -> List[SessionDict]:
         """Flatten ConcreteScope to list of session dicts.
 
         Each session dict is augmented with home and workspace context
@@ -154,7 +155,7 @@ class WorkspaceListHandler(VerbHandler):
             },
         )
 
-    def _aggregate_workspaces(self, scope: ConcreteScope) -> Dict[str, Dict[str, Any]]:
+    def _aggregate_workspaces(self, scope: ConcreteScope) -> Dict[str, WorkspaceDict]:
         """Aggregate sessions by workspace.
 
         Groups all sessions by (home, workspace) and computes summary
@@ -167,7 +168,7 @@ class WorkspaceListHandler(VerbHandler):
             Dictionary mapping (home:workspace) key to workspace summary dict.
         """
         # Use OrderedDict to preserve insertion order
-        workspaces: Dict[str, Dict[str, Any]] = OrderedDict()
+        workspaces: Dict[str, WorkspaceDict] = OrderedDict()
 
         for record in scope:
             # Create unique key for (home, workspace) pair
@@ -304,7 +305,7 @@ class HomeListHandler(VerbHandler):
             },
         )
 
-    def _enumerate_known_homes(self) -> Dict[str, Dict[str, Any]]:
+    def _enumerate_known_homes(self) -> Dict[str, HomeDict]:
         """Enumerate all known homes.
 
         Always includes "local". Detects WSL distributions (from Windows),
@@ -320,7 +321,7 @@ class HomeListHandler(VerbHandler):
             is_running_in_wsl,
         )
 
-        homes: Dict[str, Dict[str, Any]] = OrderedDict()
+        homes: Dict[str, HomeDict] = OrderedDict()
 
         # Always include local home
         homes["local"] = {
@@ -415,8 +416,8 @@ class HomeListHandler(VerbHandler):
         return homes
 
     def _aggregate_homes(
-        self, scope: ConcreteScope, known_homes: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Dict[str, Any]]:
+        self, scope: ConcreteScope, known_homes: Dict[str, HomeDict]
+    ) -> Dict[str, HomeDict]:
         """Aggregate workspaces and sessions by home.
 
         Updates the known_homes dictionary with session/workspace counts
