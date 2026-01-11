@@ -23,6 +23,9 @@ __version__ = "2.0.0"
 
 # Re-export key classes for convenience
 from agent_history.cli import CLIParser, CommandOrchestrator, main
+
+# Fluent API
+from agent_history.fluent import Context, FluentContext, context
 from agent_history.handlers import (
     CommandResult,
     DispatchError,
@@ -63,46 +66,41 @@ from agent_history.types import (
 )
 
 __all__ = [
-    # Version
-    "__version__",
-    # CLI
     "CLIParser",
     "CommandOrchestrator",
-    "main",
-    # Context
     "CommandRequest",
+    "CommandResult",
+    "ConcreteRecord",
+    "ConcreteScope",
+    "ContentBlock",
+    "Context",
     "ContextBuilder",
+    "DispatchError",
+    "FluentContext",
+    "HomeDict",
+    "HomeSpec",
+    "MatchType",
+    "MessageDict",
+    "MetricsDict",
     "OutputArgs",
+    "OutputFormatter",
+    "ProjectDict",
     "ResolutionContext",
     "ResolutionResult",
     "ScopeArgs",
-    # Resolver
     "ScopeResolver",
-    # Scope Types
-    "ConcreteRecord",
-    "ConcreteScope",
-    "HomeSpec",
-    "MatchType",
-    "SessionSpec",
-    "WorkspaceSpec",
-    # Dict Type Aliases
-    "ContentBlock",
-    "HomeDict",
-    "MessageDict",
-    "MetricsDict",
-    "ProjectDict",
     "SessionDict",
-    "StatsDict",
-    "WorkspaceDict",
-    "WorkspaceSessionsMap",
-    # Handlers
-    "CommandResult",
-    "DispatchError",
     "SessionExportHandler",
     "SessionListHandler",
+    "SessionSpec",
+    "StatsDict",
     "VerbDispatcher",
     "VerbHandler",
+    "WorkspaceDict",
     "WorkspaceListHandler",
-    # Output
-    "OutputFormatter",
+    "WorkspaceSessionsMap",
+    "WorkspaceSpec",
+    "__version__",
+    "context",
+    "main",
 ]
