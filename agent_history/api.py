@@ -323,14 +323,17 @@ def homes(
     # Aggregate by home
     home_data: Dict[str, Dict[str, Any]] = {}
     for record in scope:
-        if record.home not in home_data:
-            home_data[record.home] = {
-                "home": record.home,
-                "workspaces": set(),
+        context = WorkspaceContext.from_record(record)
+        if context.home not in home_data:
+            home_data[context.home] = {
+                "home": context.home,
+                "workspaces": {},
                 "session_count": 0,
             }
-        home_data[record.home]["workspaces"].add(record.workspace)
-        home_data[record.home]["session_count"] += len(record.sessions)
+        workspaces = home_data[context.home]["workspaces"]
+        if context.workspace_key not in workspaces:
+            workspaces[context.workspace_key] = context.workspace_display
+        home_data[context.home]["session_count"] += len(record.sessions)
 
     for home_info in home_data.values():
         yield {
