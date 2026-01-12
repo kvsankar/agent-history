@@ -9,6 +9,7 @@ See docs/design-v2/pipeline-architecture.md for the complete specification.
 """
 
 import json
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -31,6 +32,8 @@ from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
 from agent_history.utils.paths import decode_workspace_path
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
+
+_INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
 
 # =============================================================================
 # Export Result Type
@@ -496,15 +499,49 @@ class SessionExportHandler(VerbHandler):
         if flat:
             return output_dir
 
+        def _sanitize_segment(segment: str) -> str:
+            cleaned = _INVALID_PATH_CHARS_RE.sub("_", segment)
+            cleaned = cleaned.rstrip(" .")
+            if not cleaned:
+                cleaned = "_"
+            upper = cleaned.upper()
+            if upper in {
+                "CON",
+                "PRN",
+                "AUX",
+                "NUL",
+                "COM1",
+                "COM2",
+                "COM3",
+                "COM4",
+                "COM5",
+                "COM6",
+                "COM7",
+                "COM8",
+                "COM9",
+                "LPT1",
+                "LPT2",
+                "LPT3",
+                "LPT4",
+                "LPT5",
+                "LPT6",
+                "LPT7",
+                "LPT8",
+                "LPT9",
+            }:
+                cleaned = f"_{cleaned}"
+            return cleaned
+
         decoded = decode_workspace_path(workspace, verify_local=False)
         normalized = decoded.replace("\\", "/")
         if "/" in normalized:
-            parts = [part for part in normalized.split("/") if part]
-            if parts and parts[0].endswith(":"):
-                parts[0] = parts[0].rstrip(":")
+            parts_raw = [part for part in normalized.split("/") if part]
+            if parts_raw and parts_raw[0].endswith(":"):
+                parts_raw[0] = parts_raw[0].rstrip(":")
+            parts = [_sanitize_segment(part) for part in parts_raw]
             ws_path = output_dir.joinpath(*parts)
         else:
-            ws_path = output_dir / normalized
+            ws_path = output_dir / _sanitize_segment(normalized)
         ws_path.mkdir(parents=True, exist_ok=True)
         return ws_path
 
