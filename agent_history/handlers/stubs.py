@@ -190,16 +190,18 @@ class ProjectAddHandler(VerbHandler):
                 errors=["Project name is required"],
             )
 
-        workspaces_by_home: Dict[str, List[str]] = {}
+        workspaces_by_home: Dict[str, Dict[str, str]] = {}
         for record in scope:
-            workspaces_by_home.setdefault(record.home, [])
-            if record.workspace not in workspaces_by_home[record.home]:
-                workspaces_by_home[record.home].append(record.workspace)
+            context = WorkspaceContext.from_record(record)
+            workspaces_by_home.setdefault(context.home, {})
+            workspaces_by_home[context.home].setdefault(
+                context.workspace_key, context.workspace_display
+            )
 
         if not workspaces_by_home:
             explicit = verb_args.get("workspaces") or []
             if explicit:
-                workspaces_by_home["local"] = list(explicit)
+                workspaces_by_home["local"] = {ws: ws for ws in explicit}
 
         if not workspaces_by_home:
             return CommandResult(
@@ -218,7 +220,7 @@ class ProjectAddHandler(VerbHandler):
         added = 0
         for home_key, workspaces in workspaces_by_home.items():
             workspace_list = project_def.setdefault(home_key, [])
-            for workspace in workspaces:
+            for workspace in workspaces.values():
                 decoded = decode_workspace_path(workspace, verify_local=False)
                 if decoded not in workspace_list:
                     workspace_list.append(decoded)
