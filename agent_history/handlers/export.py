@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent_history.backends.claude import read_jsonl_messages
+from agent_history.core.workspaces import build_scope_metadata
 from agent_history.export import (
     MIN_MESSAGES_FOR_SPLIT,
     build_output_filename_ndjson,
@@ -28,6 +29,7 @@ from agent_history.export import (
 )
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
+from agent_history.scope.types import ConcreteRecord
 from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
 from agent_history.utils.paths import decode_workspace_path
@@ -199,8 +201,26 @@ class SessionExportHandler(VerbHandler):
                 sys.stderr.write(f"Error exporting {missing_id}: session not found\n")
 
         # Collect unique homes and workspaces from export tasks
-        unique_homes = {home for _, home, _, _ in tasks}
-        unique_workspaces = {workspace for _, _, workspace, _ in tasks}
+        grouped: Dict[Tuple[str, str, str], ConcreteRecord] = {}
+        scope_records: List[ConcreteRecord] = []
+        for session, home, workspace, workspace_display in tasks:
+            key = (home, workspace, workspace_display)
+            record = grouped.get(key)
+            if record is None:
+                record = ConcreteRecord(
+                    home=home,
+                    workspace=workspace,
+                    workspace_key=workspace,
+                    workspace_display=workspace_display,
+                    sessions=[],
+                )
+                grouped[key] = record
+                scope_records.append(record)
+            record.sessions.append(session)
+
+        metadata = build_scope_metadata(scope_records)
+        unique_homes = set(metadata["homes"])
+        unique_workspaces = set(metadata["workspaces"])
 
         # Generate index manifest if multi-home or multi-workspace export
         if len(unique_homes) > 1 or len(unique_workspaces) > 1:
@@ -216,8 +236,9 @@ class SessionExportHandler(VerbHandler):
             },
             data_type="export_result",
             metadata={
-                "homes": list(unique_homes),
-                "workspaces": list(unique_workspaces),
+                "homes": sorted(unique_homes),
+                "workspaces": sorted(unique_workspaces),
+                "workspace_display_map": metadata["workspace_display_map"],
             },
             errors=[f"{s.get('filename', s.get('file', 'unknown'))}: {e}" for s, e in failed],
         )
