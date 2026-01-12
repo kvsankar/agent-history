@@ -94,7 +94,7 @@ class TableFormatter(DataFormatter):
         formatter = self._formatters.get(data_type)
         if formatter:
             # Some formatters need metadata, some don't
-            if data_type in ("stats", "project_details", "exported_files"):
+            if data_type in ("stats", "project_details", "exported_files", "project_list"):
                 return formatter(data, metadata)
             return formatter(data)
         return str(data)
@@ -295,11 +295,14 @@ class TableFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_project_list(self, projects: List[ProjectDict]) -> str:
+    def _format_project_list(
+        self, projects: List[ProjectDict], metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
         """Format project list as table."""
         if not projects:
             return "No projects configured."
 
+        workspace_display_map = (metadata or {}).get("workspace_display_map", {})
         headers = ["PROJECT", "SOURCE", "WORKSPACE", "SESSIONS"]
         rows = []
 
@@ -315,10 +318,13 @@ class TableFormatter(DataFormatter):
                 source_str = str(sources)
 
             if isinstance(workspaces, list):
+                display_workspaces = [
+                    workspace_display_map.get(str(ws), str(ws)) for ws in workspaces
+                ]
                 workspace_str = (
-                    ", ".join(workspaces)
-                    if len(workspaces) <= 2
-                    else f"{len(workspaces)} workspaces"
+                    ", ".join(display_workspaces)
+                    if len(display_workspaces) <= 2
+                    else f"{len(display_workspaces)} workspaces"
                 )
             else:
                 workspace_str = str(p.get("workspace_count", workspaces))
@@ -343,10 +349,11 @@ class TableFormatter(DataFormatter):
         lines.append("")
 
         workspaces_by_home = data.get("workspaces_by_home", {})
+        workspace_display_map = metadata.get("workspace_display_map", {})
         for home, workspaces in workspaces_by_home.items():
             lines.append(f"  {home}:")
             for ws in workspaces:
-                ws_path = ws.get("workspace", "")
+                ws_path = _workspace_display(ws, display_map=workspace_display_map)
                 session_count = ws.get("session_count", 0)
                 lines.append(f"    {ws_path} ({session_count} sessions)")
 
@@ -451,6 +458,8 @@ class TsvFormatter(DataFormatter):
         """Format data as TSV."""
         formatter = self._formatters.get(data_type)
         if formatter:
+            if data_type == "project_list":
+                return formatter(data, metadata)
             return formatter(data)
         # Fallback to JSON for complex types
         return json.dumps(data, default=str)
@@ -527,10 +536,13 @@ class TsvFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_project_list(self, projects: List[ProjectDict]) -> str:
+    def _format_project_list(
+        self, projects: List[ProjectDict], metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
         """Format project list as TSV."""
         headers = ["PROJECT", "SOURCE", "WORKSPACE", "SESSIONS"]
         lines = ["\t".join(headers)]
+        workspace_display_map = (metadata or {}).get("workspace_display_map", {})
 
         for p in projects:
             # Handle both legacy (source/workspace as lists) and new (workspace_count) formats
@@ -544,10 +556,13 @@ class TsvFormatter(DataFormatter):
                 source_str = str(sources)
 
             if isinstance(workspaces, list):
+                display_workspaces = [
+                    workspace_display_map.get(str(ws), str(ws)) for ws in workspaces
+                ]
                 workspace_str = (
-                    ", ".join(workspaces)
-                    if len(workspaces) <= 2
-                    else f"{len(workspaces)} workspaces"
+                    ", ".join(display_workspaces)
+                    if len(display_workspaces) <= 2
+                    else f"{len(display_workspaces)} workspaces"
                 )
             else:
                 workspace_str = str(p.get("workspace_count", workspaces))
