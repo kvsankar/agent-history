@@ -13,9 +13,8 @@ from typing import Any, Dict, Optional
 
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
-from agent_history.core.workspaces import build_workspace_rows
+from agent_history.core.workspaces import build_scope_metadata, build_workspace_rows
 from agent_history.scope.types import ConcreteRecord, ConcreteScope
-from agent_history.utils.workspace_ref import WorkspaceContext
 
 
 class SessionStatsHandler(VerbHandler):
@@ -110,7 +109,9 @@ class SessionStatsHandler(VerbHandler):
         stats["total_sessions"] = stats.get("sessions", 0)
         stats["total_messages"] = stats.get("messages", 0)
 
-        workspace_rows, workspace_display_map = build_workspace_rows(scope)
+        workspace_rows, _workspace_display_map = build_workspace_rows(scope)
+        metadata = build_scope_metadata(scope)
+        workspace_display_map = metadata["workspace_display_map"]
         workspace_rows.sort(key=lambda r: r["sessions"], reverse=True)
         if top_ws:
             workspace_rows = workspace_rows[:top_ws]
@@ -118,14 +119,7 @@ class SessionStatsHandler(VerbHandler):
         stats["workspace_display_map"] = workspace_display_map
 
         # Build metadata
-        all_homes = set()
-        all_workspaces = set()
-        total_sessions = 0
-        for record in scope:
-            context = WorkspaceContext.from_record(record)
-            all_homes.add(context.home)
-            all_workspaces.add(context.workspace_display)
-            total_sessions += len(record.sessions)
+        total_sessions = sum(len(record.sessions) for record in scope)
 
         return CommandResult(
             success=True,
@@ -133,8 +127,8 @@ class SessionStatsHandler(VerbHandler):
             data_type="stats",
             metadata={
                 "total_sessions": total_sessions,
-                "homes": sorted(all_homes),
-                "workspaces": sorted(all_workspaces),
+                "homes": metadata["homes"],
+                "workspaces": metadata["workspaces"],
                 "workspace_display_map": workspace_display_map,
                 "group_by": group_list,
                 "include_time": include_time,
