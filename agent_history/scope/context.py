@@ -311,6 +311,7 @@ class ContextBuilder:
 
         cwd = Path.cwd()
         cwd_str = str(cwd)
+        cwd_str_normalized = cwd_str.replace("\\", "/")
 
         # Get Claude projects directory
         claude_projects = Path.home() / ".claude" / "projects"
@@ -324,8 +325,9 @@ class ContextBuilder:
         if agent_home:
             try:
                 rel = cwd.relative_to(Path(agent_home))
+                rel_str = str(rel).replace("\\", "/")
                 # Normalize to absolute workspace path
-                normalized_cwd = "/" + str(rel).lstrip("/")
+                normalized_cwd = "/" + rel_str.lstrip("/")
                 # Encode as workspace pattern: /home/user/myproject -> -home-user-myproject
                 encoded_pattern = normalized_cwd.replace("/", "-")
                 # Check if this workspace exists in Claude projects
@@ -369,7 +371,7 @@ class ContextBuilder:
         # .claude/projects/-tmp-pytest-xxx-test-workspace/
         if claude_projects.exists():
             # Encode CWD as workspace pattern
-            cwd_encoded = cwd_str.replace("/", "-")
+            cwd_encoded = cwd_str_normalized.replace("/", "-")
             if not cwd_encoded.startswith("-"):
                 cwd_encoded = "-" + cwd_encoded
             for workspace_dir in claude_projects.iterdir():
@@ -402,7 +404,10 @@ class ContextBuilder:
                         # Check if CWD ends with the workspace path (decoded)
                         # This allows for test directories like /tmp/xxx/home/user/projects/auth
                         # to match /home/user/projects/auth
-                        if cwd_str.endswith(decoded_ws) or cwd_str == decoded_ws:
+                        if (
+                            cwd_str_normalized.endswith(decoded_ws)
+                            or cwd_str_normalized == decoded_ws
+                        ):
                             return (home, decoded_ws)
 
         return (None, None)
