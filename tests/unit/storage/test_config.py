@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import stat
+import sys
 from pathlib import Path
+
+import pytest
 
 from agent_history.storage.config import (
     get_alias_for_workspace,
@@ -118,6 +121,8 @@ class TestConfigLoadSave:
 
         file_mode = config_file.stat().st_mode
         # Check that only owner has read/write (0o600)
+        if sys.platform == "win32":
+            pytest.skip("Windows does not enforce POSIX chmod semantics")
         assert stat.S_IMODE(file_mode) == 0o600
 
     def test_config_dir_permissions(self, tmp_path, monkeypatch):
@@ -129,6 +134,8 @@ class TestConfigLoadSave:
         assert config_dir.exists()
         dir_mode = config_dir.stat().st_mode
         # Check that only owner has rwx (0o700)
+        if sys.platform == "win32":
+            pytest.skip("Windows does not enforce POSIX chmod semantics")
         assert stat.S_IMODE(dir_mode) == 0o700
 
     def test_save_config_adds_version(self, tmp_path, monkeypatch):
