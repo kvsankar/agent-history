@@ -168,16 +168,22 @@ class ProjectShowHandler(VerbHandler):
             for home, workspaces in project_def.items():
                 if isinstance(workspaces, list):
                     for ws in workspaces:
+                        decoded = decode_workspace_path(ws, verify_local=False)
                         workspaces_by_home[home].append(
                             {
-                                "workspace": decode_workspace_path(ws, verify_local=False),
+                                "workspace": decoded,
+                                "workspace_key": decoded,
+                                "workspace_display": decoded,
                                 "session_count": 0,
                             }
                         )
                 elif isinstance(workspaces, str):
+                    decoded = decode_workspace_path(workspaces, verify_local=False)
                     workspaces_by_home[home].append(
                         {
-                            "workspace": decode_workspace_path(workspaces, verify_local=False),
+                            "workspace": decoded,
+                            "workspace_key": decoded,
+                            "workspace_display": decoded,
                             "session_count": 0,
                         }
                     )
