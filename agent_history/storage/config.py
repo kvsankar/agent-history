@@ -69,6 +69,13 @@ def _get_config_dirs() -> tuple[Path, Path]:
     return home / CONFIG_DIR_NAME, home / LEGACY_CONFIG_DIR_NAME
 
 
+def _apply_secure_permissions(path: Path, mode: int) -> None:
+    """Apply POSIX-style permissions unless on Windows."""
+    if os.name == "nt":
+        return
+    os.chmod(path, mode)
+
+
 def _migrate_legacy_config_dir(new_dir: Path, legacy_dir: Path) -> Path:
     """Migrate legacy ~/.claude-history to ~/.agent-history if needed."""
     if new_dir.exists():
@@ -205,7 +212,7 @@ def save_config(data: dict) -> bool:
     try:
         config_dir.mkdir(parents=True, exist_ok=True)
         # Set secure permissions on config directory (owner-only access)
-        os.chmod(config_dir, 0o700)
+        _apply_secure_permissions(config_dir, 0o700)
         if "version" not in data:
             data["version"] = 1
         homes = data.get("homes") or data.get("sources") or []
@@ -215,7 +222,7 @@ def save_config(data: dict) -> bool:
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         # Set secure permissions on config file (owner read/write only)
-        os.chmod(config_file, 0o600)
+        _apply_secure_permissions(config_file, 0o600)
         return True
     except OSError as e:
         sys.stderr.write(f"Error saving config: {e}\n")
@@ -361,7 +368,7 @@ def save_aliases(data: dict) -> bool:
     try:
         # Create directory if needed
         config_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(config_dir, 0o700)
+        _apply_secure_permissions(config_dir, 0o700)
 
         # Normalize payload
         if "aliases" in data and "projects" not in data:
