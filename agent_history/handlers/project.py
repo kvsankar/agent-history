@@ -15,8 +15,7 @@ from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.storage.config import load_config
-from agent_history.utils.paths import decode_workspace_path
-from agent_history.utils.workspace_ref import WorkspaceContext
+from agent_history.utils.workspace_ref import WorkspaceContext, build_workspace_ref
 from agent_history.core.workspaces import build_scope_metadata
 
 
@@ -45,20 +44,26 @@ class ProjectListHandler(VerbHandler):
         config = load_config()
         projects_config = config.get("projects", {})
 
+        workspace_display_map: Dict[str, str] = {}
+
         # Build project list
         projects = []
         for name, definition in projects_config.items():
             # Collect all workspaces from the project definition
             all_workspaces = []
             for home_workspaces in definition.values():
+                items: List[str]
                 if isinstance(home_workspaces, list):
-                    all_workspaces.extend(
-                        decode_workspace_path(ws, verify_local=False) for ws in home_workspaces
-                    )
+                    items = home_workspaces
                 elif isinstance(home_workspaces, str):
-                    all_workspaces.append(
-                        decode_workspace_path(home_workspaces, verify_local=False)
-                    )
+                    items = [home_workspaces]
+                else:
+                    items = []
+
+                for workspace in items:
+                    ref = build_workspace_ref(workspace)
+                    all_workspaces.append(ref.display)
+                    workspace_display_map.setdefault(ref.key, ref.display)
 
             # Use v1-compatible field names: project, source, workspace
             project_info = {
@@ -79,11 +84,6 @@ class ProjectListHandler(VerbHandler):
 
         # Sort by project name
         projects.sort(key=lambda p: p["project"])
-
-        workspace_display_map: Dict[str, str] = {}
-        for project in projects:
-            for workspace in project.get("workspace", []) or []:
-                workspace_display_map.setdefault(str(workspace), str(workspace))
 
         return CommandResult(
             success=True,
@@ -181,27 +181,27 @@ class ProjectShowHandler(VerbHandler):
             for home, workspaces in project_def.items():
                 if isinstance(workspaces, list):
                     for ws in workspaces:
-                        decoded = decode_workspace_path(ws, verify_local=False)
+                        ref = build_workspace_ref(ws)
                         workspaces_by_home[home].append(
                             {
-                                "workspace": decoded,
-                                "workspace_key": decoded,
-                                "workspace_display": decoded,
+                                "workspace": ref.display,
+                                "workspace_key": ref.key,
+                                "workspace_display": ref.display,
                                 "session_count": 0,
                             }
                         )
-                        workspace_display_map.setdefault(decoded, decoded)
+                        workspace_display_map.setdefault(ref.key, ref.display)
                 elif isinstance(workspaces, str):
-                    decoded = decode_workspace_path(workspaces, verify_local=False)
+                    ref = build_workspace_ref(workspaces)
                     workspaces_by_home[home].append(
                         {
-                            "workspace": decoded,
-                            "workspace_key": decoded,
-                            "workspace_display": decoded,
+                            "workspace": ref.display,
+                            "workspace_key": ref.key,
+                            "workspace_display": ref.display,
                             "session_count": 0,
                         }
                     )
-                    workspace_display_map.setdefault(decoded, decoded)
+                    workspace_display_map.setdefault(ref.key, ref.display)
 
         return CommandResult(
             success=True,
