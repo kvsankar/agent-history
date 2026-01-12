@@ -346,7 +346,7 @@ class HomeListHandler(VerbHandler):
             "workspace_count": 0,
             "session_count": 0,
             "last_modified": None,
-            "workspaces": set(),
+            "workspaces": {},
             "agents": set(),
         }
 
@@ -358,7 +358,7 @@ class HomeListHandler(VerbHandler):
             "workspace_count": 0,
             "session_count": 0,
             "last_modified": None,
-            "workspaces": set(),
+            "workspaces": {},
             "agents": set(),
         }
 
@@ -376,7 +376,7 @@ class HomeListHandler(VerbHandler):
                         "workspace_count": 0,
                         "session_count": 0,
                         "last_modified": None,
-                        "workspaces": set(),
+                        "workspaces": {},
                         "agents": set(),
                     }
         except Exception:
@@ -397,7 +397,7 @@ class HomeListHandler(VerbHandler):
                             "workspace_count": 0,
                             "session_count": 0,
                             "last_modified": None,
-                            "workspaces": set(),
+                            "workspaces": {},
                             "agents": set(),
                         }
             except Exception:
@@ -438,7 +438,7 @@ class HomeListHandler(VerbHandler):
                         "workspace_count": 0,
                         "session_count": 0,
                         "last_modified": None,
-                        "workspaces": set(),
+                        "workspaces": {},
                         "agents": set(),
                     }
         except Exception:
@@ -466,6 +466,7 @@ class HomeListHandler(VerbHandler):
 
         for record in scope:
             home_key = record.home
+            context = WorkspaceContext.from_record(record)
 
             if home_key not in homes:
                 # Home found in scope but not in known homes - add it
@@ -486,15 +487,15 @@ class HomeListHandler(VerbHandler):
                     "workspace_count": 0,
                     "session_count": 0,
                     "last_modified": None,
-                    "workspaces": set(),
+                    "workspaces": {},
                     "agents": set(),
                 }
 
             home_data = homes[home_key]
 
-            # Track unique workspaces
-            if record.workspace not in home_data["workspaces"]:
-                home_data["workspaces"].add(record.workspace)
+            # Track unique workspaces by key/display
+            if context.workspace_key not in home_data["workspaces"]:
+                home_data["workspaces"][context.workspace_key] = context.workspace_display
                 home_data["workspace_count"] += 1
 
             # Count sessions
@@ -513,7 +514,11 @@ class HomeListHandler(VerbHandler):
 
         # Convert sets to sorted lists for serialization
         for home_data in homes.values():
-            home_data["workspaces"] = sorted(home_data["workspaces"])
+            workspaces = home_data["workspaces"]
+            if isinstance(workspaces, dict):
+                home_data["workspaces"] = sorted(workspaces.values())
+            else:
+                home_data["workspaces"] = sorted(workspaces)
             home_data["agents"] = sorted(home_data["agents"])
 
         return homes
