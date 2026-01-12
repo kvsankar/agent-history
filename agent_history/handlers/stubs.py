@@ -57,6 +57,7 @@ class SessionShowHandler(VerbHandler):
                         "message_count": len(messages),
                     },
                     data_type="session_show",
+                    metadata={"workspace_display_map": {}},
                 )
             except (OSError, json.JSONDecodeError) as exc:
                 return CommandResult(
