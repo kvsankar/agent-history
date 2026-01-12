@@ -42,7 +42,7 @@ from agent_history.scope.context import (
 )
 from agent_history.scope.resolver import ScopeResolver
 from agent_history.scope.types import ConcreteScope
-from agent_history.utils.workspace_ref import attach_workspace_context
+from agent_history.utils.workspace_ref import WorkspaceContext, attach_workspace_context
 
 # Type aliases for clarity
 SessionDict = Dict[str, Any]
@@ -216,18 +216,12 @@ def sessions(  # noqa: PLR0913
     scope = _resolve_scope(scope_args, context)
 
     for record in scope:
+        context = WorkspaceContext.from_record(record)
         for session in record.sessions:
             # Add context to each session
             enriched = dict(session)
-            enriched["home"] = record.home
             enriched.setdefault("workspace_raw", enriched.get("workspace"))
-            enriched["workspace"] = record.workspace
-            attach_workspace_context(
-                enriched,
-                workspace=record.workspace,
-                workspace_key=record.workspace_key,
-                workspace_display=record.workspace_display,
-            )
+            attach_workspace_context(enriched, context=context)
             yield enriched
 
 
@@ -278,19 +272,15 @@ def workspaces(
     scope = _resolve_scope(scope_args, context)
 
     for record in scope:
+        context = WorkspaceContext.from_record(record)
         workspace = record.workspace
         item = {
             "workspace": workspace,
-            "home": record.home,
+            "home": context.home,
             "session_count": len(record.sessions),
             "sessions": record.sessions,
         }
-        attach_workspace_context(
-            item,
-            workspace=workspace,
-            workspace_key=record.workspace_key,
-            workspace_display=record.workspace_display,
-        )
+        attach_workspace_context(item, context=context)
         yield item
 
 

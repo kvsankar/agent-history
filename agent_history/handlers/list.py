@@ -25,6 +25,7 @@ from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
 from agent_history.utils.workspace_ref import (
     attach_workspace_context,
     select_workspace_display,
+    WorkspaceContext,
 )
 
 
@@ -101,17 +102,16 @@ class SessionListHandler(VerbHandler):
         """
         sessions = []
         for record in scope:
+            ws_context = WorkspaceContext.from_record(record)
             for session in record.sessions:
                 # Add home/workspace context to each session
                 session_with_context = dict(session)
-                session_with_context["home"] = record.home
-                session_with_context.setdefault("workspace_raw", session_with_context.get("workspace"))
-                session_with_context["workspace"] = record.workspace
+                session_with_context.setdefault(
+                    "workspace_raw", session_with_context.get("workspace")
+                )
                 attach_workspace_context(
                     session_with_context,
-                    workspace=record.workspace,
-                    workspace_key=record.workspace_key,
-                    workspace_display=record.workspace_display,
+                    context=ws_context,
                 )
                 sessions.append(session_with_context)
         return sessions

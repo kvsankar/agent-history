@@ -15,6 +15,7 @@ from agent_history.utils.paths import (
     is_cached_workspace,
     is_encoded_workspace_name,
 )
+from agent_history.scope.types import ConcreteRecord
 
 
 class WorkspaceKind(str, Enum):
@@ -43,6 +44,35 @@ class WorkspaceRef:
             "workspace_raw": self.raw,
             "workspace_kind": self.kind.value,
         }
+
+
+@dataclass(frozen=True)
+class WorkspaceContext:
+    """Workspace context derived from a concrete record."""
+
+    home: str
+    workspace: str
+    workspace_key: str
+    workspace_display: str
+
+    @classmethod
+    def from_record(cls, record: ConcreteRecord) -> "WorkspaceContext":
+        return cls(
+            home=record.home,
+            workspace=record.workspace,
+            workspace_key=select_workspace_key(record.workspace, record.workspace_key),
+            workspace_display=select_workspace_display(
+                record.workspace, record.workspace_display
+            ),
+        )
+
+    def apply(self, target: Dict[str, Any]) -> None:
+        target["home"] = self.home
+        target["workspace"] = self.workspace
+        target["workspace_key"] = self.workspace_key
+        target["workspace_display"] = self.workspace_display
+        if not target.get("workspace_readable"):
+            target["workspace_readable"] = self.workspace_display
 
 
 _HASH_RE = re.compile(r"^[0-9a-f]{32,64}$", re.IGNORECASE)
@@ -146,13 +176,24 @@ def select_workspace_display(workspace: str, workspace_display: Optional[str] = 
 def attach_workspace_context(
     target: Dict[str, Any],
     *,
-    workspace: str,
+    workspace: Optional[str] = None,
     workspace_key: Optional[str] = None,
     workspace_display: Optional[str] = None,
+    context: Optional[WorkspaceContext] = None,
 ) -> None:
     """Attach workspace key/display values to an output dictionary."""
-    key = select_workspace_key(workspace, workspace_key)
-    display = select_workspace_display(workspace, workspace_display)
+    if context is not None:
+        key = context.workspace_key
+        display = context.workspace_display
+        if "home" not in target:
+            target["home"] = context.home
+        if "workspace" not in target:
+            target["workspace"] = context.workspace
+    else:
+        if workspace is None:
+            raise ValueError("workspace is required when context is not provided")
+        key = select_workspace_key(workspace, workspace_key)
+        display = select_workspace_display(workspace, workspace_display)
     target["workspace_key"] = key
     target["workspace_display"] = display
     if not target.get("workspace_readable"):
