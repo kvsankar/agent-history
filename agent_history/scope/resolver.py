@@ -86,8 +86,12 @@ class ScopeResolver:
         # Loaded once per home, grouped by workspace for O(1) lookup
         self._session_cache: WorkspaceSessionsMap = {}
 
+        from agent_history.adapters.inventory import InventoryProvider
+
+        self._inventory = InventoryProvider(context)
+
         # Initialize stage modules
-        self._cache = SessionCache(context)
+        self._cache = SessionCache(context, self._inventory)
         self._project_stage = ProjectStage(context)
         self._home_stage = HomeStage(context)
         self._workspace_stage = WorkspaceStage(
@@ -181,14 +185,15 @@ class ScopeResolver:
         # This prevents accidentally scanning remote homes with implicit patterns
         # The guard only applies when the user is IN a local workspace - if they're
         # not in a workspace, there's no implicit path that could be mismatched
+        non_web_homes = [home for home in args.home_names if home != "web"]
         needs_cross_home = (
             args.home_type in ("wsl", "windows", "remote")
             or args.all_homes
-            or bool(args.home_names)
+            or bool(non_web_homes)
         )
         has_explicit_scope = (
             args.all_workspaces
-            or args.project
+            or bool(args.projects)
             or self.context.cwd_project
             or bool(args.patterns)
             or bool(args.name_patterns)
@@ -214,8 +219,11 @@ class ScopeResolver:
             )
 
         # Check for explicit project
-        if args.project:
-            return [ProjectRecord(project=args.project, sessions=session_spec)]
+        if args.projects:
+            return [
+                ProjectRecord(project=project, sessions=session_spec)
+                for project in dict.fromkeys(args.projects)
+            ]
 
         # Check for --this (current workspace only) - must come before implicit project
         # This forces scope to current workspace only, overriding project expansion
@@ -314,7 +322,36 @@ class ScopeResolver:
         """
         # --ah (all homes)
         if args.all_homes:
-            return HomeSpecFactory.All
+            # Special case: --ah --local limits to local
+            if args.home_type == "local":
+                return HomeSpecFactory.Local
+
+            homes: List[str] = ["local"]
+
+            if not args.no_wsl:
+                for distro in self.context.available_homes.get("wsl", []):
+                    homes.append(f"wsl:{distro}")
+
+            if not args.no_windows:
+                for user in self.context.available_homes.get("windows", []):
+                    homes.append(f"windows:{user}")
+
+            if not args.no_remote:
+                for remote in self.context.available_homes.get("remote", []):
+                    homes.append(f"remote:{remote}")
+
+            if not args.no_web:
+                homes.append("web")
+
+            # Deduplicate while preserving order
+            seen = set()
+            ordered = []
+            for home in homes:
+                if home not in seen:
+                    seen.add(home)
+                    ordered.append(home)
+
+            return HomeSpecFactory.Multiple(ordered)
 
         # Category-based selection (--wsl, --windows, --remote, --local)
         if args.home_type:
@@ -397,25 +434,7 @@ class ScopeResolver:
         Raises:
             ValueError: If SSH connection fails for remote homes.
         """
-        # Handle remote homes via SSH
-        if home.startswith("remote:"):
-            return self._enumerate_remote_workspaces(home)
-
-        workspaces: set[str] = set()
-
-        # Claude workspaces: directory names under ~/.claude/projects/
-        claude_workspaces = self._enumerate_claude_workspaces(home)
-        workspaces.update(claude_workspaces)
-
-        # Codex workspaces: from sessions metadata
-        codex_workspaces = self._enumerate_codex_workspaces(home)
-        workspaces.update(codex_workspaces)
-
-        # Gemini workspaces: from index
-        gemini_workspaces = self._enumerate_gemini_workspaces(home)
-        workspaces.update(gemini_workspaces)
-
-        return sorted(workspaces)
+        return self._inventory.list_workspaces(home)
 
     def _enumerate_remote_workspaces(self, home: str) -> List[str]:
         """
@@ -584,22 +603,7 @@ class ScopeResolver:
             List of all session dictionaries in the home.
         """
         # Use strategy pattern for home-specific directory resolution
-        resolver = get_resolver_for_home(home)
-        projects_dir = resolver.get_claude_dir(self.context)
-
-        if not projects_dir or not projects_dir.exists():
-            return []
-
-        # Get all sessions using backend function
-        # Skip message count by default for faster loading during scope resolution
-        # Message counts can be computed later if needed
-        all_sessions = get_workspace_sessions(
-            workspace_pattern="*",
-            projects_dir=projects_dir,
-            skip_message_count=True,
-        )
-
-        return all_sessions
+        return self._inventory.list_sessions(home, agent="claude")
 
     def _load_codex_sessions_for_home(self, home: str) -> List[SessionDict]:
         """
@@ -614,22 +618,7 @@ class ScopeResolver:
             List of all session dictionaries in the home.
         """
         # Use strategy pattern for home-specific directory resolution
-        resolver = get_resolver_for_home(home)
-        sessions_dir = resolver.get_codex_dir(self.context)
-
-        if not sessions_dir:
-            return []
-
-        # Get all sessions using backend function
-        # Empty pattern matches all workspaces
-        # Skip message count by default for faster loading during scope resolution
-        all_sessions = codex_scan_sessions(
-            pattern="",
-            sessions_dir=sessions_dir,
-            skip_message_count=True,
-        )
-
-        return all_sessions
+        return self._inventory.list_sessions(home, agent="codex")
 
     def _load_gemini_sessions_for_home(self, home: str) -> List[SessionDict]:
         """
@@ -644,22 +633,7 @@ class ScopeResolver:
             List of all session dictionaries in the home.
         """
         # Use strategy pattern for home-specific directory resolution
-        resolver = get_resolver_for_home(home)
-        sessions_dir = resolver.get_gemini_dir(self.context)
-
-        if not sessions_dir:
-            return []
-
-        # Get all sessions using backend function
-        # Empty pattern matches all workspaces
-        # Skip message count by default for faster loading during scope resolution
-        all_sessions = gemini_scan_sessions(
-            pattern="",
-            sessions_dir=sessions_dir,
-            skip_message_count=True,
-        )
-
-        return all_sessions
+        return self._inventory.list_sessions(home, agent="gemini")
 
     # =========================================================================
     # Delegate methods for backward compatibility with tests

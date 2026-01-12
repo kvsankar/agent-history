@@ -18,13 +18,17 @@ from agent_history.cli.constants import (
     DEFAULT_OUTPUT_DIR,
     DEFAULT_VERB_INDEX,
     DEFAULT_VERB_LIST,
+    DEFAULT_VERB_RUN,
     FLAGS_WITH_VALUES,
     GLOBAL_FLAGS_WITH_VALUES,
     MIN_SPLIT_LINES,
     OUTPUT_FORMAT_CHOICES,
+    RESOURCE_FETCH,
     RESOURCE_GEMINI_INDEX,
     RESOURCE_HOME,
+    RESOURCE_INSTALL,
     RESOURCE_PROJECT,
+    RESOURCE_RESET,
     RESOURCE_SESSION,
     RESOURCE_WS,
     SESSION_SUBCOMMANDS,
@@ -208,6 +212,9 @@ class CLIParser:
         self._add_project_parser(subparsers)
         self._add_home_parser(subparsers)
         self._add_gemini_index_parser(subparsers)
+        self._add_install_parser(subparsers)
+        self._add_reset_parser(subparsers)
+        self._add_fetch_parser(subparsers)
 
         return parser
 
@@ -260,6 +267,14 @@ class CLIParser:
         sess_export = sess_sub.add_parser("export", help="Export sessions to markdown")
         sess_export.set_defaults(command=RESOURCE_SESSION, session_verb="export")
         self._add_workspace_scope_flags(sess_export, positional_name="target")
+        sess_export.add_argument(
+            "--session",
+            "--session-id",
+            dest="session_ids",
+            action="append",
+            metavar="ID",
+            help="Export specific session IDs or filenames (repeatable or comma-separated)",
+        )
         sess_export.add_argument(
             "output_dir",
             nargs="?",
@@ -374,17 +389,11 @@ class CLIParser:
         proj_add = proj_sub.add_parser("add", help="Add workspace to project")
         proj_add.set_defaults(command=RESOURCE_PROJECT, project_command="add")
         proj_add.add_argument("name", help="Project name")
-        proj_add.add_argument("workspaces", nargs="*", help="Workspace paths to add")
-        proj_add.add_argument("--pick", action="store_true", help="Interactive picker")
-        proj_add.add_argument("--wsl", action="store_true", help="Add from WSL")
-        proj_add.add_argument("--windows", action="store_true", help="Add from Windows")
-        proj_add.add_argument(
-            "--ah",
-            "--all-homes",
-            action="store_true",
-            dest="all_homes",
-            help="Add from all homes",
+        self._add_workspace_scope_flags(
+            proj_add, positional_name="workspaces", include_project=False
         )
+        self._add_home_scope_flags(proj_add)
+        proj_add.add_argument("--pick", action="store_true", help="Interactive picker")
 
         # project remove
         proj_remove = proj_sub.add_parser("remove", help="Remove workspace or project")
@@ -541,6 +550,54 @@ class CLIParser:
             help="Show full SHA-256 hashes instead of truncated (with --list)",
         )
 
+    def _add_install_parser(self, subparsers) -> None:
+        """Add install subparser."""
+        install_parser = subparsers.add_parser(
+            RESOURCE_INSTALL,
+            help="Install CLI and Claude skill",
+            description="Install the CLI binary and Claude skill files.",
+        )
+        install_parser.set_defaults(command=RESOURCE_INSTALL, install_verb=DEFAULT_VERB_RUN)
+        install_parser.add_argument("--bin-dir", help="Custom binary install directory")
+        install_parser.add_argument("--skill-dir", help="Custom skill install directory")
+        install_parser.add_argument("--skip-cli", action="store_true", help="Skip CLI install")
+        install_parser.add_argument("--skip-skill", action="store_true", help="Skip skill install")
+        install_parser.add_argument(
+            "--skip-settings", action="store_true", help="Skip settings update"
+        )
+
+    def _add_reset_parser(self, subparsers) -> None:
+        """Add reset subparser."""
+        reset_parser = subparsers.add_parser(
+            RESOURCE_RESET,
+            help="Reset stored data",
+            description="Reset metrics database, config, and caches.",
+        )
+        reset_parser.set_defaults(command=RESOURCE_RESET, reset_verb=DEFAULT_VERB_RUN)
+        reset_parser.add_argument(
+            "what",
+            nargs="?",
+            choices=["all", "db", "config", "settings"],
+            default="all",
+            help="What to reset (default: all)",
+        )
+        reset_parser.add_argument("-y", "--yes", action="store_true", help="Confirm reset")
+        reset_parser.add_argument("--db", action="store_true", help="Reset metrics database")
+        reset_parser.add_argument("--config", action="store_true", help="Reset config files")
+        reset_parser.add_argument("--settings", action="store_true", help="Reset caches")
+
+    def _add_fetch_parser(self, subparsers) -> None:
+        """Add fetch subparser."""
+        fetch_parser = subparsers.add_parser(
+            RESOURCE_FETCH,
+            help="Fetch remote sessions into cache",
+            description="Fetch remote sessions and cache them locally.",
+        )
+        fetch_parser.set_defaults(command=RESOURCE_FETCH, fetch_verb=DEFAULT_VERB_RUN)
+        self._add_workspace_scope_flags(fetch_parser)
+        self._add_home_scope_flags(fetch_parser)
+        self._add_agent_filter(fetch_parser)
+
 
     # =========================================================================
     # Common argument groups
@@ -590,7 +647,11 @@ class CLIParser:
         )
 
     def _add_workspace_scope_flags(
-        self, parser, positional_name: str = "workspace", include_positional: bool = True
+        self,
+        parser,
+        positional_name: str = "workspace",
+        include_positional: bool = True,
+        include_project: bool = True,
     ) -> None:
         """Add workspace scope flags.
 
@@ -623,13 +684,14 @@ class CLIParser:
             action="store_true",
             help="Current workspace only (skip project auto-detection)",
         )
-        parser.add_argument(
-            "--project",
-            action="append",
-            dest="projects",
-            metavar="NAME",
-            help="Project name (repeatable)",
-        )
+        if include_project:
+            parser.add_argument(
+                "--project",
+                action="append",
+                dest="projects",
+                metavar="NAME",
+                help="Project name (repeatable)",
+            )
 
     def _add_date_filters(self, parser) -> None:
         """Add since/until date filters."""
@@ -754,12 +816,6 @@ class CLIParser:
         parser.add_argument(
             "--time", action="store_true", help="Show time tracking with daily breakdown"
         )
-        parser.add_argument("--tools", action="store_true", help="Show tool usage statistics")
-        parser.add_argument("--models", action="store_true", help="Show model usage statistics")
-        parser.add_argument(
-            "--by-workspace", action="store_true", help="Group statistics by workspace"
-        )
-        parser.add_argument("--by-day", action="store_true", help="Group statistics by day")
         parser.add_argument(
             "--top-ws",
             type=int,
@@ -774,6 +830,8 @@ class CLIParser:
 
     def _build_request(self, args: argparse.Namespace) -> CommandRequest:
         """Convert parsed args to CommandRequest."""
+        self._normalize_export_args(args)
+
         # Determine resource and verb
         resource, verb = self._get_resource_verb(args)
 
@@ -794,6 +852,36 @@ class CLIParser:
             verb_args=verb_args,
         )
 
+    def _split_csv_list(self, values: List[str]) -> List[str]:
+        """Split comma-separated CLI values into a flat list."""
+        result: List[str] = []
+        for item in values:
+            for part in str(item).split(","):
+                part = part.strip()
+                if part:
+                    result.append(part)
+        return result
+
+    def _normalize_export_args(self, args: argparse.Namespace) -> None:
+        """Normalize export args when positional output_dir is consumed by nargs='*'."""
+        command = getattr(args, "command", None)
+
+        if command == RESOURCE_WS and getattr(args, "ws_verb", None) == "export":
+            if getattr(args, "output_override", None):
+                return
+            targets = list(getattr(args, "target", None) or [])
+            if getattr(args, "output_dir", DEFAULT_OUTPUT_DIR) == DEFAULT_OUTPUT_DIR and len(targets) > 1:
+                args.output_dir = targets[-1]
+                args.target = targets[:-1]
+
+        if command == RESOURCE_HOME and getattr(args, "home_verb", None) == "export":
+            if getattr(args, "output_override", None):
+                return
+            names = list(getattr(args, "names", None) or [])
+            if getattr(args, "output_dir", DEFAULT_OUTPUT_DIR) == DEFAULT_OUTPUT_DIR and len(names) > 1:
+                args.output_dir = names[-1]
+                args.names = names[:-1]
+
     def _get_resource_verb(self, args: argparse.Namespace) -> tuple[str, str]:
         """Extract resource and verb from parsed args."""
         command = getattr(args, "command", None)
@@ -808,6 +896,12 @@ class CLIParser:
             return (RESOURCE_HOME, getattr(args, "home_verb", DEFAULT_VERB_LIST))
         elif command == RESOURCE_GEMINI_INDEX:
             return (RESOURCE_GEMINI_INDEX, DEFAULT_VERB_INDEX)
+        elif command == RESOURCE_INSTALL:
+            return (RESOURCE_INSTALL, DEFAULT_VERB_RUN)
+        elif command == RESOURCE_RESET:
+            return (RESOURCE_RESET, DEFAULT_VERB_RUN)
+        elif command == RESOURCE_FETCH:
+            return (RESOURCE_FETCH, DEFAULT_VERB_RUN)
         else:
             # Default to session list
             return (RESOURCE_SESSION, DEFAULT_VERB_LIST)
@@ -819,12 +913,23 @@ class CLIParser:
         home_type = None
         home_value = None
         home_names = list(getattr(args, "homes", None) or [])
+        command = getattr(args, "command", None)
+
+        if command == RESOURCE_HOME:
+            name = getattr(args, "name", None)
+            if name:
+                home_names.append(name)
+            names = getattr(args, "names", None) or []
+            home_names.extend(names)
 
         # Add remote hosts from -r/--remote flags
         remotes = getattr(args, "remotes", None) or []
         for remote in remotes:
             # Prefix remote hosts with "remote:" for identification
             home_names.append(f"remote:{remote}")
+
+        if getattr(args, "web", False):
+            home_names.append("web")
 
         if getattr(args, "wsl", False):
             home_type = "wsl"
@@ -835,10 +940,12 @@ class CLIParser:
 
         # Workspace selection
         all_workspaces = getattr(args, "all_workspaces", False)
-        project = None
-        projects = getattr(args, "projects", None)
-        if projects and len(projects) == 1:
-            project = projects[0]
+        projects = list(getattr(args, "projects", None) or [])
+        if command == RESOURCE_PROJECT:
+            project_name = getattr(args, "name", None)
+            project_command = getattr(args, "project_command", None)
+            if project_command in ("show", "export", "stats") and project_name:
+                projects = [project_name]
 
         # Get positional patterns (exact match)
         patterns = []
@@ -851,6 +958,16 @@ class CLIParser:
         name_patterns = getattr(args, "name_patterns", None) or []
 
         this_only = getattr(args, "this_only", False)
+
+        # Session ID selection for session export (implies all workspaces if no scope)
+        session_ids = self._split_csv_list(list(getattr(args, "session_ids", None) or []))
+        if (
+            command == RESOURCE_SESSION
+            and getattr(args, "session_verb", None) == "export"
+            and session_ids
+            and not (patterns or name_patterns or projects or all_workspaces or this_only)
+        ):
+            all_workspaces = True
 
         # Session filters
         agent = getattr(args, "agent", None)
@@ -871,7 +988,7 @@ class CLIParser:
             home_value=home_value,
             home_names=home_names,
             all_workspaces=all_workspaces,
-            project=project,
+            projects=projects,
             patterns=patterns,
             name_patterns=name_patterns,
             this_only=this_only,
@@ -935,13 +1052,17 @@ class CLIParser:
             verb_args["jobs"] = getattr(args, "jobs", None)
             verb_args["flat"] = getattr(args, "flat", False)
             verb_args["include_source"] = getattr(args, "include_source", False)
+            if resource == RESOURCE_SESSION:
+                raw_ids = list(getattr(args, "session_ids", None) or [])
+                verb_args["session_ids"] = self._split_csv_list(raw_ids)
 
         # Stats-specific args
         elif verb == "stats":
             verb_args["sync"] = getattr(args, "sync", False)
             verb_args["no_sync"] = getattr(args, "no_sync", False)
             verb_args["force"] = getattr(args, "force", False)
-            verb_args["by"] = getattr(args, "by", None)
+            raw_by = getattr(args, "by", None)
+            verb_args["by"] = self._split_csv_list([raw_by]) if raw_by else None
             verb_args["time"] = getattr(args, "time", False)
             verb_args["top_ws"] = getattr(args, "top_ws", None)
 
@@ -965,6 +1086,8 @@ class CLIParser:
                 verb_args["pick"] = getattr(args, "pick", False)
             elif verb == "remove":
                 verb_args["workspace"] = getattr(args, "workspace", None)
+                verb_args["wsl"] = getattr(args, "wsl", False)
+                verb_args["windows"] = getattr(args, "windows", False)
 
         # Home management args
         if resource == RESOURCE_HOME and verb in ("add", "remove"):
@@ -976,5 +1099,22 @@ class CLIParser:
             verb_args["rebuild"] = getattr(args, "rebuild", False)
             verb_args["list_index"] = getattr(args, "list_index", False)
             verb_args["full_hash"] = getattr(args, "full_hash", False)
+
+        if resource == RESOURCE_INSTALL:
+            verb_args["bin_dir"] = getattr(args, "bin_dir", None)
+            verb_args["skill_dir"] = getattr(args, "skill_dir", None)
+            verb_args["skip_cli"] = getattr(args, "skip_cli", False)
+            verb_args["skip_skill"] = getattr(args, "skip_skill", False)
+            verb_args["skip_settings"] = getattr(args, "skip_settings", False)
+
+        if resource == RESOURCE_RESET:
+            what = getattr(args, "what", "all")
+            verb_args["reset_db"] = getattr(args, "db", False) or what == "db"
+            verb_args["reset_config"] = getattr(args, "config", False) or what == "config"
+            verb_args["reset_settings"] = getattr(args, "settings", False) or what == "settings"
+            verb_args["yes"] = getattr(args, "yes", False)
+
+        if resource == RESOURCE_FETCH:
+            verb_args["fetch"] = True
 
         return verb_args

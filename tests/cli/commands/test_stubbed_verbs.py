@@ -106,7 +106,6 @@ class TestStubbedVerbs:
         self, current_workspace_setup: Dict[str, Any], tmp_path: Path
     ) -> None:
         env = ensure_config_env(current_workspace_setup["env"], tmp_path / ".agent-history")
-        encoded_ws = encode_workspace_path(current_workspace_setup["workspace_path"])
         result = run_cli_subprocess(
             [
                 "project",
@@ -122,7 +121,9 @@ class TestStubbedVerbs:
         config_path = Path(env["AGENT_HISTORY_CONFIG_DIR"]) / "config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
         project_def = config.get("projects", {}).get("gap-project", {})
-        assert encoded_ws in project_def.get("local", []), "Expected project to be added"
+        assert (
+            current_workspace_setup["workspace_path"] in project_def.get("local", [])
+        ), "Expected project to be added"
 
     def test_project_remove_updates_config(
         self, current_workspace_setup: Dict[str, Any], tmp_path: Path
@@ -130,12 +131,13 @@ class TestStubbedVerbs:
         config_dir = tmp_path / ".agent-history"
         env = ensure_config_env(current_workspace_setup["env"], config_dir)
         config_path = config_dir / "config.json"
-        encoded_ws = encode_workspace_path(current_workspace_setup["workspace_path"])
         config_path.write_text(
             json.dumps(
                 {
                     "version": 2,
-                    "projects": {"gap-project": {"local": [encoded_ws]}},
+                    "projects": {
+                        "gap-project": {"local": [current_workspace_setup["workspace_path"]]}
+                    },
                     "homes": [],
                 },
                 indent=2,
@@ -152,7 +154,8 @@ class TestStubbedVerbs:
         assert_cli_success(result, "project remove should succeed")
         config = json.loads(config_path.read_text(encoding="utf-8"))
         assert (
-            encoded_ws not in config.get("projects", {}).get("gap-project", {}).get("local", [])
+            current_workspace_setup["workspace_path"]
+            not in config.get("projects", {}).get("gap-project", {}).get("local", [])
         ), "Expected workspace to be removed from project"
 
     def test_project_export_writes_files(

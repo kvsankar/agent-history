@@ -130,11 +130,12 @@ def list_remote_workspaces(remote_host: str, agent: str = "claude") -> Tuple[Lis
         # Codex uses date-based directory structure
         cmd = '''for f in ~/.codex/sessions/*/*/*/*.jsonl; do
             [ -f "$f" ] || continue
-            head -1 "$f" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/'
+            line=$(grep -m1 '"cwd"' "$f" | head -1)
+            echo "$line" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/'
         done | sort -u'''
     elif agent == "gemini":
-        # Gemini uses hash directories
-        cmd = 'ls -1 ~/.gemini/ 2>/dev/null | head -20'
+        # Gemini uses hash directories under ~/.gemini/tmp
+        cmd = 'ls -1 ~/.gemini/tmp 2>/dev/null || true'
     else:
         return [], f"Unknown agent type: {agent}"
 
@@ -157,14 +158,16 @@ def list_remote_workspaces(remote_host: str, agent: str = "claude") -> Tuple[Lis
             if line.strip()
         ]
 
-        # Filter for workspace directories (start with -) and exclude remote caches
-        workspaces = [
-            ws for ws in items
-            if ws.startswith("-")  # Encoded workspace names start with -
-            and not ws.startswith("remote_") and not ws.startswith("wsl_")
-        ]
+        if agent == "claude":
+            # Filter for workspace directories (start with -) and exclude remote caches
+            workspaces = [
+                ws for ws in items
+                if ws.startswith("-")  # Encoded workspace names start with -
+                and not ws.startswith("remote_") and not ws.startswith("wsl_")
+            ]
+            return workspaces, None
 
-        return workspaces, None
+        return items, None
 
     except subprocess.TimeoutExpired:
         return [], f"SSH command timed out for {remote_host}"
@@ -204,8 +207,28 @@ for f in *.jsonl; do
     lines=$(wc -l < "$f")
     echo "$f|$size|$mtime|$lines"
 done'''
+    elif agent == "codex":
+        cmd = f'''ws='{safe_workspace}'
+for f in ~/.codex/sessions/*/*/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"cwd"' "$f" | head -1)
+    cwd=$(echo "$line" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/')
+    if [ -n "$cwd" ] && [ "$cwd" = "$ws" ]; then
+        size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+        mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+        lines=$(wc -l < "$f")
+        echo "$f|$size|$mtime|$lines|$cwd"
+    fi
+done'''
+    elif agent == "gemini":
+        cmd = f'''for f in ~/.gemini/tmp/'{safe_workspace}'/chats/*.json; do
+    [ -f "$f" ] || continue
+    size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+    lines=$(wc -l < "$f")
+    echo "$f|$size|$mtime|$lines"
+done'''
     else:
-        # TODO: Implement for codex and gemini
         return [], f"Remote session listing not implemented for {agent}"
 
     try:
@@ -226,7 +249,7 @@ done'''
                 continue
             parts = line.strip().split("|")
             if len(parts) >= 4:
-                sessions.append({
+                entry = {
                     "file": parts[0],
                     "size": int(parts[1]) if parts[1].isdigit() else 0,
                     "mtime": int(parts[2]) if parts[2].isdigit() else 0,
@@ -234,7 +257,10 @@ done'''
                     "agent": agent,
                     "workspace": workspace,
                     "home": f"remote:{remote_host}",
-                })
+                }
+                if len(parts) >= 5 and parts[4]:
+                    entry["workspace"] = parts[4]
+                sessions.append(entry)
 
         return sessions, None
 

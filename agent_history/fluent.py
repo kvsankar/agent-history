@@ -141,7 +141,7 @@ class FluentContext:
         if pattern:
             self._scope_args.patterns.append(pattern)
         if project:
-            self._scope_args.project = project
+            self._scope_args.projects.append(project)
         if all_workspaces:
             self._scope_args.all_workspaces = True
         if this_only:

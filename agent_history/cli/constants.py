@@ -23,8 +23,11 @@ FLAGS_WITH_VALUES = frozenset({
     "--home",
     "-r", "--remote",
     "--project",
+    "--session", "--session-id",
     "--by",
     "--top-ws",
+    "--bin-dir",
+    "--skill-dir",
 })
 
 # =============================================================================
@@ -38,6 +41,9 @@ RESOURCE_SUBCOMMANDS = {
     "project": frozenset({"list", "show", "add", "remove", "export", "stats"}),
     "home": frozenset({"list", "show", "add", "remove", "export", "stats"}),
     "gemini-index": frozenset({"index"}),
+    "install": frozenset({"run"}),
+    "reset": frozenset({"run"}),
+    "fetch": frozenset({"run"}),
 }
 
 # Subset used in preprocessing (ws and session only)
@@ -74,10 +80,14 @@ RESOURCE_WS = "ws"
 RESOURCE_PROJECT = "project"
 RESOURCE_HOME = "home"
 RESOURCE_GEMINI_INDEX = "gemini-index"
+RESOURCE_INSTALL = "install"
+RESOURCE_RESET = "reset"
+RESOURCE_FETCH = "fetch"
 
 # Default verbs
 DEFAULT_VERB_LIST = "list"
 DEFAULT_VERB_INDEX = "index"
+DEFAULT_VERB_RUN = "run"
 
 # =============================================================================
 # Global flags that take values (used in preprocessing)

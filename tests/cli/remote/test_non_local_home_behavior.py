@@ -51,23 +51,30 @@ def test_web_home_appears_in_home_list(isolated_home):
     assert any(h.get("home") == "web" for h in homes), "Expected web home in list"
 
 
-def test_remote_cache_is_used_for_sessions(tmp_path: Path):
-    """Remote cache workspaces should be scanned for remote homes."""
+def test_remote_sessions_use_remote_client(tmp_path: Path):
+    """Remote homes should rely on remote client listings, not local cache dirs."""
+    from agent_history.adapters.inventory import InventoryProvider
     from agent_history.scope.cache import SessionCache
     from agent_history.scope.context import ResolutionContext
 
-    projects_dir = tmp_path / ".claude" / "projects"
-    projects_dir.mkdir(parents=True, exist_ok=True)
+    class FakeRemoteClient:
+        def list_workspaces(self, remote_host: str, agent: str = "claude"):
+            return ["-home-testuser-remote-project"]
 
-    builder = ClaudeSessionBuilder(
-        workspace="remote_vm01_-home-testuser-remote-project",
-        session_id="remote-session-001",
-    )
-    builder.add_user_message("hello from remote cache")
-    builder.write_to(projects_dir)
+        def list_sessions(self, remote_host: str, workspace: str, agent: str = "claude"):
+            return [
+                {
+                    "workspace": workspace,
+                    "workspace_readable": "/home/testuser/remote/project",
+                    "file": tmp_path / "remote-session.jsonl",
+                    "filename": "remote-session.jsonl",
+                    "agent": "claude",
+                }
+            ]
 
-    context = ResolutionContext(claude_projects_dir=projects_dir)
-    cache = SessionCache(context)
+    context = ResolutionContext()
+    inventory = InventoryProvider(context, remote_client=FakeRemoteClient())
+    cache = SessionCache(context, inventory_provider=inventory)
 
     sessions = cache.get_sessions("remote:vm01", "/home/testuser/remote/project")
-    assert sessions, "Expected remote cached sessions to be loaded"
+    assert sessions, "Expected remote sessions from remote client"

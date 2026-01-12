@@ -15,6 +15,7 @@ from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.storage.config import load_config
+from agent_history.utils.paths import decode_workspace_path
 
 
 class ProjectListHandler(VerbHandler):
@@ -49,7 +50,13 @@ class ProjectListHandler(VerbHandler):
             all_workspaces = []
             for home_workspaces in definition.values():
                 if isinstance(home_workspaces, list):
-                    all_workspaces.extend(home_workspaces)
+                    all_workspaces.extend(
+                        decode_workspace_path(ws, verify_local=False) for ws in home_workspaces
+                    )
+                elif isinstance(home_workspaces, str):
+                    all_workspaces.append(
+                        decode_workspace_path(home_workspaces, verify_local=False)
+                    )
 
             # Use v1-compatible field names: project, source, workspace
             project_info = {
@@ -157,10 +164,17 @@ class ProjectShowHandler(VerbHandler):
                     for ws in workspaces:
                         workspaces_by_home[home].append(
                             {
-                                "workspace": ws,
+                                "workspace": decode_workspace_path(ws, verify_local=False),
                                 "session_count": 0,
                             }
                         )
+                elif isinstance(workspaces, str):
+                    workspaces_by_home[home].append(
+                        {
+                            "workspace": decode_workspace_path(workspaces, verify_local=False),
+                            "session_count": 0,
+                        }
+                    )
 
         return CommandResult(
             success=True,
@@ -209,37 +223,11 @@ class ProjectStatsHandler(VerbHandler):
                 data_type="error",
                 errors=["Project name not specified."],
             )
+        from agent_history.handlers.stats import SessionStatsHandler
 
-        # Compute statistics from scope
-        stats = {
-            "project": project_name,
-            "total_sessions": 0,
-            "total_messages": 0,
-            "by_agent": defaultdict(int),
-            "by_home": defaultdict(int),
-            "by_workspace": defaultdict(int),
-        }
-
-        for record in scope:
-            for session in record.sessions:
-                stats["total_sessions"] += 1
-                stats["total_messages"] += session.get("message_count", 0)
-
-                agent = session.get("agent", "unknown")
-                stats["by_agent"][agent] += 1
-                stats["by_home"][record.home] += 1
-                stats["by_workspace"][record.workspace] += 1
-
-        # Convert defaultdicts to regular dicts for serialization
-        stats["by_agent"] = dict(stats["by_agent"])
-        stats["by_home"] = dict(stats["by_home"])
-        stats["by_workspace"] = dict(stats["by_workspace"])
-
-        return CommandResult(
-            success=True,
-            data=stats,
-            data_type="stats",
-            metadata={
-                "project": project_name,
-            },
-        )
+        result = SessionStatsHandler().execute(scope, verb_args, output_args)
+        if isinstance(result.data, dict):
+            result.data["project"] = project_name
+        if isinstance(result.metadata, dict):
+            result.metadata["project"] = project_name
+        return result

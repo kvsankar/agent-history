@@ -26,6 +26,8 @@ __all__ = [
     "sync_file_to_db",
     "sync_sessions_to_db",
     "get_session_stats_from_db",
+    "get_tool_usage_stats_from_db",
+    "get_time_stats_from_db",
 ]
 
 # Schema version for migrations
@@ -1057,6 +1059,88 @@ def sync_sessions_to_db(
     return stats
 
 
+def sync_scope_to_db(
+    conn: sqlite3.Connection,
+    scope: "ConcreteScope",
+    force: bool = False,
+) -> Dict[str, int]:
+    """Sync all sessions referenced in a resolved scope to the database."""
+    stats = {"synced": 0, "skipped": 0, "errors": 0}
+    seen_paths: set[str] = set()
+
+    for record in scope:
+        home = record.home
+        for session in record.sessions:
+            file_value = session.get("file")
+            if not file_value:
+                stats["errors"] += 1
+                continue
+
+            file_path = Path(str(file_value))
+
+            if not file_path.exists():
+                if home.startswith("remote:"):
+                    from agent_history.adapters.remote import SSHRemoteClient
+
+                    remote_host = home[7:]
+                    try:
+                        client = SSHRemoteClient()
+                        local_copy = client.ensure_local_copy(remote_host, record.workspace, session)
+                        if local_copy:
+                            file_path = local_copy
+                    except Exception:
+                        stats["errors"] += 1
+                        continue
+                elif home == "web":
+                    from agent_history.backends.web import WebSessionsError, ensure_web_session_cache
+                    from agent_history.backends.web import resolve_web_credentials
+
+                    session_id = (
+                        session.get("session_id") or session.get("id") or session.get("filename")
+                    )
+                    if not session_id:
+                        stats["errors"] += 1
+                        continue
+                    try:
+                        token, org_uuid = resolve_web_credentials()
+                        file_path = ensure_web_session_cache(
+                            str(session_id), token, org_uuid, force=force
+                        )
+                    except WebSessionsError:
+                        stats["errors"] += 1
+                        continue
+
+            if not file_path.exists():
+                stats["errors"] += 1
+                continue
+
+            file_key = str(file_path)
+            if file_key in seen_paths:
+                continue
+            seen_paths.add(file_key)
+
+            agent = session.get("agent") or "claude"
+            try:
+                synced = sync_file_to_db(
+                    conn,
+                    file_path,
+                    source_key=home,
+                    force=force,
+                    workspace=record.workspace,
+                    agent=agent,
+                )
+            except Exception:
+                stats["errors"] += 1
+                continue
+
+            if synced:
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+
+    return stats
+
+
 def get_session_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
     """Get aggregated session statistics from the metrics database.
 
@@ -1101,6 +1185,70 @@ def get_session_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
             "messages": row["messages"],
             "user_messages": row["user_messages"],
             "assistant_messages": row["assistant_messages"],
+        }
+    finally:
+        conn.close()
+
+
+def get_tool_usage_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Dict[str, int]]:
+    """Get aggregated tool usage statistics from the metrics database."""
+    conn = init_metrics_db(db_path)
+    try:
+        cursor = conn.execute(
+            """
+            SELECT tool_name,
+                   COUNT(*) as uses,
+                   COALESCE(SUM(is_error), 0) as errors
+            FROM tool_uses
+            GROUP BY tool_name
+            """
+        )
+        return {
+            row["tool_name"]: {"uses": row["uses"], "errors": row["errors"]}
+            for row in cursor.fetchall()
+            if row["tool_name"]
+        }
+    finally:
+        conn.close()
+
+
+def get_time_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Get aggregated time statistics from the metrics database."""
+    conn = init_metrics_db(db_path)
+    try:
+        cursor = conn.execute(
+            """
+            SELECT
+                COALESCE(SUM(work_period_seconds), 0) as total_seconds,
+                SUM(CASE WHEN work_period_seconds > 0 THEN 1 ELSE 0 END) as sessions_with_time
+            FROM sessions
+            """
+        )
+        row = cursor.fetchone()
+        total_seconds = row["total_seconds"] if row else 0
+        sessions_with_time = row["sessions_with_time"] if row else 0
+        avg_seconds = total_seconds / sessions_with_time if sessions_with_time else 0
+
+        day_cursor = conn.execute(
+            """
+            SELECT SUBSTR(first_timestamp, 1, 10) as day,
+                   COALESCE(SUM(work_period_seconds), 0) as total_seconds
+            FROM sessions
+            WHERE first_timestamp IS NOT NULL AND work_period_seconds > 0
+            GROUP BY day
+            """
+        )
+        by_day = {
+            row["day"]: row["total_seconds"]
+            for row in day_cursor.fetchall()
+            if row["day"]
+        }
+
+        return {
+            "total_duration_seconds": total_seconds,
+            "sessions_with_time": sessions_with_time,
+            "average_duration_seconds": avg_seconds,
+            "by_day": by_day,
         }
     finally:
         conn.close()

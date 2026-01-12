@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_history.backends.claude import read_jsonl_messages
+from agent_history.core.conversation import analyze_conversation_graph, generate_graph_summary
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
 
 
@@ -36,6 +37,12 @@ def parse_jsonl_to_markdown(
 
     # Build header
     md_lines = generate_markdown_file_header(jsonl_file, messages, display_file, agent_type)
+
+    # Add conversation graph summary when forks are detected (Claude only)
+    if show_graph and not minimal and messages and agent_type == AGENT_CLAUDE:
+        graph = analyze_conversation_graph(messages)
+        if not graph.is_linear:
+            md_lines.extend(generate_graph_summary(graph))
 
     md_lines.extend(["", "---", ""])
 
@@ -127,7 +134,14 @@ def generate_message_section(
 
     # Role emoji and header
     role_display = "User" if role == "user" else "Assistant"
-    lines = [f"## Message {index}: {role_display}", ""]
+    lines = []
+
+    if not minimal and msg.get("uuid"):
+        lines.append(f'<a name="msg-{msg["uuid"]}"></a>')
+        lines.append("")
+
+    lines.append(f"## Message {index}: {role_display}")
+    lines.append("")
 
     if timestamp:
         lines.append(f"*{timestamp}*")

@@ -44,6 +44,8 @@ home (local, wsl, windows, web, remote:user@host)
 project = cross-cutting alias that groups workspaces from any home
 ```
 
+`web` homes require Claude credentials and are included by `--ah` unless excluded.
+
 ### Home Types
 
 | Type | Description | Flag |
@@ -85,11 +87,11 @@ agent-history project       # = project list
 
 | Command | Data Accessed | Source |
 |---------|---------------|--------|
-| `session list` | File metadata (name, size, mtime, message count) | JSONL files |
-| `session show` | Full conversation content | JSONL file |
-| `session export` | Full conversation content | JSONL files |
-| `ws list` | Directory listing with session counts | Filesystem |
-| `session stats` | Aggregate metrics (tokens, tools, models, time) | Metrics DB |
+| `session list` | Session metadata (agent, home, workspace, filename, mtime, message count) | Session files (JSONL/JSON) |
+| `session show` | Session summary (metadata only) | Session file or resolved scope |
+| `session export` | Full conversation content (Markdown or NDJSON) | Session files (JSONL/JSON) |
+| `ws list` | Aggregated workspace summary (status, counts, last modified) | Resolved scope |
+| `session stats` | Aggregate metrics (counts; tokens/tools/time only after `--sync`) | Scope + metrics DB |
 
 ### Why Stats Uses a Database
 
@@ -99,29 +101,24 @@ Computing aggregate metrics requires parsing every message in every session file
 - Model breakdown
 - Time tracking (gaps between messages)
 
-This is expensive. The metrics database (`~/.agent-history/metrics.db`) caches these computed values for fast querying.
+This is expensive. The metrics database (`~/.agent-history/metrics.db`) caches these computed values; they are populated only when `--sync` is used.
 
-### Auto-Sync Behavior
+### Sync Behavior
 
-**Stats automatically syncs the scope being queried:**
+Stats do **not** auto-sync. Use `--sync` to populate the metrics database:
 
 ```
-session stats                    # Syncs current workspace, then shows stats
-session stats --aw               # Syncs all local workspaces, then shows stats
-session stats --ah               # Syncs current workspace from all homes
-session stats --ah --aw          # Syncs everything, then shows stats
+session stats --sync             # Syncs local sessions, then shows stats
+session stats --sync --agent codex
 ```
 
 **Sync characteristics:**
-- **Automatic**: No explicit `--sync` needed
-- **Scope-aware**: Only syncs workspaces being queried
+- **Manual**: Requires explicit `--sync`
+- **Local-only**: Syncs local agent storage, independent of scope/home selection
 - **Incremental**: Only processes new/modified files (based on mtime)
 - **Additive**: Deleted sessions remain in DB until `reset --db`
 
-**Skip sync for speed:**
-```
-session stats --no-sync          # Query cached data only (faster, may be stale)
-```
+`--no-sync` skips the automatic metrics sync for stats.
 
 ---
 
@@ -149,6 +146,10 @@ session stats --no-sync          # Query cached data only (faster, may be stale)
 | `--no-web` | Skip web sessions |
 | `--local` | Local home only |
 
+Notes:
+- `--web` includes Claude web sessions; `--no-web` excludes them
+- `--no-wsl`, `--no-windows`, `--no-remote` are honored with `--ah`
+
 ### Workspace Scope (for session commands)
 
 | Argument/Flag | Description |
@@ -159,28 +160,30 @@ session stats --no-sync          # Query cached data only (faster, may be stale)
 | `--this` | Current workspace only (override project auto-detection) |
 
 **Pattern matching:**
-- Patterns match against workspace names (case-insensitive substring)
+- Positional patterns use exact matching when path-like (`/`, `-`, or contains `/`), otherwise substring matching
+- `-n` patterns always use case-insensitive substring matching
 - Multiple patterns: match any
-- Empty pattern or `*` or `all`: match all workspaces
 
 ### Project Scope
 
 | Flag | Description |
 |------|-------------|
-| `--project <name>` | Use workspaces from named project |
+| `--project <name>` | Use workspaces from named project (repeatable) |
+
+Multiple `--project` flags are combined into a single scope.
 
 **Project Auto-Detection:** When running `session`, `ws`, or `export` commands without explicit workspace arguments, if the current directory belongs to a project, the command automatically scopes to that project. Use `--this` to override and target only the current workspace.
 
 ```
 # In ~/myproject (which is part of project "myproj")
-session list                    # → stderr: "Using project myproj (use --this for current workspace only)"
+session list                    # Uses project myproj (implicit)
 session list --this             # Current workspace only, no project expansion
 session list --project other    # Explicit project selection
 ```
 
 ### Cross-Home Access Guard
 
-When accessing non-local homes (`--windows`, `--wsl`, `-r user@host`, `--ah`) from within a local workspace, all session verbs (`list`, `export`, `stats`) require either:
+When accessing non-local homes (`--windows`, `--wsl`, `-r user@host`, `--home <name>`, `--ah`) from within a local workspace, all session verbs (`list`, `export`, `stats`) require either:
 1. An explicit workspace pattern (`-n <pattern>`)
 2. A project that ties the local workspace to remote workspaces
 3. The `--aw` flag (explicitly requesting all workspaces)
@@ -231,7 +234,6 @@ All scope modifiers are orthogonal and can be combined:
 ```
 session list                      # current ws, local home, auto agent
 session list --aw                 # all ws, local home
-session list --ah                 # current ws, all homes
 session list --aw --ah            # all ws, all homes
 session list -n auth --ah         # pattern "auth", all homes
 session list --agent codex        # codex sessions only
@@ -252,7 +254,7 @@ home show <name>                  # Show home details
 home add <source>                 # Add a home
 home add --wsl                    # Add WSL
 home add --windows                # Add Windows
-home add --web                    # Add Claude.ai web sessions
+home add --web                    # Add Claude.ai web home
 home add user@hostname            # Add SSH remote
 home remove <source>              # Remove a home
 home export [name]                # Export all sessions from home(s)
@@ -283,7 +285,7 @@ Browse and export conversation sessions.
 ```
 session [list] [options]          # List sessions
 session show <id>                 # Show session details
-session export [options]          # Export sessions to markdown
+session export [options]          # Export sessions to markdown or NDJSON
 session stats [options]           # Stats for sessions
 
 Scope Options:
@@ -295,9 +297,9 @@ Scope Options:
   --ah, --all-homes               # All homes
   --wsl                           # WSL home
   --windows                       # Windows home
-  --web                           # Claude.ai web sessions
+  --web                           # Include Claude.ai web sessions
   -r <user@host>                  # SSH remote (repeatable)
-  --no-wsl, --no-windows, --no-remote, --no-web  # Exclude sources (with --ah)
+  --no-wsl, --no-windows, --no-remote, --no-web  # Exclude homes when using --ah
 
 Filter Options:
   --agent <agent>                 # Filter by agent: auto, claude, codex, gemini
@@ -309,6 +311,8 @@ List Options:
 
 Export Options:
   -o, --output <dir>              # Output directory (default: ./ai-chats/)
+  --session <id>                  # Export specific session IDs or filenames (repeatable)
+  --json                          # Export NDJSON (unified schema) instead of Markdown
   --minimal                       # No metadata
   --split <lines>                 # Split long conversations
   --flat                          # No workspace subdirectories
@@ -319,10 +323,11 @@ Export Options:
 
 Stats Options:
   --sync                          # Force sync before display
-  --by <dimension>                # Group by: model, tool, day, workspace, home, agent
+  --no-sync                       # Skip auto-sync (faster, uses cached DB)
+  --by <dimension>                # Group by (comma-separated): model, tool, day, workspace, home, agent
   --time                          # Time tracking mode
   --top-ws <n>                    # Limit to top N workspaces
-  -H                              # Human-readable numbers
+  -H                              # Accepted but currently ignored
 
 Output Options:
   --format <fmt>                  # Output format: table, tsv, json
@@ -337,7 +342,7 @@ project [list]                    # List all projects
 project show <name>               # Show project details
 project add <name> <workspace>    # Add workspace to project
 project add <name> -n <pattern>   # Add by pattern
-project add <name> --ah ...       # Add from all homes
+project add <name> --ah ...       # Add from all homes (local + wsl + windows + remotes + web)
 project remove <name> [workspace] # Remove workspace (or entire project)
 project export <name> [options]   # Export all sessions in project
 project stats <name> [options]    # Stats for project
@@ -358,12 +363,13 @@ These are top-level commands that don't follow the noun-verb pattern:
 
 | Command | Description |
 |---------|-------------|
-| `install` | Install CLI to PATH and Claude skill |
-| `reset` | Reset stored data (database, config, projects) |
+| `install` | Report install status (compatibility stub in v2) |
+| `reset` | Reset stored data (database, config, caches) |
+| `fetch` | Pre-fetch remote sessions into local cache |
 | `gemini-index` | Manage Gemini CLI hash→path mappings |
 
 ```
-install                           # Install CLI + skill + retention settings
+install                           # Report install status (no filesystem changes)
 install --skip-skill              # Skip skill installation
 install --skip-cli                # Skip CLI installation
 install --skip-settings           # Skip settings update
@@ -373,6 +379,11 @@ install --skill-dir ~/.claude/skills/custom  # Custom skill directory
 reset                             # Interactive reset (prompts for confirmation)
 reset --db                        # Reset metrics database only
 reset --config                    # Reset configuration only
+reset --settings                  # Reset caches only
+
+fetch --ah                         # Prefetch from all homes
+fetch -r user@host                 # Prefetch from a remote host
+fetch --agent codex --ah           # Prefetch Codex sessions
 
 gemini-index                      # List hash→path mappings
 gemini-index --add                # Add current directory
@@ -453,22 +464,16 @@ agent-history session export -n auth -o ./exports
 
 ```bash
 # List workspaces from all homes
-agent-history ws --ah
+agent-history ws --aw --ah
 
 # List sessions from WSL
-agent-history session --wsl
+agent-history session --wsl --aw
 
 # List sessions from Windows (from WSL)
-agent-history session --windows
-
-# List Claude.ai web sessions
-agent-history session --web
+agent-history session --windows --aw
 
 # Export from multiple homes
 agent-history session export --home local --home remote:vm01
-
-# Export from all homes except remotes
-agent-history session export --ah --no-remote
 
 # Stats across all homes
 agent-history session stats --ah --aw
@@ -478,10 +483,11 @@ agent-history session stats --ah --aw
 
 ```bash
 # Create a project (auto-created on first add)
-agent-history project add myproj -n myproject
+agent-history project add myproj /home/user/myproject
 
-# Add workspace from remote
-agent-history project add myproj -n myproject -r vm01
+# Add workspace from WSL/Windows
+agent-history project add myproj /home/user/myproject --wsl
+agent-history project add myproj /mnt/c/Users/alice/myproject --windows
 
 # Use the project
 agent-history session list --project myproj
@@ -502,8 +508,8 @@ agent-history session export --since 2025-01-01 --until 2025-01-31
 # Export with custom output directory
 agent-history session export -o ./my-exports
 
-# Export single session
-agent-history session export <session-id>
+# Export by session ID or filename
+agent-history session export --session 550e8400-e29b-41d4 -o ./exports
 
 # Minimal export (no metadata)
 agent-history session export --minimal
@@ -516,6 +522,9 @@ agent-history session export --flat
 
 # Include raw source files
 agent-history session export --source
+
+# NDJSON export
+agent-history session export --json
 
 # Parallel export
 agent-history session export --jobs 4
@@ -530,32 +539,26 @@ agent-history session export --force
 ### Stats Options
 
 ```bash
-# Summary stats (auto-syncs current workspace)
+# Summary stats (scope only)
 agent-history session stats
 
-# Stats across scopes (auto-syncs each scope)
+# Stats across scopes (no auto-sync)
 agent-history session stats --aw             # All workspaces
 agent-history session stats --ah             # All homes
 agent-history session stats --ah --aw        # Everything
 
-# Skip sync for speed (use cached data)
-agent-history session stats --no-sync
+# Sync local metrics before stats
+agent-history session stats --sync
+agent-history session stats --sync --agent codex
 
-# Group by dimension
-agent-history session stats --by model
-agent-history session stats --by tool
-agent-history session stats --by day
-agent-history session stats --by workspace
-agent-history session stats --by home,agent    # Multi-dimension
+# Add by_day key in JSON output
+agent-history session stats --by day --format json
 
-# Time tracking
-agent-history session stats --time
+# Time tracking (JSON output, requires --sync)
+agent-history session stats --sync --time --format json
 
 # Limit results
 agent-history session stats --top-ws 10
-
-# Human-readable numbers
-agent-history session stats -H
 
 # Output format
 agent-history session stats --format json
@@ -580,7 +583,7 @@ Lists workspaces with session counts.
 
 **Table (default):**
 ```
-HOME    WORKSPACE                    SESSIONS  STATUS   LAST MODIFIED
+HOME    WORKSPACE                    SESSIONS  STATUS   LAST_MODIFIED
 local   /home/user/projects/api           144  ok       2025-01-03 18:15
 local   /home/user/projects/my-app         23  ok       2025-01-02 10:30
 local   /home/user/projects/deleted        12  missing  2024-12-28 14:22
@@ -588,7 +591,7 @@ local   /home/user/projects/deleted        12  missing  2024-12-28 14:22
 
 **With multi-home (`--ah` or `-r`):**
 ```
-HOME              WORKSPACE                    SESSIONS  STATUS   LAST MODIFIED
+HOME              WORKSPACE                    SESSIONS  STATUS   LAST_MODIFIED
 local             /home/user/projects/api           144  ok       2025-01-03 18:15
 remote:vm01       /home/user/projects/api            89  ok       2025-01-02 10:30
 wsl:Ubuntu        /home/user/projects/my-app         34  ok       2025-01-01 09:15
@@ -614,8 +617,8 @@ local	/home/user/projects/deleted	12	missing	2024-12-28T14:22:00
 **JSON (`--format json`):**
 ```json
 [
-  {"home": "local", "workspace": "/home/user/projects/api", "sessions": 144, "status": "ok", "last_modified": "2025-01-03T18:15:00"},
-  {"home": "local", "workspace": "/home/user/projects/my-app", "sessions": 23, "status": "ok", "last_modified": "2025-01-02T10:30:00"}
+  {"home": "local", "workspace": "/home/user/projects/api", "session_count": 144, "status": "ok", "last_modified": "2025-01-03T18:15:00"},
+  {"home": "local", "workspace": "/home/user/projects/my-app", "session_count": 23, "status": "ok", "last_modified": "2025-01-02T10:30:00"}
 ]
 ```
 
@@ -625,19 +628,22 @@ Lists sessions with metadata.
 
 **Default (table):**
 ```
-SESSION                                   MESSAGES  SIZE      MODIFIED
-550e8400-e29b-41d4-a716-446655440000           127  45.2 KB   2025-01-03 18:15
-agent-a1b2c3d4                                  34  12.1 KB   2025-01-03 17:45
-6ba7b810-9dad-11d1-80b4-00c04fd430c8            89  28.7 KB   2025-01-02 10:30
+AGENT    HOME    WORKSPACE              FILE                                 MESSAGES  DATE
+claude   local   /home/user/myproj      550e8400-e29b-41d4-a716.jsonl              127  2025-01-03
+claude   local   /home/user/myproj      agent-a1b2c3d4.jsonl                        34  2025-01-03
+codex    local   /home/user/other       rollout-173590.jsonl                        89  2025-01-02
 ```
 
 **With `--ah` (multi-home):**
 ```
-HOME              WORKSPACE       SESSION                             MESSAGES  SIZE
-local             claude-history  550e8400-e29b-41d4-a716-446655...        127  45.2 KB
-wsl:Ubuntu        claude-history  6ba7b810-9dad-11d1-80b4-00c04f...         89  28.7 KB
-remote:vm01       my-project      agent-a1b2c3d4                            34  12.1 KB
+AGENT    HOME        WORKSPACE           FILE                               MESSAGES  DATE
+claude   local       /home/user/myproj   550e8400-e29b-41d4.jsonl                127  2025-01-03
+claude   wsl:Ubuntu  /home/user/myproj   6ba7b810-9dad-11d1.jsonl                 89  2025-01-02
+claude   remote:vm01 /home/user/myproj   agent-a1b2c3d4.jsonl                     34  2025-01-03
 ```
+
+**Notes:**
+- `MESSAGES` is `0` unless `--counts` is used
 
 ### session export
 
@@ -645,21 +651,22 @@ Exports sessions to markdown files.
 
 **Default output:**
 ```
-Exporting 3 sessions to ./ai-chats/claude-history/
-  ✓ 20250103181500_550e8400-e29b.md (127 messages)
-  ✓ 20250103174500_agent-a1b2c3d4.md (34 messages)
-  ○ 20250102103000_6ba7b810-9dad.md (skipped, up-to-date)
-Exported: 2, Skipped: 1, Failed: 0
+./ai-chats/home/user/myproj/20250103181500_550e8400-e29b.md
+./ai-chats/home/user/myproj/20250103174500_agent-a1b2c3d4.md
+{'exported': 2, 'skipped': 0, 'failed': 0, 'output_dir': './ai-chats'}
 ```
 
 **With `--quiet`:**
 ```
-Exported: 2, Skipped: 1, Failed: 0
+{'exported': 2, 'skipped': 0, 'failed': 0, 'output_dir': './ai-chats'}
 ```
 
 **Exit codes:**
 - `0`: Success (all files exported or skipped)
 - `1`: Error (one or more files failed)
+
+**Notes:**
+- `--session` restricts export to specific session IDs or filenames
 
 ### session stats
 
@@ -667,60 +674,23 @@ Shows usage statistics.
 
 **Summary (default):**
 ```
-Statistics for claude-history (local)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Sessions: 144  Messages: 30728
 
-Sessions:        144
-Messages:     30,728
-  User:       12,456
-  Assistant:  18,272
+By Agent:
+  claude: 140
+  codex: 4
 
-Tokens:    4,521,890
-  Input:   1,234,567
-  Output:  3,287,323
+By Home:
+  local: 144
 
-Top Models:
-  claude-sonnet-4-5-20250929     89%
-  claude-opus-4-5-20250919       11%
-
-Top Tools:
-  Read          8,234 calls
-  Edit          5,123 calls
-  Bash          3,456 calls
+By Workspace:
+  /home/user/myproj: 120
+  /home/user/other: 24
 ```
 
-**With `--by tool`:**
-```
-TOOL              CALLS     TOKENS
-Read              8,234    234,567
-Edit              5,123    189,012
-Bash              3,456    156,789
-Grep              2,345     89,012
-Write             1,234     67,890
-```
-
-**With `--by day`:**
-```
-DATE          SESSIONS  MESSAGES    TOKENS
-2025-01-03          12       456    45,678
-2025-01-02          15       789    78,901
-2025-01-01           8       234    23,456
-```
-
-**With `--time`:**
-```
-Time Tracking for claude-history
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Total Time:   45h 23m
-Active Days:       12
-
-Daily Breakdown:
-DATE          TIME      SESSIONS
-2025-01-03   4h 12m          12
-2025-01-02   5h 45m          15
-2025-01-01   2h 30m           8
-```
+**Notes:**
+- Token/tool/time breakdowns are available in `--format json` after sync (auto unless `--no-sync`)
+- `--by` controls which groupings appear in table output; `by_day` is included only when requested
 
 ### home list
 
@@ -728,11 +698,11 @@ Lists configured homes.
 
 **Default:**
 ```
-HOME              TYPE      STATUS    WORKSPACES
-local             local     ✓              45
-wsl:Ubuntu        wsl       ✓              23
-remote:vm01       ssh       ✓              12
-remote:vm02       ssh       ✗ unreachable   -
+HOME              TYPE      STATUS       SESSIONS
+local             local     ok                 45
+wsl:Ubuntu        wsl       ok                 23
+remote:vm01       remote    configured         12
+remote:vm02       remote    configured          0
 ```
 
 ### project list
@@ -741,10 +711,12 @@ Lists configured projects.
 
 **Default:**
 ```
-PROJECT       WORKSPACES  HOMES
-myproject              3  local, wsl:Ubuntu, remote:vm01
-api-work               2  local, remote:vm01
+PROJECT       SOURCE                       WORKSPACE             SESSIONS
+myproject     local, wsl:Ubuntu, remote:vm01 3 workspaces         45
+api-work      local, remote:vm01             2 workspaces         12
 ```
+
+Note: `SESSIONS` is only populated with `project list --counts`.
 
 ### project show
 
@@ -754,13 +726,14 @@ Shows project details.
 ```
 Project: myproject
 
-Workspaces:
-  local             /home/user/myproject
-  wsl:Ubuntu        /home/user/myproject
-  remote:vm01       /home/user/myproject
+Total Sessions: 45
 
-Sessions: 45
-Last Modified: 2025-01-03 18:15
+  local:
+    /home/user/myproject (12 sessions)
+  wsl:Ubuntu:
+    /home/user/myproject (18 sessions)
+  remote:vm01:
+    /home/user/myproject (15 sessions)
 ```
 
 ### ws show
@@ -769,46 +742,23 @@ Shows workspace details.
 
 **Default:**
 ```
-Workspace: claude-history
-Path: /home/user/claude-history
-Home: local
-
-Sessions:        144
-Messages:     30,728
-Last Modified: 2025-01-03 18:15
-
-Recent Sessions:
-  550e8400-e29b-41d4...  127 messages  2025-01-03 18:15
-  agent-a1b2c3d4          34 messages  2025-01-03 17:45
-  6ba7b810-9dad-11d1...   89 messages  2025-01-02 10:30
+HOME    WORKSPACE                 SESSIONS  STATUS  LAST_MODIFIED
+local   /home/user/claude-history      144  ok      2025-01-03 18:15
 ```
 
 ### session show
 
-Shows session details (full conversation).
+Shows session metadata (no full conversation rendering).
 
-**Default:**
-```
-Session: 550e8400-e29b-41d4-a716-446655440000
-Workspace: claude-history
-Home: local
-Agent: claude
+**Default (table format):** raw dict rendering.
 
-Started: 2025-01-03 10:15:00
-Ended: 2025-01-03 18:15:00
-Duration: 8h 0m (effort: 2h 15m)
-
-Messages: 127 (52 user, 75 assistant)
-Tokens: 45,678 (input: 12,345, output: 33,333)
-Tools: Read (45), Edit (23), Bash (12)
-
---- Conversation ---
-
-[Message 1] User | 2025-01-03 10:15:00
-Help me fix this bug...
-
-[Message 2] Assistant | 2025-01-03 10:15:05
-I'll help you fix that bug...
+**With `--format json`:**
+```json
+{
+  "file": "/home/user/.claude/projects/-home-user-myproject/550e8400.jsonl",
+  "filename": "550e8400.jsonl",
+  "message_count": 127
+}
 ```
 
 ### home show
@@ -817,19 +767,8 @@ Shows home details.
 
 **Default:**
 ```
-Home: remote:vm01
-Type: ssh
-Host: user@vm01
-Status: ✓ connected
-
-Workspaces: 12
-Sessions: 156
-Last Synced: 2025-01-03 18:00
-
-Top Workspaces:
-  my-project         45 sessions
-  api-server         23 sessions
-  docs               12 sessions
+HOME        TYPE    STATUS       SESSIONS
+remote:vm01 remote  configured         12
 ```
 
 ### Error Output
@@ -838,25 +777,17 @@ Errors are written to stderr.
 
 **Workspace not found:**
 ```
-Error: Workspace 'nonexistent' not found
-
-Did you mean one of these?
-  - my-project
-  - my-other-project
+Error in workspace: Not in a recognized workspace
+  Did you mean: Use --aw to list all workspaces or specify a pattern
 ```
 
 **SSH connection failed:**
 ```
-Error: Cannot connect to remote 'vm01'
-  SSH connection failed: Connection refused
+Error: Cannot connect to vm01 via passwordless SSH
+Setup: ssh-copy-id vm01
 ```
 
 **No sessions found:**
 ```
-No sessions found matching criteria.
-```
-
-**Project auto-detection notice (stderr):**
-```
-Using project myproj (use --this for current workspace only)
+No sessions found.
 ```

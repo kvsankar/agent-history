@@ -64,27 +64,66 @@ class SessionStatsHandler(VerbHandler):
         group_by = verb_args.get("by")
         include_time = verb_args.get("time", False)
         top_limit = verb_args.get("top")
+        top_ws = verb_args.get("top_ws")
 
         # Compute statistics
-        stats = self._compute_stats(scope, group_by, include_time)
+        from agent_history.core.stats import apply_top_limit, compute_stats, overlay_metrics
+
+        group_list = []
+        if isinstance(group_by, list):
+            group_list = [value for value in group_by if value]
+        elif isinstance(group_by, str):
+            group_list = [group_by]
+
+        include_day = "day" in group_list
+        stats = compute_stats(scope, "day" if include_day else None, include_time)
 
         # If sync was used, overlay token totals from metrics database
         # This ensures accurate token counts that were parsed during sync
         if verb_args.get("sync"):
             try:
-                from agent_history.storage.metrics import get_session_stats_from_db
+                from agent_history.storage.metrics import (
+                    get_session_stats_from_db,
+                    get_time_stats_from_db,
+                    get_tool_usage_stats_from_db,
+                )
 
                 db_stats = get_session_stats_from_db()
-                stats["tokens"]["input"] = db_stats["input_tokens"]
-                stats["tokens"]["output"] = db_stats["output_tokens"]
-                stats["tokens"]["cache_creation"] = db_stats["cache_creation_tokens"]
-                stats["tokens"]["cache_read"] = db_stats["cache_read_tokens"]
+                db_stats["by_tool"] = get_tool_usage_stats_from_db()
+                if include_time:
+                    db_stats["time_stats"] = get_time_stats_from_db()
+                stats = overlay_metrics(stats, db_stats)
             except Exception:
                 pass  # Fall back to scope-based stats if DB query fails
 
         # Apply top limit to breakdowns if specified
         if top_limit:
-            stats = self._apply_top_limit(stats, top_limit)
+            stats = apply_top_limit(stats, top_limit)
+
+        if top_ws:
+            by_workspace = stats.get("by_workspace")
+            if isinstance(by_workspace, dict):
+                stats["by_workspace"] = dict(list(by_workspace.items())[:top_ws])
+
+        stats["total_sessions"] = stats.get("sessions", 0)
+        stats["total_messages"] = stats.get("messages", 0)
+
+        workspace_rows = []
+        for record in scope:
+            session_count = len(record.sessions)
+            message_count = sum(s.get("message_count", 0) for s in record.sessions)
+            workspace_rows.append(
+                {
+                    "home": record.home,
+                    "workspace": record.workspace,
+                    "sessions": session_count,
+                    "messages": message_count,
+                }
+            )
+        workspace_rows.sort(key=lambda r: r["sessions"], reverse=True)
+        if top_ws:
+            workspace_rows = workspace_rows[:top_ws]
+        stats["workspace_rows"] = workspace_rows
 
         # Build metadata
         all_homes = set()
@@ -103,7 +142,7 @@ class SessionStatsHandler(VerbHandler):
                 "total_sessions": total_sessions,
                 "homes": sorted(all_homes),
                 "workspaces": sorted(all_workspaces),
-                "group_by": group_by,
+                "group_by": group_list,
                 "include_time": include_time,
             },
         )

@@ -285,7 +285,7 @@ When syncing between machines (P1 ↔ P2), the tool automatically filters out ca
 
 ### Cache locations
 
-- Remote: `~/.claude/projects/remote_hostname_workspace`
+- Remote: `~/.agent-history/remote-cache/<host>/<agent>/<workspace>`
 - WSL: Direct filesystem access (no caching)
 
 ---
@@ -296,8 +296,9 @@ When syncing between machines (P1 ↔ P2), the tool automatically filters out ca
 
 All data is stored in `~/.agent-history/`:
 - `metrics.db` - SQLite database for stats and time tracking
-- `config.json` - Settings (saved SSH remotes)
-- `aliases.json` - Workspace alias definitions
+- `config.json` - Settings (saved SSH remotes + projects)
+- `remote-cache/` - Cached remote session files
+- `gemini_index.json` - Gemini hash index
 - On first run, any legacy `~/.claude-history/` directory is migrated here and removed.
 
 ### How do I start fresh?
@@ -309,8 +310,8 @@ agent-history reset
 
 # Delete only specific data
 agent-history reset db        # Metrics only
-agent-history reset aliases   # Aliases only
-agent-history reset settings  # SSH remotes only
+agent-history reset config    # Homes/projects only
+agent-history reset settings  # Remote cache only
 
 # Skip confirmation (for scripts)
 agent-history reset -y

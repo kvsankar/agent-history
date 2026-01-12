@@ -95,7 +95,7 @@ class TestBuildScopeArgs:
     def test_project_arg(self):
         """Test project parameter."""
         args = api._build_scope_args(project="myapp")
-        assert args.project == "myapp"
+        assert args.projects == ["myapp"]
 
     def test_all_workspaces(self):
         """Test all_workspaces flag."""

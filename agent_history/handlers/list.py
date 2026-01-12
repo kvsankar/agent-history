@@ -447,6 +447,8 @@ class HomeListHandler(VerbHandler):
             saved_homes = get_saved_homes()
             for home_spec in saved_homes:
                 if isinstance(home_spec, str):
+                    if home_spec == "web":
+                        continue
                     if home_spec.startswith("remote:"):
                         name = home_spec[7:]
                         home_key = f"remote:{name}"
@@ -456,6 +458,8 @@ class HomeListHandler(VerbHandler):
                         continue
                 elif isinstance(home_spec, dict) and home_spec.get("name"):
                     name = home_spec["name"]
+                    if name == "web":
+                        continue
                     if name.startswith("remote:"):
                         home_key = name
                     elif not name.startswith(("wsl:", "windows:", "local")):
@@ -581,6 +585,7 @@ class GeminiIndexHandler(VerbHandler):
         from agent_history.backends.gemini import (
             gemini_add_paths_to_index,
             gemini_load_hash_index,
+            gemini_rebuild_hash_index,
             HASH_DISPLAY_LEN,
         )
 
@@ -589,11 +594,12 @@ class GeminiIndexHandler(VerbHandler):
         full_hash = verb_args.get("full_hash", False)
 
         if rebuild_mode:
+            result = gemini_rebuild_hash_index()
             return CommandResult(
                 success=True,
-                data={"action": "rebuild", "status": "not implemented"},
+                data={"action": "rebuild", **result},
                 data_type="gemini_index",
-                metadata={"message": "Gemini index rebuild not yet implemented"},
+                metadata={"message": "Gemini index rebuilt"},
             )
         elif add_paths is not None:
             # --add was specified (even with empty list means use current directory)

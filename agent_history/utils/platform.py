@@ -28,6 +28,10 @@ __all__ = [
     "get_windows_users_with_claude",
     "get_windows_projects_dir",
     "get_wsl_projects_dir",
+    "get_wsl_codex_sessions_dir",
+    "get_wsl_gemini_sessions_dir",
+    "get_windows_codex_sessions_dir",
+    "get_windows_gemini_sessions_dir",
     # Command path resolution
     "get_command_path",
     # Cache management (for testing)
@@ -693,6 +697,31 @@ def get_wsl_projects_dir(distro_name: str) -> Optional[Path]:
     return None
 
 
+def _get_wsl_agent_sessions_dir(
+    distro_name: str, agent: str, env_var: str
+) -> Optional[Path]:
+    """Get a WSL agent sessions directory with optional override."""
+    override = os.environ.get(env_var)
+    if override and Path(override).exists():
+        return Path(override)
+
+    username = _get_wsl_username(distro_name)
+    if not username:
+        return None
+
+    return _locate_wsl_agent_dir(distro_name, username, agent)
+
+
+def get_wsl_codex_sessions_dir(distro_name: str) -> Optional[Path]:
+    """Get Codex sessions directory for a WSL distribution."""
+    return _get_wsl_agent_sessions_dir(distro_name, AGENT_CODEX, "CODEX_WSL_SESSIONS_DIR")
+
+
+def get_wsl_gemini_sessions_dir(distro_name: str) -> Optional[Path]:
+    """Get Gemini sessions directory for a WSL distribution."""
+    return _get_wsl_agent_sessions_dir(distro_name, AGENT_GEMINI, "GEMINI_WSL_SESSIONS_DIR")
+
+
 def get_windows_projects_dir(username: Optional[str] = None):
     """Get Claude projects directory for Windows from WSL.
 
@@ -722,3 +751,37 @@ def get_windows_projects_dir(username: Optional[str] = None):
         return None
 
     return projects_dir
+
+
+def get_windows_codex_sessions_dir(username: Optional[str] = None) -> Optional[Path]:
+    """Get Codex sessions directory for Windows (from WSL)."""
+    override = os.environ.get("CODEX_WINDOWS_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    if not is_running_in_wsl():
+        return None
+
+    windows_home = get_windows_home_from_wsl(username)
+    if not windows_home:
+        return None
+
+    sessions_dir = windows_home / ".codex" / "sessions"
+    return sessions_dir if sessions_dir.exists() else None
+
+
+def get_windows_gemini_sessions_dir(username: Optional[str] = None) -> Optional[Path]:
+    """Get Gemini sessions directory for Windows (from WSL)."""
+    override = os.environ.get("GEMINI_WINDOWS_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    if not is_running_in_wsl():
+        return None
+
+    windows_home = get_windows_home_from_wsl(username)
+    if not windows_home:
+        return None
+
+    sessions_dir = windows_home / ".gemini" / "tmp"
+    return sessions_dir if sessions_dir.exists() else None

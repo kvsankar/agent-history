@@ -49,7 +49,7 @@ def test_export_all_homes_generates_manifest(
     for md_file in md_files:
         # Export-all should organize sessions under workspace subdirectories.
         assert md_file.parent != output_dir, "sessions should be grouped by workspace"
-        workspace = md_file.parent.name
+        workspace = str(md_file.parent.relative_to(output_dir))
         workspace_counts[workspace] = workspace_counts.get(workspace, 0) + 1
 
     content = index_file.read_text(encoding="utf-8")

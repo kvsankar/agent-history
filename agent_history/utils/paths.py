@@ -31,10 +31,13 @@ __all__ = [
     "is_cached_workspace",
     "is_native_workspace",
     "normalize_workspace_name",
+    "is_encoded_workspace_name",
+    "decode_workspace_path",
     "get_folder_short_name",
     "get_current_workspace_pattern",
     "get_workspace_name_from_path",
     "convert_windows_path_to_encoded",
+    "encode_workspace_path",
 ]
 
 # ============================================================================
@@ -105,6 +108,26 @@ def _is_windows_encoded_path(name: str) -> bool:
     """Check if name is a Windows-style encoded path (e.g., 'C--path-to-dir')."""
     # Must be at least 3 chars, start with drive letter (A-Z), followed by "--"
     return len(name) >= MIN_ENCODED_PATH_LEN and name[0].isalpha() and name[1:3] == "--"
+
+
+def is_encoded_workspace_name(name: str) -> bool:
+    """Return True if the workspace name looks Claude-encoded."""
+    if not name:
+        return False
+    if name.startswith("-"):
+        return True
+    return _is_windows_encoded_path(name)
+
+
+def decode_workspace_path(workspace: str, verify_local: bool = False) -> str:
+    """Decode a workspace path if it appears encoded."""
+    if not workspace:
+        return workspace
+    if "/" in workspace or "\\" in workspace:
+        return workspace
+    if is_encoded_workspace_name(workspace):
+        return normalize_workspace_name(workspace, verify_local=verify_local)
+    return workspace
 
 
 def _build_current_path(base_path: Path, segments: list[str]) -> Path:
@@ -617,3 +640,26 @@ def convert_windows_path_to_encoded(path: str) -> str:
     drive = path[0].upper()
     rest = path[2:].lstrip("/\\").replace("\\", "/").replace("/", "-")
     return f"{drive}--{rest}"
+
+
+def encode_workspace_path(path: str) -> str:
+    """Encode a path as a Claude workspace directory name."""
+    path = path.replace("\\", "/").rstrip("/")
+
+    if len(path) >= MIN_WINDOWS_PATH_LEN and path[1:2] == ":":
+        drive = path[0].upper()
+        remainder = path[2:].lstrip("/").replace("/", "-")
+        return f"{drive}--{remainder}"
+
+    wsl_prefix = "/mnt/"
+    if path.startswith(wsl_prefix) and len(path) > len(wsl_prefix):
+        drive_letter = path[len(wsl_prefix)]
+        if drive_letter.isalpha():
+            drive = drive_letter.upper()
+            remainder = path[len(wsl_prefix) + 1 :].lstrip("/").replace("/", "-")
+            return f"{drive}--{remainder}"
+
+    encoded = path.replace("/", "-")
+    if not encoded.startswith("-"):
+        encoded = "-" + encoded
+    return encoded

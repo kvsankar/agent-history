@@ -712,6 +712,7 @@ def _get_session_from_file(
         jsonl_file, skip_message_count, use_cached_counts=use_cached_counts
     )
     return {
+        "agent": "claude",
         "workspace": workspace_dir.name,
         "workspace_readable": readable_name,
         "file": jsonl_file,
@@ -720,6 +721,7 @@ def _get_session_from_file(
         "modified": datetime.fromtimestamp(stat.st_mtime),
         "message_count": message_count,
         "message_count_skipped": skip_message_count,
+        "source": "local",
     }
 
 

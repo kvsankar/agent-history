@@ -180,39 +180,98 @@ class TableFormatter(DataFormatter):
         lines = []
 
         # Summary line
-        total_sessions = stats.get("total_sessions", 0)
-        total_messages = stats.get("total_messages", 0)
+        total_sessions = stats.get("total_sessions", stats.get("sessions", 0))
+        total_messages = stats.get("total_messages", stats.get("messages", 0))
         lines.append(f"Sessions: {total_sessions}  Messages: {total_messages}")
         lines.append("")
 
-        # By agent
-        by_agent = stats.get("by_agent", {})
-        if by_agent:
-            lines.append("By Agent:")
-            for agent, count in sorted(by_agent.items()):
-                lines.append(f"  {agent}: {count}")
-            lines.append("")
+        group_by = metadata.get("group_by") or []
+        if isinstance(group_by, str):
+            group_list = [group_by]
+        else:
+            group_list = list(group_by)
+        if not group_list:
+            group_list = ["agent", "home", "workspace"]
 
-        # By home
-        by_home = stats.get("by_home", {})
-        if by_home:
-            lines.append("By Home:")
-            for home, count in sorted(by_home.items()):
-                lines.append(f"  {home}: {count}")
-            lines.append("")
+        def get_count(value: Any, key: str) -> Any:
+            if isinstance(value, dict):
+                if key in value:
+                    return value[key]
+                if "sessions" in value:
+                    return value["sessions"]
+                if "uses" in value:
+                    return value["uses"]
+                if "messages" in value:
+                    return value["messages"]
+            return value
 
-        # By workspace (limited)
-        by_workspace = stats.get("by_workspace", {})
-        if by_workspace:
-            lines.append("By Workspace:")
-            sorted_ws = sorted(by_workspace.items(), key=lambda x: -x[1])
-            for ws, count in sorted_ws[:10]:  # Top 10
-                ws_display = ws
-                if len(ws_display) > 50:
-                    ws_display = "..." + ws_display[-47:]
-                lines.append(f"  {ws_display}: {count}")
-            if len(by_workspace) > 10:
-                lines.append(f"  ... and {len(by_workspace) - 10} more")
+        if "agent" in group_list:
+            by_agent = stats.get("by_agent", {})
+            if by_agent:
+                lines.append("By Agent:")
+                for agent, value in sorted(by_agent.items()):
+                    lines.append(f"  {agent}: {get_count(value, 'sessions')}")
+                lines.append("")
+
+        if "home" in group_list:
+            by_home = stats.get("by_home", {})
+            if by_home:
+                lines.append("By Home:")
+                for home, value in sorted(by_home.items()):
+                    lines.append(f"  {home}: {get_count(value, 'sessions')}")
+                lines.append("")
+
+        if "workspace" in group_list:
+            by_workspace = stats.get("by_workspace", {})
+            if by_workspace:
+                lines.append("By Workspace:")
+                sorted_ws = sorted(
+                    by_workspace.items(), key=lambda x: -get_count(x[1], "sessions")
+                )
+                for ws, value in sorted_ws[:10]:
+                    ws_display = ws
+                    if len(ws_display) > 50:
+                        ws_display = "..." + ws_display[-47:]
+                    lines.append(f"  {ws_display}: {get_count(value, 'sessions')}")
+                if len(by_workspace) > 10:
+                    lines.append(f"  ... and {len(by_workspace) - 10} more")
+                lines.append("")
+
+        if "model" in group_list:
+            by_model = stats.get("by_model", {})
+            if by_model:
+                lines.append("By Model:")
+                for model, value in sorted(by_model.items()):
+                    if isinstance(value, dict):
+                        lines.append(
+                            f"  {model}: {value.get('messages', 0)} messages"
+                            f", {value.get('tokens', 0)} tokens"
+                        )
+                    else:
+                        lines.append(f"  {model}: {value}")
+                lines.append("")
+
+        if "tool" in group_list:
+            by_tool = stats.get("by_tool", {})
+            if by_tool:
+                lines.append("By Tool:")
+                for tool, value in sorted(by_tool.items()):
+                    if isinstance(value, dict):
+                        lines.append(
+                            f"  {tool}: {value.get('uses', 0)} uses"
+                            f", {value.get('errors', 0)} errors"
+                        )
+                    else:
+                        lines.append(f"  {tool}: {value}")
+                lines.append("")
+
+        if "day" in group_list:
+            by_day = stats.get("by_day", {})
+            if by_day:
+                lines.append("By Day:")
+                for day, value in sorted(by_day.items()):
+                    lines.append(f"  {day}: {get_count(value, 'sessions')}")
+                lines.append("")
 
         return "\n".join(lines)
 
@@ -365,6 +424,7 @@ class TsvFormatter(DataFormatter):
             "workspace_list": self._format_workspace_list,
             "home_list": self._format_home_list,
             "project_list": self._format_project_list,
+            "stats": self._format_stats,
         }
 
     def format(self, data: Any, data_type: str, metadata: Dict[str, Any]) -> str:
@@ -480,6 +540,26 @@ class TsvFormatter(DataFormatter):
             ]
             lines.append("\t".join(row))
 
+        return "\n".join(lines)
+
+    def _format_stats(self, stats: StatsDict) -> str:
+        """Format stats workspace breakdown as TSV."""
+        rows = stats.get("workspace_rows", [])
+        if not rows:
+            return ""
+        headers = ["HOME", "WORKSPACE", "SESSIONS", "MESSAGES"]
+        lines = ["\t".join(headers)]
+        for row in rows:
+            lines.append(
+                "\t".join(
+                    [
+                        str(row.get("home", "")),
+                        str(row.get("workspace", "")),
+                        str(row.get("sessions", 0)),
+                        str(row.get("messages", 0)),
+                    ]
+                )
+            )
         return "\n".join(lines)
 
 

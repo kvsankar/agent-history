@@ -59,6 +59,7 @@ def _build_scope_args(  # noqa: PLR0913, C901
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
+    projects: Optional[List[str]] = None,
     project: Optional[str] = None,
     all_workspaces: bool = False,
     this_only: bool = False,
@@ -82,8 +83,10 @@ def _build_scope_args(  # noqa: PLR0913, C901
         args.patterns.extend(patterns)
 
     # Workspace scope
+    if projects:
+        args.projects.extend(projects)
     if project:
-        args.project = project
+        args.projects.append(project)
     if all_workspaces:
         args.all_workspaces = True
     if this_only:
@@ -148,6 +151,7 @@ def sessions(  # noqa: PLR0913
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
+    projects: Optional[List[str]] = None,
     project: Optional[str] = None,
     all_workspaces: bool = False,
     this_only: bool = False,
@@ -167,6 +171,7 @@ def sessions(  # noqa: PLR0913
     Args:
         pattern: Workspace pattern to match (path or substring).
         patterns: Multiple workspace patterns.
+        projects: Project names from configuration.
         project: Project name from configuration.
         all_workspaces: Include all workspaces in scope.
         this_only: Restrict to current workspace only.
@@ -196,6 +201,7 @@ def sessions(  # noqa: PLR0913
     scope_args = _build_scope_args(
         pattern,
         patterns=patterns,
+        projects=projects,
         project=project,
         all_workspaces=all_workspaces,
         this_only=this_only,
@@ -221,6 +227,7 @@ def workspaces(
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
+    projects: Optional[List[str]] = None,
     project: Optional[str] = None,
     all_workspaces: bool = False,
     all_homes: bool = False,
@@ -235,6 +242,7 @@ def workspaces(
     Args:
         pattern: Workspace pattern to match.
         patterns: Multiple workspace patterns.
+        projects: Project names from configuration.
         project: Project name from configuration.
         all_workspaces: Include all workspaces.
         all_homes: Search all available homes.
@@ -252,6 +260,7 @@ def workspaces(
     scope_args = _build_scope_args(
         pattern,
         patterns=patterns,
+        projects=projects,
         project=project,
         all_workspaces=all_workspaces,
         all_homes=all_homes,
@@ -334,6 +343,7 @@ def list_sessions(  # noqa: PLR0913
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
+    projects: Optional[List[str]] = None,
     project: Optional[str] = None,
     all_workspaces: bool = False,
     this_only: bool = False,
@@ -354,6 +364,7 @@ def list_sessions(  # noqa: PLR0913
     Args:
         pattern: Workspace pattern to match.
         patterns: Multiple workspace patterns.
+        projects: Project names from configuration.
         project: Project name from configuration.
         all_workspaces: Include all workspaces.
         this_only: Restrict to current workspace.
@@ -378,6 +389,7 @@ def list_sessions(  # noqa: PLR0913
     scope_args = _build_scope_args(
         pattern,
         patterns=patterns,
+        projects=projects,
         project=project,
         all_workspaces=all_workspaces,
         this_only=this_only,
@@ -399,6 +411,7 @@ def list_workspaces(  # noqa: PLR0913
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
+    projects: Optional[List[str]] = None,
     project: Optional[str] = None,
     all_workspaces: bool = False,
     all_homes: bool = False,
@@ -412,6 +425,7 @@ def list_workspaces(  # noqa: PLR0913
     Args:
         pattern: Workspace pattern to match.
         patterns: Multiple workspace patterns.
+        projects: Project names from configuration.
         project: Project name from configuration.
         all_workspaces: Include all workspaces.
         all_homes: Search all homes.
@@ -431,6 +445,7 @@ def list_workspaces(  # noqa: PLR0913
     scope_args = _build_scope_args(
         pattern,
         patterns=patterns,
+        projects=projects,
         project=project,
         all_workspaces=all_workspaces,
         all_homes=all_homes,
@@ -498,6 +513,7 @@ def export(  # noqa: PLR0913
     output_dir: Optional[Union[str, Path]] = None,
     *,
     patterns: Optional[List[str]] = None,
+    projects: Optional[List[str]] = None,
     project: Optional[str] = None,
     all_workspaces: bool = False,
     all_homes: bool = False,
@@ -520,6 +536,7 @@ def export(  # noqa: PLR0913
         pattern: Workspace pattern to match.
         output_dir: Output directory (default: ./ai-chats).
         patterns: Multiple workspace patterns.
+        projects: Project names from configuration.
         project: Project name from configuration.
         all_workspaces: Include all workspaces.
         all_homes: Search all homes.
@@ -547,6 +564,7 @@ def export(  # noqa: PLR0913
     scope_args = _build_scope_args(
         pattern,
         patterns=patterns,
+        projects=projects,
         project=project,
         all_workspaces=all_workspaces,
         all_homes=all_homes,
@@ -581,6 +599,7 @@ def stats(  # noqa: PLR0913
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
+    projects: Optional[List[str]] = None,
     project: Optional[str] = None,
     all_workspaces: bool = False,
     all_homes: bool = False,
@@ -598,6 +617,7 @@ def stats(  # noqa: PLR0913
     Args:
         pattern: Workspace pattern to match.
         patterns: Multiple workspace patterns.
+        projects: Project names from configuration.
         project: Project name from configuration.
         all_workspaces: Include all workspaces.
         all_homes: Search all homes.
@@ -620,6 +640,7 @@ def stats(  # noqa: PLR0913
     scope_args = _build_scope_args(
         pattern,
         patterns=patterns,
+        projects=projects,
         project=project,
         all_workspaces=all_workspaces,
         all_homes=all_homes,
@@ -649,6 +670,7 @@ def stats(  # noqa: PLR0913
 def count_sessions(
     pattern: Optional[str] = None,
     *,
+    projects: Optional[List[str]] = None,
     all_workspaces: bool = False,
     all_homes: bool = False,
     since: Optional[str] = None,
@@ -679,6 +701,7 @@ def count_sessions(
     """
     scope_args = _build_scope_args(
         pattern,
+        projects=projects,
         all_workspaces=all_workspaces,
         all_homes=all_homes,
         since=since,

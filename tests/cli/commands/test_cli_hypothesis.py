@@ -212,7 +212,7 @@ class TestStatsCombinations:
         use_sync=st.booleans(),
         use_ah=st.booleans(),
         use_aw=st.booleans(),
-        view=st.sampled_from([None, "tools", "models", "by-workspace", "by-day", "time"]),
+        view=st.sampled_from([None, "tool", "model", "workspace", "day", "time"]),
     )
     @settings(max_examples=100, suppress_health_check=DEFAULT_HEALTH, deadline=None)
     def test_stats_flag_combinations(
@@ -231,7 +231,10 @@ class TestStatsCombinations:
         if use_aw:
             args.append("--aw")
         if view:
-            args.append(f"--{view}")
+            if view == "time":
+                args.append("--time")
+            else:
+                args.extend(["--by", view])
 
         result = _run(args, env=isolated_home["env"], cwd=isolated_home["path"])
         assert "Traceback" not in result.stderr
@@ -250,14 +253,17 @@ class TestStatsCombinations:
     ):
         """Stats multi-view flags should be tolerated."""
         args = ["session", "stats"]
+        by_dims = []
         if use_tools:
-            args.append("--tools")
+            by_dims.append("tool")
         if use_models:
-            args.append("--models")
+            by_dims.append("model")
         if use_by_workspace:
-            args.append("--by-workspace")
+            by_dims.append("workspace")
         if use_by_day:
-            args.append("--by-day")
+            by_dims.append("day")
+        if by_dims:
+            args.extend(["--by", ",".join(by_dims)])
         if use_time:
             args.append("--time")
 

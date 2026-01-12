@@ -24,7 +24,7 @@ class SessionCache:
     Sessions are loaded lazily when first requested for a home.
     """
 
-    def __init__(self, context: ResolutionContext):
+    def __init__(self, context: ResolutionContext, inventory_provider: Optional[Any] = None):
         """
         Initialize the session cache with a resolution context.
 
@@ -32,6 +32,11 @@ class SessionCache:
             context: Resolution context containing agent paths.
         """
         self.context = context
+        if inventory_provider is None:
+            from agent_history.adapters.inventory import InventoryProvider
+
+            inventory_provider = InventoryProvider(context)
+        self.inventory_provider = inventory_provider
         # Session cache: {home: {workspace: [sessions]}}
         # Loaded once per home, grouped by workspace for O(1) lookup
         self._cache: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
@@ -72,33 +77,13 @@ class SessionCache:
         # Group sessions by workspace
         workspace_sessions: Dict[str, List[Dict[str, Any]]] = {}
 
-        # Load all Claude sessions for this home
-        claude_sessions = self._load_claude_sessions(home)
-        for session in claude_sessions:
+        all_sessions = self.inventory_provider.list_sessions(home)
+        for session in all_sessions:
             ws = session.get("workspace_readable") or session.get("workspace", "")
-            if ws not in workspace_sessions:
-                workspace_sessions[ws] = []
-            workspace_sessions[ws].append(session)
-
-        # Load all Codex sessions for this home
-        codex_sessions = self._load_codex_sessions(home)
-        for session in codex_sessions:
-            ws = session.get("workspace_readable") or session.get("workspace", "")
-            if ws not in workspace_sessions:
-                workspace_sessions[ws] = []
-            workspace_sessions[ws].append(session)
-
-        # Load all Gemini sessions for this home
-        # Gemini sessions need to be indexed by BOTH the hash (workspace) and
-        # the readable form (workspace_readable) because:
-        # - _enumerate_gemini_workspaces returns hashes when no hash index exists
-        # - workspace_readable may be "[hash:...]" display format or resolved path
-        gemini_sessions = self._load_gemini_sessions(home)
-        for session in gemini_sessions:
-            ws = session.get("workspace_readable") or session.get("workspace", "")
-            if ws not in workspace_sessions:
-                workspace_sessions[ws] = []
-            workspace_sessions[ws].append(session)
+            if ws:
+                if ws not in workspace_sessions:
+                    workspace_sessions[ws] = []
+                workspace_sessions[ws].append(session)
             # Also index by raw workspace (hash) if different
             raw_ws = session.get("workspace", "")
             if raw_ws and raw_ws != ws:

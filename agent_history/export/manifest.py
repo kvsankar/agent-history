@@ -71,16 +71,24 @@ def scan_workspace_directories(output_dir: Path) -> Dict[str, Dict[str, Any]]:
         Dictionary mapping workspace name to info dict with 'total' and 'sources'.
     """
     workspaces: Dict[str, Dict[str, Any]] = {}
-    for item in output_dir.iterdir():
-        if not item.is_dir():
+    for session_file in output_dir.rglob("*.md"):
+        if session_file.name == "index.md":
+            continue
+        workspace_dir = session_file.parent
+        try:
+            workspace_name = str(workspace_dir.relative_to(output_dir))
+        except ValueError:
+            workspace_name = workspace_dir.name
+        if workspace_name == ".":
             continue
 
-        sessions = list(item.glob("*.md"))
-        sources = {"local": 0, "wsl": 0, "windows": 0, "remote": 0}
-        for session_file in sessions:
-            sources[classify_session_source(session_file.name)] += 1
+        entry = workspaces.setdefault(
+            workspace_name,
+            {"total": 0, "sources": {"local": 0, "wsl": 0, "windows": 0, "remote": 0, "web": 0}},
+        )
+        entry["total"] += 1
+        entry["sources"][classify_session_source(session_file.name)] += 1
 
-        workspaces[item.name] = {"total": len(sessions), "sources": sources}
     return workspaces
 
 
@@ -99,6 +107,8 @@ def classify_session_source(filename: str) -> str:
         return "windows"
     if filename.startswith("remote_"):
         return "remote"
+    if filename.startswith("web_"):
+        return "web"
     return "local"
 
 
@@ -122,6 +132,8 @@ def format_source_label(home: str) -> str:
     if home.startswith("remote:"):
         host = home[7:]
         return f"Remote ({host})"
+    if home == "web":
+        return "Web"
     return home
 
 
@@ -140,6 +152,7 @@ def format_workspace_sources(sources: Dict[str, int]) -> List[str]:
         ("wsl", "WSL"),
         ("windows", "Windows"),
         ("remote", "Remote"),
+        ("web", "Web"),
     ]:
         if sources.get(source, 0) > 0:
             lines.append(f"- **{label}:** {sources[source]} sessions")
