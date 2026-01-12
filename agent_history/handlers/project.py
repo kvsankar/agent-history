@@ -79,12 +79,18 @@ class ProjectListHandler(VerbHandler):
         # Sort by project name
         projects.sort(key=lambda p: p["project"])
 
+        workspace_display_map: Dict[str, str] = {}
+        for project in projects:
+            for workspace in project.get("workspace", []) or []:
+                workspace_display_map.setdefault(str(workspace), str(workspace))
+
         return CommandResult(
             success=True,
             data=projects,
             data_type="project_list",
             metadata={
                 "total_count": len(projects),
+                "workspace_display_map": workspace_display_map,
             },
         )
 
@@ -151,6 +157,9 @@ class ProjectShowHandler(VerbHandler):
         workspaces_by_home: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         total_sessions = 0
         metadata = build_scope_metadata(scope) if scope else {"homes": []}
+        workspace_display_map: Dict[str, str] = dict(
+            metadata.get("workspace_display_map", {})
+        )
 
         for record in scope:
             context = WorkspaceContext.from_record(record)
@@ -162,6 +171,9 @@ class ProjectShowHandler(VerbHandler):
             }
             workspaces_by_home[context.home].append(workspace_info)
             total_sessions += len(record.sessions)
+            workspace_display_map.setdefault(
+                context.workspace_key, context.workspace_display
+            )
 
         # If scope is empty, use project definition
         if not workspaces_by_home:
@@ -177,6 +189,7 @@ class ProjectShowHandler(VerbHandler):
                                 "session_count": 0,
                             }
                         )
+                        workspace_display_map.setdefault(decoded, decoded)
                 elif isinstance(workspaces, str):
                     decoded = decode_workspace_path(workspaces, verify_local=False)
                     workspaces_by_home[home].append(
@@ -187,6 +200,7 @@ class ProjectShowHandler(VerbHandler):
                             "session_count": 0,
                         }
                     )
+                    workspace_display_map.setdefault(decoded, decoded)
 
         return CommandResult(
             success=True,
@@ -199,7 +213,7 @@ class ProjectShowHandler(VerbHandler):
             data_type="project_details",
             metadata={
                 "homes": list(workspaces_by_home.keys()) or metadata.get("homes", []),
-                "workspace_display_map": metadata.get("workspace_display_map", {}),
+                "workspace_display_map": workspace_display_map,
             },
         )
 
