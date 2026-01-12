@@ -1,4 +1,4 @@
-"""Parity tests for metrics DB workspace resolution."""
+"""Metrics DB workspace resolution behavior tests."""
 
 import json
 from pathlib import Path
@@ -11,7 +11,7 @@ def test_codex_metrics_workspace_uses_cwd(tmp_path: Path):
     from agent_history.storage.metrics import init_metrics_db, sync_sessions_to_db
 
     codex_dir = tmp_path / ".codex" / "sessions"
-    builder = CodexSessionBuilder(session_id="codex-parity-001", cwd="/home/testuser/codex")
+    builder = CodexSessionBuilder(session_id="codex-metrics-001", cwd="/home/testuser/codex")
     builder.add_user_message("hi")
     builder.add_assistant_message("ok")
     session_file = builder.write_to(codex_dir)
@@ -36,7 +36,7 @@ def test_gemini_metrics_workspace_uses_hash_index(tmp_path: Path, monkeypatch):
 
     gemini_dir = tmp_path / ".gemini" / "tmp"
     project_hash = "b" * 64
-    builder = GeminiSessionBuilder(session_id="gemini-parity-001", project_hash=project_hash)
+    builder = GeminiSessionBuilder(session_id="gemini-metrics-001", project_hash=project_hash)
     builder.add_user_message("hi")
     builder.add_gemini_message("ok")
     session_file = builder.write_to(gemini_dir)

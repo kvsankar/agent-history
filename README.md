@@ -141,8 +141,12 @@ make test
 make test-unit
 make test-integration
 
-# Legacy tests have been deprecated and removed
-# All tests ported to new architecture in tests/v1, tests/stats, tests/scope
+# Tests are organized by surface area:
+# - tests/cli (CLI behavior and scope)
+# - tests/formats (agent session formats)
+# - tests/legacy (v1 script compatibility)
+# - tests/unit (package internals)
+# - tests/e2e_docker (Docker + SSH E2E)
 
 # Windows PowerShell helper
 scripts\run-tests.ps1              # all

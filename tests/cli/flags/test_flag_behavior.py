@@ -1,4 +1,4 @@
-"""Parity tests for CLI flags that should alter behavior."""
+"""Behavior tests for CLI flags that should alter behavior."""
 
 import json
 from pathlib import Path

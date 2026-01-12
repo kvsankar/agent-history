@@ -314,7 +314,7 @@ Or, if keeping single-file structure:
 
 ### Behavioral Tests Enable Safe Refactoring
 
-The tests in `tests/v1/test_context_consistency.py` are **behavioral/integration tests**:
+The tests in `tests/cli/scope/test_context_consistency.py` are **behavioral/integration tests**:
 - Use `run_cli_subprocess()` to invoke the CLI
 - Test input/output behavior, not internal functions
 - No imports of internal module functions
@@ -329,7 +329,7 @@ Failed tests expose the bugs we're fixing. When all 17 pass, the architecture is
 
 Run tests after each phase:
 ```bash
-pytest tests/v1/test_context_consistency.py -v
+pytest tests/cli/scope/test_context_consistency.py -v
 ```
 
 ## Validation Checklist

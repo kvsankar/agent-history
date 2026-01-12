@@ -1,4 +1,4 @@
-"""Parity test for work-period gap threshold."""
+"""Work-period gap threshold behavior."""
 
 from agent_history.storage import metrics
 

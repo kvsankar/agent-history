@@ -1,4 +1,4 @@
-"""Parity tests for CLI stats output vs metrics DB expectations."""
+"""CLI stats output behavior vs metrics DB expectations."""
 
 import json
 

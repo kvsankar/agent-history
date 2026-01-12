@@ -11,7 +11,6 @@ were incorrectly decoding to `/home/alice/alice-projects-api` instead of
 `/home/alice/alice/projects/api` when the target path didn't exist.
 """
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, Generator
@@ -19,51 +18,7 @@ from typing import Any, Dict, Generator
 import pytest
 
 from tests.helpers.cli import run_cli_subprocess
-
-
-def create_workspace_fixture(base_path: Path, workspace_path: str, num_sessions: int = 1) -> str:
-    """Create a Claude workspace with sessions at the given path.
-
-    Args:
-        base_path: The temp directory acting as home
-        workspace_path: The workspace path (e.g., "/home/user/projects/my-app")
-        num_sessions: Number of sessions to create
-
-    Returns:
-        The encoded workspace directory name
-    """
-    # Encode the workspace path (replace / with -)
-    encoded = workspace_path.replace("/", "-")
-    if not encoded.startswith("-"):
-        encoded = "-" + encoded
-
-    # Create the Claude projects directory structure
-    claude_dir = base_path / ".claude" / "projects" / encoded
-    claude_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create minimal session files
-    for i in range(num_sessions):
-        session_file = claude_dir / f"session-{i:03d}.jsonl"
-        session_data = [
-            {
-                "type": "user",
-                "message": {"role": "user", "content": "test"},
-                "timestamp": "2025-01-01T10:00:00Z",
-                "sessionId": f"sess-{i}",
-            },
-            {
-                "type": "assistant",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
-                "timestamp": "2025-01-01T10:00:01Z",
-                "sessionId": f"sess-{i}",
-            },
-        ]
-        with open(session_file, "w") as f:
-            for entry in session_data:
-                f.write(json.dumps(entry) + "\n")
-
-    return encoded
-
+from tests.helpers.workspace_paths import create_workspace_fixture
 
 @pytest.fixture
 def decode_test_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
