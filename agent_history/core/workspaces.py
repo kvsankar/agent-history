@@ -88,27 +88,15 @@ def build_workspace_rows(
     return rows, display_map
 
 
-def build_workspace_display_map(
-    records: Iterable[ConcreteRecord],
-) -> Dict[str, str]:
-    """Build a mapping of workspace key to display name."""
-    display_map: Dict[str, str] = {}
-    for record in records:
-        context = WorkspaceContext.from_record(record)
-        display_map.setdefault(context.workspace_key, context.workspace_display)
-    return display_map
-
-
-def build_scope_metadata(
-    records: Iterable[ConcreteRecord],
+def build_workspace_metadata(
+    contexts: Iterable[WorkspaceContext],
 ) -> Dict[str, Any]:
-    """Build homes/workspaces metadata with display mapping."""
+    """Build homes/workspaces metadata from workspace contexts."""
     homes: set[str] = set()
     workspaces: set[str] = set()
     display_map: Dict[str, str] = {}
 
-    for record in records:
-        context = WorkspaceContext.from_record(record)
+    for context in contexts:
         homes.add(context.home)
         workspaces.add(context.workspace_display)
         display_map.setdefault(context.workspace_key, context.workspace_display)
@@ -118,3 +106,19 @@ def build_scope_metadata(
         "workspaces": sorted(workspaces),
         "workspace_display_map": display_map,
     }
+
+
+def build_workspace_display_map(
+    records: Iterable[ConcreteRecord],
+) -> Dict[str, str]:
+    """Build a mapping of workspace key to display name."""
+    contexts = (WorkspaceContext.from_record(record) for record in records)
+    return build_workspace_metadata(contexts)["workspace_display_map"]
+
+
+def build_scope_metadata(
+    records: Iterable[ConcreteRecord],
+) -> Dict[str, Any]:
+    """Build homes/workspaces metadata with display mapping."""
+    contexts = (WorkspaceContext.from_record(record) for record in records)
+    return build_workspace_metadata(contexts)
