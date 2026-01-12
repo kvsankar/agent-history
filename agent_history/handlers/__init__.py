@@ -34,6 +34,18 @@ from agent_history.handlers.project import (
     ProjectStatsHandler,
 )
 from agent_history.handlers.stats import SessionStatsHandler
+from agent_history.handlers.stubs import (
+    HomeExportHandler,
+    HomeShowHandler,
+    HomeStatsHandler,
+    ProjectAddHandler,
+    ProjectExportHandler,
+    ProjectRemoveHandler,
+    SessionShowHandler,
+    WorkspaceExportHandler,
+    WorkspaceShowHandler,
+    WorkspaceStatsHandler,
+)
 
 __all__ = [
     # Base classes
@@ -58,4 +70,15 @@ __all__ = [
     "ProjectListHandler",
     "ProjectShowHandler",
     "ProjectStatsHandler",
+    # Stub handlers (not yet implemented)
+    "SessionShowHandler",
+    "WorkspaceShowHandler",
+    "WorkspaceExportHandler",
+    "WorkspaceStatsHandler",
+    "HomeShowHandler",
+    "HomeExportHandler",
+    "HomeStatsHandler",
+    "ProjectAddHandler",
+    "ProjectRemoveHandler",
+    "ProjectExportHandler",
 ]

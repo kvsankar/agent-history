@@ -151,6 +151,24 @@ class HomeSpecConcrete(HomeSpec):
         return f"HomeSpec.Concrete({self.home!r})"
 
 
+@dataclass(frozen=True)
+class HomeSpecMultiple(HomeSpec):
+    """
+    Multiple explicit home names (--home flag used multiple times).
+
+    This preserves all home names when the user specifies multiple --home values.
+
+    Examples:
+        HomeSpecMultiple(("local", "remote:vm01"))  # Two explicit homes
+        HomeSpecMultiple(("wsl:Ubuntu", "wsl:Debian"))  # Multiple WSL distros
+    """
+
+    homes: tuple  # Using tuple for immutability (frozen=True requires hashable)
+
+    def __str__(self) -> str:
+        return f"HomeSpec.Multiple({list(self.homes)!r})"
+
+
 # Convenience namespace for creating HomeSpec instances
 class HomeSpecFactory:
     """Factory for creating HomeSpec instances with a clean API."""
@@ -170,6 +188,10 @@ class HomeSpecFactory:
     @staticmethod
     def Concrete(home: str) -> HomeSpec:
         return HomeSpecConcrete(home)
+
+    @staticmethod
+    def Multiple(homes: List[str]) -> HomeSpec:
+        return HomeSpecMultiple(tuple(homes))
 
 
 # =============================================================================

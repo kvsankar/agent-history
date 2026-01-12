@@ -68,6 +68,20 @@ class SessionStatsHandler(VerbHandler):
         # Compute statistics
         stats = self._compute_stats(scope, group_by, include_time)
 
+        # If sync was used, overlay token totals from metrics database
+        # This ensures accurate token counts that were parsed during sync
+        if verb_args.get("sync"):
+            try:
+                from agent_history.storage.metrics import get_session_stats_from_db
+
+                db_stats = get_session_stats_from_db()
+                stats["tokens"]["input"] = db_stats["input_tokens"]
+                stats["tokens"]["output"] = db_stats["output_tokens"]
+                stats["tokens"]["cache_creation"] = db_stats["cache_creation_tokens"]
+                stats["tokens"]["cache_read"] = db_stats["cache_read_tokens"]
+            except Exception:
+                pass  # Fall back to scope-based stats if DB query fails
+
         # Apply top limit to breakdowns if specified
         if top_limit:
             stats = self._apply_top_limit(stats, top_limit)

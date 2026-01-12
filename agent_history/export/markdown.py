@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_history.backends.claude import read_jsonl_messages
+from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
 
 
 def parse_jsonl_to_markdown(
@@ -15,6 +16,7 @@ def parse_jsonl_to_markdown(
     messages: Optional[List[Dict[str, Any]]] = None,
     display_file: Optional[str] = None,
     show_graph: bool = True,
+    agent_type: str = AGENT_CLAUDE,
 ) -> str:
     """Convert a Claude Code JSONL session file to readable Markdown.
 
@@ -24,6 +26,7 @@ def parse_jsonl_to_markdown(
         messages: Pre-parsed messages (optional).
         display_file: File name to display in header.
         show_graph: If True, include conversation graph analysis.
+        agent_type: Agent type (claude, codex, gemini).
 
     Returns:
         Markdown formatted string.
@@ -32,7 +35,7 @@ def parse_jsonl_to_markdown(
         messages = read_jsonl_messages(jsonl_file)
 
     # Build header
-    md_lines = generate_markdown_file_header(jsonl_file, messages, display_file)
+    md_lines = generate_markdown_file_header(jsonl_file, messages, display_file, agent_type)
 
     md_lines.extend(["", "---", ""])
 
@@ -46,10 +49,28 @@ def parse_jsonl_to_markdown(
     return "\n".join(md_lines)
 
 
+def _get_agent_header_title(agent_type: str) -> str:
+    """Get the header title for the given agent type.
+
+    Args:
+        agent_type: Agent type (claude, codex, gemini).
+
+    Returns:
+        Header title string.
+    """
+    if agent_type == AGENT_CODEX:
+        return "Codex Conversation"
+    elif agent_type == AGENT_GEMINI:
+        return "Gemini Conversation"
+    else:
+        return "Claude Code Session"
+
+
 def generate_markdown_file_header(
     jsonl_file: Path,
     messages: List[Dict[str, Any]],
     display_file: Optional[str] = None,
+    agent_type: str = AGENT_CLAUDE,
 ) -> List[str]:
     """Generate markdown header for a session file.
 
@@ -57,12 +78,19 @@ def generate_markdown_file_header(
         jsonl_file: Source file path.
         messages: List of messages.
         display_file: Override display filename.
+        agent_type: Agent type (claude, codex, gemini).
 
     Returns:
         List of markdown header lines.
     """
-    display_name = display_file or jsonl_file.name
-    lines = [f"# Claude Code Session: {display_name}", ""]
+    header_title = _get_agent_header_title(agent_type)
+
+    # For Codex and Gemini, use simpler header format (no filename)
+    if agent_type in (AGENT_CODEX, AGENT_GEMINI):
+        lines = [f"# {header_title}", ""]
+    else:
+        display_name = display_file or jsonl_file.name
+        lines = [f"# {header_title}: {display_name}", ""]
 
     if messages:
         first_ts = messages[0].get("timestamp", "")

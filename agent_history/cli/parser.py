@@ -506,13 +506,22 @@ class CLIParser:
         gi_parser = subparsers.add_parser(
             RESOURCE_GEMINI_INDEX,
             help="Manage Gemini session index",
-            description="Build and manage the Gemini session index for faster lookups.",
+            description=(
+                "Manage the Gemini hash-to-path index. By default, lists all mappings. "
+                "Use --add to add project paths to the index. "
+                "For each path added, computes its SHA-256 hash and checks if Gemini "
+                "has sessions for that project. If sessions exist, adds the mapping "
+                "so agent-history can display readable workspace paths instead of hashes."
+            ),
         )
         gi_parser.set_defaults(command=RESOURCE_GEMINI_INDEX, gemini_index_verb=DEFAULT_VERB_LIST)
         gi_parser.add_argument(
             "--add",
-            action="store_true",
-            help="Add new sessions to the index",
+            "-a",
+            nargs="*",
+            dest="add_paths",
+            metavar="PATH",
+            help="Add project directories to index (default: current directory if no paths given)",
         )
         gi_parser.add_argument(
             "--rebuild",
@@ -520,10 +529,18 @@ class CLIParser:
             help="Rebuild the entire index from scratch",
         )
         gi_parser.add_argument(
-            "--path",
-            metavar="DIR",
-            help="Path to Gemini sessions directory",
+            "--list",
+            "-l",
+            action="store_true",
+            dest="list_index",
+            help="List all mappings in the hash index (default if no options)",
         )
+        gi_parser.add_argument(
+            "--full-hash",
+            action="store_true",
+            help="Show full SHA-256 hashes instead of truncated (with --list)",
+        )
+
 
     # =========================================================================
     # Common argument groups
@@ -955,8 +972,9 @@ class CLIParser:
 
         # Gemini-index args
         if resource == RESOURCE_GEMINI_INDEX:
-            verb_args["add"] = getattr(args, "add", False)
+            verb_args["add_paths"] = getattr(args, "add_paths", None)
             verb_args["rebuild"] = getattr(args, "rebuild", False)
-            verb_args["path"] = getattr(args, "path", None)
+            verb_args["list_index"] = getattr(args, "list_index", False)
+            verb_args["full_hash"] = getattr(args, "full_hash", False)
 
         return verb_args

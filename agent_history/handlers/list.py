@@ -13,12 +13,14 @@ See docs/design-v2/code-reuse-mapping.md for code reuse details.
 
 from collections import OrderedDict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
 
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.types import HomeDict, SessionDict, WorkspaceDict
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
+from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
 
 
 class SessionListHandler(VerbHandler):
@@ -45,7 +47,7 @@ class SessionListHandler(VerbHandler):
 
         Args:
             scope: Resolved ConcreteScope with sessions.
-            verb_args: Verb-specific arguments (e.g., sort options).
+            verb_args: Verb-specific arguments (e.g., sort options, counts).
             output_args: Output formatting options.
 
         Returns:
@@ -53,6 +55,10 @@ class SessionListHandler(VerbHandler):
         """
         # Flatten scope to session list
         sessions = self._flatten_sessions(scope)
+
+        # Populate message counts if --counts flag is set
+        if verb_args.get("counts", False):
+            self._populate_message_counts(sessions)
 
         # Sort by modified time (newest first)
         sessions.sort(key=lambda s: s.get("modified") or datetime.min, reverse=True)
@@ -100,6 +106,54 @@ class SessionListHandler(VerbHandler):
                     session_with_context["workspace_readable"] = record.workspace
                 sessions.append(session_with_context)
         return sessions
+
+    def _populate_message_counts(self, sessions: List[SessionDict]) -> None:
+        """Populate message_count for sessions that have it skipped.
+
+        When scope resolution loads sessions with skip_message_count=True,
+        the message_count field is 0 and message_count_skipped is True.
+        This method counts messages for such sessions.
+
+        Args:
+            sessions: List of session dicts to update in place.
+        """
+        for session in sessions:
+            # Skip if message count was already computed
+            if not session.get("message_count_skipped", False):
+                continue
+
+            file_path = session.get("file")
+            if not file_path:
+                continue
+
+            if isinstance(file_path, str):
+                file_path = Path(file_path)
+
+            if not file_path.exists():
+                continue
+
+            # Count messages based on agent type
+            agent = session.get("agent", AGENT_CLAUDE)
+            try:
+                if agent == AGENT_GEMINI:
+                    from agent_history.backends.gemini import gemini_count_messages
+
+                    session["message_count"] = gemini_count_messages(file_path)
+                elif agent == AGENT_CODEX:
+                    from agent_history.backends.codex import codex_count_messages
+
+                    session["message_count"] = codex_count_messages(file_path)
+                else:
+                    # Claude - use the internal count function
+                    from agent_history.backends.claude import _count_file_messages
+
+                    session["message_count"] = _count_file_messages(
+                        file_path, skip_count=False, use_cached_counts=True
+                    )
+                session["message_count_skipped"] = False
+            except Exception:
+                # Keep the 0 count if there's an error
+                pass
 
 
 class WorkspaceListHandler(VerbHandler):
@@ -335,6 +389,18 @@ class HomeListHandler(VerbHandler):
             "agents": set(),
         }
 
+        # Web home (Claude.ai web sessions)
+        homes["web"] = {
+            "home": "web",
+            "type": "web",
+            "status": "ok",
+            "workspace_count": 0,
+            "session_count": 0,
+            "last_modified": None,
+            "workspaces": set(),
+            "agents": set(),
+        }
+
         # WSL distributions (available from Windows)
         try:
             wsl_distros = get_wsl_distributions()
@@ -506,15 +572,21 @@ class GeminiIndexHandler(VerbHandler):
 
         Args:
             scope: Resolved ConcreteScope (may be empty for index operations).
-            verb_args: Verb-specific arguments (add, rebuild, path).
+            verb_args: Verb-specific arguments (add_paths, rebuild, list_index, full_hash).
             output_args: Output formatting options.
 
         Returns:
             CommandResult with index status.
         """
-        add_mode = verb_args.get("add", False)
+        from agent_history.backends.gemini import (
+            gemini_add_paths_to_index,
+            gemini_load_hash_index,
+            HASH_DISPLAY_LEN,
+        )
+
+        add_paths = verb_args.get("add_paths")
         rebuild_mode = verb_args.get("rebuild", False)
-        index_path = verb_args.get("path")
+        full_hash = verb_args.get("full_hash", False)
 
         if rebuild_mode:
             return CommandResult(
@@ -523,18 +595,50 @@ class GeminiIndexHandler(VerbHandler):
                 data_type="gemini_index",
                 metadata={"message": "Gemini index rebuild not yet implemented"},
             )
-        elif add_mode:
+        elif add_paths is not None:
+            # --add was specified (even with empty list means use current directory)
+            paths = add_paths if add_paths else ["."]
+            path_objects = [Path(p).expanduser().resolve() for p in paths]
+
+            result = gemini_add_paths_to_index(path_objects)
+
             return CommandResult(
                 success=True,
-                data={"action": "add", "status": "not implemented"},
+                data={
+                    "action": "add",
+                    "added": result["added"],
+                    "existing": result["existing"],
+                    "no_sessions": result["no_sessions"],
+                    "mappings": result["mappings"],
+                },
                 data_type="gemini_index",
-                metadata={"message": "Gemini index add not yet implemented"},
+                metadata={
+                    "message": f"Added {result['added']} path(s) to index"
+                },
             )
         else:
             # Default: list/show index status
+            index = gemini_load_hash_index()
+            mappings = index.get("hashes", {})
+
+            formatted_mappings = []
+            for project_hash, path in sorted(mappings.items(), key=lambda x: x[1]):
+                display_hash = project_hash if full_hash else project_hash[:HASH_DISPLAY_LEN]
+                formatted_mappings.append({
+                    "hash": display_hash,
+                    "path": path,
+                })
+
             return CommandResult(
                 success=True,
-                data={"action": "list", "indexed_sessions": 0},
+                data={
+                    "action": "list",
+                    "indexed_sessions": len(mappings),
+                    "mappings": formatted_mappings,
+                },
                 data_type="gemini_index",
-                metadata={"message": "No Gemini sessions indexed"},
+                metadata={
+                    "message": f"Found {len(mappings)} indexed path(s)"
+                    if mappings else "Hash index is empty. Use 'gemini-index --add <path>' to add mappings."
+                },
             )

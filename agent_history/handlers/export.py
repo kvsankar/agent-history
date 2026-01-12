@@ -10,6 +10,7 @@ See docs/design-v2/pipeline-architecture.md for the complete specification.
 
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -89,6 +90,7 @@ class SessionExportHandler(VerbHandler):
         force = verb_args.get("force", False)
         include_source = verb_args.get("include_source", False)
         export_json = verb_args.get("export_json", False)
+        jobs = verb_args.get("jobs")
         quiet = output_args.quiet
 
         # Ensure output directory exists
@@ -102,14 +104,56 @@ class SessionExportHandler(VerbHandler):
         # Track sources for index manifest generation
         sources_info: Dict[str, int] = {}  # home -> session count
 
-        # Process each record in scope
+        # Collect all tasks to process
+        tasks = []
         for record in scope:
             for session in record.sessions:
+                tasks.append((session, record.home, record.workspace))
+
+        # Use ThreadPoolExecutor when jobs > 1
+        if jobs is not None and jobs > 1:
+            with ThreadPoolExecutor(max_workers=jobs) as executor:
+                futures = []
+                for session, home, workspace in tasks:
+                    future = executor.submit(
+                        self._export_session_safe,
+                        session=session,
+                        home=home,
+                        workspace=workspace,
+                        output_dir=output_dir,
+                        minimal=minimal,
+                        split_lines=split_lines,
+                        flat=flat,
+                        force=force,
+                        include_source=include_source,
+                        export_json=export_json,
+                        quiet=quiet,
+                    )
+                    futures.append((future, session, home))
+
+                # Collect results
+                for future, session, home in futures:
+                    result, error = future.result()
+                    if error:
+                        failed.append((session, error))
+                        if not quiet:
+                            filename = session.get("filename", session.get("file", "unknown"))
+                            sys.stderr.write(f"Error exporting {filename}: {error}\n")
+
+                    elif result == EXPORT_EXPORTED:
+                        exported.append(session)
+                        sources_info[home] = sources_info.get(home, 0) + 1
+                    elif result == EXPORT_SKIPPED:
+                        skipped.append(session)
+                        sources_info[home] = sources_info.get(home, 0) + 1
+        else:
+            # Sequential: Process each record in scope
+            for session, home, workspace in tasks:
                 try:
                     result = self._export_session(
                         session=session,
-                        home=record.home,
-                        workspace=record.workspace,
+                        home=home,
+                        workspace=workspace,
                         output_dir=output_dir,
                         minimal=minimal,
                         split_lines=split_lines,
@@ -122,11 +166,11 @@ class SessionExportHandler(VerbHandler):
                     if result == EXPORT_EXPORTED:
                         exported.append(session)
                         # Track by home for index manifest
-                        sources_info[record.home] = sources_info.get(record.home, 0) + 1
+                        sources_info[home] = sources_info.get(home, 0) + 1
                     elif result == EXPORT_SKIPPED:
                         skipped.append(session)
                         # Also track skipped for index (they still exist in output)
-                        sources_info[record.home] = sources_info.get(record.home, 0) + 1
+                        sources_info[home] = sources_info.get(home, 0) + 1
                 except Exception as e:
                     failed.append((session, str(e)))
                     if not quiet:
@@ -156,6 +200,44 @@ class SessionExportHandler(VerbHandler):
             },
             errors=[f"{s.get('filename', s.get('file', 'unknown'))}: {e}" for s, e in failed],
         )
+
+    def _export_session_safe(
+        self,
+        session: SessionDict,
+        home: str,
+        workspace: str,
+        output_dir: Path,
+        minimal: bool,
+        split_lines: Optional[int],
+        flat: bool,
+        force: bool,
+        include_source: bool,
+        export_json: bool,
+        quiet: bool,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Export a single session, catching exceptions for thread safety.
+
+        Returns:
+            Tuple of (result, error). If error is None, result contains
+            EXPORT_EXPORTED, EXPORT_SKIPPED, or EXPORT_FAILED.
+        """
+        try:
+            result = self._export_session(
+                session=session,
+                home=home,
+                workspace=workspace,
+                output_dir=output_dir,
+                minimal=minimal,
+                split_lines=split_lines,
+                flat=flat,
+                force=force,
+                include_source=include_source,
+                export_json=export_json,
+                quiet=quiet,
+            )
+            return (result, None)
+        except Exception as e:
+            return (None, str(e))
 
     def _export_session(
         self,
@@ -400,7 +482,7 @@ class SessionExportHandler(VerbHandler):
                 return
 
         # Write single file
-        markdown = parse_jsonl_to_markdown(jsonl_file, minimal, messages)
+        markdown = parse_jsonl_to_markdown(jsonl_file, minimal, messages, agent_type=agent_type)
         output_file.write_text(markdown, encoding="utf-8")
         if not quiet:
             print(output_file)
