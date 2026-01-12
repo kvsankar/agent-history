@@ -20,6 +20,7 @@ from agent_history.scope.types import (
     HomeSpecCurrent,
     HomeSpecFactory,
     HomeSpecLocal,
+    HomeSpecMultiple,
     ProjectRecord,
     ScopeRecord,
     TemplateScope,
@@ -141,6 +142,10 @@ class HomeStage:
 
         elif isinstance(spec, HomeSpecConcrete):
             return [spec.home], None
+
+        elif isinstance(spec, HomeSpecMultiple):
+            # Return all homes from the tuple
+            return list(spec.homes), None
 
         else:
             return [], ResolutionError(

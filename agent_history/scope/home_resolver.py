@@ -165,10 +165,13 @@ class WSLHomeResolver(HomeResolver):
         """
         Get the Claude projects directory for WSL home.
 
-        TODO: Implement WSL path resolution.
-        WSL paths would be something like:
-        /mnt/c/Users/<username>/.claude/projects/
+        Uses get_wsl_projects_dir() from platform utils which supports
+        the CLAUDE_WSL_PROJECTS_DIR test override.
         """
+        from agent_history.utils.platform import get_wsl_projects_dir
+
+        if self._distro:
+            return get_wsl_projects_dir(self._distro)
         return None
 
     def get_codex_dir(self, context: ResolutionContext) -> Optional[Path]:

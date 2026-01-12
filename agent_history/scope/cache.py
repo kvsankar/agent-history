@@ -134,9 +134,30 @@ class SessionCache:
             # TODO: Implement Windows path resolution
             return []
         elif home.startswith("remote:"):
-            # Remote homes - skip for now
-            # TODO: Implement remote session collection
-            return []
+            # Remote homes - scan for cached workspaces with remote_ prefix
+            # Cached remote workspaces are named: remote_{remote_name}_{encoded_path}
+            remote_name = home[7:]  # Extract name after "remote:"
+            prefix = f"remote_{remote_name}_"
+            projects_dir = self.context.claude_projects_dir
+            if not projects_dir or not projects_dir.exists():
+                return []
+            # Scan for matching remote cache workspaces
+            all_sessions = get_workspace_sessions(
+                workspace_pattern=prefix,
+                projects_dir=projects_dir,
+                skip_message_count=True,
+                include_cached=True,
+            )
+            # Decode workspace paths: remote_vm01_-home-user-project -> /home/user/project
+            for session in all_sessions:
+                ws = session.get("workspace", "")
+                if ws.startswith(prefix):
+                    encoded_path = ws[len(prefix):]
+                    # Decode: -home-user-project -> /home/user/project
+                    if encoded_path.startswith("-"):
+                        decoded = encoded_path.replace("-", "/")
+                        session["workspace_readable"] = decoded
+            return all_sessions
         else:
             # Unknown home type - use default
             projects_dir = self.context.claude_projects_dir

@@ -58,9 +58,23 @@ def write_ndjson_export(
         quiet: If True, suppress per-file output.
     """
     lines = []
-    for msg in messages:
-        unified = normalize_message_to_unified(msg, agent_type)
-        lines.append(json.dumps(unified, ensure_ascii=False))
+
+    # Write header record first
+    header_record = {
+        "type": "header",
+        "agent": agent_type,
+        "version": "1.0",
+        "session_file": session.get("filename", session.get("file", "")),
+    }
+    lines.append(json.dumps(header_record, ensure_ascii=False))
+
+    # Write session record with messages
+    session_record = {
+        "type": "session",
+        "agent": agent_type,
+        "messages": [normalize_message_to_unified(msg, agent_type) for msg in messages],
+    }
+    lines.append(json.dumps(session_record, ensure_ascii=False))
 
     output_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if not quiet:

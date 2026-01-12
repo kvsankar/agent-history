@@ -25,13 +25,14 @@ __all__ = [
     "init_metrics_db",
     "sync_file_to_db",
     "sync_sessions_to_db",
+    "get_session_stats_from_db",
 ]
 
 # Schema version for migrations
 METRICS_DB_VERSION = 7
 
-# Work period gap threshold in seconds
-WORK_PERIOD_GAP_THRESHOLD = 3600.0
+# Work period gap threshold in seconds (30 minutes per spec)
+WORK_PERIOD_GAP_THRESHOLD = 30 * 60
 
 
 def get_metrics_db_path() -> Path:
@@ -552,6 +553,33 @@ def _parse_codex_jsonl(
     return session_info, messages, tool_uses
 
 
+def _lookup_gemini_hash(project_hash: str) -> Optional[str]:
+    """Look up a Gemini project hash in the index file.
+
+    Args:
+        project_hash: The SHA256 hash of the project path
+
+    Returns:
+        The resolved project path, or None if not found
+    """
+    # Check environment variable for test override
+    config_dir_override = os.environ.get("AGENT_HISTORY_CONFIG_DIR")
+    if config_dir_override:
+        index_path = Path(config_dir_override) / "gemini_index.json"
+    else:
+        index_path = get_config_dir() / "gemini_index.json"
+
+    if not index_path.exists():
+        return None
+
+    try:
+        with open(index_path, encoding="utf-8") as f:
+            index_data = json.load(f)
+        return index_data.get("hashes", {}).get(project_hash)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def _parse_gemini_json(
     json_file: Path,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -775,8 +803,21 @@ def sync_file_to_db(
         # Default to Claude format
         session_info, messages, tool_uses = _parse_claude_jsonl(jsonl_file)
 
-    # Determine workspace
-    if workspace is None:
+    # Determine workspace - prefer metadata over passed value
+    if agent == "codex" and session_info.get("cwd"):
+        # Codex: use session_meta.cwd
+        workspace = session_info["cwd"]
+    elif agent == "gemini":
+        # Gemini: try hash index lookup
+        hash_dir = jsonl_file.parent.parent  # .../hash/chats/file.json -> .../hash
+        project_hash = hash_dir.name if hash_dir.name else None
+        if project_hash:
+            resolved = _lookup_gemini_hash(project_hash)
+            if resolved:
+                workspace = resolved
+            elif workspace is None:
+                workspace = jsonl_file.parent.name
+    elif workspace is None:
         workspace = jsonl_file.parent.name
 
     # Calculate work periods from message timestamps
@@ -1014,3 +1055,52 @@ def sync_sessions_to_db(
 
     conn.commit()
     return stats
+
+
+def get_session_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Get aggregated session statistics from the metrics database.
+
+    Returns aggregate totals for all sessions in the database, including
+    token counts, message counts, and session counts.
+
+    Args:
+        db_path: Optional path to metrics database. Defaults to standard location.
+
+    Returns:
+        Dictionary containing:
+        - input_tokens: Total input tokens across all sessions
+        - output_tokens: Total output tokens across all sessions
+        - cache_creation_tokens: Total cache creation tokens
+        - cache_read_tokens: Total cache read tokens
+        - sessions: Total session count
+        - messages: Total message count
+        - user_messages: Total user message count
+        - assistant_messages: Total assistant message count
+    """
+    conn = init_metrics_db(db_path)
+    try:
+        cursor = conn.execute("""
+            SELECT
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                COUNT(*) as sessions,
+                COALESCE(SUM(message_count), 0) as messages,
+                COALESCE(SUM(user_messages), 0) as user_messages,
+                COALESCE(SUM(assistant_messages), 0) as assistant_messages
+            FROM sessions
+        """)
+        row = cursor.fetchone()
+        return {
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "cache_creation_tokens": row["cache_creation_tokens"],
+            "cache_read_tokens": row["cache_read_tokens"],
+            "sessions": row["sessions"],
+            "messages": row["messages"],
+            "user_messages": row["user_messages"],
+            "assistant_messages": row["assistant_messages"],
+        }
+    finally:
+        conn.close()

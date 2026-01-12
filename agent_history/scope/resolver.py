@@ -330,9 +330,12 @@ class ScopeResolver:
 
         # Explicit home names (--home flag, can be repeated)
         if args.home_names:
-            # For now, just use the first one
-            # TODO: Support multiple explicit homes
-            return HomeSpecFactory.Concrete(args.home_names[0])
+            if len(args.home_names) == 1:
+                # Single home - use Concrete
+                return HomeSpecFactory.Concrete(args.home_names[0])
+            else:
+                # Multiple homes - use Multiple to preserve all values
+                return HomeSpecFactory.Multiple(args.home_names)
 
         # Default: local home only
         return HomeSpecFactory.Local

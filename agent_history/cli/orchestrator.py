@@ -19,16 +19,26 @@ from agent_history.handlers import (
     DispatchError,
     GeminiIndexHandler,
     HomeAddHandler,
+    HomeExportHandler,
     HomeListHandler,
     HomeRemoveHandler,
+    HomeShowHandler,
+    HomeStatsHandler,
+    ProjectAddHandler,
+    ProjectExportHandler,
     ProjectListHandler,
+    ProjectRemoveHandler,
     ProjectShowHandler,
     ProjectStatsHandler,
     SessionExportHandler,
     SessionListHandler,
+    SessionShowHandler,
     SessionStatsHandler,
     VerbDispatcher,
+    WorkspaceExportHandler,
     WorkspaceListHandler,
+    WorkspaceShowHandler,
+    WorkspaceStatsHandler,
 )
 from agent_history.output.formatter import FormatterError, OutputFormatter
 from agent_history.scope.context import (
@@ -161,19 +171,29 @@ class CommandOrchestrator:
         dispatcher.register("session", "list", SessionListHandler())
         dispatcher.register("session", "export", SessionExportHandler())
         dispatcher.register("session", "stats", SessionStatsHandler())
+        dispatcher.register("session", "show", SessionShowHandler())
 
         # Workspace handlers
         dispatcher.register("ws", "list", WorkspaceListHandler())
+        dispatcher.register("ws", "show", WorkspaceShowHandler())
+        dispatcher.register("ws", "export", WorkspaceExportHandler())
+        dispatcher.register("ws", "stats", WorkspaceStatsHandler())
 
         # Home handlers
         dispatcher.register("home", "list", HomeListHandler())
         dispatcher.register("home", "add", HomeAddHandler())
         dispatcher.register("home", "remove", HomeRemoveHandler())
+        dispatcher.register("home", "show", HomeShowHandler())
+        dispatcher.register("home", "export", HomeExportHandler())
+        dispatcher.register("home", "stats", HomeStatsHandler())
 
         # Project handlers
         dispatcher.register("project", "list", ProjectListHandler())
         dispatcher.register("project", "show", ProjectShowHandler())
         dispatcher.register("project", "stats", ProjectStatsHandler())
+        dispatcher.register("project", "add", ProjectAddHandler())
+        dispatcher.register("project", "remove", ProjectRemoveHandler())
+        dispatcher.register("project", "export", ProjectExportHandler())
 
         # Gemini index handler
         dispatcher.register("gemini-index", "index", GeminiIndexHandler())
