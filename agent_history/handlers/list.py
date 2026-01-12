@@ -18,10 +18,7 @@ from typing import Any, Dict, List
 
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.types import HomeDict, SessionDict, WorkspaceDict
-from agent_history.core.workspaces import (
-    aggregate_workspaces,
-    build_scope_metadata,
-)
+from agent_history.core.workspaces import aggregate_workspaces, build_scope_metadata
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
@@ -317,6 +314,7 @@ class HomeListHandler(VerbHandler):
                 "total_count": len(home_list),
                 "total_workspaces": sum(h.get("workspace_count", 0) for h in home_list),
                 "total_sessions": sum(h.get("session_count", 0) for h in home_list),
+                "workspace_display_map": build_scope_metadata(scope)["workspace_display_map"],
             },
         )
 
