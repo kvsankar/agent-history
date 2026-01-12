@@ -147,7 +147,11 @@ class SessionStage:
         sessions = [
             s
             for s in all_sessions
-            if (s.get("workspace_readable", "") == workspace or s.get("workspace", "") == workspace)
+            if (
+                s.get("workspace_key", "") == workspace
+                or s.get("workspace_readable", "") == workspace
+                or s.get("workspace", "") == workspace
+            )
         ]
 
         # Apply session spec filters

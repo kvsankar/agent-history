@@ -12,6 +12,7 @@ from agent_history.backends.gemini import gemini_scan_sessions
 from agent_history.scope.context import ResolutionContext
 from agent_history.scope.home_resolver import get_resolver_for_home
 from agent_history.utils.paths import normalize_workspace_name
+from agent_history.utils.workspace_ref import apply_workspace_ref
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
 
 
@@ -34,6 +35,9 @@ class InventoryProvider:
             sessions.extend(self._list_codex_sessions(home))
         if agent in (None, AGENT_GEMINI):
             sessions.extend(self._list_gemini_sessions(home))
+
+        for session in sessions:
+            apply_workspace_ref(session)
 
         return sessions
 
