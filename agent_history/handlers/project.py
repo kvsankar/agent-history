@@ -257,4 +257,9 @@ class ProjectStatsHandler(VerbHandler):
             result.data["project"] = project_name
         if isinstance(result.metadata, dict):
             result.metadata["project"] = project_name
+            if scope:
+                metadata = build_scope_metadata(scope)
+                result.metadata.setdefault(
+                    "workspace_display_map", metadata.get("workspace_display_map", {})
+                )
         return result

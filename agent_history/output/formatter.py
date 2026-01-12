@@ -94,7 +94,13 @@ class TableFormatter(DataFormatter):
         formatter = self._formatters.get(data_type)
         if formatter:
             # Some formatters need metadata, some don't
-            if data_type in ("stats", "project_details", "exported_files", "project_list"):
+            if data_type in (
+                "stats",
+                "project_details",
+                "exported_files",
+                "project_list",
+                "home_list",
+            ):
                 return formatter(data, metadata)
             return formatter(data)
         return str(data)
@@ -170,7 +176,9 @@ class TableFormatter(DataFormatter):
 
         return self._render_table(headers, rows)
 
-    def _format_home_list(self, homes: List[HomeDict]) -> str:
+    def _format_home_list(
+        self, homes: List[HomeDict], metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
         """Format home list as table."""
         if not homes:
             return "No homes configured."
@@ -458,7 +466,7 @@ class TsvFormatter(DataFormatter):
         """Format data as TSV."""
         formatter = self._formatters.get(data_type)
         if formatter:
-            if data_type == "project_list":
+            if data_type in ("project_list", "home_list"):
                 return formatter(data, metadata)
             return formatter(data)
         # Fallback to JSON for complex types
@@ -520,7 +528,9 @@ class TsvFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_home_list(self, homes: List[HomeDict]) -> str:
+    def _format_home_list(
+        self, homes: List[HomeDict], metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
         """Format home list as TSV."""
         headers = ["HOME", "TYPE", "STATUS", "SESSIONS"]
         lines = ["\t".join(headers)]
