@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from agent_history.handlers.base import CommandResult, VerbHandler
+from agent_history.core.workspaces import build_workspace_metadata
 from agent_history.handlers.export import SessionExportHandler
 from agent_history.handlers.list import HomeListHandler, WorkspaceListHandler
 from agent_history.handlers.stats import SessionStatsHandler
@@ -75,11 +76,17 @@ class SessionShowHandler(VerbHandler):
                 ):
                     payload = dict(session)
                     payload.setdefault("workspace_raw", payload.get("workspace"))
+                    context = WorkspaceContext.from_record(record)
                     attach_workspace_context(
                         payload,
-                        context=WorkspaceContext.from_record(record),
+                        context=context,
                     )
-                    return CommandResult(success=True, data=payload, data_type="session_show")
+                    return CommandResult(
+                        success=True,
+                        data=payload,
+                        data_type="session_show",
+                        metadata=build_workspace_metadata([context]),
+                    )
 
         return CommandResult(
             success=False,
