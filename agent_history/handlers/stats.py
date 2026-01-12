@@ -15,7 +15,7 @@ from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.core.workspaces import build_workspace_rows
 from agent_history.scope.types import ConcreteRecord, ConcreteScope
-from agent_history.utils.workspace_ref import select_workspace_display
+from agent_history.utils.workspace_ref import WorkspaceContext
 
 
 class SessionStatsHandler(VerbHandler):
@@ -122,10 +122,9 @@ class SessionStatsHandler(VerbHandler):
         all_workspaces = set()
         total_sessions = 0
         for record in scope:
-            all_homes.add(record.home)
-            all_workspaces.add(
-                select_workspace_display(record.workspace, record.workspace_display)
-            )
+            context = WorkspaceContext.from_record(record)
+            all_homes.add(context.home)
+            all_workspaces.add(context.workspace_display)
             total_sessions += len(record.sessions)
 
         return CommandResult(

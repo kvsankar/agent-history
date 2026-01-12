@@ -32,7 +32,7 @@ from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
 from agent_history.utils.paths import decode_workspace_path
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
-from agent_history.utils.workspace_ref import select_workspace_display
+from agent_history.utils.workspace_ref import WorkspaceContext
 
 _INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
 
@@ -112,11 +112,11 @@ class SessionExportHandler(VerbHandler):
         # Collect all tasks to process
         tasks = []
         for record in scope:
+            context = WorkspaceContext.from_record(record)
             for session in record.sessions:
-                workspace_display = select_workspace_display(
-                    record.workspace, record.workspace_display
+                tasks.append(
+                    (session, context.home, context.workspace, context.workspace_display)
                 )
-                tasks.append((session, record.home, record.workspace, workspace_display))
 
         # Filter by explicit session IDs/filenames if provided
         missing_ids: List[str] = []

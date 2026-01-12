@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from agent_history.scope.types import ConcreteRecord
 from agent_history.types import WorkspaceDict
-from agent_history.utils.workspace_ref import select_workspace_display, select_workspace_key
+from agent_history.utils.workspace_ref import WorkspaceContext
 
 StatusLookup = Callable[[str, str], str]
 
@@ -20,17 +20,20 @@ def aggregate_workspaces(
     workspaces: Dict[str, WorkspaceDict] = OrderedDict()
 
     for record in records:
-        workspace_key = select_workspace_key(record.workspace, record.workspace_key)
-        workspace_display = select_workspace_display(record.workspace, record.workspace_display)
-        key = f"{record.home}:{workspace_key}"
+        context = WorkspaceContext.from_record(record)
+        key = f"{context.home}:{context.workspace_key}"
 
         if key not in workspaces:
-            status = status_lookup(workspace_display, record.home) if status_lookup else "unknown"
+            status = (
+                status_lookup(context.workspace_display, context.home)
+                if status_lookup
+                else "unknown"
+            )
             workspaces[key] = {
-                "home": record.home,
-                "workspace": workspace_display,
-                "workspace_key": workspace_key,
-                "workspace_display": workspace_display,
+                "home": context.home,
+                "workspace": context.workspace_display,
+                "workspace_key": context.workspace_key,
+                "workspace_display": context.workspace_display,
                 "session_count": 0,
                 "sessions": 0,
                 "status": status,
@@ -66,18 +69,17 @@ def build_workspace_rows(
     display_map: Dict[str, str] = {}
 
     for record in records:
-        workspace_key = select_workspace_key(record.workspace, record.workspace_key)
-        workspace_display = select_workspace_display(record.workspace, record.workspace_display)
-        display_map.setdefault(workspace_key, workspace_display)
+        context = WorkspaceContext.from_record(record)
+        display_map.setdefault(context.workspace_key, context.workspace_display)
 
         session_count = len(record.sessions)
         message_count = sum(s.get("message_count", 0) for s in record.sessions)
         rows.append(
             {
-                "home": record.home,
-                "workspace": workspace_display,
-                "workspace_key": workspace_key,
-                "workspace_display": workspace_display,
+                "home": context.home,
+                "workspace": context.workspace_display,
+                "workspace_key": context.workspace_key,
+                "workspace_display": context.workspace_display,
                 "sessions": session_count,
                 "messages": message_count,
             }
