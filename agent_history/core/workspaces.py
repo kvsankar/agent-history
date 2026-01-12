@@ -86,3 +86,14 @@ def build_workspace_rows(
         )
 
     return rows, display_map
+
+
+def build_workspace_display_map(
+    records: Iterable[ConcreteRecord],
+) -> Dict[str, str]:
+    """Build a mapping of workspace key to display name."""
+    display_map: Dict[str, str] = {}
+    for record in records:
+        context = WorkspaceContext.from_record(record)
+        display_map.setdefault(context.workspace_key, context.workspace_display)
+    return display_map

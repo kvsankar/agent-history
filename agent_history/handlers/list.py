@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.types import HomeDict, SessionDict, WorkspaceDict
-from agent_history.core.workspaces import aggregate_workspaces
+from agent_history.core.workspaces import aggregate_workspaces, build_workspace_display_map
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
@@ -75,6 +75,7 @@ class SessionListHandler(VerbHandler):
         for record in scope:
             homes.add(record.home)
             workspaces.add(select_workspace_display(record.workspace, record.workspace_display))
+        workspace_display_map = build_workspace_display_map(scope)
 
         return CommandResult(
             success=True,
@@ -84,6 +85,7 @@ class SessionListHandler(VerbHandler):
                 "total_count": len(sessions),
                 "homes": sorted(homes),
                 "workspaces": sorted(workspaces),
+                "workspace_display_map": workspace_display_map,
                 "record_count": len(scope),
             },
         )
@@ -206,6 +208,7 @@ class WorkspaceListHandler(VerbHandler):
         homes = set()
         for record in scope:
             homes.add(record.home)
+        workspace_display_map = build_workspace_display_map(scope)
 
         return CommandResult(
             success=True,
@@ -215,6 +218,7 @@ class WorkspaceListHandler(VerbHandler):
                 "total_count": len(workspace_list),
                 "homes": sorted(homes),
                 "total_sessions": sum(w.get("session_count", 0) for w in workspace_list),
+                "workspace_display_map": workspace_display_map,
             },
         )
 
