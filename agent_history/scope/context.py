@@ -328,8 +328,10 @@ class ContextBuilder:
                 rel_str = str(rel).replace("\\", "/")
                 # Normalize to absolute workspace path
                 normalized_cwd = "/" + rel_str.lstrip("/")
+                from agent_history.utils.paths import encode_workspace_path
+
                 # Encode as workspace pattern: /home/user/myproject -> -home-user-myproject
-                encoded_pattern = normalized_cwd.replace("/", "-")
+                encoded_pattern = encode_workspace_path(normalized_cwd)
                 # Check if this workspace exists in Claude projects
                 if claude_projects.exists():
                     for workspace_dir in claude_projects.iterdir():
@@ -371,9 +373,9 @@ class ContextBuilder:
         # .claude/projects/-tmp-pytest-xxx-test-workspace/
         if claude_projects.exists():
             # Encode CWD as workspace pattern
-            cwd_encoded = cwd_str_normalized.replace("/", "-")
-            if not cwd_encoded.startswith("-"):
-                cwd_encoded = "-" + cwd_encoded
+            from agent_history.utils.paths import encode_workspace_path
+
+            cwd_encoded = encode_workspace_path(cwd_str_normalized)
             for workspace_dir in claude_projects.iterdir():
                 if not workspace_dir.is_dir():
                     continue
