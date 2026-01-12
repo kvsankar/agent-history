@@ -178,16 +178,24 @@ class WSLHomeResolver(HomeResolver):
         """
         Get the Codex sessions directory for WSL home.
 
-        TODO: Implement WSL path resolution for Codex.
+        Uses get_wsl_codex_sessions_dir() from platform utils.
         """
+        from agent_history.utils.platform import get_wsl_codex_sessions_dir
+
+        if self._distro:
+            return get_wsl_codex_sessions_dir(self._distro)
         return None
 
     def get_gemini_dir(self, context: ResolutionContext) -> Optional[Path]:
         """
         Get the Gemini sessions directory for WSL home.
 
-        TODO: Implement WSL path resolution for Gemini.
+        Uses get_wsl_gemini_sessions_dir() from platform utils.
         """
+        from agent_history.utils.platform import get_wsl_gemini_sessions_dir
+
+        if self._distro:
+            return get_wsl_gemini_sessions_dir(self._distro)
         return None
 
 
@@ -224,28 +232,33 @@ class WindowsHomeResolver(HomeResolver):
         """
         Get the Claude projects directory for Windows home.
 
-        TODO: Implement Windows path resolution.
         Windows paths would be something like:
         /mnt/c/Users/<username>/.claude/projects/
         or via network: //hostname/Users/<username>/.claude/projects/
         """
-        return None
+        from agent_history.utils.platform import get_windows_projects_dir
+
+        return get_windows_projects_dir(self._user)
 
     def get_codex_dir(self, context: ResolutionContext) -> Optional[Path]:
         """
         Get the Codex sessions directory for Windows home.
 
-        TODO: Implement Windows path resolution for Codex.
+        Uses get_windows_codex_sessions_dir() from platform utils.
         """
-        return None
+        from agent_history.utils.platform import get_windows_codex_sessions_dir
+
+        return get_windows_codex_sessions_dir(self._user)
 
     def get_gemini_dir(self, context: ResolutionContext) -> Optional[Path]:
         """
         Get the Gemini sessions directory for Windows home.
 
-        TODO: Implement Windows path resolution for Gemini.
+        Uses get_windows_gemini_sessions_dir() from platform utils.
         """
-        return None
+        from agent_history.utils.platform import get_windows_gemini_sessions_dir
+
+        return get_windows_gemini_sessions_dir(self._user)
 
 
 class RemoteHomeResolver(HomeResolver):

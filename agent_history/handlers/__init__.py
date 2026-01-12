@@ -46,6 +46,7 @@ from agent_history.handlers.stubs import (
     WorkspaceShowHandler,
     WorkspaceStatsHandler,
 )
+from agent_history.handlers.utilities import FetchHandler, InstallHandler, ResetHandler
 
 __all__ = [
     # Base classes
@@ -81,4 +82,8 @@ __all__ = [
     "ProjectAddHandler",
     "ProjectRemoveHandler",
     "ProjectExportHandler",
+    # Utility handlers
+    "InstallHandler",
+    "ResetHandler",
+    "FetchHandler",
 ]

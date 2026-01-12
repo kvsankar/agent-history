@@ -81,7 +81,7 @@ class ScopeArgs:
         home_value: Specific home within a category (e.g., "Ubuntu" for --wsl=Ubuntu).
         home_names: List of explicit home names from --home flags.
         all_workspaces: If True, search all workspaces in selected homes (--aw flag).
-        project: Project name for project-scoped operations (--project flag).
+        projects: Project names for project-scoped operations (--project flag, repeatable).
         patterns: Workspace patterns from positional arguments.
         this_only: If True, restrict to current workspace only (--this flag).
         agent: Agent filter ("claude", "codex", "gemini", or None for all).
@@ -101,7 +101,7 @@ class ScopeArgs:
 
     # Workspace selection
     all_workspaces: bool = False
-    project: Optional[str] = None
+    projects: List[str] = field(default_factory=list)
     patterns: List[str] = field(default_factory=list)  # Positional patterns (exact match)
     name_patterns: List[str] = field(default_factory=list)  # -n patterns (substring match)
     this_only: bool = False
@@ -478,6 +478,8 @@ class ContextBuilder:
             # Filter to only remote hosts (not wsl: or windows: prefixed)
             for home_spec in saved_homes:
                 if isinstance(home_spec, str):
+                    if home_spec == "web":
+                        continue
                     if home_spec.startswith("remote:"):
                         homes["remote"].append(home_spec[7:])  # Strip "remote:" prefix
                     elif not home_spec.startswith(("wsl:", "windows:")):
@@ -485,6 +487,8 @@ class ContextBuilder:
                         homes["remote"].append(home_spec)
                 elif isinstance(home_spec, dict) and home_spec.get("name"):
                     name = home_spec["name"]
+                    if name == "web":
+                        continue
                     if name.startswith("remote:"):
                         homes["remote"].append(name[7:])
                     elif not name.startswith(("wsl:", "windows:")):

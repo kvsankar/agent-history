@@ -19,7 +19,7 @@ For agent-specific session formats, see [agents/formats/](agents/formats/).
 
 **Constraints:**
 - Read-only: Never modifies source session files
-- Offline: No network calls except SSH for remote access and web session API
+- Network use: SSH for remote access and HTTPS for Claude web sessions when enabled
 - Portable: No external dependencies required
 
 ---
@@ -57,38 +57,28 @@ A **home** is a data source where agent sessions are stored.
 | `local` | Current machine | Direct filesystem |
 | `wsl` | WSL distribution (from Windows) | UNC path (`\\wsl.localhost\...`) |
 | `windows` | Windows (from WSL) | Mount path (`/mnt/c/Users/...`) |
-| `web` | Claude.ai web sessions | API with auth token |
-| `remote` | SSH-accessible machine | SSH + rsync |
+| `web` | Claude.ai web sessions | HTTPS API (OAuth token) |
+| `remote` | SSH-accessible machine | SSH (per-file read) |
 
 ### Web Session Access
 
-Claude.ai web sessions require authentication:
-- **Token**: Session cookie from browser
-- **Organization UUID**: Organization identifier
+Claude.ai web sessions are supported via the Anthropic API.
 
-Authentication can be:
-- **Automatic** (macOS): Extracted from system keychain
-- **Manual**: Provided via `--token` and `--org-uuid` flags
-
-Web sessions provide limited metadata compared to CLI agents:
-- Conversation content and timestamps
-- No token usage or tool execution details
-- GitHub repository association (if available)
-- Workspace resolution:
-  - Build a GitHub→workspace map by scanning **local Claude workspaces only** for git remotes (origin) that point to GitHub; if a web session repo (`owner/repo`) matches, the corresponding local path is used.
-  - This mapping is automatic and best-effort; there is no user config for repo→workspace mapping, and only GitHub remotes are considered.
-  - If no local match, fall back to the GitHub repo string itself.
-  - If no repo, fall back to `session_context.cwd` when present.
-  - If none are available, workspace may remain unresolved.
+- Access token resolved from macOS Keychain or `~/.claude/.credentials.json`
+- Organization UUID read from `~/.claude.json`
+- Session lists are fetched from `/sessions`
+- Session exports fetch full loglines and cache to `~/.agent-history/web-cache`
+- `--web` includes web sessions; `--no-web` excludes them
+- `--ah` includes web sessions by default
 
 ### Home Configuration
 
 Homes are discovered as follows:
 - Local is always present.
-- WSL/Windows/web are implicitly included when available; no explicit `home add` is required.
+- WSL/Windows are implicitly included when available; no explicit `home add` is required.
 - SSH remotes must be added explicitly via `home add user@hostname` (repeatable).
 
-The `--ah` (all homes) flag automatically includes local + detected WSL/Windows/web + configured SSH remotes. Use `--no-wsl`, `--no-windows`, or `--no-web` to exclude those implicit sources.
+The `--ah` (all homes) flag automatically includes local + detected WSL/Windows + configured SSH remotes + web. `--no-wsl`, `--no-windows`, `--no-remote`, and `--no-web` are honored by scope resolution.
 
 Projects/aliases share the same configuration file. Legacy `projects.json`/`aliases.json` files are auto-imported into `config.json` at load time (non-destructive). For test isolation or sandboxed runs, set `AGENT_HISTORY_CONFIG_DIR` to point the tool at a temporary config directory so the real `~/.agent-history/config.json` is untouched.
 
@@ -105,8 +95,8 @@ Configuration stored in `~/.agent-history/config.json` (canonical key: `homes`; 
   ],
   "projects": {
     "myproj": {
-      "local": ["-home-user-myproject"],
-      "remote:vm01": ["-home-user-myproject"]
+      "local": ["/home/user/myproject"],
+      "remote:vm01": ["/home/user/myproject"]
     }
   }
 }
@@ -130,8 +120,8 @@ Configuration stored in `~/.agent-history/config.json` (canonical key: `homes`; 
   ],
   "projects": {
     "myproj": {
-      "local": ["-home-user-myproject"],
-      "remote:vm01": ["-home-user-myproject"]
+      "local": ["/home/user/myproject"],
+      "remote:vm01": ["/home/user/myproject"]
     }
   }
 }
@@ -255,10 +245,10 @@ A message is a single turn in the conversation.
 | Role | Description | Agent-specific names |
 |------|-------------|---------------------|
 | `user` | Human input or task prompt | All agents use `user` |
-| `assistant` | AI response | Claude: `assistant`, Codex: `assistant`, Gemini: `gemini` |
+| `assistant` | AI response | Claude: `assistant`, Codex: `assistant`, Gemini: `model`/`gemini`/`assistant` |
 | `system` | System messages (compaction markers, etc.) | Claude only |
 
-The tool normalizes role names for consistent display: Gemini's `gemini` type is displayed as `Assistant`.
+The tool normalizes role names for consistent display: Gemini's `model`/`gemini` types are displayed as `assistant`.
 
 **Message content types:**
 | Type | Description | Agents |
@@ -271,17 +261,8 @@ The tool normalizes role names for consistent display: Gemini's `gemini` type is
 
 ### Conversation Forks
 
-Claude Code sessions can have **forked conversations** where a single parent message has multiple child responses (e.g., user regenerated a response, or different branches were explored).
-
-**Fork detection:**
-- Messages are linked via `parentUuid` field
-- A fork occurs when one message has multiple children
-- Each branch represents an alternative conversation path
-
-**Export behavior for forks:**
-- Forked conversations are detected and marked in export header
-- Fork points and branch information are summarized
-- Navigation links help trace conversation paths
+Conversation fork detection is implemented for Claude sessions using `uuid`/`parentUuid` linkage.
+Forked exports include a **Conversation Structure** summary and anchor links for branch navigation.
 
 ---
 
@@ -291,51 +272,51 @@ Claude Code sessions can have **forked conversations** where a single parent mes
 
 **`ws list`** - Enumerate workspaces
 - Input: Home scope, optional pattern filter
-- Output: Workspace name, session count, last modified date
-- Behavior: Scan agent storage directories, count session files
+- Output: Home, workspace path, session count, status, last modified
+- Behavior: Aggregate sessions from resolved scope (no extra scanning)
 
 **`session list`** - Enumerate sessions
 - Input: Workspace scope, home scope, optional date filter
-- Output: Session ID, message count, file size, modified date
-- Behavior: Scan workspace directories, count messages per file
+- Output: Agent, home, workspace, filename, message count, modified date
+- Behavior: List session file metadata from resolved scope (message counts are 0 unless `--counts` is used)
 
 **`home list`** - Enumerate configured homes
 - Input: None
-- Output: Home name, type, status, workspace count
-- Behavior: Check connectivity for remote homes
+- Output: Home name, type, status, session count (scope-based)
+- Behavior: Lists configured/detected homes; no SSH connectivity checks
 
 **`project list`** - Enumerate configured projects
 - Input: None
-- Output: Project name, workspace count, home list
-- Behavior: Read from projects configuration
+- Output: Project name, source homes, workspace list (or count), session count when `--counts` is used
+- Behavior: Read from config.json (no auto-resolution unless `--counts`)
 
 ### Show Operations
 
 **`ws show`** - Display detailed workspace information
 - Input: Workspace pattern or path
-- Output: Workspace path, session count, recent sessions, aggregate statistics
-- Behavior: Read workspace metadata and compute statistics
+- Output: Workspace summary entries (same shape as `ws list`)
+- Behavior: Aggregate sessions from resolved scope
 
 **`session show`** - Display detailed session information
 - Input: Session ID or file path
-- Output: Full conversation content with metadata, timestamps, tool usage
-- Behavior: Parse session file and format for display
+- Output: Session metadata summary (file, filename, message_count) or session dict from scope
+- Behavior: Reads file metadata; does not render full conversation
 
 **`home show`** - Display detailed home information
 - Input: Home name or identifier
-- Output: Home type, connection status, workspace count, top workspaces
-- Behavior: Query home configuration and compute statistics
+- Output: Home summary entry (same shape as `home list`)
+- Behavior: Filtered view of `home list`
 
 **`project show`** - Display detailed project information
 - Input: Project name (optional, defaults to current project if in workspace)
-- Output: Project workspaces across all homes, session counts, last modified
-- Behavior: Read project configuration and aggregate workspace data
+- Output: Project name, total sessions, workspaces grouped by home
+- Behavior: Aggregate sessions from resolved scope (no last-modified calculation)
 
 ### Export Operations
 
-**`session export`** - Convert sessions to markdown
+**`session export`** - Export sessions to markdown or NDJSON
 - Input: Session scope, output directory, format options
-- Output: Markdown files with conversation content
+- Output: Markdown (`.md`) or NDJSON (`.ndjson`) files per session
 - Behavior:
   1. Resolve sessions from scope
   2. For each session:
@@ -348,75 +329,79 @@ Claude Code sessions can have **forked conversations** where a single parent mes
 **Export options:**
 | Option | Effect |
 |--------|--------|
+| `--session <id>` | Export specific session IDs or filenames (repeatable) |
 | `--minimal` | Omit metadata sections |
 | `--split <n>` | Split conversations exceeding n lines |
 | `--flat` | No workspace subdirectories |
 | `--source` | Copy raw source files alongside markdown |
+| `--json` | Export as NDJSON (unified schema) |
 | `--force` | Re-export even if up-to-date |
 
-**Output filename format:** `<source-prefix><timestamp>_<session-id>.md`
-- **Source prefix** (multi-home exports): `wsl_<distro>_`, `remote_<host>_`, `windows_` (local has no prefix)
+**Notes:**
+- `--session` restricts export to matching session IDs/filenames and reports missing IDs as failures.
+
+**Output filename format:** `<source-prefix><timestamp>_<session-id>.(md|ndjson)`
+- **Source prefix** (multi-home exports): `wsl_<distro>_`, `remote_<host>_`, `windows_<user>_` (local has no prefix)
 - **Timestamp** from first message: `YYYYMMDDHHMMSS`
+- **No timestamp**: If the first message lacks a timestamp, the filename is `<source-prefix><session-id>.(md|ndjson)`
 - **Session ID**: Original filename stem
 
 **Output directory structure:**
 ```
 <output-dir>/
 ├── index.md                          # Summary manifest (optional)
-├── <workspace-name>/                 # Workspace subdirectory
+├── <workspace-path>/                 # Workspace path segments when decoded
 │   ├── 20250103181500_<uuid>.md     # Local session (no prefix)
-│   ├── wsl_ubuntu_20250103174500_<uuid>.md
+│   ├── wsl_Ubuntu_20250103174500_<uuid>.md
 │   └── remote_vm01_20250102103000_<uuid>.md
-└── <another-workspace>/
+└── <workspace-id>/                   # Hash/encoded name when path cannot be decoded
     └── ...
 ```
 
 Use `--flat` to disable workspace subdirectories.
 
 **Index manifest (`index.md`):**
-- Generated after multi-home export (`--ah`)
+- Generated when multiple homes or multiple workspaces are exported
 - Contains: export timestamp, workspace count, session count
 - Lists sources with session counts
 - Lists workspaces with session counts per source
 
 **Markdown output structure:**
 ```markdown
-# Claude Conversation
-or
-# Claude Conversation (Agent)  <!-- for agent sessions -->
-
-> ⚠️ **Agent Conversation** notice (if applicable)
-
-## Session Information
-- Session ID, timestamps, workspace, git branch
-- Model, token usage summary
+# Claude Code Session: 550e8400-e29b-41d4-a716.jsonl
+**Started:** 2025-01-03T10:15:00Z
+**Ended:** 2025-01-03T18:15:00Z
+**Messages:** 127
 
 ---
 
-## Message 1
-**User** | 2025-01-03 10:15:00
+## Message 1: User
+*2025-01-03T10:15:00Z*
 
 Message content here
 
 ---
 
-## Message 2
-**Assistant** | 2025-01-03 10:15:05
+## Message 2: Assistant
+*2025-01-03T10:15:05Z*
 
 Response text
 
-### Tool Use: Read
-```json
-{"file_path": "/path/to/file"}
-```
+<details>
+<summary>Metadata</summary>
 
-### Tool Result
-File contents here...
+**Model:** claude-3-5-sonnet
+**Tokens:** 12 in / 34 out
+**CWD:** /home/user/myproject
+**Branch:** main
+</details>
 
 ---
 ```
 
-**Minimal mode (`--minimal`):** Omits Session Information section, UUIDs, and navigation links.
+Forked Claude sessions include a **Conversation Structure** summary and per-message anchors for branch navigation (non-minimal exports).
+
+**Minimal mode (`--minimal`):** Omits the per-message metadata details blocks.
 
 **Split behavior (`--split <n>`):**
 - Estimates ~30-50 lines per message (varies by content and metadata)
@@ -430,12 +415,7 @@ File contents here...
 **Parallel export (`--jobs <n>`):**
 - Processes multiple sessions concurrently
 - Useful for large exports or remote sources
-- Default: auto (up to 2 workers, based on CPU count)
-
-**Single file conversion:**
-- Export accepts a single `.jsonl` or `.json` file path
-- Converts directly to markdown without workspace context
-- Supports remote files: fetches via SSH, converts locally
+- Default: sequential unless `--jobs` is set
 
 ### Stats Operations
 
@@ -443,25 +423,23 @@ File contents here...
 - Input: Session scope, home scope, grouping options
 - Output: Aggregate statistics
 - Behavior:
-  1. Sync: Parse sessions and store metrics in database
-  2. Query: Aggregate metrics from database
-  3. Display: Format and output results
+  1. Auto sync: Sync the resolved scope to the metrics DB (unless `--no-sync`)
+  2. Compute: Aggregate stats from the resolved scope
+  3. Overlay: Overlay token/tool/time totals from the DB when sync runs
 
 **Metrics computed:**
 | Metric | Source |
 |--------|--------|
 | Session count | File count |
 | Message count | Message array length |
-| Token usage | `usage` field in assistant messages |
-| Tool usage | `tool_use` content blocks |
-| Time spent | Gaps between message timestamps |
+| Token usage | Metrics DB (requires sync; auto by default) |
+| Tool usage | Metrics DB (requires sync; auto by default) |
+| Time spent | Metrics DB work-period calculation (requires sync; auto by default) |
 
-**Time tracking algorithm:**
-- **Gap threshold:** 30 minutes of inactivity marks end of work period
-- **Work period:** Continuous activity with gaps < 30 minutes
-- **Effort time:** Sum of work period durations (excludes idle gaps)
-- **Calendar time:** Last timestamp minus first timestamp (includes all gaps)
-- **Concurrent agents:** Counted separately for effort, once for calendar
+**Time tracking algorithm (metrics DB):**
+- **Gap threshold:** 30 minutes of inactivity marks end of a work period
+- **Work period time:** Sum of gaps below the threshold
+- **Outputs:** `work_period_seconds` totals and counts (no calendar time)
 
 **Grouping dimensions:**
 | Dimension | Groups by |
@@ -472,6 +450,11 @@ File contents here...
 | `workspace` | Workspace name |
 | `home` | Home identifier |
 | `agent` | Agent type (claude, codex, gemini) |
+
+**Notes:**
+- `--by` accepts comma-separated dimensions (e.g., `--by model,tool,day`)
+- Table output shows only the requested groupings; JSON output always includes `by_agent`, `by_home`, `by_workspace`, `by_model`, and `by_tool`, with `by_day` added only when requested
+- `--no-sync` skips the automatic metrics sync (faster, but tokens/tools/time may be stale)
 
 ### Project Operations
 
@@ -490,14 +473,14 @@ File contents here...
   - With workspace: Remove workspace from project
   - Without workspace: Delete entire project
 
-**Project storage:** `~/.agent-history/projects.json`
+**Project storage:** `~/.agent-history/config.json`
 ```json
 {
   "projects": {
     "myproject": {
-      "local": ["-home-user-myproject"],
-      "wsl": {"Ubuntu": ["-home-user-myproject"]},
-      "remote": {"vm01": ["-home-user-myproject"]}
+      "local": ["/home/user/myproject"],
+      "wsl:Ubuntu": ["/home/user/myproject"],
+      "remote:vm01": ["/home/user/myproject"]
     }
   }
 }
@@ -510,6 +493,7 @@ File contents here...
 ### Pattern Matching
 
 The `-n <pattern>` flag performs **case-insensitive substring matching** on workspace names.
+Positional patterns use **exact matching** when the pattern looks path-like (`/`, `-`, or contains `/`), otherwise they use substring matching.
 
 Examples:
 - Pattern `auth` matches `authentication`, `oauth-service`, `my-auth-lib`
@@ -518,35 +502,34 @@ Examples:
 
 ### Deduplication
 
-When multiple scope modifiers result in overlapping sessions:
-- Sessions are deduplicated by **file path**
-- The first occurrence is kept (order: local → WSL → Windows → remotes)
-- Deduplication happens after all sources are scanned
+Sessions are **not** deduplicated across homes. Each home/workspace pair is treated as a distinct scope; overlapping file names may appear multiple times if sources overlap.
 
 ### Workspace Scope
 
 Priority order for workspace resolution:
 
-1. **Explicit path**: Positional argument specifies exact workspace
-2. **Pattern match**: `-n <pattern>` matches workspace names containing pattern
-3. **Project**: `--project <name>` uses workspaces from named project
-4. **Auto-detect project**: If cwd belongs to a project, use that project
-5. **Current workspace**: Derive from current working directory
-6. **All workspaces**: `--aw` flag
+1. **Explicit project**: `--project <name>` (single project) uses configured workspaces
+2. **`--this` flag**: Force current workspace only (skip project auto-detection)
+3. **Auto-detect project**: If cwd belongs to a project, use that project
+4. **`--aw` (all workspaces)**: Only when no patterns are provided
+5. **Explicit patterns**: Positional patterns and `-n <pattern>` filters
+6. **Current workspace**: If cwd is in a workspace
+7. **Fallback**: All workspaces
 
-The `--this` flag overrides project auto-detection, forcing current workspace only.
+Positional patterns use exact matching when path-like; `-n` patterns always use substring matching.
 
 ### Home Scope
 
 Priority order for home resolution:
 
-1. **Explicit home**: `--home <name>` specifies saved home
-2. **Home type flags**: `--wsl`, `--windows`, `--web`
-3. **Remote flag**: `-r <user@host>` specifies SSH remote
-4. **All homes**: `--ah` flag includes all configured homes
-5. **Local**: Default when no home specified
+1. **All homes**: `--ah` includes local + WSL/Windows + configured remotes + web
+2. **Home type flags**: `--wsl`, `--windows`, `--local` (category selection)
+3. **Explicit homes**: `--home <name>` and `-r <user@host>` (concrete home names)
+4. **Local**: Default when no home specified
 
-Exclusion flags (`--no-wsl`, `--no-windows`, `--no-remote`) filter sources when using `--ah`.
+Notes:
+- `--web` includes Claude web sessions
+- `--no-wsl`, `--no-windows`, `--no-remote`, `--no-web` exclude those homes when used with `--ah`
 
 ### Combined Scope
 
@@ -560,6 +543,8 @@ Home and workspace scopes are orthogonal:
 | `session list --aw --ah` | all | all configured |
 | `session list -n auth --ah` | pattern "auth" | all configured |
 
+**Cross-home guard:** When running in a local workspace, non-local homes (`--ah`, `--wsl`, `--windows`, `-r/--home`) require an explicit workspace scope (`-n`, positional pattern, `--aw`, or `--project`). Otherwise the command errors to avoid ambiguous cross-home matching.
+
 ---
 
 ## Metrics Database
@@ -572,22 +557,26 @@ Caches computed metrics for fast querying. Parsing every message in every sessio
 
 ### Sync Behavior
 
-Stats commands automatically sync before querying:
-- Scope-aware: Only syncs workspaces being queried
+Stats auto-sync by default. Sync happens for the resolved scope unless `--no-sync` is passed:
+- Syncs only the sessions in scope (homes + workspaces + agent filters)
 - Incremental: Skips files unchanged since last sync (by mtime)
 - Additive: Deleted sessions remain until explicit reset
-
-Use `--no-sync` to query cached data without syncing.
+ 
+`--sync` is accepted for explicit refresh; `--force` re-syncs all files in scope.
 
 ### Schema
 
-**sessions table:**
+**sessions table (core columns):**
 | Column | Type | Description |
 |--------|------|-------------|
-| id | TEXT | Session file path (primary key) |
-| home | TEXT | Home identifier |
+| file_path | TEXT | Session file path (primary key) |
+| session_id | TEXT | Session identifier (if available) |
 | workspace | TEXT | Workspace name |
-| agent | TEXT | Agent type (claude, codex, gemini) |
+| home | TEXT | Home identifier |
+| agent | TEXT | Agent type |
+| file_mtime | REAL | Source file mtime (Unix epoch) |
+| is_agent | INTEGER | Claude agent session flag |
+| parent_session_id | TEXT | Claude parent session id |
 | message_count | INTEGER | Total messages |
 | user_messages | INTEGER | User message count |
 | assistant_messages | INTEGER | Assistant message count |
@@ -597,22 +586,27 @@ Use `--no-sync` to query cached data without syncing.
 | cache_read_tokens | INTEGER | Tokens read from cache |
 | first_timestamp | TEXT | First message timestamp (ISO 8601) |
 | last_timestamp | TEXT | Last message timestamp (ISO 8601) |
-| mtime | REAL | Source file modification time (Unix epoch) |
+| work_period_seconds | REAL | Active time (gap-based) |
+| num_work_periods | INTEGER | Number of work periods |
 
-**tool_usage table:**
+**tool_uses table:**
 | Column | Type | Description |
 |--------|------|-------------|
-| session_id | TEXT | Foreign key to sessions |
+| file_path | TEXT | Foreign key to sessions |
+| session_id | TEXT | Session id |
 | tool_name | TEXT | Tool name |
-| call_count | INTEGER | Number of invocations |
+| is_error | INTEGER | Tool error flag |
+| timestamp | TEXT | Tool timestamp |
 
-**model_usage table:**
+**messages table (aggregates per message):**
 | Column | Type | Description |
 |--------|------|-------------|
-| session_id | TEXT | Foreign key to sessions |
-| model_name | TEXT | Model identifier |
-| message_count | INTEGER | Messages using this model |
-| tokens | INTEGER | Tokens for this model |
+| file_path | TEXT | Foreign key to sessions |
+| type | TEXT | Message type |
+| timestamp | TEXT | Message timestamp |
+| model | TEXT | Model name (if any) |
+| input_tokens | INTEGER | Input tokens |
+| output_tokens | INTEGER | Output tokens |
 
 ---
 
@@ -640,7 +634,7 @@ Location: `~/.agent-history/gemini_index.json`
 
 The hash is computed from the absolute path string.
 
-**Progressive learning:** The index is updated automatically when running commands from directories that have Gemini sessions.
+**Index updates:** The index is updated via `gemini-index` (and may also merge `~/.gemini/hash_index.json` if present). It is not auto-updated during normal commands.
 
 ### Codex Index
 
@@ -672,7 +666,7 @@ Location: `~/.agent-history/codex_index.json`
 
 | Condition | Behavior |
 |-----------|----------|
-| Workspace not found | Error with suggestions (fuzzy match) |
+| Workspace not found | Error with generic suggestion (e.g., use `--aw` or a pattern) |
 | No sessions match | Empty result (not an error) |
 | Session file corrupt | Skip file, log warning, continue |
 
@@ -681,8 +675,8 @@ Location: `~/.agent-history/codex_index.json`
 | Condition | Behavior |
 |-----------|----------|
 | SSH connection failed | Error with connection details |
-| Remote home unreachable | Skip home in `--ah` mode, log warning |
-| rsync failure | Error with rsync output |
+| Remote home unreachable | Skip home in `--ah` mode (no warning) |
+| Remote fetch failure | Error with SSH output or missing file |
 
 ### Permissions
 
@@ -696,20 +690,21 @@ Location: `~/.agent-history/codex_index.json`
 
 ## Remote Session Caching
 
-When exporting from remote sources (SSH, WSL from Windows, Windows from WSL):
+When using SSH remote sources:
 
 **Caching behavior:**
-- Sessions are fetched to local cache before export
-- Cache location: Within local agent storage directory with source prefix
-- Example: `remote_vm01_<workspace>/` for SSH remote `vm01`
+- Sessions are fetched to local cache before list/export
+- Cache location: `~/.agent-history/remote-cache/<host>/<agent>/<workspace>/`
+- Example: `~/.agent-history/remote-cache/vm01/claude/-home-user-myproject/`
 
 **Incremental sync:**
-- Uses rsync for efficient transfer (SSH remotes)
-- Only new/modified files are transferred
-- Circular fetch prevention: Remote/WSL prefixed directories are skipped
+- Per-file SSH reads (no rsync)
+- Only missing or stale files are fetched (mtime-based refresh)
+- Remote deletes purge cached files with matching filenames
+- Cached `remote_`/`wsl_`/`windows_` directories in `~/.claude/projects/` are ignored in v2
 
 **List vs Export:**
-- `session list -r <host>`: Direct remote query, no caching
+- `session list -r <host>`: Remote query with cache refresh
 - `session export -r <host>`: Fetches to cache first, then exports
 
 ---
@@ -718,10 +713,9 @@ When exporting from remote sources (SSH, WSL from Windows, Windows from WSL):
 
 ### Install
 
-**`install`** - Install CLI and Claude Code skill
-- Copies CLI binary to PATH directory (default: `~/.local/bin/`)
-- Installs Claude Code skill files (default: `~/.claude/skills/agent-history/`)
-- Updates Claude Code settings for session retention
+**`install`** - Report install status (compatibility stub)
+- Accepts legacy install flags but performs no filesystem changes in v2
+- Returns a status payload describing requested paths and flags
 
 **Options:**
 | Option | Effect |
@@ -737,13 +731,30 @@ When exporting from remote sources (SSH, WSL from Windows, Windows from WSL):
 **`reset`** - Reset stored data
 - Clears metrics database
 - Clears configuration
-- Clears projects
+- Clears caches (remote + web fetch cache)
 
 **Options:**
 | Option | Effect |
 |--------|--------|
 | `--db` | Reset metrics database only |
 | `--config` | Reset configuration only |
+| `--settings` | Reset caches only |
+
+**Notes:**
+- Prompts for confirmation when run interactively; use `-y` to skip
+
+### Fetch
+
+**`fetch`** - Pre-fetch remote sessions into local cache
+- Applies the same home/workspace/agent filters as session export
+- Useful for offline export or warming remote caches ahead of large operations
+
+**Options:**
+| Option | Effect |
+|--------|--------|
+| `-r <user@host>` | Restrict to SSH remotes |
+| `--ah` | Fetch from all homes |
+| `--agent <name>` | Filter by agent |
 
 ---
 
@@ -755,8 +766,8 @@ When exporting from remote sources (SSH, WSL from Windows, Windows from WSL):
 | `~/.agent-history/metrics.db` | Metrics cache database |
 | `~/.agent-history/gemini_index.json` | Gemini hash→path mappings |
 | `~/.agent-history/codex_index.json` | Codex session→workspace index |
-| `~/.agent-history/.env` | Web session credentials (optional, for Claude.ai web sessions) |
-| `~/.agent-history/remote_<hostname>/` | Cached remote session files |
+| `~/.agent-history/remote-cache/<host>/<agent>/<workspace>/` | Cached remote session files |
+| `~/.agent-history/web-cache/` | Cached Claude web sessions (JSONL) |
 
 **Legacy files (auto-migrated on first use):**
 - `~/.agent-history/projects.json` → Merged into `config.json`

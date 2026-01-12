@@ -158,7 +158,7 @@ class TestFluentContextInit:
         fc = FluentContext()
         assert isinstance(fc._scope_args, ScopeArgs)
         assert fc._scope_args.patterns == []
-        assert fc._scope_args.project is None
+        assert fc._scope_args.projects == []
         assert not fc._scope_args.all_workspaces
 
 
@@ -194,7 +194,7 @@ class TestScopeMethod:
         """scope(project=) should set project in scope_args."""
         fc = FluentContext(mock_context)
         fc.scope(project="testproj")
-        assert fc._scope_args.project == "testproj"
+        assert fc._scope_args.projects == ["testproj"]
 
     def test_scope_with_all_workspaces(self, mock_context: ResolutionContext) -> None:
         """scope(all_workspaces=True) should set flag."""
@@ -573,7 +573,7 @@ class TestStatsMethod:
         with patch.object(fc, "_resolve", return_value=mock_scope):
             result = fc.stats(by="model")
 
-        assert result.metadata.get("group_by") == "model"
+        assert result.metadata.get("group_by") == ["model"]
 
     def test_stats_with_time(
         self, mock_context: ResolutionContext, mock_scope: ConcreteScope

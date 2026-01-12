@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+from agent_history.core.ndjson import build_ndjson_records
 
 def build_output_filename_ndjson(
     jsonl_file: Path, source_tag: str, messages: List[Dict[str, Any]]
@@ -57,24 +58,8 @@ def write_ndjson_export(
         session: Session metadata.
         quiet: If True, suppress per-file output.
     """
-    lines = []
-
-    # Write header record first
-    header_record = {
-        "type": "header",
-        "agent": agent_type,
-        "version": "1.0",
-        "session_file": session.get("filename", session.get("file", "")),
-    }
-    lines.append(json.dumps(header_record, ensure_ascii=False))
-
-    # Write session record with messages
-    session_record = {
-        "type": "session",
-        "agent": agent_type,
-        "messages": [normalize_message_to_unified(msg, agent_type) for msg in messages],
-    }
-    lines.append(json.dumps(session_record, ensure_ascii=False))
+    records = build_ndjson_records(agent_type, messages, session)
+    lines = [json.dumps(record, ensure_ascii=False) for record in records]
 
     output_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if not quiet:

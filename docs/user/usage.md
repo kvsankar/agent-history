@@ -12,8 +12,9 @@ Detailed documentation for all `agent-history` commands and options.
 | `export` | Export sessions to markdown |
 | `project` | Manage workspace projects |
 | `stats` | Show usage statistics and metrics |
-| `reset` | Reset stored data (database, settings, projects) |
-| `install` | Install CLI + Claude skill and update retention settings |
+| `reset` | Reset stored data (metrics/config/cache) |
+| `install` | Report install settings (no-op in v2) |
+| `fetch` | Fetch remote sessions into local cache |
 | `gemini-index` | Add project paths to Gemini hash→path index |
 
 ---
@@ -505,21 +506,22 @@ agent-history export myproject --windows
 
 ## `reset` - Reset Stored Data
 
-Delete metrics database, settings (homes), and/or projects.
+Delete metrics database, config, and/or cache.
 
 ```bash
-agent-history reset [what] [--force]
+agent-history reset [what] [-y]
 ```
 
 **Arguments:**
 - `what`: What to reset (optional, default: `all`)
   - `db`: Delete metrics database only
-  - `settings`: Delete home configuration only
-  - `projects`: Delete projects only
+  - `config`: Delete config (homes/projects) only
+  - `settings`: Delete cache only
   - `all`: Delete everything (default)
 
 **Options:**
 - `-y`, `--yes`: Skip confirmation prompt
+- `--db`, `--config`, `--settings`: Equivalent to `what` values above
 
 **Examples:**
 ```bash
@@ -528,6 +530,7 @@ agent-history reset
 
 # Reset only metrics database
 agent-history reset db
+agent-history reset --db
 
 # Reset without confirmation (for scripts)
 agent-history reset -y
@@ -536,9 +539,25 @@ agent-history reset db -y
 
 **Files affected:**
 - `~/.agent-history/metrics.db` - Metrics database (stats, time tracking)
-- `~/.agent-history/config.json` - Settings (configured homes)
-- `~/.agent-history/projects.json` - Workspace projects
+- `~/.agent-history/config.json` - Config (homes + projects)
+- `~/.agent-history/remote-cache/` - Cached remote sessions
+- `~/.agent-history/gemini_index.json` - Gemini hash index
+- `~/.agent-history/gemini_hash_index.json` - Legacy Gemini hash index (if present)
 - On first run, any legacy `~/.claude-history/` directory is migrated here and cleaned up.
+
+---
+
+## `fetch` - Fetch Remote Sessions
+
+Fetch remote sessions into a local cache for export.
+
+```bash
+agent-history fetch -r user@host --aw
+```
+
+**Notes:**
+- Uses the same scope flags as `session list` (e.g., `-r`, `--aw`, `--agent`).
+- Remote sessions are cached under `~/.agent-history/remote-cache/`.
 
 ---
 
@@ -625,22 +644,18 @@ The hash index also learns progressively when you run any `agent-history` comman
 
 ## `install` - Install CLI and Claude Skill
 
-Install the CLI into your local `PATH`, copy the Claude skill files, and bump Claude Code’s retention settings so conversations aren’t auto-deleted.
+Configure install settings (status-only in v2).
 
 ```bash
 agent-history install [--bin-dir DIR] [--skill-dir DIR]
-                       [--cli-name NAME] [--skill-name NAME]
                        [--skip-cli] [--skip-skill] [--skip-settings]
 ```
 
-**Default behavior:**
-- CLI installed to `~/.local/bin/agent-history` (sudo-free). The command warns if that directory isn't on `PATH`.
-- Claude skill (binary + `SKILL.md`) installed to `~/.claude/skills/agent-history/`.
-- `~/.claude/settings.json` is created or updated with `{"cleanupPeriodDays": 99999}` so Claude Code keeps session history.
+**Current behavior:**
+- Validates flags and reports the requested install settings.
+- Does not copy binaries or modify Claude settings yet.
 
-**Common options:**
-- `--bin-dir DIR`, `--cli-name NAME`: Customize CLI destination and binary name.
-- `--skill-dir DIR`, `--skill-name NAME`: Customize Claude skill destination.
-- `--skip-cli`, `--skip-skill`, `--skip-settings`: Skip specific parts of the install workflow.
-
-Run the installer whenever you update the script to keep the CLI and skill copy in sync.
+**Options:**
+- `--bin-dir DIR`: Custom binary install directory
+- `--skill-dir DIR`: Custom skill install directory
+- `--skip-cli`, `--skip-skill`, `--skip-settings`: Skip specific steps

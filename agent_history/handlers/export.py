@@ -29,7 +29,7 @@ from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
-from agent_history.utils.paths import normalize_workspace_name
+from agent_history.utils.paths import decode_workspace_path
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
 
 # =============================================================================
@@ -91,6 +91,7 @@ class SessionExportHandler(VerbHandler):
         include_source = verb_args.get("include_source", False)
         export_json = verb_args.get("export_json", False)
         jobs = verb_args.get("jobs")
+        session_ids = verb_args.get("session_ids") or []
         quiet = output_args.quiet
 
         # Ensure output directory exists
@@ -109,6 +110,11 @@ class SessionExportHandler(VerbHandler):
         for record in scope:
             for session in record.sessions:
                 tasks.append((session, record.home, record.workspace))
+
+        # Filter by explicit session IDs/filenames if provided
+        missing_ids: List[str] = []
+        if session_ids:
+            tasks, missing_ids = self._filter_tasks_by_session_ids(tasks, session_ids)
 
         # Use ThreadPoolExecutor when jobs > 1
         if jobs is not None and jobs > 1:
@@ -177,9 +183,15 @@ class SessionExportHandler(VerbHandler):
                         filename = session.get("filename", session.get("file", "unknown"))
                         sys.stderr.write(f"Error exporting {filename}: {e}\n")
 
-        # Collect unique homes and workspaces
-        unique_homes = set(r.home for r in scope)
-        unique_workspaces = set(r.workspace for r in scope)
+        # Add missing session IDs as failures
+        for missing_id in missing_ids:
+            failed.append(({"filename": missing_id}, "Session not found"))
+            if not quiet:
+                sys.stderr.write(f"Error exporting {missing_id}: session not found\n")
+
+        # Collect unique homes and workspaces from export tasks
+        unique_homes = {home for _, home, _ in tasks}
+        unique_workspaces = {workspace for _, _, workspace in tasks}
 
         # Generate index manifest if multi-home or multi-workspace export
         if len(unique_homes) > 1 or len(unique_workspaces) > 1:
@@ -200,6 +212,62 @@ class SessionExportHandler(VerbHandler):
             },
             errors=[f"{s.get('filename', s.get('file', 'unknown'))}: {e}" for s, e in failed],
         )
+
+    def _filter_tasks_by_session_ids(
+        self,
+        tasks: List[Tuple[SessionDict, str, str]],
+        session_ids: List[str],
+    ) -> Tuple[List[Tuple[SessionDict, str, str]], List[str]]:
+        """Filter export tasks to specific session IDs or filenames."""
+        targets = [str(value).strip() for value in session_ids if str(value).strip()]
+        if not targets:
+            return tasks, []
+
+        matched: set[str] = set()
+        filtered: List[Tuple[SessionDict, str, str]] = []
+        seen_keys: set[str] = set()
+
+        for session, home, workspace in tasks:
+            for target in targets:
+                if self._session_matches_target(session, target):
+                    key = (
+                        str(session.get("file"))
+                        or session.get("filename")
+                        or session.get("session_id")
+                        or session.get("id")
+                    )
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        filtered.append((session, home, workspace))
+                    matched.add(target)
+                    break
+
+        missing = [target for target in targets if target not in matched]
+        return filtered, missing
+
+    def _session_matches_target(self, session: SessionDict, target: str) -> bool:
+        """Check whether a session matches an explicit identifier."""
+        target = str(target)
+        if not target:
+            return False
+
+        for key in ("session_id", "id", "filename"):
+            value = session.get(key)
+            if value is not None and str(value) == target:
+                return True
+
+        file_value = session.get("file")
+        if file_value:
+            path = Path(str(file_value))
+            if target in (str(path), path.name, path.stem):
+                return True
+
+        filename = session.get("filename")
+        if filename:
+            if target == Path(str(filename)).stem:
+                return True
+
+        return False
 
     def _export_session_safe(
         self,
@@ -278,6 +346,35 @@ class SessionExportHandler(VerbHandler):
         if isinstance(jsonl_file, str):
             jsonl_file = Path(jsonl_file)
 
+        # Ensure remote sessions are fetched locally before reading
+        if not jsonl_file.exists() and home.startswith("remote:"):
+            from agent_history.adapters.remote import SSHRemoteClient
+
+            remote_host = home[7:]
+            client = SSHRemoteClient()
+            local_copy = client.ensure_local_copy(remote_host, workspace, session)
+            if local_copy:
+                jsonl_file = local_copy
+
+        # Ensure web sessions are cached locally before reading
+        if not jsonl_file.exists() and home == "web":
+            from agent_history.backends.web import WebSessionsError, ensure_web_session_cache
+            from agent_history.backends.web import resolve_web_credentials
+
+            session_id = session.get("session_id") or session.get("id") or session.get("filename")
+            if not session_id:
+                raise ValueError("Web session missing identifier")
+            try:
+                token, org_uuid = resolve_web_credentials()
+                jsonl_file = ensure_web_session_cache(
+                    str(session_id), token, org_uuid, force=force
+                )
+            except WebSessionsError as exc:
+                raise ValueError(str(exc)) from exc
+
+        if not jsonl_file.exists():
+            raise ValueError(f"Session file does not exist: {jsonl_file}")
+
         # Determine agent type
         agent_type = session.get("agent", AGENT_CLAUDE)
 
@@ -309,6 +406,11 @@ class SessionExportHandler(VerbHandler):
                 session=session,
                 quiet=quiet,
             )
+            if include_source:
+                source_copy = output_file.with_suffix(jsonl_file.suffix)
+                source_copy.write_bytes(jsonl_file.read_bytes())
+                if not quiet:
+                    print(source_copy)
             return EXPORT_EXPORTED
 
         # Handle markdown export
@@ -394,13 +496,15 @@ class SessionExportHandler(VerbHandler):
         if flat:
             return output_dir
 
-        # Normalize workspace name for directory
-        ws_name = normalize_workspace_name(workspace, verify_local=False)
-        ws_name = ws_name.replace("/", "-").replace("\\", "-")
-        if ws_name.startswith("-"):
-            ws_name = ws_name[1:]
-
-        ws_path = output_dir / ws_name
+        decoded = decode_workspace_path(workspace, verify_local=False)
+        normalized = decoded.replace("\\", "/")
+        if "/" in normalized:
+            parts = [part for part in normalized.split("/") if part]
+            if parts and parts[0].endswith(":"):
+                parts[0] = parts[0].rstrip(":")
+            ws_path = output_dir.joinpath(*parts)
+        else:
+            ws_path = output_dir / normalized
         ws_path.mkdir(parents=True, exist_ok=True)
         return ws_path
 
@@ -482,7 +586,18 @@ class SessionExportHandler(VerbHandler):
                 return
 
         # Write single file
-        markdown = parse_jsonl_to_markdown(jsonl_file, minimal, messages, agent_type=agent_type)
+        if agent_type == AGENT_CODEX:
+            from agent_history.backends.codex import codex_parse_jsonl_to_markdown
+
+            markdown = codex_parse_jsonl_to_markdown(jsonl_file, minimal)
+        elif agent_type == AGENT_GEMINI:
+            from agent_history.backends.gemini import gemini_parse_json_to_markdown
+
+            markdown = gemini_parse_json_to_markdown(jsonl_file, minimal)
+        else:
+            markdown = parse_jsonl_to_markdown(
+                jsonl_file, minimal, messages, agent_type=agent_type
+            )
         output_file.write_text(markdown, encoding="utf-8")
         if not quiet:
             print(output_file)

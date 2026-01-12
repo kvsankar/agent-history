@@ -47,6 +47,7 @@ __all__ = [
     "gemini_get_path_for_hash",
     "gemini_get_workspace_readable",
     "gemini_add_paths_to_index",
+    "gemini_rebuild_hash_index",
     # Session scanning
     "gemini_get_workspace_from_session",
     "gemini_count_messages",
@@ -248,12 +249,12 @@ def _extract_gemini_content(content) -> str:
 
 def _build_gemini_message(msg: dict, content: str) -> Optional[dict]:
     """Build a normalized message dict from Gemini message data."""
-    msg_type = msg.get("type", "")
+    msg_type = msg.get("type") or msg.get("role") or ""
     timestamp = msg.get("timestamp", "")
 
     if msg_type == "user":
         return {"role": "user", "content": content, "timestamp": timestamp}
-    if msg_type == "gemini":
+    if msg_type in ("gemini", "assistant", "model"):
         return {
             "role": "assistant",
             "content": content,
@@ -289,8 +290,8 @@ def gemini_read_json_messages(json_file: Path) -> tuple:
         return [], None
 
     session_meta = {
-        "sessionId": data.get("sessionId"),
-        "projectHash": data.get("projectHash"),
+        "sessionId": data.get("sessionId") or data.get("id"),
+        "projectHash": data.get("projectHash") or data.get("cwd"),
         "startTime": data.get("startTime"),
         "lastUpdated": data.get("lastUpdated"),
         "summary": data.get("summary"),
@@ -821,6 +822,56 @@ def gemini_add_paths_to_index(paths: list[Path]) -> HashIndexCounts:
         gemini_save_hash_index(index)
 
     return counts
+
+
+def _load_cli_hash_index() -> dict[str, str]:
+    """Load Gemini CLI hash index (if present) from ~/.gemini/hash_index.json."""
+    cli_index = Path.home() / ".gemini" / "hash_index.json"
+    if not cli_index.exists():
+        return {}
+    try:
+        with open(cli_index, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {}
+
+
+def gemini_rebuild_hash_index(sessions_dir: Optional[Path] = None) -> dict:
+    """Rebuild Gemini hash->path index from session storage."""
+    if sessions_dir is None:
+        sessions_dir = gemini_get_home_dir()
+
+    if not sessions_dir.exists():
+        index = {"version": GEMINI_HASH_INDEX_VERSION, "hashes": {}}
+        gemini_save_hash_index(index)
+        return {"status": "ok", "indexed": 0, "scanned": 0}
+
+    existing = gemini_load_hash_index()
+    cli_index = _load_cli_hash_index()
+
+    hashes: dict[str, str] = {}
+    scanned = 0
+    for hash_dir in sessions_dir.iterdir():
+        if not hash_dir.is_dir():
+            continue
+        chats_dir = hash_dir / "chats"
+        if not chats_dir.exists():
+            continue
+        if not any(chats_dir.glob("*.json")):
+            continue
+        scanned += 1
+        project_hash = hash_dir.name
+        if project_hash in cli_index:
+            hashes[project_hash] = cli_index[project_hash]
+        elif project_hash in existing.get("hashes", {}):
+            hashes[project_hash] = existing["hashes"][project_hash]
+
+    index = {"version": GEMINI_HASH_INDEX_VERSION, "hashes": hashes}
+    gemini_save_hash_index(index)
+    return {"status": "ok", "indexed": len(hashes), "scanned": scanned}
 
 
 # =============================================================================

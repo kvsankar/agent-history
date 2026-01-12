@@ -13,6 +13,8 @@ Technical specifications for `agent-history`.
 
 How each AI coding assistant stores conversation data.
 
+Note: Claude web sessions are supported; other web format specs are reference-only.
+
 | Document | Agent |
 |----------|-------|
 | [claude-code-format.md](agents/formats/claude-code-format.md) | Claude Code (Anthropic) |

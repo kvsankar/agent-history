@@ -24,6 +24,7 @@ from agent_history.handlers import (
     HomeRemoveHandler,
     HomeShowHandler,
     HomeStatsHandler,
+    InstallHandler,
     ProjectAddHandler,
     ProjectExportHandler,
     ProjectListHandler,
@@ -34,6 +35,8 @@ from agent_history.handlers import (
     SessionListHandler,
     SessionShowHandler,
     SessionStatsHandler,
+    FetchHandler,
+    ResetHandler,
     VerbDispatcher,
     WorkspaceExportHandler,
     WorkspaceListHandler,
@@ -48,10 +51,7 @@ from agent_history.scope.context import (
     ResolutionResult,
 )
 from agent_history.scope.resolver import ScopeResolver
-from agent_history.storage.metrics import (
-    init_metrics_db,
-    sync_sessions_to_db,
-)
+from agent_history.storage.metrics import init_metrics_db, sync_scope_to_db
 
 
 class ErrorHandler:
@@ -198,6 +198,11 @@ class CommandOrchestrator:
         # Gemini index handler
         dispatcher.register("gemini-index", "index", GeminiIndexHandler())
 
+        # Utility handlers
+        dispatcher.register("install", "run", InstallHandler())
+        dispatcher.register("reset", "run", ResetHandler())
+        dispatcher.register("fetch", "run", FetchHandler())
+
         return dispatcher
 
     def _enrich_verb_args(self, request: CommandRequest, context: ResolutionContext) -> None:
@@ -246,7 +251,7 @@ class CommandOrchestrator:
         )
         has_explicit_scope = (
             args.all_workspaces
-            or args.project
+            or bool(args.projects)
             or context.cwd_project
             or bool(args.patterns)
             or bool(args.name_patterns)
@@ -286,80 +291,19 @@ class CommandOrchestrator:
 
         return all_ok
 
-    def _handle_stats_sync(self, request: CommandRequest, context: ResolutionContext) -> None:
-        """Handle --sync flag for stats commands.
-
-        When --sync is passed, sync session data to the metrics database
-        before computing statistics.
-
-        Args:
-            request: The command request with verb_args.
-            context: Resolution context with platform info.
-        """
+    def _handle_stats_sync(self, request: CommandRequest, scope) -> None:
+        """Auto-sync stats scope unless --no-sync is specified."""
         if request.verb != "stats":
             return
-        if not request.verb_args.get("sync"):
+        if request.verb_args.get("no_sync"):
             return
 
-        # Initialize the metrics database
         conn = init_metrics_db()
-
         try:
-            # Determine which agents to sync based on scope
-            agents_to_sync = []
-            agent_filter = request.scope_args.agent
-
-            if agent_filter:
-                agents_to_sync = [agent_filter]
-            else:
-                # Auto-detect available agents
-                agents_to_sync = ["claude", "codex", "gemini"]
-
             force = request.verb_args.get("force", False)
-
-            # Sync Claude sessions
-            if "claude" in agents_to_sync:
-                from agent_history.backends.claude import get_claude_projects_dir
-
-                claude_dir = get_claude_projects_dir()
-                if claude_dir.exists():
-                    sync_sessions_to_db(
-                        conn,
-                        claude_dir,
-                        source_key="local",
-                        agent="claude",
-                        force=force,
-                    )
-
-            # Sync Codex sessions
-            if "codex" in agents_to_sync:
-                from agent_history.backends.codex import codex_get_home_dir
-
-                codex_dir = codex_get_home_dir()
-                if codex_dir.exists():
-                    sync_sessions_to_db(
-                        conn,
-                        codex_dir,
-                        source_key="local",
-                        agent="codex",
-                        force=force,
-                    )
-
-            # Sync Gemini sessions
-            if "gemini" in agents_to_sync:
-                from agent_history.backends.gemini import gemini_get_home_dir
-
-                gemini_dir = gemini_get_home_dir()
-                if gemini_dir.exists():
-                    sync_sessions_to_db(
-                        conn,
-                        gemini_dir,
-                        source_key="local",
-                        agent="gemini",
-                        force=force,
-                    )
-
+            sync_scope_to_db(conn, scope, force=force)
             conn.commit()
+            request.verb_args["sync"] = True
         finally:
             conn.close()
 
@@ -388,9 +332,6 @@ class CommandOrchestrator:
             # 2.5. Enrich verb_args with context-derived values
             self._enrich_verb_args(request, context)
 
-            # 2.6. Handle --sync for stats commands
-            self._handle_stats_sync(request, context)
-
             # 2.7. Pre-flight check: verify SSH connectivity to remotes
             # (skipped if cross-home guard would trigger - let guard error show first)
             if not self._check_remote_connectivity(request, context):
@@ -409,6 +350,9 @@ class CommandOrchestrator:
             # Handle resolution errors
             if not self.error_handler.handle_resolution_errors(resolution):
                 return 1
+
+            # 3.5. Auto-sync stats after scope resolution (unless --no-sync)
+            self._handle_stats_sync(request, resolution.scope)
 
             # 4. Dispatch to handler
             try:
@@ -470,6 +414,9 @@ class CommandOrchestrator:
         # 3. Resolve scope
         resolver = ScopeResolver(context)
         resolution = resolver.resolve(request.scope_args)
+
+        # Auto-sync stats after scope resolution (unless --no-sync)
+        self._handle_stats_sync(request, resolution.scope)
 
         # 4. Dispatch to handler
         return self.dispatcher.dispatch(request, resolution.scope)

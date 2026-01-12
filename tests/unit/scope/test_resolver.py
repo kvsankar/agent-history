@@ -118,7 +118,7 @@ class TestBuildTemplate:
         This tests that when the user specifies --project testproj, the template
         contains a ProjectRecord that will be expanded in Stage 1.
         """
-        args = ScopeArgs(project="testproj")
+        args = ScopeArgs(projects=["testproj"])
 
         template = resolver._build_template(args)
 
@@ -861,7 +861,7 @@ class TestFullPipeline:
         """Pipeline should resolve projects correctly."""
         resolver = ScopeResolver(mock_context)
 
-        args = ScopeArgs(project="testproj")
+        args = ScopeArgs(projects=["testproj"])
 
         # Mock session collection to return sessions for project workspaces
         def mock_claude_sessions(home: str, workspace: str) -> List[Dict]:
@@ -887,7 +887,7 @@ class TestFullPipeline:
         """Pipeline should collect errors for invalid configurations."""
         resolver = ScopeResolver(mock_context)
 
-        args = ScopeArgs(project="nonexistent")
+        args = ScopeArgs(projects=["nonexistent"])
 
         result = resolver.resolve(args)
 
