@@ -79,7 +79,11 @@ class SessionCache:
 
         all_sessions = self.inventory_provider.list_sessions(home)
         for session in all_sessions:
-            ws = session.get("workspace_readable") or session.get("workspace", "")
+            ws = (
+                session.get("workspace_key")
+                or session.get("workspace_readable")
+                or session.get("workspace", "")
+            )
             if ws:
                 if ws not in workspace_sessions:
                     workspace_sessions[ws] = []
