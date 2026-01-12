@@ -153,8 +153,18 @@ class HomeShowHandler(VerbHandler):
                     data_type="error",
                     errors=[f"No home found for {name}"],
                 )
-            return CommandResult(success=True, data=[home], data_type="home_list")
-        return CommandResult(success=True, data=list(aggregated.values()), data_type="home_list")
+            return CommandResult(
+                success=True,
+                data=[home],
+                data_type="home_list",
+                metadata=handler.execute(scope, {}, output_args).metadata or {},
+            )
+        return CommandResult(
+            success=True,
+            data=list(aggregated.values()),
+            data_type="home_list",
+            metadata=handler.execute(scope, {}, output_args).metadata or {},
+        )
 
 
 class HomeExportHandler(VerbHandler):
