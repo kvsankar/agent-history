@@ -11,7 +11,7 @@ from typing import Any, Dict, Generator
 import pytest
 
 from tests.helpers.cli import run_cli_subprocess
-from tests.v1.test_workspace_decode import create_workspace_fixture
+from tests.core.test_workspace_decode import create_workspace_fixture
 
 
 @pytest.fixture

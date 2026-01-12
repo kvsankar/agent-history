@@ -24,11 +24,11 @@ def get_script_path() -> Path:
     Set AGENT_HISTORY_TEST_SCRIPT=v1 to use the old ah.py script instead.
 
     This allows running the same test suite against both implementations:
-        # Test against new v2 module (default)
-        uv run pytest tests/v1/
+        # Test against new agent-history module (default)
+        uv run pytest tests/core/
 
         # Test against old ah.py script
-        AGENT_HISTORY_TEST_SCRIPT=v1 uv run pytest tests/v1/
+        AGENT_HISTORY_TEST_SCRIPT=v1 uv run pytest tests/core/
     """
     use_old_script = os.environ.get("AGENT_HISTORY_TEST_SCRIPT", "").lower() in (
         "v1",

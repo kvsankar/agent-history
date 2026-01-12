@@ -18,7 +18,9 @@ from agent_history.handlers import (
     CommandResult,
     DispatchError,
     GeminiIndexHandler,
+    HomeAddHandler,
     HomeListHandler,
+    HomeRemoveHandler,
     ProjectListHandler,
     ProjectShowHandler,
     ProjectStatsHandler,
@@ -165,6 +167,8 @@ class CommandOrchestrator:
 
         # Home handlers
         dispatcher.register("home", "list", HomeListHandler())
+        dispatcher.register("home", "add", HomeAddHandler())
+        dispatcher.register("home", "remove", HomeRemoveHandler())
 
         # Project handlers
         dispatcher.register("project", "list", ProjectListHandler())
@@ -190,6 +194,77 @@ class CommandOrchestrator:
         if request.resource == "project" and request.verb in ("show", "stats"):
             if not request.verb_args.get("name") and context.cwd_project:
                 request.verb_args["name"] = context.cwd_project
+
+    def _check_remote_connectivity(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> bool:
+        """Check SSH connectivity to all specified remote hosts upfront.
+
+        This provides early failure with helpful error messages before
+        attempting any scope resolution or data operations.
+
+        Note: This check is skipped if the cross-home guard would trigger,
+        allowing the guard error to be shown instead of SSH errors.
+
+        Args:
+            request: The command request with scope_args.
+            context: Resolution context with CWD workspace info.
+
+        Returns:
+            True if all remotes are reachable (or no remotes specified),
+            False if any remote failed connectivity check.
+        """
+        from agent_history.backends.ssh import check_ssh_connection
+
+        # First, check if cross-home guard would trigger
+        # If so, skip SSH check - let the resolver show the guard error instead
+        args = request.scope_args
+        needs_cross_home = (
+            args.home_type in ("wsl", "windows", "remote")
+            or args.all_homes
+            or bool(args.home_names)
+        )
+        has_explicit_scope = (
+            args.all_workspaces
+            or args.project
+            or context.cwd_project
+            or bool(args.patterns)
+            or bool(args.name_patterns)
+        )
+        is_in_workspace = bool(context.cwd_workspace)
+
+        if needs_cross_home and not has_explicit_scope and is_in_workspace:
+            # Cross-home guard will trigger - skip SSH check
+            return True
+
+        # Collect all remote hosts to check
+        remotes_to_check: list[str] = []
+
+        # Check -r/--remote flags
+        if request.scope_args.home_type == "remote" and request.scope_args.home_value:
+            remotes_to_check.append(request.scope_args.home_value)
+
+        # Check --home flags for remote: prefixed homes
+        for home in request.scope_args.home_names:
+            if home.startswith("remote:"):
+                remotes_to_check.append(home[7:])  # Remove "remote:" prefix
+            elif "@" in home and not home.startswith(("wsl:", "windows:")):
+                # Looks like user@host format
+                remotes_to_check.append(home)
+
+        if not remotes_to_check:
+            return True
+
+        # Check connectivity to each remote
+        all_ok = True
+        for remote_host in remotes_to_check:
+            success, error = check_ssh_connection(remote_host)
+            if not success:
+                sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
+                sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
+                all_ok = False
+
+        return all_ok
 
     def _handle_stats_sync(self, request: CommandRequest, context: ResolutionContext) -> None:
         """Handle --sync flag for stats commands.
@@ -295,6 +370,11 @@ class CommandOrchestrator:
 
             # 2.6. Handle --sync for stats commands
             self._handle_stats_sync(request, context)
+
+            # 2.7. Pre-flight check: verify SSH connectivity to remotes
+            # (skipped if cross-home guard would trigger - let guard error show first)
+            if not self._check_remote_connectivity(request, context):
+                return 1
 
             # 3. Resolve scope
             resolver = ScopeResolver(context)

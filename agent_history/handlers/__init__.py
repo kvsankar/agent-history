@@ -8,6 +8,8 @@ This module provides the handler framework for executing commands:
 - SessionListHandler: Handler for 'session list' command
 - WorkspaceListHandler: Handler for 'ws list' command
 - HomeListHandler: Handler for 'home list' command
+- HomeAddHandler: Handler for 'home add' command
+- HomeRemoveHandler: Handler for 'home remove' command
 - GeminiIndexHandler: Handler for 'gemini-index' command
 - SessionExportHandler: Handler for 'session export' command
 - SessionStatsHandler: Handler for 'session stats' command
@@ -19,6 +21,7 @@ This module provides the handler framework for executing commands:
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.handlers.dispatcher import DispatchError, VerbDispatcher
 from agent_history.handlers.export import SessionExportHandler
+from agent_history.handlers.home import HomeAddHandler, HomeRemoveHandler
 from agent_history.handlers.list import (
     GeminiIndexHandler,
     HomeListHandler,
@@ -44,6 +47,9 @@ __all__ = [
     "WorkspaceListHandler",
     "HomeListHandler",
     "GeminiIndexHandler",
+    # Home management handlers
+    "HomeAddHandler",
+    "HomeRemoveHandler",
     # Export handlers
     "SessionExportHandler",
     # Stats handlers
