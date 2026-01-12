@@ -14,6 +14,7 @@ from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.storage.config import load_config, save_config
 from agent_history.utils.paths import decode_workspace_path, encode_workspace_path
+from agent_history.utils.workspace_ref import WorkspaceContext, attach_workspace_context
 
 
 def _read_messages_from_file(path: Path) -> List[Dict[str, Any]]:
@@ -73,8 +74,11 @@ class SessionShowHandler(VerbHandler):
                     session.get("session_id"),
                 ):
                     payload = dict(session)
-                    payload["home"] = record.home
-                    payload["workspace"] = record.workspace
+                    payload.setdefault("workspace_raw", payload.get("workspace"))
+                    attach_workspace_context(
+                        payload,
+                        context=WorkspaceContext.from_record(record),
+                    )
                     return CommandResult(success=True, data=payload, data_type="session_show")
 
         return CommandResult(
@@ -101,7 +105,15 @@ class WorkspaceShowHandler(VerbHandler):
                 errors=["No matching workspace found"],
             )
         workspace_list = list(aggregated.values())
-        return CommandResult(success=True, data=workspace_list, data_type="workspace_list")
+        metadata = handler.execute(scope, {}, output_args).metadata
+        if metadata is None:
+            metadata = {}
+        return CommandResult(
+            success=True,
+            data=workspace_list,
+            data_type="workspace_list",
+            metadata=metadata,
+        )
 
 
 class WorkspaceExportHandler(VerbHandler):

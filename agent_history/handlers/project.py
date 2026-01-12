@@ -16,6 +16,8 @@ from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.storage.config import load_config
 from agent_history.utils.paths import decode_workspace_path
+from agent_history.utils.workspace_ref import WorkspaceContext
+from agent_history.core.workspaces import build_scope_metadata
 
 
 class ProjectListHandler(VerbHandler):
@@ -148,13 +150,17 @@ class ProjectShowHandler(VerbHandler):
         # Aggregate data from scope
         workspaces_by_home: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         total_sessions = 0
+        metadata = build_scope_metadata(scope) if scope else {"homes": []}
 
         for record in scope:
+            context = WorkspaceContext.from_record(record)
             workspace_info = {
-                "workspace": record.workspace,
+                "workspace": context.workspace_display,
+                "workspace_key": context.workspace_key,
+                "workspace_display": context.workspace_display,
                 "session_count": len(record.sessions),
             }
-            workspaces_by_home[record.home].append(workspace_info)
+            workspaces_by_home[context.home].append(workspace_info)
             total_sessions += len(record.sessions)
 
         # If scope is empty, use project definition
@@ -186,7 +192,8 @@ class ProjectShowHandler(VerbHandler):
             },
             data_type="project_details",
             metadata={
-                "homes": list(workspaces_by_home.keys()),
+                "homes": list(workspaces_by_home.keys()) or metadata.get("homes", []),
+                "workspace_display_map": metadata.get("workspace_display_map", {}),
             },
         )
 
