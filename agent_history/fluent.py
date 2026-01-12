@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from agent_history.handlers.base import CommandResult
+from agent_history.core.workspaces import build_scope_metadata
 from agent_history.handlers.export import SessionExportHandler
 from agent_history.handlers.list import (
     HomeListHandler,
@@ -633,7 +634,7 @@ class FluentContext:
                 print(ws)
         """
         scope = self._resolve()
-        return sorted({record.workspace for record in scope})
+        return build_scope_metadata(scope)["workspaces"]
 
     @property
     def homes(self) -> list[str]:
