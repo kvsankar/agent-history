@@ -165,6 +165,8 @@ class TestSessionsGenerator:
 
         assert result[0]["home"] == "local"
         assert result[0]["workspace"] == "/home/user/projects/myapp"
+        assert result[0]["workspace_key"] == "/home/user/projects/myapp"
+        assert result[0]["workspace_display"] == "/home/user/projects/myapp"
 
     def test_sessions_is_lazy(self, mock_scope):
         """Test that sessions() is a generator (lazy)."""
@@ -204,6 +206,8 @@ class TestWorkspacesGenerator:
             result = list(api.workspaces(all_workspaces=True))
 
         assert result[0]["home"] == "local"
+        assert result[0]["workspace_key"] == "/home/user/projects/myapp"
+        assert result[0]["workspace_display"] == "/home/user/projects/myapp"
 
 
 class TestHomesGenerator:

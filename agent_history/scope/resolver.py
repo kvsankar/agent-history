@@ -659,11 +659,16 @@ class ScopeResolver:
         import fnmatch
 
         all_workspaces = self._enumerate_workspaces(home)
+        normalized_pattern = pattern
+        if match_type in (MatchType.EXACT, MatchType.PREFIX):
+            from agent_history.utils.workspace_ref import build_workspace_ref
+
+            normalized_pattern = build_workspace_ref(pattern).key
 
         if match_type == MatchType.EXACT:
-            return [ws for ws in all_workspaces if ws == pattern]
+            return [ws for ws in all_workspaces if ws == normalized_pattern]
         elif match_type == MatchType.PREFIX:
-            return [ws for ws in all_workspaces if ws.startswith(pattern)]
+            return [ws for ws in all_workspaces if ws.startswith(normalized_pattern)]
         elif match_type == MatchType.CONTAINS:
             pattern_lower = pattern.lower()
             result = []
@@ -745,7 +750,11 @@ class ScopeResolver:
         sessions = [
             s
             for s in all_sessions
-            if (s.get("workspace_readable", "") == workspace or s.get("workspace", "") == workspace)
+            if (
+                s.get("workspace_key", "") == workspace
+                or s.get("workspace_readable", "") == workspace
+                or s.get("workspace", "") == workspace
+            )
         ]
 
         # Apply session spec filters
@@ -787,7 +796,10 @@ class ScopeResolver:
         return [
             s
             for s in all_sessions
-            if (s.get("workspace_readable") or s.get("workspace", "")) == workspace
+            if (
+                s.get("workspace_key") == workspace
+                or (s.get("workspace_readable") or s.get("workspace", "")) == workspace
+            )
         ]
 
     def _collect_codex_sessions(self, home: str, workspace: str) -> List[SessionDict]:
@@ -807,7 +819,10 @@ class ScopeResolver:
         return [
             s
             for s in all_sessions
-            if (s.get("workspace_readable") or s.get("workspace", "")) == workspace
+            if (
+                s.get("workspace_key") == workspace
+                or (s.get("workspace_readable") or s.get("workspace", "")) == workspace
+            )
         ]
 
     def _collect_gemini_sessions(self, home: str, workspace: str) -> List[SessionDict]:
@@ -827,7 +842,11 @@ class ScopeResolver:
         return [
             s
             for s in all_sessions
-            if (s.get("workspace_readable", "") == workspace or s.get("workspace", "") == workspace)
+            if (
+                s.get("workspace_key", "") == workspace
+                or s.get("workspace_readable", "") == workspace
+                or s.get("workspace", "") == workspace
+            )
         ]
 
     def _resolve_projects(
@@ -1049,11 +1068,16 @@ class ScopeResolver:
                 continue
 
             home = record.home.home
+            from agent_history.utils.workspace_ref import build_workspace_ref
+
             workspace = record.workspace.path
+            workspace_ref = build_workspace_ref(workspace)
+            workspace_key = workspace_ref.key
+            workspace_display = workspace_ref.display
 
             # Use the resolver's own _collect_sessions which uses
             # _collect_claude_sessions, etc. (patchable by tests)
-            sessions = self._collect_sessions(home, workspace, record.sessions)
+            sessions = self._collect_sessions(home, workspace_key, record.sessions)
 
             # Always include the workspace record, even without sessions
             # This is important for remote workspaces where we may not have
@@ -1061,7 +1085,9 @@ class ScopeResolver:
             result.append(
                 ConcreteRecord(
                     home=home,
-                    workspace=workspace,
+                    workspace=workspace_key,
+                    workspace_key=workspace_key,
+                    workspace_display=workspace_display,
                     sessions=sessions,
                 )
             )

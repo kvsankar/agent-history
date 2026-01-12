@@ -32,6 +32,7 @@ from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
 from agent_history.utils.paths import decode_workspace_path
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
+from agent_history.utils.workspace_ref import select_workspace_display
 
 _INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
 
@@ -112,7 +113,10 @@ class SessionExportHandler(VerbHandler):
         tasks = []
         for record in scope:
             for session in record.sessions:
-                tasks.append((session, record.home, record.workspace))
+                workspace_display = select_workspace_display(
+                    record.workspace, record.workspace_display
+                )
+                tasks.append((session, record.home, record.workspace, workspace_display))
 
         # Filter by explicit session IDs/filenames if provided
         missing_ids: List[str] = []
@@ -123,12 +127,13 @@ class SessionExportHandler(VerbHandler):
         if jobs is not None and jobs > 1:
             with ThreadPoolExecutor(max_workers=jobs) as executor:
                 futures = []
-                for session, home, workspace in tasks:
+                for session, home, workspace, workspace_display in tasks:
                     future = executor.submit(
                         self._export_session_safe,
                         session=session,
                         home=home,
                         workspace=workspace,
+                        workspace_display=workspace_display,
                         output_dir=output_dir,
                         minimal=minimal,
                         split_lines=split_lines,
@@ -157,12 +162,13 @@ class SessionExportHandler(VerbHandler):
                         sources_info[home] = sources_info.get(home, 0) + 1
         else:
             # Sequential: Process each record in scope
-            for session, home, workspace in tasks:
+            for session, home, workspace, workspace_display in tasks:
                 try:
                     result = self._export_session(
                         session=session,
                         home=home,
                         workspace=workspace,
+                        workspace_display=workspace_display,
                         output_dir=output_dir,
                         minimal=minimal,
                         split_lines=split_lines,
@@ -193,8 +199,8 @@ class SessionExportHandler(VerbHandler):
                 sys.stderr.write(f"Error exporting {missing_id}: session not found\n")
 
         # Collect unique homes and workspaces from export tasks
-        unique_homes = {home for _, home, _ in tasks}
-        unique_workspaces = {workspace for _, _, workspace in tasks}
+        unique_homes = {home for _, home, _, _ in tasks}
+        unique_workspaces = {workspace for _, _, workspace, _ in tasks}
 
         # Generate index manifest if multi-home or multi-workspace export
         if len(unique_homes) > 1 or len(unique_workspaces) > 1:
@@ -218,19 +224,19 @@ class SessionExportHandler(VerbHandler):
 
     def _filter_tasks_by_session_ids(
         self,
-        tasks: List[Tuple[SessionDict, str, str]],
+        tasks: List[Tuple[SessionDict, str, str, str]],
         session_ids: List[str],
-    ) -> Tuple[List[Tuple[SessionDict, str, str]], List[str]]:
+    ) -> Tuple[List[Tuple[SessionDict, str, str, str]], List[str]]:
         """Filter export tasks to specific session IDs or filenames."""
         targets = [str(value).strip() for value in session_ids if str(value).strip()]
         if not targets:
             return tasks, []
 
         matched: set[str] = set()
-        filtered: List[Tuple[SessionDict, str, str]] = []
+        filtered: List[Tuple[SessionDict, str, str, str]] = []
         seen_keys: set[str] = set()
 
-        for session, home, workspace in tasks:
+        for session, home, workspace, workspace_display in tasks:
             for target in targets:
                 if self._session_matches_target(session, target):
                     key = (
@@ -241,7 +247,7 @@ class SessionExportHandler(VerbHandler):
                     )
                     if key not in seen_keys:
                         seen_keys.add(key)
-                        filtered.append((session, home, workspace))
+                        filtered.append((session, home, workspace, workspace_display))
                     matched.add(target)
                     break
 
@@ -277,6 +283,7 @@ class SessionExportHandler(VerbHandler):
         session: SessionDict,
         home: str,
         workspace: str,
+        workspace_display: str,
         output_dir: Path,
         minimal: bool,
         split_lines: Optional[int],
@@ -297,6 +304,7 @@ class SessionExportHandler(VerbHandler):
                 session=session,
                 home=home,
                 workspace=workspace,
+                workspace_display=workspace_display,
                 output_dir=output_dir,
                 minimal=minimal,
                 split_lines=split_lines,
@@ -315,6 +323,7 @@ class SessionExportHandler(VerbHandler):
         session: SessionDict,
         home: str,
         workspace: str,
+        workspace_display: str,
         output_dir: Path,
         minimal: bool,
         split_lines: Optional[int],
@@ -390,7 +399,7 @@ class SessionExportHandler(VerbHandler):
         source_tag = self._get_source_tag(home)
 
         # Build output path
-        ws_output_path = self._get_workspace_output_path(output_dir, workspace, flat)
+        ws_output_path = self._get_workspace_output_path(output_dir, workspace_display, flat)
 
         # Handle NDJSON export
         if export_json:

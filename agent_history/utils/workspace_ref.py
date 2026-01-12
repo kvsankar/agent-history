@@ -133,6 +133,32 @@ def build_workspace_ref(raw: Optional[str], readable: Optional[str] = None) -> W
     return WorkspaceRef(key=key, display=display or key, raw=raw_value, kind=kind)
 
 
+def select_workspace_key(workspace: str, workspace_key: Optional[str] = None) -> str:
+    """Select the stable workspace key."""
+    return workspace_key or workspace
+
+
+def select_workspace_display(workspace: str, workspace_display: Optional[str] = None) -> str:
+    """Select the workspace display string."""
+    return workspace_display or workspace
+
+
+def attach_workspace_context(
+    target: Dict[str, Any],
+    *,
+    workspace: str,
+    workspace_key: Optional[str] = None,
+    workspace_display: Optional[str] = None,
+) -> None:
+    """Attach workspace key/display values to an output dictionary."""
+    key = select_workspace_key(workspace, workspace_key)
+    display = select_workspace_display(workspace, workspace_display)
+    target["workspace_key"] = key
+    target["workspace_display"] = display
+    if not target.get("workspace_readable"):
+        target["workspace_readable"] = display
+
+
 def apply_workspace_ref(session: Dict[str, Any]) -> WorkspaceRef:
     raw = session.get("workspace") or ""
     readable = session.get("workspace_readable") or session.get("workspace_display")

@@ -99,17 +99,24 @@ class SessionStage:
                 continue
 
             home = record.home.home
+            from agent_history.utils.workspace_ref import build_workspace_ref
+
             workspace = record.workspace.path
+            workspace_ref = build_workspace_ref(workspace)
+            workspace_key = workspace_ref.key
+            workspace_display = workspace_ref.display
 
             # Collect sessions with EXACT workspace matching
-            sessions = self._collect_sessions(home, workspace, record.sessions)
+            sessions = self._collect_sessions(home, workspace_key, record.sessions)
 
             # Only include if sessions exist
             if sessions:
                 result.append(
                     ConcreteRecord(
                         home=home,
-                        workspace=workspace,
+                        workspace=workspace_key,
+                        workspace_key=workspace_key,
+                        workspace_display=workspace_display,
                         sessions=sessions,
                     )
                 )

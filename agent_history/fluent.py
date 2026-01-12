@@ -51,6 +51,7 @@ from agent_history.scope.context import (
 )
 from agent_history.scope.resolver import ScopeResolver
 from agent_history.scope.types import ConcreteScope
+from agent_history.utils.workspace_ref import attach_workspace_context
 
 
 class FluentContext:
@@ -614,7 +615,14 @@ class FluentContext:
             for session in record.sessions:
                 session_copy = dict(session)
                 session_copy["home"] = record.home
+                session_copy.setdefault("workspace_raw", session_copy.get("workspace"))
                 session_copy["workspace"] = record.workspace
+                attach_workspace_context(
+                    session_copy,
+                    workspace=record.workspace,
+                    workspace_key=record.workspace_key,
+                    workspace_display=record.workspace_display,
+                )
                 sessions.append(session_copy)
         return sessions
 

@@ -126,7 +126,11 @@ class InventoryProvider:
         sessions = self._list_codex_sessions(home)
         return sorted(
             {
-                (s.get("workspace_readable") or s.get("workspace", "")).strip()
+                (
+                    s.get("workspace_key")
+                    or s.get("workspace_readable")
+                    or s.get("workspace", "")
+                ).strip()
                 for s in sessions
                 if s
             }
@@ -137,7 +141,11 @@ class InventoryProvider:
         sessions = self._list_gemini_sessions(home)
         return sorted(
             {
-                (s.get("workspace_readable") or s.get("workspace", "")).strip()
+                (
+                    s.get("workspace_key")
+                    or s.get("workspace_readable")
+                    or s.get("workspace", "")
+                ).strip()
                 for s in sessions
                 if s
             }

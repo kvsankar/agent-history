@@ -178,6 +178,9 @@ class TableFormatter(DataFormatter):
     def _format_stats(self, stats: StatsDict, metadata: Dict[str, Any]) -> str:
         """Format statistics as table."""
         lines = []
+        workspace_display_map = (
+            metadata.get("workspace_display_map") or stats.get("workspace_display_map") or {}
+        )
 
         # Summary line
         total_sessions = stats.get("total_sessions", stats.get("sessions", 0))
@@ -229,7 +232,7 @@ class TableFormatter(DataFormatter):
                     by_workspace.items(), key=lambda x: -get_count(x[1], "sessions")
                 )
                 for ws, value in sorted_ws[:10]:
-                    ws_display = ws
+                    ws_display = workspace_display_map.get(ws, ws)
                     if len(ws_display) > 50:
                         ws_display = "..." + ws_display[-47:]
                     lines.append(f"  {ws_display}: {get_count(value, 'sessions')}")
