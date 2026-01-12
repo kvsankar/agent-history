@@ -65,6 +65,7 @@ class ProjectListHandler(VerbHandler):
                 "project": name,
                 "source": list(definition.keys()),
                 "workspace": all_workspaces,
+                "workspace_count": len(all_workspaces),
             }
 
             # Add session count if requested
