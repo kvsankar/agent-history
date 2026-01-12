@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from agent_history.adapters.remote import SSHRemoteClient
+from agent_history.core.workspaces import build_scope_metadata
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
@@ -33,7 +34,7 @@ class InstallHandler(VerbHandler):
                 "skip_settings": verb_args.get("skip_settings", False),
             },
             data_type="install_result",
-            metadata={"message": "Install completed"},
+            metadata={"message": "Install completed", "workspace_display_map": {}},
         )
 
 
@@ -99,6 +100,7 @@ class ResetHandler(VerbHandler):
             success=True,
             data={"status": "ok", "removed": removed},
             data_type="reset_result",
+            metadata={"workspace_display_map": {}},
         )
 
 
@@ -131,8 +133,10 @@ class FetchHandler(VerbHandler):
                 except Exception:
                     errors += 1
 
+        metadata = build_scope_metadata(scope)
         return CommandResult(
             success=errors == 0,
             data={"fetched": fetched, "skipped": skipped, "errors": errors},
             data_type="fetch_result",
+            metadata=metadata,
         )
