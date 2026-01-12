@@ -19,10 +19,7 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
-from agent_history.utils.paths import (
-    is_cached_workspace,
-    normalize_workspace_name,
-)
+from agent_history.utils.paths import encode_workspace_path, is_cached_workspace, normalize_workspace_name
 
 __all__ = [
     # Session scanning
@@ -58,10 +55,6 @@ __all__ = [
 
 # Maximum workspace name length (reasonable limit for encoded paths)
 MAX_WORKSPACE_NAME_LENGTH = 1000
-
-# Minimum length for Windows paths
-MIN_WINDOWS_PATH_LEN = 2  # "C:"
-MIN_WSL_MNT_PATH_LEN = 6  # "/mnt/c"
 
 # Workspace name validation pattern (alphanumeric, dashes, underscores, dots, unicode)
 import re
@@ -193,13 +186,6 @@ def get_claude_projects_dir() -> Path:
 # ============================================================================
 
 
-def _convert_windows_path_to_encoded(path: str) -> str:
-    """Convert Windows absolute path (C:\\... or C:/...) to encoded format."""
-    drive = path[0].upper()
-    rest = path[2:].lstrip("/\\").replace("\\", "/").replace("/", "-")
-    return f"{drive}--{rest}"
-
-
 def path_to_encoded_workspace(path: str) -> str:
     """Convert an absolute path to Claude's encoded workspace directory name.
 
@@ -209,28 +195,7 @@ def path_to_encoded_workspace(path: str) -> str:
     Returns:
         Encoded workspace name (e.g., '-home-user-my-project' or 'C--Users-alice-projects')
     """
-    # Remove trailing slash/backslash if present
-    path = path.rstrip("/").rstrip("\\")
-
-    # Handle native Windows paths (C:\... or C:/...)
-    # Check for drive letter followed by colon (e.g., C:, D:)
-    if len(path) >= MIN_WINDOWS_PATH_LEN and path[1] == ":":
-        return _convert_windows_path_to_encoded(path)
-
-    # Handle WSL-mounted Windows paths like /mnt/c/Users/me/project
-    if path.startswith("/mnt/") and len(path) > MIN_WSL_MNT_PATH_LEN:
-        drive_letter = path[5]
-        sep = path[MIN_WSL_MNT_PATH_LEN]
-        if drive_letter.isalpha() and sep in ("/", "\\"):
-            remainder = path[MIN_WSL_MNT_PATH_LEN + 1 :].replace("\\", "/").strip("/")
-            normalized = remainder.replace("/", "-") if remainder else ""
-            return f"{drive_letter.upper()}--{normalized}"
-
-    # Replace / with - and add leading -
-    if path.startswith("/"):
-        return "-" + path[1:].replace("/", "-")
-    else:
-        return "-" + path.replace("/", "-")
+    return encode_workspace_path(path)
 
 
 # ============================================================================
