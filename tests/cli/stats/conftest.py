@@ -525,6 +525,7 @@ def stats_test_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
     env["GEMINI_SESSIONS_DIR"] = str(gemini_dir)
     env["HOME"] = str(tmp_path)
     env["AGENT_HISTORY_HOME"] = str(tmp_path)
+    env["AGENT_HISTORY_CONFIG_DIR"] = str(history_dir)
 
     yield {
         "path": tmp_path,
