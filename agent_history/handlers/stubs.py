@@ -96,24 +96,15 @@ class WorkspaceShowHandler(VerbHandler):
         self, scope: ConcreteScope, verb_args: Dict[str, Any], output_args: OutputArgs
     ) -> CommandResult:
         handler = WorkspaceListHandler()
-        aggregated = handler._aggregate_workspaces(scope)
-        if not aggregated:
+        result = handler.execute(scope, {}, output_args)
+        if not result.data:
             return CommandResult(
                 success=False,
                 data={"error": "workspace_not_found"},
                 data_type="error",
                 errors=["No matching workspace found"],
             )
-        workspace_list = list(aggregated.values())
-        metadata = handler.execute(scope, {}, output_args).metadata
-        if metadata is None:
-            metadata = {}
-        return CommandResult(
-            success=True,
-            data=workspace_list,
-            data_type="workspace_list",
-            metadata=metadata,
-        )
+        return result
 
 
 class WorkspaceExportHandler(VerbHandler):
@@ -141,11 +132,14 @@ class HomeShowHandler(VerbHandler):
         self, scope: ConcreteScope, verb_args: Dict[str, Any], output_args: OutputArgs
     ) -> CommandResult:
         handler = HomeListHandler()
-        known_homes = handler._enumerate_known_homes()
-        aggregated = handler._aggregate_homes(scope, known_homes)
+        result = handler.execute(scope, {}, output_args)
         name = verb_args.get("name")
         if name:
-            home = aggregated.get(name)
+            home = None
+            for item in result.data or []:
+                if item.get("home") == name:
+                    home = item
+                    break
             if not home:
                 return CommandResult(
                     success=False,
@@ -157,14 +151,9 @@ class HomeShowHandler(VerbHandler):
                 success=True,
                 data=[home],
                 data_type="home_list",
-                metadata=handler.execute(scope, {}, output_args).metadata or {},
+                metadata=result.metadata or {},
             )
-        return CommandResult(
-            success=True,
-            data=list(aggregated.values()),
-            data_type="home_list",
-            metadata=handler.execute(scope, {}, output_args).metadata or {},
-        )
+        return result
 
 
 class HomeExportHandler(VerbHandler):
