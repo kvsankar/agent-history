@@ -608,6 +608,8 @@ class TestConvenienceProperties:
         # Check that home and workspace are added
         assert all("home" in s for s in sessions)
         assert all("workspace" in s for s in sessions)
+        assert all("workspace_key" in s for s in sessions)
+        assert all("workspace_display" in s for s in sessions)
 
     def test_workspaces_property(
         self, mock_context: ResolutionContext, mock_scope: ConcreteScope

@@ -145,8 +145,9 @@ def _add_session_stats(
     stats["by_home"][record.home]["sessions"] += 1
     stats["by_home"][record.home]["messages"] += message_count
 
-    stats["by_workspace"][record.workspace]["sessions"] += 1
-    stats["by_workspace"][record.workspace]["messages"] += message_count
+    workspace_key = record.workspace_key or record.workspace
+    stats["by_workspace"][workspace_key]["sessions"] += 1
+    stats["by_workspace"][workspace_key]["messages"] += message_count
 
     if "by_day" in stats:
         day_key = _extract_day_key(session)

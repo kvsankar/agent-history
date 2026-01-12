@@ -18,9 +18,14 @@ from typing import Any, Dict, List
 
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.types import HomeDict, SessionDict, WorkspaceDict
+from agent_history.core.workspaces import aggregate_workspaces
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
+from agent_history.utils.workspace_ref import (
+    attach_workspace_context,
+    select_workspace_display,
+)
 
 
 class SessionListHandler(VerbHandler):
@@ -68,7 +73,7 @@ class SessionListHandler(VerbHandler):
         workspaces = set()
         for record in scope:
             homes.add(record.home)
-            workspaces.add(record.workspace)
+            workspaces.add(select_workspace_display(record.workspace, record.workspace_display))
 
         return CommandResult(
             success=True,
@@ -100,10 +105,14 @@ class SessionListHandler(VerbHandler):
                 # Add home/workspace context to each session
                 session_with_context = dict(session)
                 session_with_context["home"] = record.home
+                session_with_context.setdefault("workspace_raw", session_with_context.get("workspace"))
                 session_with_context["workspace"] = record.workspace
-                # Ensure workspace_readable is set for display
-                if "workspace_readable" not in session_with_context:
-                    session_with_context["workspace_readable"] = record.workspace
+                attach_workspace_context(
+                    session_with_context,
+                    workspace=record.workspace,
+                    workspace_key=record.workspace_key,
+                    workspace_display=record.workspace_display,
+                )
                 sessions.append(session_with_context)
         return sessions
 
@@ -221,48 +230,7 @@ class WorkspaceListHandler(VerbHandler):
         Returns:
             Dictionary mapping (home:workspace) key to workspace summary dict.
         """
-        # Use OrderedDict to preserve insertion order
-        workspaces: Dict[str, WorkspaceDict] = OrderedDict()
-
-        for record in scope:
-            # Create unique key for (home, workspace) pair
-            key = f"{record.home}:{record.workspace}"
-
-            if key not in workspaces:
-                # Compute workspace status
-                status = self._check_workspace_status(record.workspace, record.home)
-
-                workspaces[key] = {
-                    "home": record.home,
-                    "workspace": record.workspace,
-                    "session_count": 0,
-                    "sessions": 0,  # Alias for session_count (legacy compatibility)
-                    "status": status,
-                    "last_modified": None,
-                    "agents": set(),
-                }
-
-            ws_data = workspaces[key]
-            ws_data["session_count"] += len(record.sessions)
-            ws_data["sessions"] += len(record.sessions)  # Keep in sync
-
-            # Track latest modification time
-            for session in record.sessions:
-                modified = session.get("modified")
-                if modified:
-                    if ws_data["last_modified"] is None or modified > ws_data["last_modified"]:
-                        ws_data["last_modified"] = modified
-
-                # Track agents
-                agent = session.get("agent")
-                if agent:
-                    ws_data["agents"].add(agent)
-
-        # Convert agent sets to sorted lists for serialization
-        for ws_data in workspaces.values():
-            ws_data["agents"] = sorted(ws_data["agents"])
-
-        return workspaces
+        return aggregate_workspaces(scope, status_lookup=self._check_workspace_status)
 
     def _check_workspace_status(self, workspace_path: str, home: str) -> str:
         """Check if workspace path exists on filesystem.

@@ -619,6 +619,8 @@ class ConcreteRecord:
     home: str
     workspace: str
     sessions: List[Dict[str, Any]]
+    workspace_key: Optional[str] = None
+    workspace_display: Optional[str] = None
 
     def __str__(self) -> str:
         return f"ConcreteRecord(home={self.home!r}, workspace={self.workspace!r}, sessions=[{len(self.sessions)} sessions])"

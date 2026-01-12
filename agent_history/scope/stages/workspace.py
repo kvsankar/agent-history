@@ -397,14 +397,19 @@ class WorkspaceStage:
             List of matching workspace paths.
         """
         all_workspaces = self._enumerate_workspaces(home)
+        normalized_pattern = pattern
+        if match_type in (MatchType.EXACT, MatchType.PREFIX):
+            from agent_history.utils.workspace_ref import build_workspace_ref
+
+            normalized_pattern = build_workspace_ref(pattern).key
 
         if match_type == MatchType.EXACT:
             # THE FIX: Exact equality, no substring matching!
-            return [ws for ws in all_workspaces if ws == pattern]
+            return [ws for ws in all_workspaces if ws == normalized_pattern]
 
         elif match_type == MatchType.PREFIX:
             # Prefix matching - useful for directory hierarchies
-            return [ws for ws in all_workspaces if ws.startswith(pattern)]
+            return [ws for ws in all_workspaces if ws.startswith(normalized_pattern)]
 
         elif match_type == MatchType.CONTAINS:
             # Substring matching - the OLD BUGGY behavior

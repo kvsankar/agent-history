@@ -13,7 +13,9 @@ from typing import Any, Dict, Optional
 
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
+from agent_history.core.workspaces import build_workspace_rows
 from agent_history.scope.types import ConcreteRecord, ConcreteScope
+from agent_history.utils.workspace_ref import select_workspace_display
 
 
 class SessionStatsHandler(VerbHandler):
@@ -108,22 +110,12 @@ class SessionStatsHandler(VerbHandler):
         stats["total_sessions"] = stats.get("sessions", 0)
         stats["total_messages"] = stats.get("messages", 0)
 
-        workspace_rows = []
-        for record in scope:
-            session_count = len(record.sessions)
-            message_count = sum(s.get("message_count", 0) for s in record.sessions)
-            workspace_rows.append(
-                {
-                    "home": record.home,
-                    "workspace": record.workspace,
-                    "sessions": session_count,
-                    "messages": message_count,
-                }
-            )
+        workspace_rows, workspace_display_map = build_workspace_rows(scope)
         workspace_rows.sort(key=lambda r: r["sessions"], reverse=True)
         if top_ws:
             workspace_rows = workspace_rows[:top_ws]
         stats["workspace_rows"] = workspace_rows
+        stats["workspace_display_map"] = workspace_display_map
 
         # Build metadata
         all_homes = set()
@@ -131,7 +123,9 @@ class SessionStatsHandler(VerbHandler):
         total_sessions = 0
         for record in scope:
             all_homes.add(record.home)
-            all_workspaces.add(record.workspace)
+            all_workspaces.add(
+                select_workspace_display(record.workspace, record.workspace_display)
+            )
             total_sessions += len(record.sessions)
 
         return CommandResult(
@@ -142,6 +136,7 @@ class SessionStatsHandler(VerbHandler):
                 "total_sessions": total_sessions,
                 "homes": sorted(all_homes),
                 "workspaces": sorted(all_workspaces),
+                "workspace_display_map": workspace_display_map,
                 "group_by": group_list,
                 "include_time": include_time,
             },
