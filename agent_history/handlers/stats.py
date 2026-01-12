@@ -286,8 +286,9 @@ class SessionStatsHandler(VerbHandler):
         stats["by_home"][record.home]["messages"] += message_count
 
         # Workspace breakdown
-        stats["by_workspace"][record.workspace]["sessions"] += 1
-        stats["by_workspace"][record.workspace]["messages"] += message_count
+        workspace_key = record.workspace_key or record.workspace
+        stats["by_workspace"][workspace_key]["sessions"] += 1
+        stats["by_workspace"][workspace_key]["messages"] += message_count
 
         # Day breakdown (if requested)
         if "by_day" in stats:
