@@ -37,6 +37,13 @@ METRICS_DB_VERSION = 7
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60
 
 
+def _apply_secure_permissions(path: Path, mode: int) -> None:
+    """Apply POSIX-style permissions unless on Windows."""
+    if os.name == "nt":
+        return
+    os.chmod(path, mode)
+
+
 def get_metrics_db_path() -> Path:
     """Get the metrics database file path.
 
@@ -68,7 +75,7 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
     # Ensure directory exists with secure permissions
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(db_path.parent, 0o700)
+    _apply_secure_permissions(db_path.parent, 0o700)
 
     # Track if this is a new database
     is_new_db = not db_path.exists()
@@ -80,7 +87,7 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
     # Set secure permissions on new database file
     if is_new_db:
-        os.chmod(db_path, 0o600)
+        _apply_secure_permissions(db_path, 0o600)
     conn.row_factory = sqlite3.Row  # Enable column access by name
 
     # Create tables
