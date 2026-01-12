@@ -11,6 +11,9 @@ Usage:
 
     # Option 2: Via pytest --docker flag (handles container lifecycle)
     uv run pytest --docker -v
+
+    # Option 3: Test against legacy ah.py script
+    AGENT_HISTORY_TEST_SCRIPT=v1 uv run pytest --docker -v
 """
 
 import os
@@ -19,6 +22,8 @@ from pathlib import Path
 from typing import Any, Dict
 
 import pytest
+
+from tests.helpers.cli import get_script_path
 
 # Mark all tests in this directory as e2e_docker
 pytestmark = pytest.mark.e2e_docker
@@ -37,13 +42,12 @@ def docker_env() -> Dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def cli_path() -> Path:
-    """Get path to agent-history CLI."""
-    # In Docker, the project is mounted at /app
-    cli = Path("/app/agent-history")
-    if not cli.exists():
-        # Fallback for local development
-        cli = Path(__file__).parent.parent.parent / "agent-history"
-    return cli
+    """Get path to agent-history CLI.
+
+    Respects AGENT_HISTORY_TEST_SCRIPT environment variable to select
+    between v2 (agent-history) and v1 (ah.py) implementations.
+    """
+    return get_script_path()
 
 
 def run_cli(

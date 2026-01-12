@@ -386,11 +386,18 @@ class ScopeResolver:
         in the specified home.
 
         Args:
-            home: Home identifier (e.g., "local", "wsl:Ubuntu").
+            home: Home identifier (e.g., "local", "wsl:Ubuntu", "remote:user@host").
 
         Returns:
             Sorted list of unique workspace paths.
+
+        Raises:
+            ValueError: If SSH connection fails for remote homes.
         """
+        # Handle remote homes via SSH
+        if home.startswith("remote:"):
+            return self._enumerate_remote_workspaces(home)
+
         workspaces: set[str] = set()
 
         # Claude workspaces: directory names under ~/.claude/projects/
@@ -404,6 +411,41 @@ class ScopeResolver:
         # Gemini workspaces: from index
         gemini_workspaces = self._enumerate_gemini_workspaces(home)
         workspaces.update(gemini_workspaces)
+
+        return sorted(workspaces)
+
+    def _enumerate_remote_workspaces(self, home: str) -> List[str]:
+        """
+        Enumerate workspaces from a remote host via SSH.
+
+        Args:
+            home: Remote home identifier (e.g., "remote:user@host").
+
+        Returns:
+            List of workspace paths found on the remote host.
+
+        Raises:
+            ValueError: If SSH connection fails.
+        """
+        from agent_history.backends.ssh import list_remote_workspaces
+        from agent_history.utils.paths import normalize_workspace_name
+
+        # Extract the remote host from "remote:user@host"
+        remote_host = home[7:]  # Remove "remote:" prefix
+
+        workspaces: set[str] = set()
+
+        # Get Claude workspaces from remote
+        claude_ws, error = list_remote_workspaces(remote_host, agent="claude")
+        if error:
+            raise ValueError(f"SSH connection failed: {error}")
+
+        # Decode workspace names to readable paths
+        for ws in claude_ws:
+            decoded = normalize_workspace_name(ws, verify_local=False)
+            workspaces.add(decoded)
+
+        # TODO: Add Codex and Gemini remote enumeration
 
         return sorted(workspaces)
 
@@ -886,7 +928,16 @@ class ScopeResolver:
             ws_error: Optional[ResolutionError] = None
 
             if isinstance(spec, WorkspaceSpecAll):
-                workspaces = self._enumerate_workspaces(home)
+                try:
+                    workspaces = self._enumerate_workspaces(home)
+                except ValueError as e:
+                    # SSH connection error for remote homes
+                    ws_error = ResolutionError(
+                        stage="workspace",
+                        spec=spec,
+                        reason=str(e),
+                        suggestions=[],
+                    )
             elif isinstance(spec, WorkspaceSpecCurrent):
                 if self.context.cwd_workspace:
                     workspaces = [self.context.cwd_workspace]
@@ -910,7 +961,16 @@ class ScopeResolver:
                 decoded = normalize_workspace_name(spec.encoded, verify_local=True)
                 workspaces = [decoded]
             elif isinstance(spec, WorkspaceSpecPattern):
-                workspaces = self._match_workspaces(home, spec.pattern, spec.match_type)
+                try:
+                    workspaces = self._match_workspaces(home, spec.pattern, spec.match_type)
+                except ValueError as e:
+                    # SSH connection error for remote homes
+                    ws_error = ResolutionError(
+                        stage="workspace",
+                        spec=spec,
+                        reason=str(e),
+                        suggestions=[],
+                    )
             elif isinstance(spec, WorkspaceSpecHash):
                 resolved = gemini_get_path_for_hash(spec.hash)
                 if resolved:
@@ -1018,13 +1078,15 @@ class ScopeResolver:
             # _collect_claude_sessions, etc. (patchable by tests)
             sessions = self._collect_sessions(home, workspace, record.sessions)
 
-            if sessions:
-                result.append(
-                    ConcreteRecord(
-                        home=home,
-                        workspace=workspace,
-                        sessions=sessions,
-                    )
+            # Always include the workspace record, even without sessions
+            # This is important for remote workspaces where we may not have
+            # implemented session listing yet, but still want to list workspaces
+            result.append(
+                ConcreteRecord(
+                    home=home,
+                    workspace=workspace,
+                    sessions=sessions,
                 )
+            )
 
         return result, errors
