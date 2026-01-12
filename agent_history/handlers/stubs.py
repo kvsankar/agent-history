@@ -13,7 +13,7 @@ from agent_history.handlers.stats import SessionStatsHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.storage.config import load_config, save_config
-from agent_history.utils.paths import decode_workspace_path, encode_workspace_path
+from agent_history.utils.paths import decode_workspace_path
 from agent_history.utils.workspace_ref import WorkspaceContext, attach_workspace_context
 
 
@@ -275,15 +275,18 @@ class ProjectRemoveHandler(VerbHandler):
         removed = 0
         if workspace:
             decoded = decode_workspace_path(workspace, verify_local=False)
-            encoded = encode_workspace_path(decoded)
             workspaces = project_def.get(home_key, [])
-            if decoded in workspaces or encoded in workspaces:
-                workspaces = [ws for ws in workspaces if ws not in (decoded, encoded)]
-                project_def[home_key] = workspaces
-                removed = 1
-
-            if not project_def.get(home_key):
-                project_def.pop(home_key, None)
+            kept: List[str] = []
+            for ws in workspaces:
+                if decode_workspace_path(ws, verify_local=False) == decoded:
+                    removed += 1
+                else:
+                    kept.append(ws)
+            if removed:
+                if kept:
+                    project_def[home_key] = kept
+                else:
+                    project_def.pop(home_key, None)
 
             if not project_def:
                 projects.pop(name, None)
