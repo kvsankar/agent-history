@@ -48,6 +48,27 @@ def _workspace_display(
     return str(workspace)
 
 
+def _format_project_sources(sources: Any) -> str:
+    if isinstance(sources, list):
+        return ", ".join(sources) if len(sources) <= 3 else f"{len(sources)} sources"
+    return str(sources)
+
+
+def _format_project_workspaces(
+    workspaces: Any, display_map: Dict[str, str], workspace_count: Any
+) -> str:
+    if isinstance(workspaces, list):
+        display_workspaces = [display_map.get(str(ws), str(ws)) for ws in workspaces]
+        return (
+            ", ".join(display_workspaces)
+            if len(display_workspaces) <= 2
+            else f"{len(display_workspaces)} workspaces"
+        )
+    if workspace_count is not None:
+        return str(workspace_count)
+    return str(workspaces)
+
+
 class DataFormatter(ABC):
     """Abstract base class for data formatters.
 
@@ -319,23 +340,10 @@ class TableFormatter(DataFormatter):
             sources = p.get("source", p.get("homes", []))
             workspaces = p.get("workspace", [])
 
-            # For display, join multiple values or show count
-            if isinstance(sources, list):
-                source_str = ", ".join(sources) if len(sources) <= 3 else f"{len(sources)} sources"
-            else:
-                source_str = str(sources)
-
-            if isinstance(workspaces, list):
-                display_workspaces = [
-                    workspace_display_map.get(str(ws), str(ws)) for ws in workspaces
-                ]
-                workspace_str = (
-                    ", ".join(display_workspaces)
-                    if len(display_workspaces) <= 2
-                    else f"{len(display_workspaces)} workspaces"
-                )
-            else:
-                workspace_str = str(p.get("workspace_count", workspaces))
+            source_str = _format_project_sources(sources)
+            workspace_str = _format_project_workspaces(
+                workspaces, workspace_display_map, p.get("workspace_count")
+            )
 
             rows.append(
                 [
@@ -559,23 +567,10 @@ class TsvFormatter(DataFormatter):
             sources = p.get("source", p.get("homes", []))
             workspaces = p.get("workspace", [])
 
-            # For display, join multiple values or show count
-            if isinstance(sources, list):
-                source_str = ", ".join(sources) if len(sources) <= 3 else f"{len(sources)} sources"
-            else:
-                source_str = str(sources)
-
-            if isinstance(workspaces, list):
-                display_workspaces = [
-                    workspace_display_map.get(str(ws), str(ws)) for ws in workspaces
-                ]
-                workspace_str = (
-                    ", ".join(display_workspaces)
-                    if len(display_workspaces) <= 2
-                    else f"{len(display_workspaces)} workspaces"
-                )
-            else:
-                workspace_str = str(p.get("workspace_count", workspaces))
+            source_str = _format_project_sources(sources)
+            workspace_str = _format_project_workspaces(
+                workspaces, workspace_display_map, p.get("workspace_count")
+            )
 
             row = [
                 p.get("project", p.get("name", "")),
