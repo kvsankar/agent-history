@@ -108,6 +108,15 @@ class CLIParser:
 
         result = list(argv)
 
+        def _looks_like_path(value: str) -> bool:
+            if value.startswith("/"):
+                return True
+            if "/" in value:
+                return True
+            if "\\" in value:
+                return True
+            return len(value) > 1 and value[1] == ":"
+
         # Find the position of ws or session command (may be after global flags like --agent)
         cmd_pos = None
         cmd_type = None
@@ -135,7 +144,11 @@ class CLIParser:
         # Convert: [cmd, pattern, ...] -> [cmd, -n, pattern, ...]
         if cmd_pos + 1 < len(argv):
             next_arg = argv[cmd_pos + 1]
-            if not next_arg.startswith("-") and next_arg not in subcommands:
+            if (
+                not next_arg.startswith("-")
+                and next_arg not in subcommands
+                and not _looks_like_path(next_arg)
+            ):
                 # Insert -n before the pattern
                 result = list(argv[: cmd_pos + 1]) + ["-n", next_arg] + list(argv[cmd_pos + 2 :])
                 return result
@@ -148,6 +161,8 @@ class CLIParser:
         if cmd_pos + 2 < len(argv):
             verb = argv[cmd_pos + 1]
             if verb in subcommands:
+                if cmd_type == RESOURCE_SESSION and verb == "show":
+                    return result
                 # Check for patterns after the verb
                 new_result = list(argv[: cmd_pos + 2])  # Keep up to and including verb
                 i = cmd_pos + 2
@@ -158,7 +173,7 @@ class CLIParser:
                     if not arg.startswith("-"):
                         # Keep full paths as positional for exact matching
                         # Convert simple names/patterns to -n for substring matching
-                        if arg.startswith("/") or "/" in arg:
+                        if _looks_like_path(arg):
                             # It's a path - keep as positional for exact matching
                             new_result.append(arg)
                         else:
