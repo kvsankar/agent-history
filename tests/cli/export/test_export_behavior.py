@@ -1,4 +1,4 @@
-"""Parity tests for export behavior across agents and NDJSON schema."""
+"""Behavior tests for export output across agents and NDJSON schema."""
 
 import json
 from pathlib import Path

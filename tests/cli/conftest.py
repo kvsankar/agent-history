@@ -7,7 +7,6 @@ homes for testing scope modifiers (--aw, --ah, -n, --project, --wsl, --windows, 
 import hashlib
 import json
 import os
-import re
 import shutil
 import sys
 import uuid
@@ -52,44 +51,7 @@ from tests.helpers.session_builders import (
     CodexSessionBuilder,
     GeminiSessionBuilder,
 )
-
-# ---------------------------------------------------------------------------
-# Workspace Naming Helpers
-# ---------------------------------------------------------------------------
-
-
-def encode_workspace_path(path: str) -> str:
-    """Encode a path as a Claude workspace directory name.
-
-    Claude encodes paths by replacing / with - and prefixing the path.
-    Example: /home/user/project -> -home-user-project
-    """
-    # Normalize path separators
-    path = path.replace("\\", "/").rstrip("/")
-
-    # Handle Windows drive paths (C:\Users\me\project -> C--Users-me-project)
-    windows_drive_match = re.match(r"^[A-Za-z]:", path)
-    if windows_drive_match:
-        drive = windows_drive_match.group(0)[0].upper()
-        remainder = path[len(windows_drive_match.group(0)) :].lstrip("/").replace("/", "-")
-        return f"{drive}--{remainder}"
-
-    # Handle WSL-mounted Windows paths like /mnt/c/Users/me/project
-    wsl_prefix = "/mnt/"
-    if path.startswith(wsl_prefix) and len(path) > len(wsl_prefix):
-        drive_letter = path[len(wsl_prefix)]
-        if drive_letter.isalpha():
-            drive = drive_letter.upper()
-            remainder = path[len(wsl_prefix) + 1 :].lstrip("/").replace("/", "-")
-            return f"{drive}--{remainder}"
-        return f"{drive}--{remainder}"
-
-    # Default POSIX encoding
-    encoded = path.replace("/", "-")
-    if not encoded.startswith("-"):
-        encoded = "-" + encoded
-    return encoded
-
+from tests.helpers.workspace_paths import encode_workspace_path
 
 def compute_gemini_hash(path: str) -> str:
     """Compute Gemini project hash (SHA-256 of path)."""

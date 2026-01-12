@@ -1,4 +1,4 @@
-"""Parity tests for Gemini hash index management."""
+"""Behavior tests for Gemini hash index management."""
 
 import hashlib
 import json

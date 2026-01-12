@@ -1,4 +1,4 @@
-"""Parity test for repeatable --home handling."""
+"""Repeatable --home handling."""
 
 from agent_history.scope.context import ResolutionContext, ScopeArgs
 from agent_history.scope.resolver import ScopeResolver

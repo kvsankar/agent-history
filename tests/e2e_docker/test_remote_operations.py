@@ -3,9 +3,11 @@
 Tests workspace listing, session listing, and export from remote hosts.
 """
 
-import pytest
+import json
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from .conftest import run_cli
 
@@ -34,9 +36,8 @@ class TestRemoteWorkspaceList:
         bob_result = run_cli(["ws", "-r", f"bob@{node}"], cli_path)
         assert bob_result.returncode == 0
 
-        # Both should have output (they have similar setups in test data)
-        assert alice_result.stdout.strip() != "" or "No workspaces" in alice_result.stderr
-        assert bob_result.stdout.strip() != "" or "No workspaces" in bob_result.stderr
+        assert "myproject" in alice_result.stdout or "another-project" in alice_result.stdout
+        assert "myproject" in bob_result.stdout or "another-project" in bob_result.stdout
 
     def test_ws_remote_pattern_filter(self, docker_env, cli_path):
         """ws -r with pattern filters workspaces."""
@@ -53,55 +54,98 @@ class TestRemoteSessionList:
         """session list -r shows sessions from remote host."""
         node = docker_env["node_alpha"]
         result = run_cli(
-            ["session", "list", "-r", f"alice@{node}", "--aw"],
+            ["session", "list", "-r", f"alice@{node}", "--aw", "--format", "json"],
             cli_path,
         )
 
         assert result.returncode == 0, f"Failed: {result.stderr}"
-        # Should show session data
-        output = result.stdout + result.stderr
-        # Either shows sessions or "no sessions" message
-        assert len(output) > 0
+        sessions = json.loads(result.stdout)
+        assert sessions, "Expected remote sessions for alice"
+        assert any("session-claude-001" in s.get("filename", "") for s in sessions)
 
     def test_session_list_remote_with_workspace(self, docker_env, cli_path):
         """session list -r with workspace pattern."""
         node = docker_env["node_alpha"]
         result = run_cli(
-            ["session", "list", "-r", f"alice@{node}", "myproject"],
+            ["session", "list", "-r", f"alice@{node}", "myproject", "--format", "json"],
             cli_path,
         )
 
         assert result.returncode == 0, f"Failed: {result.stderr}"
+        sessions = json.loads(result.stdout)
+        assert sessions, "Expected remote sessions for myproject"
+        assert any("session-claude-001" in s.get("filename", "") for s in sessions)
 
     def test_session_list_remote_claude_agent(self, docker_env, cli_path):
         """session list -r --agent claude filters to Claude sessions."""
         node = docker_env["node_alpha"]
         result = run_cli(
-            ["session", "list", "-r", f"alice@{node}", "--aw", "--agent", "claude"],
+            [
+                "session",
+                "list",
+                "-r",
+                f"alice@{node}",
+                "--aw",
+                "--agent",
+                "claude",
+                "--format",
+                "json",
+            ],
             cli_path,
         )
 
         assert result.returncode == 0, f"Failed: {result.stderr}"
+        sessions = json.loads(result.stdout)
+        assert sessions, "Expected remote Claude sessions"
+        assert all(s.get("agent") == "claude" for s in sessions)
 
     def test_session_list_remote_codex_agent(self, docker_env, cli_path):
         """session list -r --agent codex filters to Codex sessions."""
         node = docker_env["node_alpha"]
         result = run_cli(
-            ["session", "list", "-r", f"alice@{node}", "--aw", "--agent", "codex"],
+            [
+                "session",
+                "list",
+                "-r",
+                f"alice@{node}",
+                "--aw",
+                "--agent",
+                "codex",
+                "--format",
+                "json",
+            ],
             cli_path,
         )
 
         assert result.returncode == 0, f"Failed: {result.stderr}"
+        sessions = json.loads(result.stdout)
+        assert sessions, "Expected remote Codex sessions"
+        assert all(s.get("agent") == "codex" for s in sessions)
+        assert any("session-codex-001" in s.get("filename", "") for s in sessions)
 
     def test_session_list_remote_gemini_agent(self, docker_env, cli_path):
         """session list -r --agent gemini filters to Gemini sessions."""
         node = docker_env["node_alpha"]
         result = run_cli(
-            ["session", "list", "-r", f"alice@{node}", "--aw", "--agent", "gemini"],
+            [
+                "session",
+                "list",
+                "-r",
+                f"alice@{node}",
+                "--aw",
+                "--agent",
+                "gemini",
+                "--format",
+                "json",
+            ],
             cli_path,
         )
 
         assert result.returncode == 0, f"Failed: {result.stderr}"
+        sessions = json.loads(result.stdout)
+        assert sessions, "Expected remote Gemini sessions"
+        assert all(s.get("agent") == "gemini" for s in sessions)
+        assert any("session-gemini-001" in s.get("filename", "") for s in sessions)
 
 
 class TestRemoteExport:
@@ -125,14 +169,20 @@ class TestRemoteExport:
             # Command should succeed
             assert result.returncode == 0, f"Failed: {result.stderr}"
 
-            # Check if any files were created (may or may not have sessions)
             output_path = Path(tmpdir)
-            # List what was created
             files = list(output_path.rglob("*.md"))
-            # Note: May be empty if no sessions, but command should still succeed
+            assert files, "Expected remote export to create markdown files"
 
-    def test_export_remote_with_agent_filter(self, docker_env, cli_path):
-        """session export -r --agent filters exports."""
+    @pytest.mark.parametrize(
+        ("agent", "header"),
+        [
+            ("claude", "# Claude Conversation"),
+            ("codex", "# Codex Conversation"),
+            ("gemini", "# Gemini Conversation"),
+        ],
+    )
+    def test_export_remote_with_agent_filter(self, docker_env, cli_path, agent, header):
+        """session export -r --agent should export files per agent."""
         node = docker_env["node_alpha"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -141,13 +191,17 @@ class TestRemoteExport:
                     "session", "export",
                     "-r", f"alice@{node}",
                     "--aw",
-                    "--agent", "claude",
+                    "--agent", agent,
                     "-o", tmpdir,
                 ],
                 cli_path,
             )
 
             assert result.returncode == 0, f"Failed: {result.stderr}"
+            output_path = Path(tmpdir)
+            files = list(output_path.rglob("*.md"))
+            assert files, f"Expected {agent} export files"
+            assert header in files[0].read_text(encoding="utf-8")
 
 
 class TestRemoteStats:

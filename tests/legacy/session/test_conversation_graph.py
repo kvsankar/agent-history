@@ -1,10 +1,9 @@
 """Conversation fork analysis coverage using forked fixture."""
 
-from pathlib import Path
-
 import pytest
 
 from tests.helpers.module_loader import load_agent_history
+from tests.helpers.paths import fixtures_dir
 
 pytestmark = pytest.mark.v1
 
@@ -12,7 +11,7 @@ pytestmark = pytest.mark.v1
 def test_fork_detection_and_summary_from_fixture() -> None:
     """Forked conversations should produce fork points and summaries."""
     module = load_agent_history()
-    fixture = Path(__file__).parent.parent / "fixtures" / "forks" / "claude_forked_session.jsonl"
+    fixture = fixtures_dir() / "forks" / "claude_forked_session.jsonl"
 
     messages = module.read_jsonl_messages(fixture)
     graph = module.analyze_conversation_graph(messages)

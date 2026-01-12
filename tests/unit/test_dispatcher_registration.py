@@ -1,4 +1,4 @@
-"""Parity tests for CLI handler registration.
+"""CLI handler registration tests.
 
 These tests assert that handlers exist for CLI verbs defined in the specs.
 They are expected to fail until the missing handlers are implemented.

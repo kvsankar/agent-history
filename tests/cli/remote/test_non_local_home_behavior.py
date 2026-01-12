@@ -1,4 +1,4 @@
-"""Parity tests for non-local home support (WSL, web, remote cache).
+"""Behavior tests for non-local home support (WSL, web, remote cache).
 
 These tests assert behavior required by the specs that is currently missing
 from the modern implementation.
