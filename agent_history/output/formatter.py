@@ -33,6 +33,21 @@ class FormatterError(Exception):
     pass
 
 
+def _workspace_display(
+    item: Dict[str, Any], display_map: Optional[Dict[str, str]] = None
+) -> str:
+    """Pick a workspace display string from an item or display map."""
+    if not item:
+        return ""
+    display = item.get("workspace_display") or item.get("workspace_readable")
+    if display:
+        return str(display)
+    workspace = item.get("workspace") or ""
+    if display_map and workspace in display_map:
+        return str(display_map[workspace])
+    return str(workspace)
+
+
 class DataFormatter(ABC):
     """Abstract base class for data formatters.
 
@@ -93,7 +108,7 @@ class TableFormatter(DataFormatter):
         rows = []
 
         for s in sessions:
-            workspace = s.get("workspace_readable") or s.get("workspace", "")
+            workspace = _workspace_display(s)
             # Truncate long workspace paths
             if len(workspace) > 40 and self.width:
                 workspace = "..." + workspace[-37:]
@@ -128,7 +143,7 @@ class TableFormatter(DataFormatter):
         rows = []
 
         for ws in workspaces:
-            workspace = ws.get("workspace") or ""
+            workspace = _workspace_display(ws)
             if len(workspace) > 50 and self.width:
                 workspace = "..." + workspace[-47:]
 
@@ -232,7 +247,9 @@ class TableFormatter(DataFormatter):
                     by_workspace.items(), key=lambda x: -get_count(x[1], "sessions")
                 )
                 for ws, value in sorted_ws[:10]:
-                    ws_display = workspace_display_map.get(ws, ws)
+                    ws_display = _workspace_display(
+                        {"workspace": ws}, display_map=workspace_display_map
+                    )
                     if len(ws_display) > 50:
                         ws_display = "..." + ws_display[-47:]
                     lines.append(f"  {ws_display}: {get_count(value, 'sessions')}")
@@ -456,7 +473,7 @@ class TsvFormatter(DataFormatter):
             row = [
                 s.get("agent", ""),
                 s.get("home", "local"),
-                s.get("workspace_readable") or s.get("workspace", ""),
+                _workspace_display(s),
                 s.get("filename", ""),
                 str(s.get("message_count", "")),
                 modified_str,
@@ -485,7 +502,7 @@ class TsvFormatter(DataFormatter):
 
             row = [
                 ws.get("home", "local"),
-                ws.get("workspace", ""),
+                _workspace_display(ws),
                 str(ws.get("session_count", "")),
                 status,
                 modified_str,
@@ -557,7 +574,7 @@ class TsvFormatter(DataFormatter):
                 "\t".join(
                     [
                         str(row.get("home", "")),
-                        str(row.get("workspace", "")),
+                        _workspace_display(row),
                         str(row.get("sessions", 0)),
                         str(row.get("messages", 0)),
                     ]
