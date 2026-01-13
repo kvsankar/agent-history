@@ -138,8 +138,6 @@ class WSLHomeResolver(HomeResolver):
     WSL homes are accessed from within Linux, reaching Windows filesystems
     via /mnt/c or /mnt/d style paths. The specific WSL distribution is
     identified by the suffix (e.g., "wsl:Ubuntu").
-
-    TODO: Implement WSL path resolution logic.
     """
 
     def __init__(self, distro: Optional[str] = None):
@@ -168,6 +166,15 @@ class WSLHomeResolver(HomeResolver):
         Uses get_wsl_projects_dir() from platform utils which supports
         the CLAUDE_WSL_PROJECTS_DIR test override.
         """
+        import os
+
+        if not self._distro:
+            override = os.environ.get("AGENT_HISTORY_HOME_WSL")
+            if override:
+                candidate = Path(override) / ".claude" / "projects"
+                if candidate.exists():
+                    return candidate
+
         from agent_history.utils.platform import get_wsl_projects_dir
 
         if self._distro:
@@ -180,6 +187,15 @@ class WSLHomeResolver(HomeResolver):
 
         Uses get_wsl_codex_sessions_dir() from platform utils.
         """
+        import os
+
+        if not self._distro:
+            override = os.environ.get("AGENT_HISTORY_HOME_WSL")
+            if override:
+                candidate = Path(override) / ".codex" / "sessions"
+                if candidate.exists():
+                    return candidate
+
         from agent_history.utils.platform import get_wsl_codex_sessions_dir
 
         if self._distro:
@@ -192,6 +208,15 @@ class WSLHomeResolver(HomeResolver):
 
         Uses get_wsl_gemini_sessions_dir() from platform utils.
         """
+        import os
+
+        if not self._distro:
+            override = os.environ.get("AGENT_HISTORY_HOME_WSL")
+            if override:
+                candidate = Path(override) / ".gemini" / "tmp"
+                if candidate.exists():
+                    return candidate
+
         from agent_history.utils.platform import get_wsl_gemini_sessions_dir
 
         if self._distro:
@@ -206,8 +231,6 @@ class WindowsHomeResolver(HomeResolver):
     Windows homes are accessed via mount points or network paths.
     This handles cases where Linux is the host and Windows
     filesystems are accessed remotely or via mount.
-
-    TODO: Implement Windows path resolution logic.
     """
 
     def __init__(self, user: Optional[str] = None):
@@ -267,8 +290,6 @@ class RemoteHomeResolver(HomeResolver):
 
     Remote homes are accessed via SSH, SFTP, or other remote protocols.
     The specific remote machine is identified by the suffix (e.g., "remote:dev").
-
-    TODO: Implement remote path resolution logic.
     """
 
     def __init__(self, remote_name: Optional[str] = None):
@@ -293,8 +314,7 @@ class RemoteHomeResolver(HomeResolver):
         """
         Get the Claude projects directory for remote home.
 
-        TODO: Implement remote path resolution.
-        This would require SSH/SFTP access or cached remote data.
+        Remote homes are accessed via SSH; there is no local path to return.
         """
         return None
 
@@ -302,7 +322,7 @@ class RemoteHomeResolver(HomeResolver):
         """
         Get the Codex sessions directory for remote home.
 
-        TODO: Implement remote path resolution for Codex.
+        Remote homes are accessed via SSH; there is no local path to return.
         """
         return None
 
@@ -310,7 +330,7 @@ class RemoteHomeResolver(HomeResolver):
         """
         Get the Gemini sessions directory for remote home.
 
-        TODO: Implement remote path resolution for Gemini.
+        Remote homes are accessed via SSH; there is no local path to return.
         """
         return None
 

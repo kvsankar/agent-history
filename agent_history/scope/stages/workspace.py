@@ -68,6 +68,7 @@ class WorkspaceStage:
                                     If not provided, uses _enumerate_workspaces_default.
         """
         self.context = context
+        self._inventory = None
         self._enumerate_workspaces_fn = (
             enumerate_workspaces_fn or self._enumerate_workspaces_default
         )
@@ -179,7 +180,7 @@ class WorkspaceStage:
 
         elif isinstance(spec, WorkspaceSpecEncoded):
             # Decode the encoded path
-            decoded = self._decode_workspace_path(spec.encoded)
+            decoded = self._decode_workspace_path(spec.encoded, home)
             return [decoded], None
 
         elif isinstance(spec, WorkspaceSpecPattern):
@@ -229,151 +230,18 @@ class WorkspaceStage:
         """
         Default implementation to enumerate workspaces.
 
-        Combines workspaces from Claude, Codex, and Gemini.
-
         Args:
             home: Home identifier.
 
         Returns:
             Sorted list of unique workspace paths.
         """
-        workspaces: set[str] = set()
+        if self._inventory is None:
+            from agent_history.adapters.inventory import InventoryProvider
 
-        # Claude workspaces
-        claude_workspaces = self._enumerate_claude_workspaces(home)
-        workspaces.update(claude_workspaces)
+            self._inventory = InventoryProvider(self.context)
 
-        # Codex workspaces
-        codex_workspaces = self._enumerate_codex_workspaces(home)
-        workspaces.update(codex_workspaces)
-
-        # Gemini workspaces
-        gemini_workspaces = self._enumerate_gemini_workspaces(home)
-        workspaces.update(gemini_workspaces)
-
-        return sorted(workspaces)
-
-    def _enumerate_claude_workspaces(self, home: str) -> List[str]:
-        """
-        Enumerate workspaces from Claude's projects directory.
-
-        Claude stores session directories with encoded workspace names.
-        Each directory name is decoded to get the actual workspace path.
-
-        Args:
-            home: Home identifier.
-
-        Returns:
-            List of workspace paths found in Claude's projects.
-        """
-        workspaces: List[str] = []
-
-        if home != "local":
-            # TODO: Handle non-local homes (WSL, remote)
-            return workspaces
-
-        claude_dir = self.context.claude_projects_dir
-        if not claude_dir or not claude_dir.exists():
-            return workspaces
-
-        for entry in claude_dir.iterdir():
-            if entry.is_dir() and not entry.name.startswith("."):
-                # Decode the directory name to get workspace path
-                workspace = self._decode_workspace_path(entry.name)
-                workspaces.append(workspace)
-
-        return workspaces
-
-    def _enumerate_codex_workspaces(self, home: str) -> List[str]:
-        """
-        Enumerate workspaces from Codex sessions.
-
-        Codex stores workspace information in session metadata.
-        This requires scanning the sessions or reading an index.
-
-        Args:
-            home: Home identifier.
-
-        Returns:
-            List of workspace paths found in Codex sessions.
-        """
-        from agent_history.backends.codex import codex_scan_sessions
-
-        workspaces: List[str] = []
-
-        if home != "local":
-            # TODO: Handle non-local homes (WSL, remote)
-            return workspaces
-
-        # Get all Codex sessions and extract unique workspaces
-        sessions_dir = self.context.codex_sessions_dir
-        codex_sessions = codex_scan_sessions(
-            pattern="",
-            sessions_dir=sessions_dir,
-            skip_message_count=True,
-        )
-        seen: set[str] = set()
-        for session in codex_sessions:
-            ws = session.get("workspace_readable") or session.get("workspace", "")
-            if ws and ws not in seen:
-                seen.add(ws)
-                workspaces.append(ws)
-
-        return workspaces
-
-    def _enumerate_gemini_workspaces(self, home: str) -> List[str]:
-        """
-        Enumerate workspaces from Gemini sessions.
-
-        Gemini uses hash-based workspace identifiers. This method:
-        1. Scans all Gemini session directories
-        2. For each hash, looks up the readable path in the hash index
-        3. Returns either the resolved path or the hash as a workspace
-
-        Args:
-            home: Home identifier.
-
-        Returns:
-            List of workspace paths found in Gemini sessions.
-        """
-        from agent_history.backends.gemini import gemini_load_hash_index
-
-        workspaces: List[str] = []
-
-        if home != "local":
-            # TODO: Handle non-local homes (WSL, remote)
-            return workspaces
-
-        # Use context's gemini_sessions_dir (respects GEMINI_SESSIONS_DIR env var)
-        gemini_dir = self.context.gemini_sessions_dir
-        if not gemini_dir or not gemini_dir.exists():
-            return workspaces
-
-        # Load the hash index for path resolution
-        hash_index = gemini_load_hash_index()
-        hashes_map = hash_index.get("hashes", {})
-
-        # Scan for hash directories that contain session files
-        for hash_dir in gemini_dir.iterdir():
-            if not hash_dir.is_dir():
-                continue
-            chats_dir = hash_dir / "chats"
-            if not chats_dir.exists():
-                continue
-            # Check if there are any session files
-            if not any(chats_dir.glob("session-*.json")):
-                continue
-
-            project_hash = hash_dir.name
-            # Look up the readable path in the hash index
-            readable_path = hashes_map.get(project_hash)
-            if readable_path:
-                workspaces.append(readable_path)
-            else:
-                # Fall back to using the hash as workspace identifier
-                workspaces.append(project_hash)
-
-        return workspaces
+        return self._inventory.list_workspaces(home)
 
     def _match_workspaces(self, home: str, pattern: str, match_type: MatchType) -> List[str]:
         """
@@ -437,7 +305,7 @@ class WorkspaceStage:
             # Unknown match type - default to exact
             return [ws for ws in all_workspaces if ws == pattern]
 
-    def _decode_workspace_path(self, encoded: str) -> str:
+    def _decode_workspace_path(self, encoded: str, home: str) -> str:
         """
         Decode a Claude-style encoded workspace path.
 
@@ -454,10 +322,30 @@ class WorkspaceStage:
         Returns:
             Decoded absolute path.
         """
+        from agent_history.backends.claude import _detect_wsl_base_path
+        from agent_history.scope.home_resolver import get_resolver_for_home
         from agent_history.utils.paths import normalize_workspace_name
 
+        base_path = None
+        verify_local = home == "local"
+
+        resolver = get_resolver_for_home(home)
+        projects_dir = resolver.get_claude_dir(self.context)
+        if projects_dir:
+            base_path = _detect_wsl_base_path(projects_dir)
+            if base_path:
+                verify_local = True
+            elif home.startswith("wsl"):
+                verify_local = False
+            elif home.startswith("windows"):
+                verify_local = True
+
         # Use the proper decoding function that handles dashed names correctly
-        return normalize_workspace_name(encoded, verify_local=True)
+        return normalize_workspace_name(
+            encoded,
+            verify_local=verify_local,
+            base_path=base_path,
+        )
 
     def _resolve_gemini_hash(self, hash_value: str) -> Optional[str]:
         """
