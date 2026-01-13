@@ -124,6 +124,8 @@ def run_cli_subprocess(
         else:
             run_env.update(env)
 
+        run_env.setdefault("AGENT_HISTORY_TEST_MODE", "1")
+
         return subprocess.run(
             cmd,
             capture_output=True,

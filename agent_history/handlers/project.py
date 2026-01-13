@@ -46,6 +46,8 @@ class ProjectListHandler(VerbHandler):
 
         workspace_display_map: Dict[str, str] = {}
 
+        show_counts = bool(verb_args.get("counts"))
+
         # Build project list
         projects = []
         for name, definition in projects_config.items():
@@ -74,7 +76,7 @@ class ProjectListHandler(VerbHandler):
             }
 
             # Add session count if requested
-            if verb_args.get("counts"):
+            if show_counts:
                 session_count = self._count_project_sessions(name, scope)
                 project_info["session_count"] = session_count
             else:
@@ -92,6 +94,7 @@ class ProjectListHandler(VerbHandler):
             metadata={
                 "total_count": len(projects),
                 "workspace_display_map": workspace_display_map,
+                "show_counts": show_counts,
             },
         )
 

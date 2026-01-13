@@ -21,6 +21,16 @@ def test_home_list_tsv_format():
     assert len(lines) >= 1  # At least header
     # Header should be tab-separated
     assert "\t" in lines[0]
+    assert "SESSIONS" not in lines[0]
+
+
+def test_home_list_tsv_format_with_counts():
+    """Test home list TSV output with session counts."""
+    result = run_cli_subprocess(["home", "list", "--format", "tsv", "--counts"])
+    assert result.returncode == 0
+    lines = result.stdout.strip().split("\n")
+    assert len(lines) >= 1  # At least header
+    assert "SESSIONS" in lines[0]
 
 
 def test_home_list_json_format():
