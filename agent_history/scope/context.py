@@ -309,6 +309,8 @@ class ContextBuilder:
         import os
         import urllib.parse
 
+        from agent_history.utils.paths import encode_workspace_path, normalize_workspace_name
+
         cwd = Path.cwd()
         cwd_str = str(cwd)
         cwd_str_normalized = cwd_str.replace("\\", "/")
@@ -328,8 +330,6 @@ class ContextBuilder:
                 rel_str = str(rel).replace("\\", "/")
                 # Normalize to absolute workspace path
                 normalized_cwd = "/" + rel_str.lstrip("/")
-                from agent_history.utils.paths import encode_workspace_path
-
                 # Encode as workspace pattern: /home/user/myproject -> -home-user-myproject
                 encoded_pattern = encode_workspace_path(normalized_cwd)
                 # Check if this workspace exists in Claude projects
@@ -337,10 +337,8 @@ class ContextBuilder:
                     for workspace_dir in claude_projects.iterdir():
                         if not workspace_dir.is_dir():
                             continue
-                        if (
-                            encoded_pattern == workspace_dir.name
-                            or encoded_pattern in workspace_dir.name
-                        ):
+                        dir_name = urllib.parse.unquote(workspace_dir.name)
+                        if encoded_pattern == dir_name or encoded_pattern in dir_name:
                             return ("local", normalized_cwd)
             except ValueError:
                 # CWD is not under AGENT_HISTORY_HOME
@@ -351,17 +349,9 @@ class ContextBuilder:
             relative = cwd.relative_to(claude_projects)
             # First part of relative path is the encoded workspace name
             if relative.parts:
-                encoded_workspace = relative.parts[0]
-                # Decode workspace path: replace '-' with '/' and URL-decode
-                # Format: -home-user-project -> /home/user/project
-                if encoded_workspace.startswith("-"):
-                    workspace = encoded_workspace.replace("-", "/")
-                    workspace = urllib.parse.unquote(workspace)
-                    return ("local", workspace)
-                else:
-                    # Handle non-standard encoding (e.g., Windows paths)
-                    workspace = urllib.parse.unquote(encoded_workspace)
-                    return ("local", workspace)
+                encoded_workspace = urllib.parse.unquote(relative.parts[0])
+                workspace = normalize_workspace_name(encoded_workspace, verify_local=True)
+                return ("local", workspace)
         except ValueError:
             # CWD is not under Claude projects
             pass
@@ -373,8 +363,6 @@ class ContextBuilder:
         # .claude/projects/-tmp-pytest-xxx-test-workspace/
         if claude_projects.exists():
             # Encode CWD as workspace pattern
-            from agent_history.utils.paths import encode_workspace_path
-
             cwd_encoded = encode_workspace_path(cwd_str_normalized)
             for workspace_dir in claude_projects.iterdir():
                 if not workspace_dir.is_dir():
@@ -397,11 +385,14 @@ class ContextBuilder:
                         # Decode encoded workspace path if needed
                         # Encoded format: -home-user-projects-auth -> /home/user/projects/auth
                         decoded_ws = ws_path
-                        if ws_path.startswith("-"):
-                            decoded_ws = ws_path.replace("-", "/")
-                        elif "/" not in ws_path and ws_path:
-                            # Assume it's encoded without leading dash
-                            decoded_ws = "/" + ws_path.replace("-", "/")
+                        if ws_path:
+                            if "/" in ws_path or "\\" in ws_path:
+                                decoded_ws = ws_path.replace("\\", "/")
+                            else:
+                                decoded_ws = normalize_workspace_name(
+                                    ws_path,
+                                    verify_local=False,
+                                )
 
                         # Check if CWD ends with the workspace path (decoded)
                         # This allows for test directories like /tmp/xxx/home/user/projects/auth
@@ -433,8 +424,9 @@ class ContextBuilder:
         from agent_history.storage.config import get_alias_for_workspace
 
         # get_alias_for_workspace expects an encoded workspace name
-        # Convert decoded path to encoded form: /home/user/project -> home-user-project
-        encoded_workspace = workspace.replace("/", "-").lstrip("-")
+        from agent_history.utils.paths import encode_workspace_path
+
+        encoded_workspace = encode_workspace_path(workspace).lstrip("-")
 
         # Use the config function to find the project/alias for this workspace
         return get_alias_for_workspace(encoded_workspace, home)
