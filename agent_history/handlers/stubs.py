@@ -209,6 +209,21 @@ class ProjectAddHandler(VerbHandler):
             explicit = verb_args.get("workspaces") or []
             if explicit:
                 workspaces_by_home["local"] = {ws: ws for ws in explicit}
+        else:
+            explicit = verb_args.get("workspaces") or []
+            if explicit:
+                normalized = {ws.replace("\\", "/"): ws for ws in explicit}
+                matched = set()
+                for workspaces in workspaces_by_home.values():
+                    for key, value in list(workspaces.items()):
+                        norm_value = value.replace("\\", "/")
+                        if norm_value in normalized:
+                            workspaces[key] = normalized[norm_value]
+                            matched.add(norm_value)
+                for norm_value, raw_value in normalized.items():
+                    if norm_value not in matched:
+                        workspaces_by_home.setdefault("local", {})
+                        workspaces_by_home["local"].setdefault(raw_value, raw_value)
 
         if not workspaces_by_home:
             return CommandResult(

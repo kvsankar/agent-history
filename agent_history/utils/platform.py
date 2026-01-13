@@ -11,6 +11,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -19,9 +20,32 @@ AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
 AGENT_GEMINI = "gemini"
 
+
+def _get_wsl_timeout() -> float:
+    raw = os.environ.get("AGENT_HISTORY_WSL_TIMEOUT", "").strip()
+    if not raw:
+        return 2.0
+    try:
+        timeout = float(raw)
+    except ValueError:
+        return 2.0
+    return max(0.5, timeout)
+
+
+def _get_unc_timeout() -> float:
+    raw = os.environ.get("AGENT_HISTORY_UNC_TIMEOUT", "").strip()
+    if not raw:
+        return 0.5
+    try:
+        timeout = float(raw)
+    except ValueError:
+        return 0.5
+    return max(0.1, timeout)
+
 __all__ = [
     # WSL detection
     "is_running_in_wsl",
+    "get_wsl_distribution_names",
     "get_wsl_distributions",
     # Windows detection
     "get_windows_home_from_wsl",
@@ -438,12 +462,30 @@ def _get_wsl_codex_candidate_paths(distro_name: str, username: str) -> list:
     ]
 
 
+@lru_cache(maxsize=32)
+def _wsl_unc_available(distro_name: str) -> bool:
+    """Check whether the WSL UNC base path is reachable."""
+    timeout = _get_unc_timeout()
+    bases = [
+        Path(f"//wsl.localhost/{distro_name}/home"),
+        Path(f"//wsl$/{distro_name}/home"),
+    ]
+    for base in bases:
+        try:
+            if _path_exists_with_timeout(base, timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _locate_wsl_projects_dir(distro_name: str, username: str):
     """Find the first accessible UNC path for a WSL distro."""
+    if not _wsl_unc_available(distro_name):
+        return None
     for candidate in _get_wsl_candidate_paths(distro_name, username):
         try:
-            # Use timeout to prevent blocking on unreachable UNC paths
-            if _path_exists_with_timeout(candidate, timeout=5.0):
+            if _path_exists_with_timeout(candidate, timeout=_get_unc_timeout()):
                 return candidate
         except OSError:
             continue
@@ -452,6 +494,8 @@ def _locate_wsl_projects_dir(distro_name: str, username: str):
 
 def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Optional[Path]:
     """Find the first accessible UNC path for an agent in a WSL distro."""
+    if not _wsl_unc_available(distro_name):
+        return None
     if agent == AGENT_CLAUDE:
         candidates = _get_wsl_candidate_paths(distro_name, username)
     elif agent == AGENT_GEMINI:
@@ -463,7 +507,7 @@ def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Option
 
     for candidate in candidates:
         try:
-            if _path_exists_with_timeout(candidate, timeout=5.0):
+            if _path_exists_with_timeout(candidate, timeout=_get_unc_timeout()):
                 return candidate
         except OSError:
             continue
@@ -472,14 +516,13 @@ def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Option
 
 def _get_wsl_usernames_from_unc(distro_name: str) -> list:
     """Discover WSL usernames via UNC paths when wsl.exe is unavailable."""
-    candidates = [
+    if not _wsl_unc_available(distro_name):
+        return []
+    for base in [
         Path(f"//wsl.localhost/{distro_name}/home"),
         Path(f"//wsl$/{distro_name}/home"),
-    ]
-    for base in candidates:
+    ]:
         try:
-            if not _path_exists_with_timeout(base, timeout=5.0):
-                continue
             return [p.name for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")]
         except (OSError, PermissionError):
             continue
@@ -571,7 +614,7 @@ def _get_wsl_distro_info(distro_name: str) -> Optional[dict]:
             check=False,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=_get_wsl_timeout(),
         )
         if user_result.returncode != 0:
             usernames = _get_wsl_usernames_from_unc(distro_name)
@@ -636,11 +679,39 @@ def get_wsl_distributions() -> list:
     return distributions
 
 
+def get_wsl_distribution_names() -> list[str]:
+    """Get list of WSL distribution names without per-distro probing.
+
+    Returns:
+        List of WSL distribution names.
+
+    Test override:
+        If CLAUDE_WSL_TEST_DISTRO and CLAUDE_WSL_PROJECTS_DIR are set,
+        return just the synthetic distro name.
+
+        If AGENT_HISTORY_HOME_WSL is set, skip WSL scanning entirely.
+    """
+    if os.environ.get("AGENT_HISTORY_HOME_WSL"):
+        return []
+
+    test_distro = os.environ.get("CLAUDE_WSL_TEST_DISTRO")
+    test_projects = os.environ.get("CLAUDE_WSL_PROJECTS_DIR")
+    if test_distro and test_projects:
+        if Path(test_projects).exists():
+            return [test_distro]
+
+    if platform.system() != "Windows":
+        return []
+
+    return _get_wsl_distro_names()
+
+
 # ============================================================================
 # WSL Username Helper
 # ============================================================================
 
 
+@lru_cache(maxsize=32)
 def _get_wsl_username(distro_name: str) -> Optional[str]:
     """Get username from a WSL distribution.
 
@@ -658,7 +729,7 @@ def _get_wsl_username(distro_name: str) -> Optional[str]:
             check=False,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=_get_wsl_timeout(),
         )
         if result.returncode == 0:
             username = result.stdout.strip()

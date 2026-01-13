@@ -22,6 +22,7 @@ from agent_history.core.workspaces import aggregate_workspaces, build_scope_meta
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
+from agent_history.utils.dates import modified_key
 from agent_history.utils.workspace_ref import attach_workspace_context, WorkspaceContext
 
 
@@ -63,7 +64,7 @@ class SessionListHandler(VerbHandler):
             self._populate_message_counts(sessions)
 
         # Sort by modified time (newest first)
-        sessions.sort(key=lambda s: s.get("modified") or datetime.min, reverse=True)
+        sessions.sort(key=lambda s: modified_key(s.get("modified")), reverse=True)
 
         metadata = build_scope_metadata(scope)
 
@@ -191,7 +192,9 @@ class WorkspaceListHandler(VerbHandler):
 
         # Convert to list and sort by last modified (newest first)
         workspace_list = sorted(
-            workspaces.values(), key=lambda w: w.get("last_modified") or datetime.min, reverse=True
+            workspaces.values(),
+            key=lambda w: modified_key(w.get("last_modified")),
+            reverse=True,
         )
 
         metadata = build_scope_metadata(scope)
@@ -347,10 +350,12 @@ class HomeListHandler(VerbHandler):
         Returns:
             Dictionary mapping home identifier to home info dict.
         """
+        import os
+
         from agent_history.storage.config import get_saved_homes
         from agent_history.utils.platform import (
             get_windows_users_with_claude,
-            get_wsl_distributions,
+            get_wsl_distribution_names,
             is_running_in_wsl,
         )
 
@@ -380,23 +385,48 @@ class HomeListHandler(VerbHandler):
             "agents": set(),
         }
 
+        # When all session roots are explicitly overridden, avoid probing
+        # non-local homes to keep isolated/test runs fast.
+        if all(
+            os.environ.get(key)
+            for key in (
+                "CLAUDE_PROJECTS_DIR",
+                "CODEX_SESSIONS_DIR",
+                "GEMINI_SESSIONS_DIR",
+                "AGENT_HISTORY_CONFIG_DIR",
+            )
+        ) and not any(
+            os.environ.get(key)
+            for key in (
+                "AGENT_HISTORY_HOME_WSL",
+                "AGENT_HISTORY_HOME_WINDOWS",
+                "CLAUDE_WSL_TEST_DISTRO",
+                "CLAUDE_WSL_PROJECTS_DIR",
+                "CLAUDE_WINDOWS_PROJECTS_DIR",
+                "CODEX_WSL_SESSIONS_DIR",
+                "GEMINI_WSL_SESSIONS_DIR",
+                "CODEX_WINDOWS_SESSIONS_DIR",
+                "GEMINI_WINDOWS_SESSIONS_DIR",
+            )
+        ):
+            return homes
+
         # WSL distributions (available from Windows)
         try:
-            wsl_distros = get_wsl_distributions()
-            for distro in wsl_distros:
-                name = distro.get("name")
-                if name:
-                    home_key = f"wsl:{name}"
-                    homes[home_key] = {
-                        "home": home_key,
-                        "type": "wsl",
-                        "status": "ok",
-                        "workspace_count": 0,
-                        "session_count": 0,
-                        "last_modified": None,
-                        "workspaces": {},
-                        "agents": set(),
-                    }
+            for name in get_wsl_distribution_names():
+                if not name:
+                    continue
+                home_key = f"wsl:{name}"
+                homes[home_key] = {
+                    "home": home_key,
+                    "type": "wsl",
+                    "status": "ok",
+                    "workspace_count": 0,
+                    "session_count": 0,
+                    "last_modified": None,
+                    "workspaces": {},
+                    "agents": set(),
+                }
         except Exception:
             pass
 
@@ -522,9 +552,11 @@ class HomeListHandler(VerbHandler):
             # Track latest modification time and agents
             for session in record.sessions:
                 modified = session.get("modified")
-                if modified:
-                    if home_data["last_modified"] is None or modified > home_data["last_modified"]:
-                        home_data["last_modified"] = modified
+                if modified and (
+                    home_data["last_modified"] is None
+                    or modified_key(modified) > modified_key(home_data["last_modified"])
+                ):
+                    home_data["last_modified"] = modified
 
                 agent = session.get("agent")
                 if agent:

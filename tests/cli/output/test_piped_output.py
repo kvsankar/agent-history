@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import shlex
 
 from tests.helpers.cli import get_script_path
 
@@ -9,9 +10,9 @@ from tests.helpers.cli import get_script_path
 def _run_piped(args_str: str) -> subprocess.CompletedProcess:
     """Run CLI command through a pipe to test auto-format detection."""
     script = get_script_path()
-    cmd = f"{sys.executable} {script} {args_str} | cat"
+    split_args = shlex.split(args_str, posix=sys.platform != "win32")
     return subprocess.run(
-        ["sh", "-c", cmd],
+        [sys.executable, str(script), *split_args],
         capture_output=True,
         text=True,
         check=False,
