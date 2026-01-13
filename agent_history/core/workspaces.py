@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from agent_history.scope.types import ConcreteRecord
 from agent_history.types import WorkspaceDict
 from agent_history.utils.workspace_ref import WorkspaceContext
+from agent_history.utils.dates import modified_key
 
 StatusLookup = Callable[[WorkspaceContext], str]
 
@@ -43,9 +44,11 @@ def aggregate_workspaces(
 
         for session in record.sessions:
             modified = session.get("modified")
-            if modified:
-                if ws_data["last_modified"] is None or modified > ws_data["last_modified"]:
-                    ws_data["last_modified"] = modified
+            if modified and (
+                ws_data["last_modified"] is None
+                or modified_key(modified) > modified_key(ws_data["last_modified"])
+            ):
+                ws_data["last_modified"] = modified
 
             agent = session.get("agent")
             if agent:

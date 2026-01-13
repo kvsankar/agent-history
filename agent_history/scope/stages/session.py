@@ -185,6 +185,9 @@ class SessionStage:
         elif isinstance(session_spec, SessionSpecFiltered):
             filters = session_spec.filters
             result = sessions
+            def _to_date(value: Any) -> Any:
+                return value.date() if hasattr(value, "date") else value
+
 
             # Filter by agent
             if filters.agent:
@@ -193,12 +196,18 @@ class SessionStage:
             # Filter by date range
             if filters.since:
                 result = [
-                    s for s in result if s.get("modified") and s.get("modified") >= filters.since
+                    s
+                    for s in result
+                    if s.get("modified")
+                    and _to_date(s.get("modified")) >= _to_date(filters.since)
                 ]
 
             if filters.until:
                 result = [
-                    s for s in result if s.get("modified") and s.get("modified") <= filters.until
+                    s
+                    for s in result
+                    if s.get("modified")
+                    and _to_date(s.get("modified")) <= _to_date(filters.until)
                 ]
 
             # Filter by message count

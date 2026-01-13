@@ -441,10 +441,12 @@ class ContextBuilder:
             Dictionary mapping categories to lists of available items.
             Example: {"wsl": ["Ubuntu", "Debian"], "windows": ["alice"], "remote": ["vm01"]}
         """
+        import os
+
         from agent_history.storage.config import get_saved_homes
         from agent_history.utils.platform import (
             get_windows_users_with_claude,
-            get_wsl_distributions,
+            get_wsl_distribution_names,
             is_running_in_wsl,
         )
 
@@ -454,10 +456,35 @@ class ContextBuilder:
             "remote": [],
         }
 
+        # When all session roots are explicitly overridden, avoid probing
+        # non-local homes to keep isolated/test runs fast.
+        if all(
+            os.environ.get(key)
+            for key in (
+                "CLAUDE_PROJECTS_DIR",
+                "CODEX_SESSIONS_DIR",
+                "GEMINI_SESSIONS_DIR",
+                "AGENT_HISTORY_CONFIG_DIR",
+            )
+        ) and not any(
+            os.environ.get(key)
+            for key in (
+                "AGENT_HISTORY_HOME_WSL",
+                "AGENT_HISTORY_HOME_WINDOWS",
+                "CLAUDE_WSL_TEST_DISTRO",
+                "CLAUDE_WSL_PROJECTS_DIR",
+                "CLAUDE_WINDOWS_PROJECTS_DIR",
+                "CODEX_WSL_SESSIONS_DIR",
+                "GEMINI_WSL_SESSIONS_DIR",
+                "CODEX_WINDOWS_SESSIONS_DIR",
+                "GEMINI_WINDOWS_SESSIONS_DIR",
+            )
+        ):
+            return homes
+
         # WSL distributions (available from Windows)
         try:
-            wsl_distros = get_wsl_distributions()
-            homes["wsl"] = [d["name"] for d in wsl_distros if d.get("name")]
+            homes["wsl"] = [name for name in get_wsl_distribution_names() if name]
         except Exception:
             # Ignore errors during WSL detection
             pass

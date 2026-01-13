@@ -576,9 +576,16 @@ def _codex_parse_date_folder(folder_path: Path) -> str:
 
 def _iter_numeric_subdirs(parent: Path):
     """Iterate sorted numeric subdirectories of a parent directory."""
-    for child in sorted(parent.iterdir()):
-        if child.is_dir() and child.name.isdigit():
-            yield child
+    try:
+        entries = list(parent.iterdir())
+    except (OSError, PermissionError):
+        return
+    for child in sorted(entries):
+        try:
+            if child.is_dir() and child.name.isdigit():
+                yield child
+        except (OSError, PermissionError):
+            continue
 
 
 def _is_date_before_cutoff(year: int, month: int, day: int, cutoff) -> bool:
@@ -638,7 +645,10 @@ def _codex_date_folders_since(sessions_dir: Path, since_date: Optional[str]) -> 
     Returns:
         List of Path objects for YYYY/MM/DD folders to scan
     """
-    if not sessions_dir.exists():
+    try:
+        if not sessions_dir.exists():
+            return []
+    except (OSError, PermissionError):
         return []
 
     since_dt = datetime.strptime(since_date, "%Y-%m-%d") if since_date else None
@@ -654,7 +664,13 @@ def _remove_stale_entries(sessions_map: dict) -> int:
     Returns:
         Number of stale entries removed
     """
-    stale_keys = [k for k in sessions_map if not Path(k).exists()]
+    stale_keys = []
+    for key in sessions_map:
+        try:
+            if not Path(key).exists():
+                stale_keys.append(key)
+        except (OSError, PermissionError):
+            stale_keys.append(key)
     for k in stale_keys:
         del sessions_map[k]
     return len(stale_keys)
@@ -674,10 +690,17 @@ def _scan_folders_for_sessions(
         Updated session mapping (modifies in place and returns for chaining)
     """
     for day_dir in folders:
-        for jsonl_file in day_dir.glob("rollout-*.jsonl"):
+        try:
+            candidates = list(day_dir.glob("rollout-*.jsonl"))
+        except (OSError, PermissionError):
+            continue
+        for jsonl_file in candidates:
             file_key = str(jsonl_file)
             if file_key not in existing_sessions:
-                workspace = codex_get_workspace_from_session(jsonl_file)
+                try:
+                    workspace = codex_get_workspace_from_session(jsonl_file)
+                except (OSError, PermissionError):
+                    continue
                 existing_sessions[file_key] = workspace
     return existing_sessions
 
@@ -695,7 +718,10 @@ def codex_ensure_index_updated(sessions_dir: Optional[Path] = None) -> dict[str,
     """
     sessions_dir = sessions_dir or codex_get_home_dir()
 
-    if not sessions_dir.exists():
+    try:
+        if not sessions_dir.exists():
+            return {}
+    except (OSError, PermissionError):
         return {}
 
     index = codex_load_index()
@@ -705,7 +731,10 @@ def codex_ensure_index_updated(sessions_dir: Optional[Path] = None) -> dict[str,
     _remove_stale_entries(sessions_map)
 
     # Incremental scan from last scan date (or full scan if first run)
-    folders = _codex_date_folders_since(sessions_dir, index.get("last_scan_date"))
+    try:
+        folders = _codex_date_folders_since(sessions_dir, index.get("last_scan_date"))
+    except (OSError, PermissionError):
+        return sessions_map
     _scan_folders_for_sessions(folders, sessions_map)
 
     # Save updated index
@@ -933,17 +962,28 @@ def codex_scan_sessions(
 
     sessions = []
     # Walk through YYYY/MM/DD structure using glob
-    for jsonl_file in sessions_dir.glob("*/*/*/rollout-*.jsonl"):
+    try:
+        candidates = list(sessions_dir.glob("*/*/*/rollout-*.jsonl"))
+    except (OSError, PermissionError):
+        return []
+
+    for jsonl_file in candidates:
         file_key = str(jsonl_file)
         # Look up workspace from index (fallback to file read if not in index or empty)
         workspace = sessions_map.get(file_key)
         if not workspace:  # None or empty string
-            workspace = codex_get_workspace_from_session(jsonl_file)
+            try:
+                workspace = codex_get_workspace_from_session(jsonl_file)
+            except (OSError, PermissionError):
+                continue
             # Update index with recomputed workspace if we had to fall back
             if workspace and file_key in sessions_map:
                 sessions_map[file_key] = workspace
 
-        modified = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
+        try:
+            modified = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
+        except (OSError, PermissionError):
+            continue
 
         if _codex_session_matches_filters(workspace, modified, pattern, since_date, until_date):
             sessions.append(
