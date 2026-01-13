@@ -366,13 +366,16 @@ def _scan_users_in_drive(drive: Path, results: list):
 def get_windows_users_with_claude():
     """Get list of all Windows users with Claude Code installed.
 
-    If AGENT_HISTORY_HOME_WINDOWS is set, returns empty list to skip real
-    Windows filesystem scanning (for testing with injected fixtures).
+    If overrides are set (AGENT_HISTORY_HOME_WINDOWS or CLAUDE_WINDOWS_PROJECTS_DIR),
+    returns empty list to skip real Windows filesystem scanning (for testing
+    with injected fixtures).
     """
     # If running under a test/override home, avoid probing the host filesystem.
     if os.environ.get("AGENT_HISTORY_TEST_MODE") and (
         os.environ.get("AGENT_HISTORY_HOME") or os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
     ):
+        return []
+    if os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
         return []
 
     results = []
@@ -645,6 +648,14 @@ def get_wsl_distributions() -> list:
         If AGENT_HISTORY_HOME_WSL is set, skip WSL scanning entirely (for testing
         with injected fixtures).
     """
+    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get(
+        "CLAUDE_WINDOWS_PROJECTS_DIR"
+    ):
+        if not os.environ.get("CLAUDE_WSL_TEST_DISTRO") and not os.environ.get(
+            "AGENT_HISTORY_HOME_WSL"
+        ):
+            return []
+
     # Skip WSL scanning if WSL home is overridden for testing
     if os.environ.get("AGENT_HISTORY_HOME_WSL"):
         return []
