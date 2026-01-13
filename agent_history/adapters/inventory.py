@@ -27,9 +27,9 @@ class InventoryProvider:
     def list_sessions(self, home: str, agent: Optional[str] = None) -> List[Dict[str, Any]]:
         sessions: List[Dict[str, Any]] = []
 
-        # In isolated/test environments (AGENT_HISTORY_HOME), skip remote probing
-        # to avoid slow SSH lookups during CLI format/guard tests.
-        if home.startswith("remote:") and os.environ.get("AGENT_HISTORY_HOME"):
+        # In test mode, skip remote probing to avoid slow SSH lookups.
+        test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
+        if home.startswith("remote:") and test_mode:
             return sessions
 
         if home == "web":
@@ -50,8 +50,9 @@ class InventoryProvider:
     def list_workspaces(self, home: str, agent: Optional[str] = None) -> List[str]:
         workspaces: set[str] = set()
 
-        # Avoid remote SSH probing in isolated/test environments.
-        if home.startswith("remote:") and os.environ.get("AGENT_HISTORY_HOME"):
+        # Avoid remote SSH probing in test mode.
+        test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
+        if home.startswith("remote:") and test_mode:
             return []
 
         if home == "web":

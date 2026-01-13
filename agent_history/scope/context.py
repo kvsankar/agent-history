@@ -456,16 +456,18 @@ class ContextBuilder:
             "remote": [],
         }
 
-        # Skip host probing when running with injected homes or directory overrides.
-        # This keeps unit/property tests fast and avoids touching real Windows/WSL filesystems.
+        # Skip host probing in test mode when using injected homes or overrides.
+        # This keeps unit/property tests fast and avoids touching real host filesystems.
         has_wsl_override = os.environ.get("CLAUDE_WSL_TEST_DISTRO") or os.environ.get(
             "AGENT_HISTORY_HOME_WSL"
         )
         has_windows_override = os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR") or os.environ.get(
             "AGENT_HISTORY_HOME_WINDOWS"
         )
+        test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
         skip_platform_scan = (
-            any(
+            test_mode
+            and any(
                 os.environ.get(name)
                 for name in (
                     "AGENT_HISTORY_HOME",

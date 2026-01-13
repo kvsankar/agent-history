@@ -302,8 +302,8 @@ def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
     if windows_home_override:
         return Path(windows_home_override)
 
-    # When using an isolated AGENT_HISTORY_HOME, don't probe the real Windows host.
-    if os.environ.get("AGENT_HISTORY_HOME"):
+    # When using an isolated AGENT_HISTORY_HOME in test mode, don't probe the host.
+    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("AGENT_HISTORY_HOME"):
         return None
 
     cache_key = username or "_default_"
@@ -369,8 +369,10 @@ def get_windows_users_with_claude():
     If AGENT_HISTORY_HOME_WINDOWS is set, returns empty list to skip real
     Windows filesystem scanning (for testing with injected fixtures).
     """
-    # If running under a test/override home, avoid probing the host filesystem
-    if os.environ.get("AGENT_HISTORY_HOME") or os.environ.get("AGENT_HISTORY_HOME_WINDOWS"):
+    # If running under a test/override home, avoid probing the host filesystem.
+    if os.environ.get("AGENT_HISTORY_TEST_MODE") and (
+        os.environ.get("AGENT_HISTORY_HOME") or os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
+    ):
         return []
 
     results = []

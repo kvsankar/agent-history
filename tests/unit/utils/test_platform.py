@@ -247,6 +247,7 @@ class TestGetWindowsHomeFromWsl:
             os.environ,
             {
                 "AGENT_HISTORY_HOME": str(tmp_path),
+                "AGENT_HISTORY_TEST_MODE": "1",
             },
             clear=False,
         ):
@@ -261,13 +262,25 @@ class TestGetWindowsUsersWithClaude:
 
     def test_returns_empty_with_agent_history_home(self, tmp_path: Path) -> None:
         """Should return empty list when AGENT_HISTORY_HOME is set."""
-        with patch.dict(os.environ, {"AGENT_HISTORY_HOME": str(tmp_path)}):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_HISTORY_HOME": str(tmp_path),
+                "AGENT_HISTORY_TEST_MODE": "1",
+            },
+        ):
             result = get_windows_users_with_claude()
             assert result == []
 
     def test_returns_empty_with_windows_home_override(self, tmp_path: Path) -> None:
         """Should return empty list when AGENT_HISTORY_HOME_WINDOWS is set."""
-        with patch.dict(os.environ, {"AGENT_HISTORY_HOME_WINDOWS": str(tmp_path)}):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_HISTORY_HOME_WINDOWS": str(tmp_path),
+                "AGENT_HISTORY_TEST_MODE": "1",
+            },
+        ):
             result = get_windows_users_with_claude()
             assert result == []
 

@@ -26,6 +26,7 @@ def test_project_list_tsv_format():
         lines = result.stdout.strip().split("\n")
         # Should be tab-separated
         assert "\t" in lines[0]
+        assert "SESSIONS" not in lines[0]
 
 
 def test_project_list_json_format():
@@ -49,4 +50,4 @@ def test_project_list_with_counts():
     if result.stdout.strip():
         lines = result.stdout.strip().split("\n")
         # Should have SESSIONS column
-        assert "SESSIONS" in lines[0] or "WORKSPACE" in lines[0]
+        assert "SESSIONS" in lines[0]

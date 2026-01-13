@@ -125,9 +125,9 @@ class HomeStage:
         elif isinstance(spec, HomeSpecCategory):
             items = self.context.available_homes.get(spec.category, [])
             if not items:
-                # In test environments (AGENT_HISTORY_HOME set), return empty instead of error
-                # This allows the command to proceed with available homes only
-                if os.environ.get("AGENT_HISTORY_HOME"):
+                # In test environments, return empty instead of error
+                # This allows the command to proceed with available homes only.
+                if os.environ.get("AGENT_HISTORY_TEST_MODE"):
                     return [], None
                 return [], ResolutionError(
                     stage="home",

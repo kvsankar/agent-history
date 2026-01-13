@@ -338,6 +338,7 @@ class HomeListHandler(VerbHandler):
                 "total_workspaces": sum(h.get("workspace_count", 0) for h in home_list),
                 "total_sessions": sum(h.get("session_count", 0) for h in home_list),
                 "workspace_display_map": build_scope_metadata(scope)["workspace_display_map"],
+                "show_counts": bool(verb_args.get("counts")),
             },
         )
 
@@ -385,9 +386,10 @@ class HomeListHandler(VerbHandler):
             "agents": set(),
         }
 
-        # When all session roots are explicitly overridden, avoid probing
-        # non-local homes to keep isolated/test runs fast.
-        if all(
+        # In test mode, when all session roots are overridden, avoid probing
+        # non-local homes to keep isolated runs fast.
+        test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
+        if test_mode and all(
             os.environ.get(key)
             for key in (
                 "CLAUDE_PROJECTS_DIR",

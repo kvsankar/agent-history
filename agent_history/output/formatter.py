@@ -228,18 +228,21 @@ class TableFormatter(DataFormatter):
         if not homes:
             return "No homes configured."
 
-        headers = ["HOME", "TYPE", "STATUS", "SESSIONS"]
+        show_counts = True if metadata is None else metadata.get("show_counts", True)
+        headers = ["HOME", "TYPE", "STATUS"]
+        if show_counts:
+            headers.append("SESSIONS")
         rows = []
 
         for h in homes:
-            rows.append(
-                [
-                    h.get("home", h.get("name", "")),
-                    h.get("type", ""),
-                    h.get("status", ""),
-                    str(h.get("session_count", "")),
-                ]
-            )
+            row = [
+                h.get("home", h.get("name", "")),
+                h.get("type", ""),
+                h.get("status", ""),
+            ]
+            if show_counts:
+                row.append(str(h.get("session_count", "")))
+            rows.append(row)
 
         return self._render_table(headers, rows)
 
@@ -356,7 +359,10 @@ class TableFormatter(DataFormatter):
             return "No projects configured."
 
         workspace_display_map = (metadata or {}).get("workspace_display_map", {})
-        headers = ["PROJECT", "SOURCE", "WORKSPACE", "SESSIONS"]
+        show_counts = True if metadata is None else metadata.get("show_counts", True)
+        headers = ["PROJECT", "SOURCE", "WORKSPACE"]
+        if show_counts:
+            headers.append("SESSIONS")
         rows = []
 
         for p in projects:
@@ -369,14 +375,14 @@ class TableFormatter(DataFormatter):
                 workspaces, workspace_display_map, p.get("workspace_count")
             )
 
-            rows.append(
-                [
-                    p.get("project", p.get("name", "")),
-                    source_str,
-                    workspace_str,
-                    str(p.get("session_count", "")),
-                ]
-            )
+            row = [
+                p.get("project", p.get("name", "")),
+                source_str,
+                workspace_str,
+            ]
+            if show_counts:
+                row.append(str(p.get("session_count", "")))
+            rows.append(row)
 
         return self._render_table(headers, rows)
 
@@ -542,7 +548,10 @@ class TsvFormatter(DataFormatter):
         self, homes: List[HomeDict], metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """Format home list as TSV."""
-        headers = ["HOME", "TYPE", "STATUS", "SESSIONS"]
+        show_counts = True if metadata is None else metadata.get("show_counts", True)
+        headers = ["HOME", "TYPE", "STATUS"]
+        if show_counts:
+            headers.append("SESSIONS")
         lines = ["\t".join(headers)]
 
         for h in homes:
@@ -550,8 +559,9 @@ class TsvFormatter(DataFormatter):
                 h.get("home", h.get("name", "")),
                 h.get("type", ""),
                 h.get("status", ""),
-                str(h.get("session_count", "")),
             ]
+            if show_counts:
+                row.append(str(h.get("session_count", "")))
             lines.append("\t".join(row))
 
         return "\n".join(lines)
@@ -560,7 +570,10 @@ class TsvFormatter(DataFormatter):
         self, projects: List[ProjectDict], metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """Format project list as TSV."""
-        headers = ["PROJECT", "SOURCE", "WORKSPACE", "SESSIONS"]
+        show_counts = True if metadata is None else metadata.get("show_counts", True)
+        headers = ["PROJECT", "SOURCE", "WORKSPACE"]
+        if show_counts:
+            headers.append("SESSIONS")
         lines = ["\t".join(headers)]
         workspace_display_map = (metadata or {}).get("workspace_display_map", {})
 
@@ -578,8 +591,9 @@ class TsvFormatter(DataFormatter):
                 p.get("project", p.get("name", "")),
                 source_str,
                 workspace_str,
-                str(p.get("session_count", "")),
             ]
+            if show_counts:
+                row.append(str(p.get("session_count", "")))
             lines.append("\t".join(row))
 
         return "\n".join(lines)
