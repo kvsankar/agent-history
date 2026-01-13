@@ -37,6 +37,7 @@ from agent_history.scope.home_resolver import get_resolver_for_home
 from agent_history.scope.stages import HomeStage, ProjectStage, SessionStage, WorkspaceStage
 from agent_history.scope.types import (
     HomeSpec,
+    HomeSpecConcrete,
     HomeSpecFactory,
     MatchType,
     ProjectRecord,
@@ -45,6 +46,7 @@ from agent_history.scope.types import (
     SessionSpecAll,
     TemplateScope,
     WorkspaceSpec,
+    WorkspaceSpecConcrete,
     WorkspaceSpecFactory,
 )
 from agent_history.types import SessionDict, WorkspaceSessionsMap
@@ -100,7 +102,7 @@ class ScopeResolver:
         )
         self._session_stage = SessionStage(context, self._cache)
 
-    def resolve(self, scope_args: ScopeArgs) -> ResolutionResult:
+    def resolve(self, scope_args: ScopeArgs, load_sessions: bool = True) -> ResolutionResult:
         """
         Resolve scope args through the full 4-stage pipeline.
 
@@ -110,6 +112,9 @@ class ScopeResolver:
 
         Args:
             scope_args: Scope arguments from command line parsing.
+            load_sessions: If False, skip session loading and return
+                empty session lists per workspace (useful for fast
+                metadata-only commands like `home list`).
 
         Returns:
             ResolutionResult containing:
@@ -143,9 +148,12 @@ class ScopeResolver:
         template, stage_errors = self._resolve_workspaces(template)
         errors.extend(stage_errors)
 
-        # Stage 4: Resolve sessions (collect actual sessions)
-        concrete, stage_errors = self._resolve_sessions_internal(template)
-        errors.extend(stage_errors)
+        if not load_sessions:
+            concrete = self._materialize_scope_without_sessions(template)
+        else:
+            # Stage 4: Resolve sessions (collect actual sessions)
+            concrete, stage_errors = self._resolve_sessions_internal(template)
+            errors.extend(stage_errors)
 
         return ResolutionResult(scope=concrete, errors=errors, warnings=warnings)
 
@@ -236,22 +244,6 @@ class ScopeResolver:
                 )
             ]
 
-        # Check for implicit project detection (CWD in project)
-        if self.context.cwd_project:
-            return [ProjectRecord(project=self.context.cwd_project, sessions=session_spec)]
-
-        # Check for --aw (all workspaces) - but patterns can still filter
-        # If --aw is used without patterns, show all workspaces
-        # If --aw is used with patterns, patterns will filter (handled below)
-        if args.all_workspaces and not args.patterns and not args.name_patterns:
-            return [
-                ScopeRecord(
-                    home=home_spec,
-                    workspace=WorkspaceSpecFactory.All,
-                    sessions=session_spec,
-                )
-            ]
-
         # Check for explicit patterns
         # Positional patterns: EXACT for paths, CONTAINS for names
         # -n patterns use CONTAINS matching (for discovery by partial name)
@@ -290,6 +282,22 @@ class ScopeResolver:
                     )
                 )
             return records
+
+        # Check for implicit project detection (CWD in project)
+        if self.context.cwd_project:
+            return [ProjectRecord(project=self.context.cwd_project, sessions=session_spec)]
+
+        # Check for --aw (all workspaces) - but patterns can still filter
+        # If --aw is used without patterns, show all workspaces
+        # If --aw is used with patterns, patterns will filter (handled above)
+        if args.all_workspaces and not args.patterns and not args.name_patterns:
+            return [
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=WorkspaceSpecFactory.All,
+                    sessions=session_spec,
+                )
+            ]
 
         # Check if CWD is in a workspace (use it as current)
         if self.context.cwd_workspace:
@@ -435,6 +443,39 @@ class ScopeResolver:
             ValueError: If SSH connection fails for remote homes.
         """
         return self._inventory.list_workspaces(home)
+
+    def _materialize_scope_without_sessions(self, scope: TemplateScope) -> ConcreteScope:
+        """
+        Convert a template scope to a concrete scope without loading sessions.
+
+        Used for fast metadata-only commands (e.g., home list) to avoid
+        expensive session scans while still preserving workspace identity.
+        """
+        from agent_history.scope.types import ConcreteRecord, ScopeRecord, WorkspaceSpecConcrete
+        from agent_history.utils.workspace_ref import build_workspace_ref
+
+        concrete: ConcreteScope = []
+
+        for record in scope:
+            if not isinstance(record, ScopeRecord):
+                continue
+            if not isinstance(record.home, HomeSpecConcrete):
+                continue
+            if not isinstance(record.workspace, WorkspaceSpecConcrete):
+                continue
+
+            ref = build_workspace_ref(record.workspace.path)
+            concrete.append(
+                ConcreteRecord(
+                    home=record.home.home,
+                    workspace=ref.key,
+                    workspace_key=ref.key,
+                    workspace_display=ref.display,
+                    sessions=[],
+                )
+            )
+
+        return concrete
 
     def _enumerate_claude_workspaces(self, home: str) -> List[str]:
         """

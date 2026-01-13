@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -89,25 +90,52 @@ def run_cli_subprocess(
         timeout: Command timeout in seconds
         cwd: Working directory
 
-    Returns:
-        CompletedProcess with stdout, stderr, returncode
-    """
+        Returns:
+            CompletedProcess with stdout, stderr, returncode
+        """
     script_path = get_script_path()
     cmd = [sys.executable, str(script_path), *args]
 
-    run_env = os.environ.copy()
-    if env:
-        run_env.update(env)
+    temp_dir = None
+    try:
+        run_env = os.environ.copy()
+        if env is None:
+            # Default to an isolated home to avoid probing the real filesystem during tests.
+            temp_dir = tempfile.TemporaryDirectory(prefix="agent-history-test-")
+            root = Path(temp_dir.name)
+            claude_dir = root / ".claude" / "projects"
+            codex_dir = root / ".codex" / "sessions"
+            gemini_dir = root / ".gemini" / "tmp"
+            history_dir = root / ".agent-history"
+            for path in (claude_dir, codex_dir, gemini_dir, history_dir):
+                path.mkdir(parents=True, exist_ok=True)
 
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        env=run_env,
-        timeout=timeout,
-        cwd=cwd,
-        check=False,
-    )
+            run_env.update(
+                {
+                    "HOME": str(root),
+                    "CLAUDE_PROJECTS_DIR": str(claude_dir),
+                    "CODEX_SESSIONS_DIR": str(codex_dir),
+                    "GEMINI_SESSIONS_DIR": str(gemini_dir),
+                    "AGENT_HISTORY_CONFIG_DIR": str(history_dir),
+                }
+            )
+            if sys.platform == "win32":
+                run_env["USERPROFILE"] = str(root)
+        else:
+            run_env.update(env)
+
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            env=run_env,
+            timeout=timeout,
+            cwd=cwd,
+            check=False,
+        )
+    finally:
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
 
 def run_cli_click(

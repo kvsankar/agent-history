@@ -337,9 +337,29 @@ class CommandOrchestrator:
             if not self._check_remote_connectivity(request, context):
                 return 1
 
+            # Project list with --counts should scope to configured projects only
+            if (
+                request.resource == "project"
+                and request.verb == "list"
+                and request.verb_args.get("counts")
+                and not request.scope_args.projects
+            ):
+                from agent_history.storage.config import load_config
+
+                projects_cfg = load_config().get("projects", {})
+                request.scope_args.projects = list(projects_cfg.keys())
+
             # 3. Resolve scope
             resolver = ScopeResolver(context)
-            resolution = resolver.resolve(request.scope_args)
+            load_sessions = True
+            if request.resource == "home" and request.verb == "list":
+                # Home list only needs session data when counts are requested
+                load_sessions = bool(request.verb_args.get("counts"))
+            elif request.resource == "project" and request.verb == "list":
+                # Project list is metadata-only unless counts are requested
+                load_sessions = bool(request.verb_args.get("counts"))
+
+            resolution = resolver.resolve(request.scope_args, load_sessions=load_sessions)
 
             if self.debug:
                 sys.stderr.write(

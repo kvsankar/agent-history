@@ -470,6 +470,11 @@ class CLIParser:
         home_list.add_argument("--web", action="store_true", help="Show Claude.ai status only")
         home_list.add_argument("--local", action="store_true", help="Show local home only")
         home_list.add_argument("--remotes", action="store_true", help="Show SSH remotes only")
+        home_list.add_argument(
+            "--counts",
+            action="store_true",
+            help="Show session counts (may be slower)",
+        )
         self._add_output_format(home_list)
 
         # home show
