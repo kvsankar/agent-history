@@ -9,7 +9,6 @@ The cache is loaded lazily per home to avoid unnecessary I/O operations.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -108,62 +107,7 @@ class SessionCache:
         Returns:
             List of all session dictionaries in the home.
         """
-        from agent_history.backends.claude import get_workspace_sessions
-
-        # Handle different home types
-        if home == "local":
-            # Use default Claude projects directory
-            projects_dir = self.context.claude_projects_dir
-        elif home.startswith("wsl:"):
-            # WSL homes - adjust base path
-            # TODO: Implement WSL path resolution
-            return []
-        elif home == "windows":
-            # Windows homes - adjust for Windows paths
-            # TODO: Implement Windows path resolution
-            return []
-        elif home.startswith("remote:"):
-            # Remote homes - scan for cached workspaces with remote_ prefix
-            # Cached remote workspaces are named: remote_{remote_name}_{encoded_path}
-            remote_name = home[7:]  # Extract name after "remote:"
-            prefix = f"remote_{remote_name}_"
-            projects_dir = self.context.claude_projects_dir
-            if not projects_dir or not projects_dir.exists():
-                return []
-            # Scan for matching remote cache workspaces
-            all_sessions = get_workspace_sessions(
-                workspace_pattern=prefix,
-                projects_dir=projects_dir,
-                skip_message_count=True,
-                include_cached=True,
-            )
-            # Decode workspace paths: remote_vm01_-home-user-project -> /home/user/project
-            for session in all_sessions:
-                ws = session.get("workspace", "")
-                if ws.startswith(prefix):
-                    encoded_path = ws[len(prefix):]
-                    # Decode: -home-user-project -> /home/user/project
-                    if encoded_path.startswith("-"):
-                        decoded = encoded_path.replace("-", "/")
-                        session["workspace_readable"] = decoded
-            return all_sessions
-        else:
-            # Unknown home type - use default
-            projects_dir = self.context.claude_projects_dir
-
-        if not projects_dir or not projects_dir.exists():
-            return []
-
-        # Get all sessions using backend function
-        # Skip message count by default for faster loading during scope resolution
-        # Message counts can be computed later if needed
-        all_sessions = get_workspace_sessions(
-            workspace_pattern="*",
-            projects_dir=projects_dir,
-            skip_message_count=True,
-        )
-
-        return all_sessions
+        return self.inventory_provider.list_sessions(home, agent="claude")
 
     def _load_codex_sessions(self, home: str) -> List[Dict[str, Any]]:
         """
@@ -175,38 +119,7 @@ class SessionCache:
         Returns:
             List of all session dictionaries in the home.
         """
-        from agent_history.backends.codex import codex_scan_sessions
-
-        # Handle different home types
-        if home == "local":
-            # Use Codex sessions directory from context (respects env var override)
-            sessions_dir = self.context.codex_sessions_dir
-        elif home.startswith("wsl:"):
-            # WSL homes - not yet supported for Codex
-            # TODO: Implement WSL path resolution for Codex
-            return []
-        elif home == "windows":
-            # Windows homes - not yet supported for Codex
-            # TODO: Implement Windows path resolution for Codex
-            return []
-        elif home.startswith("remote:"):
-            # Remote homes - skip for now
-            # TODO: Implement remote session collection for Codex
-            return []
-        else:
-            # Unknown home type - use default from context
-            sessions_dir = self.context.codex_sessions_dir
-
-        # Get all sessions using backend function
-        # Empty pattern matches all workspaces
-        # Skip message count by default for faster loading during scope resolution
-        all_sessions = codex_scan_sessions(
-            pattern="",
-            sessions_dir=sessions_dir,
-            skip_message_count=True,
-        )
-
-        return all_sessions
+        return self.inventory_provider.list_sessions(home, agent="codex")
 
     def _load_gemini_sessions(self, home: str) -> List[Dict[str, Any]]:
         """
@@ -218,38 +131,7 @@ class SessionCache:
         Returns:
             List of all session dictionaries in the home.
         """
-        from agent_history.backends.gemini import gemini_scan_sessions
-
-        # Handle different home types
-        if home == "local":
-            # Use Gemini sessions directory from context (respects env var override)
-            sessions_dir = self.context.gemini_sessions_dir
-        elif home.startswith("wsl:"):
-            # WSL homes - not yet supported for Gemini
-            # TODO: Implement WSL path resolution for Gemini
-            return []
-        elif home == "windows":
-            # Windows homes - not yet supported for Gemini
-            # TODO: Implement Windows path resolution for Gemini
-            return []
-        elif home.startswith("remote:"):
-            # Remote homes - skip for now
-            # TODO: Implement remote session collection for Gemini
-            return []
-        else:
-            # Unknown home type - use default from context
-            sessions_dir = self.context.gemini_sessions_dir
-
-        # Get all sessions using backend function
-        # Empty pattern matches all workspaces
-        # Skip message count by default for faster loading during scope resolution
-        all_sessions = gemini_scan_sessions(
-            pattern="",
-            sessions_dir=sessions_dir,
-            skip_message_count=True,
-        )
-
-        return all_sessions
+        return self.inventory_provider.list_sessions(home, agent="gemini")
 
     def clear(self) -> None:
         """Clear the session cache."""
