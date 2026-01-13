@@ -153,6 +153,13 @@ def _select_key(raw: str, display: str, kind: WorkspaceKind) -> str:
     return _normalize_path(raw)
 
 
+def is_hash_display(value: str) -> bool:
+    """Return True if value looks like a hash display label."""
+    if not value:
+        return False
+    return bool(_HASH_DISPLAY_RE.match(value))
+
+
 def build_workspace_ref(raw: Optional[str], readable: Optional[str] = None) -> WorkspaceRef:
     raw_value = raw or ""
     kind = _infer_kind(raw_value)

@@ -15,9 +15,9 @@ def test_aggregate_workspaces_uses_display_and_status() -> None:
         sessions=[{"modified": datetime(2025, 1, 1, 12, 0), "agent": "claude"}],
     )
 
-    def status_lookup(workspace: str, home: str) -> str:
-        assert workspace == "[hash:abc123de]"
-        assert home == "local"
+    def status_lookup(context) -> str:
+        assert context.workspace_display == "[hash:abc123de]"
+        assert context.home == "local"
         return "unknown"
 
     workspaces = aggregate_workspaces([record], status_lookup=status_lookup)

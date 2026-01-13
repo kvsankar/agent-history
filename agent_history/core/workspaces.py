@@ -9,7 +9,7 @@ from agent_history.scope.types import ConcreteRecord
 from agent_history.types import WorkspaceDict
 from agent_history.utils.workspace_ref import WorkspaceContext
 
-StatusLookup = Callable[[str, str], str]
+StatusLookup = Callable[[WorkspaceContext], str]
 
 
 def aggregate_workspaces(
@@ -24,11 +24,7 @@ def aggregate_workspaces(
         key = f"{context.home}:{context.workspace_key}"
 
         if key not in workspaces:
-            status = (
-                status_lookup(context.workspace_display, context.home)
-                if status_lookup
-                else "unknown"
-            )
+            status = status_lookup(context) if status_lookup else "unknown"
             workspaces[key] = {
                 "home": context.home,
                 "workspace": context.workspace_display,

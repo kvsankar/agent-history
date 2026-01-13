@@ -14,7 +14,7 @@ import sys
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agent_history.handlers.base import CommandResult
 from agent_history.scope.context import OutputArgs
@@ -46,6 +46,69 @@ def _workspace_display(
     if display_map and workspace in display_map:
         return str(display_map[workspace])
     return str(workspace)
+
+
+def _truncate_tail(value: str, max_len: int) -> str:
+    if max_len and len(value) > max_len:
+        return "..." + value[-(max_len - 3) :]
+    return value
+
+
+def _format_modified_date(modified: Any, *, date_format: str, truncate: int) -> str:
+    if isinstance(modified, datetime):
+        return modified.strftime(date_format)
+    if isinstance(modified, str):
+        return modified[:truncate] if truncate else modified
+    return ""
+
+
+def _format_modified_iso(modified: Any) -> str:
+    if isinstance(modified, datetime):
+        return modified.isoformat()
+    return str(modified) if modified else ""
+
+
+def _build_session_rows(
+    sessions: List[SessionDict],
+    *,
+    workspace_formatter: Callable[[str], str],
+    modified_formatter: Callable[[Any], str],
+) -> List[List[str]]:
+    rows = []
+    for session in sessions:
+        workspace = workspace_formatter(_workspace_display(session))
+        rows.append(
+            [
+                session.get("agent", ""),
+                session.get("home", "local"),
+                workspace,
+                session.get("filename", ""),
+                str(session.get("message_count", "")),
+                modified_formatter(session.get("modified")),
+            ]
+        )
+    return rows
+
+
+def _build_workspace_rows(
+    workspaces: List[WorkspaceDict],
+    *,
+    workspace_formatter: Callable[[str], str],
+    modified_formatter: Callable[[Any], str],
+) -> List[List[str]]:
+    rows = []
+    for workspace in workspaces:
+        modified = workspace.get("modified") or workspace.get("last_modified")
+        rows.append(
+            [
+                workspace.get("home", "local"),
+                workspace_formatter(_workspace_display(workspace)),
+                str(workspace.get("session_count", "")),
+                workspace.get("status", "unknown"),
+                modified_formatter(modified),
+            ]
+        )
+    return rows
 
 
 def _format_project_sources(sources: Any) -> str:
@@ -132,32 +195,13 @@ class TableFormatter(DataFormatter):
             return "No sessions found."
 
         headers = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
-        rows = []
-
-        for s in sessions:
-            workspace = _workspace_display(s)
-            # Truncate long workspace paths
-            if len(workspace) > 40 and self.width:
-                workspace = "..." + workspace[-37:]
-
-            modified = s.get("modified")
-            if isinstance(modified, datetime):
-                date_str = modified.strftime("%Y-%m-%d")
-            elif isinstance(modified, str):
-                date_str = modified[:10] if len(modified) >= 10 else modified
-            else:
-                date_str = ""
-
-            rows.append(
-                [
-                    s.get("agent", ""),
-                    s.get("home", "local"),
-                    workspace,
-                    s.get("filename", ""),
-                    str(s.get("message_count", "")),
-                    date_str,
-                ]
-            )
+        rows = _build_session_rows(
+            sessions,
+            workspace_formatter=lambda ws: _truncate_tail(ws, 40) if self.width else ws,
+            modified_formatter=lambda value: _format_modified_date(
+                value, date_format="%Y-%m-%d", truncate=10
+            ),
+        )
 
         return self._render_table(headers, rows)
 
@@ -167,33 +211,13 @@ class TableFormatter(DataFormatter):
             return "No workspaces found."
 
         headers = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
-        rows = []
-
-        for ws in workspaces:
-            workspace = _workspace_display(ws)
-            if len(workspace) > 50 and self.width:
-                workspace = "..." + workspace[-47:]
-
-            modified = ws.get("modified") or ws.get("last_modified")
-            if isinstance(modified, datetime):
-                date_str = modified.strftime("%Y-%m-%d %H:%M")
-            elif isinstance(modified, str):
-                date_str = modified[:16] if len(modified) >= 16 else modified
-            else:
-                date_str = ""
-
-            # Status should be pre-computed by the handler
-            status = ws.get("status", "unknown")
-
-            rows.append(
-                [
-                    ws.get("home", "local"),
-                    workspace,
-                    str(ws.get("session_count", "")),
-                    status,
-                    date_str,
-                ]
-            )
+        rows = _build_workspace_rows(
+            workspaces,
+            workspace_formatter=lambda ws: _truncate_tail(ws, 50) if self.width else ws,
+            modified_formatter=lambda value: _format_modified_date(
+                value, date_format="%Y-%m-%d %H:%M", truncate=16
+            ),
+        )
 
         return self._render_table(headers, rows)
 
@@ -487,22 +511,12 @@ class TsvFormatter(DataFormatter):
 
         headers = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "MODIFIED"]
         lines = ["\t".join(headers)]
-
-        for s in sessions:
-            modified = s.get("modified")
-            if isinstance(modified, datetime):
-                modified_str = modified.isoformat()
-            else:
-                modified_str = str(modified) if modified else ""
-
-            row = [
-                s.get("agent", ""),
-                s.get("home", "local"),
-                _workspace_display(s),
-                s.get("filename", ""),
-                str(s.get("message_count", "")),
-                modified_str,
-            ]
+        rows = _build_session_rows(
+            sessions,
+            workspace_formatter=lambda ws: ws,
+            modified_formatter=_format_modified_iso,
+        )
+        for row in rows:
             lines.append("\t".join(row))
 
         return "\n".join(lines)
@@ -514,24 +528,12 @@ class TsvFormatter(DataFormatter):
 
         headers = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
         lines = ["\t".join(headers)]
-
-        for ws in workspaces:
-            modified = ws.get("modified") or ws.get("last_modified")
-            if isinstance(modified, datetime):
-                modified_str = modified.isoformat()
-            else:
-                modified_str = str(modified) if modified else ""
-
-            # Status should be pre-computed by the handler
-            status = ws.get("status", "unknown")
-
-            row = [
-                ws.get("home", "local"),
-                _workspace_display(ws),
-                str(ws.get("session_count", "")),
-                status,
-                modified_str,
-            ]
+        rows = _build_workspace_rows(
+            workspaces,
+            workspace_formatter=lambda ws: ws,
+            modified_formatter=_format_modified_iso,
+        )
+        for row in rows:
             lines.append("\t".join(row))
 
         return "\n".join(lines)
