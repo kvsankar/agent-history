@@ -446,7 +446,7 @@ class ContextBuilder:
         from agent_history.storage.config import get_saved_homes
         from agent_history.utils.platform import (
             get_windows_users_with_claude,
-            get_wsl_distribution_names,
+            get_wsl_distributions,
             is_running_in_wsl,
         )
 
@@ -456,47 +456,50 @@ class ContextBuilder:
             "remote": [],
         }
 
-        # When all session roots are explicitly overridden, avoid probing
-        # non-local homes to keep isolated/test runs fast.
-        if all(
-            os.environ.get(key)
-            for key in (
-                "CLAUDE_PROJECTS_DIR",
-                "CODEX_SESSIONS_DIR",
-                "GEMINI_SESSIONS_DIR",
-                "AGENT_HISTORY_CONFIG_DIR",
+        # Skip host probing when running with injected homes or directory overrides.
+        # This keeps unit/property tests fast and avoids touching real Windows/WSL filesystems.
+        has_wsl_override = os.environ.get("CLAUDE_WSL_TEST_DISTRO") or os.environ.get(
+            "AGENT_HISTORY_HOME_WSL"
+        )
+        has_windows_override = os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR") or os.environ.get(
+            "AGENT_HISTORY_HOME_WINDOWS"
+        )
+        skip_platform_scan = (
+            any(
+                os.environ.get(name)
+                for name in (
+                    "AGENT_HISTORY_HOME",
+                    "AGENT_HISTORY_HOME_WSL",
+                    "AGENT_HISTORY_HOME_WINDOWS",
+                    "AGENT_HISTORY_CONFIG_DIR",
+                    "CLAUDE_PROJECTS_DIR",
+                    "CODEX_SESSIONS_DIR",
+                    "GEMINI_SESSIONS_DIR",
+                )
             )
-        ) and not any(
-            os.environ.get(key)
-            for key in (
-                "AGENT_HISTORY_HOME_WSL",
-                "AGENT_HISTORY_HOME_WINDOWS",
-                "CLAUDE_WSL_TEST_DISTRO",
-                "CLAUDE_WSL_PROJECTS_DIR",
-                "CLAUDE_WINDOWS_PROJECTS_DIR",
-                "CODEX_WSL_SESSIONS_DIR",
-                "GEMINI_WSL_SESSIONS_DIR",
-                "CODEX_WINDOWS_SESSIONS_DIR",
-                "GEMINI_WINDOWS_SESSIONS_DIR",
-            )
-        ):
-            return homes
+            and not has_wsl_override
+            and not has_windows_override
+        )
 
-        # WSL distributions (available from Windows)
-        try:
-            homes["wsl"] = [name for name in get_wsl_distribution_names() if name]
-        except Exception:
-            # Ignore errors during WSL detection
-            pass
-
-        # Windows users (available from WSL)
-        if is_running_in_wsl():
+        if not skip_platform_scan:
+            # WSL distributions (available from Windows)
             try:
-                windows_users = get_windows_users_with_claude()
-                homes["windows"] = [u["username"] for u in windows_users if u.get("username")]
+                wsl_distros = get_wsl_distributions()
+                homes["wsl"] = [d["name"] for d in wsl_distros if d.get("name")]
             except Exception:
-                # Ignore errors during Windows user detection
+                # Ignore errors during WSL detection
                 pass
+
+            # Windows users (available from WSL)
+            if is_running_in_wsl():
+                try:
+                    windows_users = get_windows_users_with_claude()
+                    homes["windows"] = [
+                        u["username"] for u in windows_users if u.get("username")
+                    ]
+                except Exception:
+                    # Ignore errors during Windows user detection
+                    pass
 
         # Configured remote hosts
         try:
