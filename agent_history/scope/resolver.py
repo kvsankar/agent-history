@@ -436,41 +436,6 @@ class ScopeResolver:
         """
         return self._inventory.list_workspaces(home)
 
-    def _enumerate_remote_workspaces(self, home: str) -> List[str]:
-        """
-        Enumerate workspaces from a remote host via SSH.
-
-        Args:
-            home: Remote home identifier (e.g., "remote:user@host").
-
-        Returns:
-            List of workspace paths found on the remote host.
-
-        Raises:
-            ValueError: If SSH connection fails.
-        """
-        from agent_history.backends.ssh import list_remote_workspaces
-        from agent_history.utils.paths import normalize_workspace_name
-
-        # Extract the remote host from "remote:user@host"
-        remote_host = home[7:]  # Remove "remote:" prefix
-
-        workspaces: set[str] = set()
-
-        # Get Claude workspaces from remote
-        claude_ws, error = list_remote_workspaces(remote_host, agent="claude")
-        if error:
-            raise ValueError(f"SSH connection failed: {error}")
-
-        # Decode workspace names to readable paths
-        for ws in claude_ws:
-            decoded = normalize_workspace_name(ws, verify_local=False)
-            workspaces.add(decoded)
-
-        # TODO: Add Codex and Gemini remote enumeration
-
-        return sorted(workspaces)
-
     def _enumerate_claude_workspaces(self, home: str) -> List[str]:
         """
         Enumerate workspaces from Claude's projects directory.
