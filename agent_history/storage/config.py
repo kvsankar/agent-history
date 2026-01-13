@@ -18,6 +18,12 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from agent_history.utils.paths import (
+    encode_workspace_path,
+    is_cached_workspace,
+    is_encoded_workspace_name,
+)
+
 __all__ = [
     # Constants
     "CONFIG_DIR_NAME",
@@ -253,23 +259,15 @@ def get_saved_homes() -> list:
 def _sanitize_alias_workspace_entry(workspace: str) -> str:
     """Normalize alias workspace entries, handling legacy absolute paths.
 
-    Note: This function requires path_to_encoded_workspace from the main module.
-    When used standalone, it performs basic normalization only.
+    Note: This function normalizes only absolute path inputs.
     """
     if not workspace:
         return workspace
 
     lowered = workspace.lower()
 
-    # Handle /mnt/ paths (WSL style)
-    if lowered.startswith("/mnt/"):
-        # Convert to encoded format: /mnt/c/foo -> C---foo
-        # This is a simplified version; full implementation in main module
-        return workspace.replace("/", "-").lstrip("-")
-
-    # Handle Unix absolute paths
-    if workspace.startswith("/"):
-        return workspace.replace("/", "-").lstrip("-")
+    if is_encoded_workspace_name(workspace) or is_cached_workspace(workspace):
+        return workspace
 
     # Handle legacy -mnt-X- encoded format
     if lowered.startswith("-mnt-") and len(workspace) > MNT_ENCODED_PREFIX_LEN:
@@ -277,6 +275,13 @@ def _sanitize_alias_workspace_entry(workspace: str) -> str:
         remainder = workspace[MNT_ENCODED_PREFIX_LEN:]
         if drive_letter.isalpha():
             return f"{drive_letter.upper()}--{remainder}"
+
+    if (
+        "/" in workspace
+        or "\\" in workspace
+        or (len(workspace) > 1 and workspace[1] == ":")
+    ):
+        return encode_workspace_path(workspace)
 
     return workspace
 

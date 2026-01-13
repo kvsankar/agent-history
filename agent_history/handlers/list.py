@@ -222,41 +222,61 @@ class WorkspaceListHandler(VerbHandler):
         """
         return aggregate_workspaces(scope, status_lookup=self._check_workspace_status)
 
-    def _check_workspace_status(self, workspace_path: str, home: str) -> str:
+    def _check_workspace_status(self, context: WorkspaceContext) -> str:
         """Check if workspace path exists on filesystem.
 
         Args:
-            workspace_path: Decoded workspace path.
-            home: Home identifier (for remote detection).
+            context: Workspace context for the workspace.
 
         Returns:
             'ok' if exists, 'missing' if not, 'unknown' if cannot determine.
         """
         import os
-        import re
         from pathlib import Path
 
-        # Clean path (remove any existing markers)
-        clean_path = workspace_path.replace(" [missing]", "").strip()
+        from agent_history.utils.paths import is_cached_workspace, is_encoded_workspace_name
+        from agent_history.utils.workspace_ref import (
+            WorkspaceKind,
+            build_workspace_ref,
+            is_hash_display,
+        )
 
-        # For hashed paths, we don't know the original path
-        if clean_path.startswith("[hash:"):
-            return "unknown"
-        # Heuristic: Gemini-style hash (no slashes, long hex string)
-        if "/" not in clean_path and re.fullmatch(r"[0-9a-fA-F]{16,64}", clean_path):
-            return "unknown"
+        # Clean path (remove any existing markers)
+        clean_path = context.workspace_display.replace(" [missing]", "").strip()
 
         # For remote sources, we can't easily check - assume ok
-        if home.startswith("remote:") or home == "web":
+        if context.home.startswith("remote:") or context.home == "web":
             return "ok"
+
+        if is_hash_display(clean_path):
+            return "unknown"
+
+        readable = clean_path
+        if readable == context.workspace and (
+            is_encoded_workspace_name(context.workspace)
+            or is_cached_workspace(context.workspace)
+        ):
+            readable = None
+
+        ref = build_workspace_ref(context.workspace, readable)
+        if ref.kind == WorkspaceKind.HASH:
+            return "unknown"
+
+        check_value = ref.display or clean_path
+        if not check_value:
+            return "unknown"
+        if "/" not in check_value and "\\" not in check_value and not (
+            len(check_value) > 1 and check_value[1] == ":"
+        ):
+            return "unknown"
 
         # Use AGENT_HISTORY_HOME if set (for testing)
         agent_home = os.environ.get("AGENT_HISTORY_HOME")
         if agent_home:
             # In test mode, check under AGENT_HISTORY_HOME
-            check_path = Path(agent_home) / clean_path.lstrip("/")
+            check_path = Path(agent_home) / check_value.lstrip("/")
         else:
-            check_path = Path(clean_path)
+            check_path = Path(check_value)
 
         return "ok" if check_path.exists() else "missing"
 
