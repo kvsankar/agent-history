@@ -4,6 +4,10 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 > **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
+![How agent-history collects, normalizes, and exports AI coding assistant session history](docs/images/agent-history-process.png)
+
+*How agent-history collects fragmented Claude Code, Codex CLI, and Gemini CLI session files across local, WSL, Windows, and SSH homes, normalizes them into a unified workspace/session model, and produces listings, markdown exports, and usage metrics. See [docs/agent-history-process-image.md](docs/agent-history-process-image.md) for the diagram brief.*
+
 ## Supported Agents
 
 | Agent | Status | Format | Documentation |
