@@ -1,0 +1,87 @@
+{
+  "sessionId": "golden-gemini-001",
+  "projectHash": "abc123def456789012345678901234567890123456789012345678901234",
+  "startTime": "2025-01-05T14:00:00.000Z",
+  "lastUpdated": "2025-01-05T14:00:30.000Z",
+  "messages": [
+    {
+      "id": "msg-g1",
+      "timestamp": "2025-01-05T14:00:00.000Z",
+      "type": "user",
+      "content": "Read the package.json file"
+    },
+    {
+      "id": "msg-g2",
+      "timestamp": "2025-01-05T14:00:10.000Z",
+      "type": "gemini",
+      "content": "I'll read the package.json file for you.",
+      "model": "gemini-2.5-pro",
+      "thoughts": [
+        {
+          "subject": "File Reading Request",
+          "description": "User wants to see the contents of package.json",
+          "timestamp": "2025-01-05T14:00:05.000Z"
+        }
+      ],
+      "tokens": {
+        "input": 150,
+        "output": 60,
+        "cached": 0,
+        "thoughts": 20,
+        "tool": 10,
+        "total": 240
+      },
+      "toolCalls": [
+        {
+          "id": "read_file-001",
+          "name": "read_file",
+          "args": {
+            "file_path": "package.json"
+          },
+          "result": [
+            {
+              "functionResponse": {
+                "id": "read_file-001",
+                "name": "read_file",
+                "response": {
+                  "output": "{\"name\": \"test-project\", \"version\": \"1.0.0\"}"
+                }
+              }
+            }
+          ],
+          "status": "success",
+          "timestamp": "2025-01-05T14:00:08.000Z",
+          "displayName": "Read File"
+        }
+      ]
+    },
+    {
+      "id": "msg-g3",
+      "timestamp": "2025-01-05T14:00:20.000Z",
+      "type": "user",
+      "content": "What's the project name?"
+    },
+    {
+      "id": "msg-g4",
+      "timestamp": "2025-01-05T14:00:30.000Z",
+      "type": "gemini",
+      "content": "The project name is 'test-project' and it's at version 1.0.0.",
+      "model": "gemini-2.5-pro",
+      "thoughts": [
+        {
+          "subject": "Answering Question",
+          "description": "Extracting project name from previously read package.json",
+          "timestamp": "2025-01-05T14:00:25.000Z"
+        }
+      ],
+      "tokens": {
+        "input": 250,
+        "output": 120,
+        "cached": 50,
+        "thoughts": 15,
+        "tool": 0,
+        "total": 435
+      }
+    }
+  ]
+}

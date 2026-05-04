@@ -12,9 +12,9 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 | Agent | Status | Format | Documentation |
 |-------|--------|--------|---------------|
-| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-format.md](docs/claude-format.md) |
-| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-format.md](docs/codex-format.md) |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-format.md](docs/gemini-format.md) |
+| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-code-format.md](docs/specs/agents/formats/claude-code-format.md) |
+| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-cli-format.md](docs/specs/agents/formats/codex-cli-format.md) |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-cli-format.md](docs/specs/agents/formats/gemini-cli-format.md) |
 
 Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
 
@@ -34,7 +34,7 @@ Claude Code, Codex CLI, and Gemini CLI leave conversation data fragmented across
 - **Markdown export (flexible)** – Export whole workspaces or single sessions; minimal/flat/split modes; size and path control.
 - **Workspace-aware filtering** – Target workspaces by name or path (slashes ok); matches encoded names automatically.
 - **Multi-environment reach** – Local, WSL (UNC or Linux paths), Windows from WSL, and SSH remotes; `[missing]` marker shows closest match for renamed workspaces.
-- **Aliases** – Group related workspaces across homes/sources; apply aliases to `lss`, `lsw`, `export`, and `stats`.
+- **Projects** – Group related workspaces across homes/sources; apply projects to `sessions`, `workspaces`, `export`, and `stats`.
 - **Usage metrics** – Summaries, homes/workspaces breakdown, token/tool stats, time tracking (with daily breakdown via `--time`), top workspaces limit via `--top-ws`.
 - **Cross-home sync** – Sync metrics from all homes (`--ah`), all workspaces (`--aw`), or current workspace only (`--this`).
 - **WSL/Windows helpers** – Auto-detect WSL distros/Windows users; UNC path inference for `lss` without `--wsl`; converts path separators safely.
@@ -51,7 +51,7 @@ chmod +x /path/to/agent-history
 cd /path/to/project
 
 # List sessions from current project
-/path/to/agent-history lss
+/path/to/agent-history session list
 
 # Export to markdown
 /path/to/agent-history export
@@ -62,7 +62,7 @@ cd /path/to/project
 **Windows:**
 ```powershell
 cd \path\to\project
-python \path\to\agent-history lss
+python \path\to\agent-history session list
 python \path\to\agent-history export
 ```
 
@@ -93,83 +93,23 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 <!-- help-snippet:start -->
 ```
-usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini}]
-                     {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index} ...
+usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini}] COMMAND ...
 
-Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)
+Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI)
 
 positional arguments:
-  {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index}
-                        Command to execute
-    lsw                 List workspaces
-    lss                 List sessions
-    lsh                 List homes and manage SSH remotes
-    export              Export to markdown
-    alias               Manage workspace aliases
-    stats               Show usage statistics and metrics
-    reset               Reset stored data (database, settings, aliases)
-    install             Install CLI and Claude skill
-    gemini-index        Manage Gemini hash→path index
+  COMMAND                     Command to execute
+    session                   Session commands
+    ws                        Workspace commands
+    project                   Manage projects
+    home                      Manage homes
+    gemini-index              Manage Gemini session index
 
 options:
-  -h, --help            show this help message and exit
-  --version             show program's version number and exit
+  -h, --help                  show this help message and exit
+  --version                   show program's version number and exit
   --agent {auto,claude,codex,gemini}
-                        Agent backend to use (default: auto-detect based on available data)
-
-EXAMPLES:
-
-  List workspaces:
-    agent-history lsw                        # all local workspaces
-    agent-history lsw myproject              # filter by pattern
-    agent-history lsw -r user@server         # remote workspaces
-
-  List sessions:
-    agent-history lss                        # current workspace
-    agent-history lss myproject              # specific workspace
-    agent-history lss myproject -r user@server    # remote sessions
-
-  Export (unified interface with orthogonal flags):
-    agent-history export                     # current workspace, local home
-    agent-history export --ah                # current workspace, all homes
-    agent-history export --aw                # all workspaces, local home
-    agent-history export --ah --aw           # all workspaces, all homes
-
-    agent-history export myproject           # specific workspace, local
-    agent-history export myproject --ah      # specific workspace, all homes
-    agent-history export file.jsonl         # export single file
-
-    agent-history export -o /tmp/backup      # current workspace, custom output
-    agent-history export myproject -o ./out  # specific workspace, custom output
-
-    agent-history export -r user@server      # current workspace, specific remote
-    agent-history export --ah -r user@vm01   # current workspace, all homes + SSH
-
-  Date filtering:
-    agent-history lss myproject --since 2025-11-01
-    agent-history export myproject --since 2025-11-01 --until 2025-11-30
-
-  Export options:
-    agent-history export myproject --minimal       # minimal mode
-    agent-history export myproject --split 500     # split long conversations
-    agent-history export myproject --flat          # flat structure (no subdirs)
-
-  WSL access (Windows):
-    agent-history lsh --wsl                        # list WSL distributions
-    agent-history lsw --wsl                        # list WSL workspaces
-    agent-history lsw --wsl Ubuntu                 # list from specific distro
-    agent-history lss myproject --wsl              # list WSL sessions
-    agent-history export myproject --wsl           # export from WSL
-
-  Windows access (from WSL):
-    agent-history lsh --windows                    # list Windows users with Claude
-    agent-history lsw --windows                    # list Windows workspaces
-    agent-history lss myproject --windows          # list Windows sessions
-    agent-history export myproject --windows       # export from Windows
-
-  Notes:
-    - Outputs may show '[missing]' when a workspace directory no longer exists; the path
-      is the closest match based on the stored workspace name.
+                              Agent backend to use (default: auto-detect based on available data)
 ```
 <!-- help-snippet:end -->
 
@@ -177,12 +117,12 @@ EXAMPLES:
 
 | Command | Remote/Home Options | Workspace Options | Default Scope |
 |---------|---------------------|-------------------|----------------|
-| `lss`   | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, aliases (`@name` / `--alias`), `--aw`, `--this` | Uses the current workspace (or its alias) even when you target other homes. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
-| `lsw`   | Same as `lss` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
-| `export`| `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), aliases, `--aw`, `--this` | Exports the current workspace (or alias) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
-| `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/aliases, `--aw`, `--this` | Defaults to the current workspace (or alias). If not in a workspace, pass a pattern or use `--aw`. Use `--aw` for every workspace in the metrics DB, or pass patterns/aliases to filter. `--source` limits results to a specific home and defaults to all workspaces for that source unless `--this` is set. |
+| `session list` | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, projects (`@name` / `--project`), `--aw`, `--this` | Uses the current workspace (or its project) even when you target other homes. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
+| `ws list` | Same as `session list` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
+| `export` | `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), projects, `--aw`, `--this` | Exports the current workspace (or project) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
+| `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/projects, `--aw`, `--this` | Defaults to the current workspace (or project). If not in a workspace, pass a pattern or use `--aw`. Use `--aw` for every workspace in the metrics DB, or pass patterns/projects to filter. `--source` limits results to a specific home and defaults to all workspaces for that source unless `--this` is set. |
 
-When in doubt: `--aw` means “all workspaces”; `--ah` means “all homes.” Without those switches the CLI sticks to the current workspace/alias, even if you add Windows/WSL/remote flags, so you get predictable, scoped results.
+When in doubt: `--aw` means "all workspaces"; `--ah` means "all homes." Without those switches the CLI sticks to the current workspace/project, even if you add Windows/WSL/remote flags, so you get predictable, scoped results.
 
 ## Testing
 
@@ -191,7 +131,7 @@ Use pytest to run unit and integration tests. By default, `pytest` runs everythi
 Quick commands:
 
 ```bash
-# All tests
+# Default suite (excludes legacy tests)
 uv run pytest
 
 # Unit only
@@ -204,6 +144,13 @@ uv run pytest -m integration tests/integration
 make test
 make test-unit
 make test-integration
+
+# Tests are organized by surface area:
+# - tests/cli (CLI behavior and scope)
+# - tests/formats (agent session formats)
+# - tests/legacy (v1 script compatibility)
+# - tests/unit (package internals)
+# - tests/e2e_docker (Docker + SSH E2E)
 
 # Windows PowerShell helper
 scripts\run-tests.ps1              # all
@@ -280,11 +227,11 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 | Command | Description |
 |---------|-------------|
-| `lsh` | List homes and manage SSH remotes |
-| `lsw` | List workspaces |
-| `lss` | List sessions |
+| `home` | List homes and manage sources (WSL, Windows, SSH) |
+| `ws` | List workspaces |
+| `session` | List sessions |
 | `export` | Export to markdown |
-| `alias` | Manage workspace aliases |
+| `project` | Manage workspace projects |
 | `stats` | Usage statistics |
 | `reset` | Reset stored data |
 | `install` | Install CLI + Claude skill and update retention settings |
@@ -293,7 +240,7 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 ```bash
 # List all workspaces
-agent-history lsw
+agent-history ws list
 
 # Export specific project
 agent-history export myproject
@@ -302,7 +249,7 @@ agent-history export myproject
 agent-history export myproject --ah
 
 # Date filtering
-agent-history lss --since 2025-11-01
+agent-history session list --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
 agent-history export myproject --minimal
@@ -318,46 +265,50 @@ agent-history stats --time
 ## Multi-Environment Access
 
 ```bash
-# Discover all Claude installations and SSH remotes
-agent-history lsh
+# Discover all Claude installations
+agent-history home
 
-# Add/remove SSH remotes
-agent-history lsh add user@server
-agent-history lsh remove user@server
+# Add homes (explicit model - must add for --ah to include)
+agent-history home add --wsl              # add WSL
+agent-history home add --windows          # add Windows
+agent-history home add user@server        # add SSH remote
+agent-history home remove user@server     # remove a source
 
 # Access WSL (from Windows)
-agent-history lss --wsl
+agent-history session list --wsl
 
 # Access Windows (from WSL)
-agent-history lss --windows
+agent-history session list --windows
 
 # Access SSH remote
-agent-history lss -r user@server
+agent-history session list -r user@server
 
-# All homes at once (includes saved SSH remotes)
+# All homes at once (includes configured sources)
 agent-history export --ah
 ```
 
-## Workspace Aliases
+## Projects
 
 Group related workspaces across environments:
 
 ```bash
-# Create alias
-agent-history alias create myproject
+# Create project
+agent-history project create myproject
 
 # Add workspaces
-agent-history alias add myproject myproject
-agent-history alias add myproject --windows myproject
-agent-history alias add myproject -r user@vm myproject
+agent-history project add myproject myproject
+agent-history project add myproject --windows myproject
+agent-history project add myproject -r user@vm myproject
 
-# Use with @ prefix
-agent-history lss @myproject
+# Use with @ prefix or --project flag
+agent-history session list @myproject
+agent-history session list --project myproject
 agent-history export @myproject
+agent-history export --project myproject
 
 # Remove entries using paths from any home
-agent-history alias remove myproject -r user@vm /home/user/myproject
-agent-history alias remove myproject --windows /mnt/c/Users/me/projects/myproject
+agent-history project remove myproject -r user@vm /home/user/myproject
+agent-history project remove myproject --windows /mnt/c/Users/me/projects/myproject
 ```
 
 ## Important: Preserve Your History

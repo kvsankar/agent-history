@@ -1,0 +1,24 @@
+// Unified NDJSON Schema for Agent History (current implementation)
+// Render with: dot -Tpng unified-json-schema.dot -o unified-json-schema.png
+
+digraph UnifiedSchema {
+    rankdir=TB;
+    node [shape=record, fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9];
+
+    labelloc="t";
+    label="Agent History - NDJSON (Per-Session Export)";
+    fontsize=14;
+    fontname="Helvetica-Bold";
+
+    file [shape=note, label="session.ndjson\n(one JSON object per line)"];
+
+    header [label="{Header (line 1)|type: header|schema_version|agent|session_file|session_id? |workspace?}"];
+    message [label="{Message (lines 2..N-1)|type: message|timestamp? |role|content|model? |tokens? |tool_calls?}"];
+    session [label="{Session (last line)|type: session|agent|session_id|message_count|workspace}"];
+
+    file -> header;
+    header -> message;
+    message -> message [label="repeats", style=dashed];
+    message -> session;
+}

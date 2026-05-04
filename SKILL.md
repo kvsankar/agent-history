@@ -71,16 +71,16 @@ agent-history stats
 agent-history stats --time
 
 # Tool usage breakdown
-agent-history stats --tools
+agent-history stats --by tool
 
 # Model usage
-agent-history stats --models
+agent-history stats --by model
 
 # Daily trends
-agent-history stats --by-day
+agent-history stats --by day
 
 # Per-workspace breakdown
-agent-history stats --by-workspace
+agent-history stats --by workspace
 ```
 
 ### List Workspaces
@@ -185,13 +185,13 @@ agent-history stats --time
 ### "Which tools do I use most?"
 
 ```bash
-agent-history stats --tools
+agent-history stats --by tool
 ```
 
 ### "Show me my activity this month"
 
 ```bash
-agent-history stats --by-day --since 2025-11-01
+agent-history stats --by day --since 2025-11-01
 ```
 
 ### "Export everything for backup"

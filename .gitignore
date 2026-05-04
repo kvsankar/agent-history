@@ -42,11 +42,18 @@ claude-conversations/
 temptest-*/
 test-*/
 
-# Claude Code session data
-.claude/
-docs/analysis/
+# Claude Code session data (but keep agents)
+.claude/*
+!.claude/agents/
 docs/learning/
 docs/reviews/
 
 # Local review files
 reviews/
+
+# Test output files
+codex_rejection_session.jsonl
+
+# PoC exploratory scripts
+poc/
+scripts/poc/

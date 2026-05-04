@@ -631,10 +631,10 @@ All: Add `agent-history lsw -r <user>@<host>` (if SSH available)
 | stats_display_aw | `agent-history stats --aw` | Shows summary for all workspaces | ⬜ |
 | stats_display_pattern | `agent-history stats <pattern>` | Filters by workspace pattern | ⬜ |
 | stats_display_top_ws | `agent-history stats --aw --top-ws 3` | Limits workspaces per home, shows Homes & Workspaces section | ⬜ |
-| stats_display_tools | `agent-history stats --tools` | Shows tool usage stats | ⬜ |
-| stats_display_models | `agent-history stats --models` | Shows model usage stats | ⬜ |
-| stats_display_by_ws | `agent-history stats --by-workspace` | Shows per-workspace breakdown | ⬜ |
-| stats_display_by_day | `agent-history stats --by-day` | Shows daily breakdown | ⬜ |
+| stats_display_tools | `agent-history stats --by tool` | Shows tool usage stats | ⬜ |
+| stats_display_models | `agent-history stats --by model` | Shows model usage stats | ⬜ |
+| stats_display_by_ws | `agent-history stats --by workspace` | Shows per-workspace breakdown | ⬜ |
+| stats_display_by_day | `agent-history stats --by day` | Shows daily breakdown | ⬜ |
 | stats_display_since | `agent-history stats --since 2025-01-01` | Date filtering | ⬜ |
 | stats_display_source | `agent-history stats --source local` | Source filtering | ⬜ |
 
@@ -1060,7 +1060,7 @@ Environment overrides for cross-boundary tests
 
 Scenarios covered (representative)
 - Local: lsh/lsw/lss, export (minimal/flat/split)
-- Stats: `--sync` then `--models`, `--tools`, `--by-day`
+- Stats: `--sync` then `--by model`, `--by tool`, `--by day`
 - Alias: create/add/show/export and `lss @alias`
 - All-homes (Windows): combine local + WSL via env override
 
