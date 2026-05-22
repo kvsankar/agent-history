@@ -1184,3 +1184,14 @@ From CONTRIBUTING.md, key points:
 ## Context Window Management
 
 Your context window will be automatically compacted as it approaches its limit, allowing you to continue working indefinitely from where you left off. Therefore, do not stop tasks early due to token budget concerns. As you approach your token budget limit, save your current progress and state to memory before the context window refreshes. Always be as persistent and autonomous as possible and complete tasks fully, even if the end of your budget is approaching. Never artificially stop any task early regardless of the context remaining.
+
+<!-- claude-insights:start -->
+## Working with Claude
+
+These working agreements come from a `/insights` analysis of past sessions. Keep them in mind on every task in this repo.
+
+- When pre-commit or pre-push hooks fail, fix the underlying issues (line length, trailing whitespace, lint errors) properly. Do NOT skip hooks, amend silently, or work around them. Never run `git init`, rewrite history (rebase, force push), or skip flaky tests without explicit permission.
+- When asked to fix a problem, diagnose the root cause before proposing a fix. Do not jump to surface-level changes (e.g., flipping a port without understanding the networking, attributing a CSS bug to line-height without investigating).
+- If two approaches have failed for the same problem, stop and present options to the user instead of trying a third. Don't thrash.
+- Never fabricate documentation content. If you don't know what a doc actually says, read the file first.
+<!-- claude-insights:end -->
