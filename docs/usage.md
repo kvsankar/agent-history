@@ -9,7 +9,7 @@ Detailed documentation for all `agent-history` commands and options.
 | `lsh` | List homes and manage SSH remotes |
 | `lsw` | List workspaces |
 | `lss` | List sessions |
-| `export` | Export sessions to markdown |
+| `export` | Export sessions to Markdown or offline HTML |
 | `alias` | Manage workspace aliases |
 | `stats` | Show usage statistics and metrics |
 | `reset` | Reset stored data (database, settings, aliases) |
@@ -177,7 +177,7 @@ agent-history lss myproject --since 2025-11-01 --until 2025-11-30
 
 ## `export` - Export Sessions
 
-Export sessions from workspace(s) to markdown with flexible scope control.
+Export sessions from workspace(s) to Markdown or offline HTML with flexible scope control.
 
 ```bash
 agent-history export [WORKSPACE...] [OPTIONS]
@@ -203,6 +203,10 @@ agent-history export [WORKSPACE...] [OPTIONS]
 - `--since DATE`: Only include sessions modified on or after this date
 - `--until DATE`: Only include sessions modified on or before this date
 - `--minimal`: Export conversation content only, no metadata
+- `--format markdown|html`: Output format (default: `markdown`)
+- `--html-level 1..4`: Initial HTML detail level (default: `1`)
+- `--html-split session|workspace`: HTML output granularity (default: `session`)
+- `--html-single`: Alias for `--html-split workspace`
 - `--split LINES`: Split long conversations into parts
 - `--flat`: Use flat directory structure (default: organized by workspace)
 - `--jobs N`: Parallel export workers (default: 1)
@@ -465,6 +469,35 @@ agent-history export myproject --split 500
 - Smart break points (before User messages, after tool results, time gaps)
 - Navigation links between parts
 - Each part shows message range
+
+### Offline HTML Export (`--format html`)
+
+HTML exports are self-contained files with embedded CSS and JavaScript. They do not require a
+backend or network access. Sessions render as conversation turns first, with global toggles and
+per-turn drilldown for actions and raw trace data.
+
+```bash
+# One HTML file per session
+agent-history export myproject --format html
+
+# One HTML file per workspace/source bundle
+agent-history export myproject --format html --html-single
+
+# Open initially with the Actions and Full I/O toggles enabled
+agent-history export myproject --format html --html-level 3
+```
+
+HTML controls:
+- Conversation text is always visible.
+- `Actions` toggles compact tool call/output snippets and assistant action notes.
+- `Full I/O` toggles complete tool call inputs and outputs.
+- `Trace` toggles subagent transcripts and trace metadata.
+
+The `--html-level 1..4` option remains as the initial preset: `1` enables no toggles,
+`2` enables `Actions`, `3` enables `Actions` and `Full I/O`, and `4` enables all toggles.
+
+When multiple sessions are bundled into one workspace HTML file, turn labels are renumbered
+across the whole export while session-local turn numbers remain available in full-trace detail.
 
 ---
 

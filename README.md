@@ -31,7 +31,7 @@ Claude Code, Codex CLI, and Gemini CLI leave conversation data fragmented across
 
 ## Features
 
-- **Markdown export (flexible)** – Export whole workspaces or single sessions; minimal/flat/split modes; size and path control.
+- **Markdown and offline HTML export** – Export whole workspaces or single sessions; Markdown minimal/flat/split modes; HTML renders turn-centered conversations with toggle controls for action snippets, full tool I/O, and full trace views.
 - **Workspace-aware filtering** – Target workspaces by name or path (slashes ok); matches encoded names automatically.
 - **Multi-environment reach** – Local, WSL (UNC or Linux paths), Windows from WSL, and SSH remotes; `[missing]` marker shows closest match for renamed workspaces.
 - **Aliases** – Group related workspaces across homes/sources; apply aliases to `lss`, `lsw`, `export`, and `stats`.
@@ -55,6 +55,9 @@ cd /path/to/project
 
 # Export to markdown
 /path/to/agent-history export
+
+# Export offline HTML with progressive detail controls
+/path/to/agent-history export --format html --html-single
 
 # Output goes to ./ai-chats/
 ```
@@ -104,7 +107,7 @@ positional arguments:
     lsw                 List workspaces
     lss                 List sessions
     lsh                 List homes and manage SSH remotes
-    export              Export to markdown
+    export              Export to Markdown or offline HTML
     alias               Manage workspace aliases
     stats               Show usage statistics and metrics
     reset               Reset stored data (database, settings, aliases)
@@ -283,7 +286,7 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 | `lsh` | List homes and manage SSH remotes |
 | `lsw` | List workspaces |
 | `lss` | List sessions |
-| `export` | Export to markdown |
+| `export` | Export to Markdown or offline HTML |
 | `alias` | Manage workspace aliases |
 | `stats` | Usage statistics |
 | `reset` | Reset stored data |
@@ -306,6 +309,9 @@ agent-history lss --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
 agent-history export myproject --minimal
+
+# Offline HTML export, one file per workspace
+agent-history export myproject --format html --html-single
 
 # Faster sync/export
 agent-history stats --sync --ah --jobs 4

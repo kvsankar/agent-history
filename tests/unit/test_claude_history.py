@@ -10595,6 +10595,381 @@ class TestExportIncremental:
         assert third_mtime > second_mtime
 
 
+class TestHtmlExport:
+    """Validate offline HTML export and progressive detail controls."""
+
+    def test_export_html_flags_parse(self):
+        parser = ch._create_argument_parser()
+        args = parser.parse_args(
+            ["export", "--format", "html", "--html-level", "3", "--html-single"]
+        )
+        assert args.output_format == ch.EXPORT_FORMAT_HTML
+        assert args.html_level == 3
+        assert args.html_split == ch.HTML_SPLIT_WORKSPACE
+
+    def test_render_html_document_includes_levels_and_escapes_text(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Run <b>unsafe</b> command"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I will run it."},
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Bash",
+                            "input": {"cmd": "echo hello"},
+                        },
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool1",
+                            "content": "hello",
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:02Z",
+                "uuid": "u2",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=2)
+
+        assert '<html lang="en" data-level="2">' in html
+        assert 'data-flag-button="actions" aria-pressed="true"' in html
+        assert 'data-flag-button="full-io" aria-pressed="false"' in html
+        assert 'data-flag-button="trace" aria-pressed="false"' in html
+        assert 'class="utility-control" type="button" data-expand-all' in html
+        assert "Turn 1" in html
+        assert "Message 1" not in html
+        assert 'class="message message-user"' in html
+        assert 'class="message message-action"' in html
+        assert "Run &lt;b&gt;unsafe&lt;/b&gt; command" in html
+        assert "Tool call: Bash" in html
+        assert "Actions: 1 tool call, 1 tool result, 1 assistant note" in html
+        assert 'data-level="3" hidden data-open-level="3"' in html
+        assert "Full input" in html
+        assert "Full output" in html
+        assert 'data-level="4"' in html
+
+    def test_html_annotations_mark_conversation_and_actions(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Check the repo"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I will inspect files first."},
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Bash",
+                            "input": {"cmd": "ls"},
+                        },
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "The repo is ready."}],
+                },
+                "timestamp": "2025-01-01T10:00:02Z",
+                "uuid": "a2",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        ch.annotate_conversation_messages(messages, ch.AGENT_CLAUDE)
+        assert [msg["_html_session_turn_index"] for msg in messages] == [1, 1, 1]
+        assert [msg["_html_conversation_role"] for msg in messages] == [
+            "user_input",
+            "tool_action",
+            "assistant_final",
+        ]
+        assert [msg["_html_detail_level"] for msg in messages] == [1, 2, 1]
+
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=1)
+        assert '<details class="turn-actions" data-level="2" hidden data-open-level="2">' in html
+        assert 'class="message message-assistant"' in html
+        assert "The repo is ready." in html
+        assert "No visible text." not in html
+
+    def test_html_does_not_promote_empty_assistant_events(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Run tests"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": []},
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a-empty",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Tests passed."}],
+                },
+                "timestamp": "2025-01-01T10:00:02Z",
+                "uuid": "a-final",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=1)
+
+        assert "Turn 1" in html
+        assert "Tests passed." in html
+        assert "No visible text." not in html
+        assert "Message 2" not in html
+
+    def test_html_export_turns_are_renumbered_across_sessions(self, tmp_path):
+        first_file = tmp_path / "first.jsonl"
+        first_records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "First turn"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Second turn"},
+                "timestamp": "2025-01-01T10:01:00Z",
+                "uuid": "u2",
+                "sessionId": "s1",
+            },
+        ]
+        second_file = tmp_path / "second.jsonl"
+        second_records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Third turn"},
+                "timestamp": "2025-01-01T11:00:00Z",
+                "uuid": "u3",
+                "sessionId": "s2",
+            },
+        ]
+        first_file.write_text("\n".join(json.dumps(record) for record in first_records))
+        second_file.write_text("\n".join(json.dumps(record) for record in second_records))
+
+        sessions = [
+            ch._build_html_session_data(
+                first_file, ch.AGENT_CLAUDE, ch.read_jsonl_messages(first_file)
+            ),
+            ch._build_html_session_data(
+                second_file, ch.AGENT_CLAUDE, ch.read_jsonl_messages(second_file)
+            ),
+        ]
+        html = ch.render_html_document("Test Export", sessions, initial_level=4)
+
+        assert html.index("Turn 1") < html.index("Turn 2") < html.index("Turn 3")
+        assert "session turn 1" in html
+        assert 'id="turn-3"' in html
+        assert 'data-scroll-turn="2" aria-label="Next turn">&gt;</button>' in html
+        assert 'data-scroll-turn="1" aria-label="Previous turn">&lt;</button>' in html
+        assert 'data-scroll-turn="3" aria-label="Next turn">&gt;</button>' in html
+        assert 'aria-label="Previous turn" disabled>&lt;</button>' in html
+        assert 'aria-label="Next turn" disabled>&gt;</button>' in html
+
+    def test_html_level_three_opens_full_tool_details(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Bash",
+                            "input": {"cmd": "echo hello"},
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            }
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=3)
+        assert 'data-open-level="3" open' in html
+
+    def test_html_export_options_signature_detects_level_changes(self, tmp_path):
+        output_file = tmp_path / "session.html"
+        html = ch.render_html_document("Test Export", [], initial_level=1)
+        output_file.write_text(html, encoding="utf-8")
+
+        assert ch._html_export_options_match(output_file, 1, ch.HTML_SPLIT_SESSION)
+        assert not ch._html_export_options_match(output_file, 2, ch.HTML_SPLIT_SESSION)
+
+    def test_markdown_export_does_not_leak_html_structural_fields(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I will inspect files."},
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Bash",
+                            "input": {"cmd": "ls"},
+                        },
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            }
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        markdown = ch.parse_jsonl_to_markdown(session_file)
+
+        assert "**[Tool Use: Bash]**" in markdown
+        assert "content_blocks" not in markdown
+        assert "raw_payload" not in markdown
+
+    def test_cmd_batch_exports_workspace_html_bundle(
+        self, tmp_path, sample_jsonl_content, monkeypatch
+    ):
+        projects_dir = tmp_path / ".claude" / "projects"
+        workspace_dir = projects_dir / "-home-user-htmlproj"
+        workspace_dir.mkdir(parents=True)
+        session_file = workspace_dir / "session.jsonl"
+        session_file.write_text(
+            "\n".join(json.dumps(msg) for msg in sample_jsonl_content),
+            encoding="utf-8",
+        )
+
+        output_dir = tmp_path / "exports"
+        monkeypatch.setattr(ch, "get_claude_projects_dir", lambda: projects_dir)
+        monkeypatch.setattr(ch, "_get_claude_projects_path", lambda: projects_dir)
+
+        args = SimpleNamespace(
+            output_dir=str(output_dir),
+            patterns=["htmlproj"],
+            since=None,
+            until=None,
+            force=False,
+            minimal=False,
+            split=None,
+            flat=False,
+            remote=None,
+            lenient=False,
+            output_format=ch.EXPORT_FORMAT_HTML,
+            html_level=2,
+            html_split=ch.HTML_SPLIT_WORKSPACE,
+            agent=ch.AGENT_CLAUDE,
+        )
+
+        assert ch.cmd_batch(args) is True
+        html_files = list(output_dir.rglob("*.html"))
+        assert len(html_files) == 1
+        content = html_files[0].read_text(encoding="utf-8")
+        assert "offline HTML with progressive detail controls" in content
+        assert "Hello Claude" in content
+
+    def test_alias_html_workspace_export_bundles_sessions(
+        self, tmp_path, sample_jsonl_content
+    ):
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+        session_file = workspace_dir / "session.jsonl"
+        session_file.write_text(
+            "\n".join(json.dumps(msg) for msg in sample_jsonl_content),
+            encoding="utf-8",
+        )
+
+        output_dir = tmp_path / "exports"
+        output_dir.mkdir()
+        stats = {"exported": 0, "skipped": 0, "failed": 0}
+        opts = {
+            "force": False,
+            "quiet": True,
+            "flat": False,
+            "html_level": 1,
+        }
+        items = [
+            {
+                "session": {
+                    "file": session_file,
+                    "workspace": "-home-user-htmlproj",
+                    "filename": "session.jsonl",
+                    "modified": datetime.fromtimestamp(session_file.stat().st_mtime),
+                    "agent": ch.AGENT_CLAUDE,
+                },
+                "workspace_name": "-home-user-htmlproj",
+                "source_tag": "",
+            }
+        ]
+
+        ch._export_alias_html_workspace_sessions(items, output_dir, opts, stats)
+
+        assert stats["exported"] == 1
+        html_files = list(output_dir.rglob("*.html"))
+        assert len(html_files) == 1
+        assert "Hello Claude" in html_files[0].read_text(encoding="utf-8")
+
+
 # ============================================================================
 # Section 19: Regression Tests for Bug Fixes
 # ============================================================================

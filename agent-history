@@ -13,6 +13,7 @@ import argparse
 import base64
 import errno
 import hashlib
+import html as html_lib
 import json
 import math
 import os
@@ -105,6 +106,19 @@ CODEX_DATE_FOLDER_DEPTH = 4  # Depth of YYYY/MM/DD/file structure
 
 # Time constants
 SECONDS_PER_MINUTE = 60
+
+# Export formats
+EXPORT_FORMAT_MARKDOWN = "markdown"
+EXPORT_FORMAT_HTML = "html"
+HTML_SPLIT_SESSION = "session"
+HTML_SPLIT_WORKSPACE = "workspace"
+HTML_DEFAULT_LEVEL = 1
+HTML_MAX_LEVEL = 4
+HTML_ACTION_SUMMARY_LEVEL = 2
+HTML_FULL_ACTION_LEVEL = 3
+HTML_FULL_TRACE_LEVEL = 4
+HTML_SNIPPET_LINES = 8
+HTML_SNIPPET_CHARS = 1200
 
 # Database migration versions
 DB_VERSION_TIME_TRACKING = 3  # Version that added time tracking
@@ -324,6 +338,9 @@ class ExportConfig:
     agent: str = "auto"
     jobs: int = 1
     quiet: bool = False
+    output_format: str = EXPORT_FORMAT_MARKDOWN
+    html_level: int = HTML_DEFAULT_LEVEL
+    html_split: str = HTML_SPLIT_SESSION
 
     @property
     def workspace(self) -> str:
@@ -365,6 +382,9 @@ class ExportConfig:
             agent=get_field("agent") or "auto",
             jobs=get_field("jobs", 1),
             quiet=get_field("quiet", False),
+            output_format=get_field("output_format", EXPORT_FORMAT_MARKDOWN),
+            html_level=get_field("html_level", HTML_DEFAULT_LEVEL),
+            html_split=get_field("html_split", HTML_SPLIT_SESSION),
         )
 
 
@@ -468,6 +488,8 @@ class ConvertCommandArgs:
     output: Optional[str] = None
     remote: Optional[str] = None
     quiet: bool = False
+    output_format: str = EXPORT_FORMAT_MARKDOWN
+    html_level: int = HTML_DEFAULT_LEVEL
 
 
 @dataclass
@@ -492,11 +514,25 @@ class ExportAllConfig:
     no_wsl: bool = False
     no_windows: bool = False
     no_remote: bool = False
+    output_format: str = EXPORT_FORMAT_MARKDOWN
+    html_level: int = HTML_DEFAULT_LEVEL
+    html_split: str = HTML_SPLIT_SESSION
 
     @property
     def workspace(self) -> str:
         """First pattern as workspace (backward compatibility)."""
         return self.patterns[0] if self.patterns else ""
+
+
+@dataclass
+class ExportRenderOptions:
+    """Rendering options for one exported session."""
+
+    minimal: bool = False
+    split_lines: Optional[int] = None
+    quiet: bool = False
+    output_format: str = EXPORT_FORMAT_MARKDOWN
+    html_level: int = HTML_DEFAULT_LEVEL
 
 
 @dataclass
@@ -550,6 +586,19 @@ def validate_split_lines(value):
         return ivalue
     except ValueError as e:
         raise argparse.ArgumentTypeError(f"split value must be an integer, got '{value}'") from e
+
+
+def validate_html_level(value):
+    """Validate HTML detail level argument for argparse."""
+    try:
+        ivalue = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"html level must be an integer, got '{value}'") from e
+    if ivalue < 1 or ivalue > HTML_MAX_LEVEL:
+        raise argparse.ArgumentTypeError(
+            f"html level must be between 1 and {HTML_MAX_LEVEL}, got '{value}'"
+        )
+    return ivalue
 
 
 # ============================================================================
@@ -1476,6 +1525,48 @@ def _iter_json_objects(line: str) -> Optional[list]:
     return objects
 
 
+def _normalize_claude_result_content(result_content) -> str:
+    """Normalize Claude tool_result content to text."""
+    if isinstance(result_content, list):
+        return "\n".join(_extract_text_from_result_item(item) for item in result_content)
+    return "" if result_content is None else str(result_content)
+
+
+def _normalize_claude_content_blocks(content) -> list:
+    """Normalize Claude message content blocks for non-Markdown renderers."""
+    if isinstance(content, str):
+        return [{"kind": "text", "text": content}]
+    if not isinstance(content, list):
+        return []
+
+    blocks = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "text":
+            blocks.append({"kind": "text", "text": block.get("text", "")})
+        elif block_type == "tool_use":
+            blocks.append(
+                {
+                    "kind": "tool_call",
+                    "name": block.get("name", "unknown"),
+                    "id": block.get("id", ""),
+                    "input": block.get("input", {}),
+                }
+            )
+        elif block_type == "tool_result":
+            blocks.append(
+                {
+                    "kind": "tool_result",
+                    "tool_use_id": block.get("tool_use_id", ""),
+                    "is_error": block.get("is_error", False),
+                    "output": _normalize_claude_result_content(block.get("content", "")),
+                }
+            )
+    return blocks
+
+
 def _format_tool_use_block(block: dict) -> list:
     """Format a tool_use block as markdown lines."""
     tool_name = block.get("name", "unknown")
@@ -1771,6 +1862,7 @@ def _build_message_dict(
     return {
         "role": role,
         "content": content,
+        "content_blocks": _normalize_claude_content_blocks(message_obj.get("content")),
         "timestamp": timestamp,
         "uuid": entry.get("uuid", ""),
         "parentUuid": entry.get("parentUuid"),
@@ -2203,6 +2295,1346 @@ def generate_markdown_for_messages(
 
 
 # ============================================================================
+# HTML Export Rendering
+# ============================================================================
+
+
+HTML_LEVEL_LABELS = {
+    1: "Conversation",
+    2: "Actions Summary",
+    3: "Full Actions",
+    4: "Full Trace",
+}
+
+HTML_DETAIL_FLAGS = {
+    "actions": ("Actions", HTML_ACTION_SUMMARY_LEVEL),
+    "full-io": ("Full I/O", HTML_FULL_ACTION_LEVEL),
+    "trace": ("Trace", HTML_FULL_TRACE_LEVEL),
+}
+
+
+HTML_STYLE = """
+:root {
+  color-scheme: light;
+  --bg: #f7f8fb;
+  --panel: #ffffff;
+  --panel-muted: #f1f4f8;
+  --text: #18212f;
+  --muted: #5c6778;
+  --border: #d9e0ea;
+  --accent: #3158d4;
+  --accent-soft: #e8edff;
+  --user-soft: #edf8f2;
+  --user-border: #cce7d7;
+  --assistant-soft: #f4f2ff;
+  --assistant-border: #dcd6fb;
+  --action-soft: #fff7e6;
+  --action-border: #f2ddb2;
+  --raw-soft: #f8f9fb;
+  --tool: #0f766e;
+  --tool-soft: #e4f5f2;
+  --trace: #6d3fb6;
+  --trace-soft: #f2eafd;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--border);
+  background: rgba(247, 248, 251, 0.96);
+  backdrop-filter: blur(8px);
+}
+.topbar-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 24px;
+}
+h1 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+.subtitle {
+  margin: 4px 0 14px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+}
+.control-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.control-actions {
+  margin-left: auto;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+.controls button, .toggle-control {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.toggle-control[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.utility-control {
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+}
+.utility-control:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+[hidden] {
+  display: none !important;
+}
+main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.session {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.session-header {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-muted);
+}
+.session-header h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+}
+.subagent-note {
+  margin: 14px 18px;
+  border: 1px solid var(--trace);
+  border-radius: 6px;
+  background: var(--trace-soft);
+  padding: 10px 12px;
+  color: #3f2569;
+}
+.turn {
+  border-top: 1px solid var(--border);
+  padding: 18px;
+  scroll-margin-top: 92px;
+}
+.turn:first-of-type {
+  border-top: 0;
+}
+.turn-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.turn-heading {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.turn-title {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: 0;
+}
+.turn-nav {
+  display: inline-flex;
+  gap: 4px;
+}
+.turn-nav-button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+.turn-nav-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.turn-nav-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.turn-meta {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+.turn-conversation {
+  display: grid;
+  gap: 10px;
+}
+.turn-actions, .turn-trace {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fbfcfe;
+  padding: 10px 12px 12px;
+}
+.message {
+  padding: 16px 18px;
+  border-top: 1px solid var(--border);
+}
+.turn .message {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.turn .message-user {
+  border-color: var(--user-border);
+  background: var(--user-soft);
+}
+.turn .message-assistant {
+  border-color: var(--assistant-border);
+  background: var(--assistant-soft);
+}
+.turn .message-action {
+  border-color: var(--action-border);
+  background: var(--action-soft);
+}
+.turn .message-raw {
+  background: var(--raw-soft);
+}
+.turn .message + .message {
+  margin-top: 8px;
+}
+.message:first-child {
+  border-top: 0;
+}
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+.role {
+  font-weight: 700;
+}
+.timestamp {
+  color: var(--muted);
+  font-size: 12px;
+}
+.message-text, pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.message-text {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+.trace-block {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+.trace-title {
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+}
+.tool-block .trace-title {
+  color: var(--tool);
+  background: var(--tool-soft);
+}
+.reasoning-block .trace-title, .metadata-block .trace-title {
+  color: var(--trace);
+  background: var(--trace-soft);
+}
+.trace-body {
+  padding: 10px 11px;
+}
+.snippet {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+details {
+  margin-top: 10px;
+}
+summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+}
+.empty {
+  color: var(--muted);
+  font-style: italic;
+}
+.footer {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 0 24px;
+}
+"""
+
+
+HTML_SCRIPT = """
+(function () {
+  var flagOrder = ["actions", "full-io", "trace"];
+
+  function intValue(value, fallback) {
+    var parsed = parseInt(value, 10);
+    return isNaN(parsed) ? fallback : parsed;
+  }
+
+  function flagsFromLevel(level) {
+    return {
+      actions: level >= 2,
+      "full-io": level >= 3,
+      trace: level >= 4
+    };
+  }
+
+  function displayLevel(flags) {
+    if (flags.trace) {
+      return 4;
+    }
+    if (flags["full-io"]) {
+      return 3;
+    }
+    if (flags.actions) {
+      return 2;
+    }
+    return 1;
+  }
+
+  function levelVisible(level, flags) {
+    if (level <= 1) {
+      return true;
+    }
+    if (level === 2) {
+      return flags.actions || flags["full-io"] || flags.trace;
+    }
+    if (level === 3) {
+      return flags["full-io"] || flags.trace;
+    }
+    return flags.trace;
+  }
+
+  function normalizeFlags(flags) {
+    if (flags.trace) {
+      flags.actions = true;
+      flags["full-io"] = true;
+    } else if (flags["full-io"]) {
+      flags.actions = true;
+    }
+    return flags;
+  }
+
+  function readFlags() {
+    var flags = {};
+    flagOrder.forEach(function (flag) {
+      flags[flag] = document.documentElement.dataset[flag.replace("-", "")] === "true";
+    });
+    return normalizeFlags(flags);
+  }
+
+  function writeFlags(flags) {
+    flagOrder.forEach(function (flag) {
+      document.documentElement.dataset[flag.replace("-", "")] = flags[flag] ? "true" : "false";
+    });
+    document.documentElement.dataset.level = String(displayLevel(flags));
+  }
+
+  function applyFlags(flags) {
+    flags = normalizeFlags(flags);
+    writeFlags(flags);
+    var currentLevel = displayLevel(flags);
+    document.querySelectorAll("[data-level]").forEach(function (el) {
+      var min = intValue(el.getAttribute("data-level"), 1);
+      var max = intValue(el.getAttribute("data-max-level"), 99);
+      el.hidden = !levelVisible(min, flags) || currentLevel > max;
+    });
+    document.querySelectorAll("[data-flag-button]").forEach(function (button) {
+      var flag = button.getAttribute("data-flag-button");
+      button.setAttribute("aria-pressed", flags[flag] ? "true" : "false");
+    });
+    document.querySelectorAll("details[data-open-level]").forEach(function (details) {
+      details.open = levelVisible(intValue(details.getAttribute("data-open-level"), 99), flags);
+    });
+  }
+
+  document.querySelectorAll("[data-flag-button]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var flags = readFlags();
+      var flag = button.getAttribute("data-flag-button");
+      flags[flag] = !flags[flag];
+      if (flag === "actions" && !flags.actions) {
+        flags["full-io"] = false;
+        flags.trace = false;
+      }
+      if (flag === "full-io" && !flags["full-io"]) {
+        flags.trace = false;
+      }
+      applyFlags(flags);
+    });
+  });
+
+  document.querySelector("[data-expand-all]").addEventListener("click", function () {
+    document.querySelectorAll("details").forEach(function (details) {
+      details.open = true;
+    });
+  });
+
+  document.querySelector("[data-collapse-all]").addEventListener("click", function () {
+    document.querySelectorAll("details").forEach(function (details) {
+      details.open = false;
+    });
+  });
+
+  document.querySelectorAll("[data-scroll-turn]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var target = document.getElementById("turn-" + button.getAttribute("data-scroll-turn"));
+      if (target) {
+        var topbar = document.querySelector(".topbar");
+        var topbarHeight = topbar ? topbar.getBoundingClientRect().height : 0;
+        var targetTop = target.getBoundingClientRect().top + window.pageYOffset;
+        window.scrollTo({
+          top: Math.max(0, targetTop - topbarHeight - 12),
+          behavior: "smooth"
+        });
+      }
+    });
+  });
+
+  applyFlags(flagsFromLevel(intValue(document.body.getAttribute("data-initial-level"), 1)));
+})();
+"""
+
+
+def _html_escape(value) -> str:
+    """Escape text for HTML body content."""
+    return html_lib.escape("" if value is None else str(value), quote=False)
+
+
+def _html_attr(value) -> str:
+    """Escape text for HTML attributes."""
+    return html_lib.escape("" if value is None else str(value), quote=True)
+
+
+def _html_pre(text, class_name: str = "") -> str:
+    """Render text in a wrapped pre block."""
+    class_attr = f' class="{_html_attr(class_name)}"' if class_name else ""
+    return f"<pre{class_attr}>{_html_escape(text)}</pre>"
+
+
+def _html_level_attrs(
+    min_level: int, initial_level: int, max_level: Optional[int] = None
+) -> str:
+    """Return progressive-disclosure attributes for an HTML element."""
+    attrs = [f'data-level="{min_level}"']
+    if max_level is not None:
+        attrs.append(f'data-max-level="{max_level}"')
+    if initial_level < min_level or (max_level is not None and initial_level > max_level):
+        attrs.append("hidden")
+    return " ".join(attrs)
+
+
+def _html_snippet(text: str) -> str:
+    """Return a compact snippet for level 2 action summaries."""
+    if not text:
+        return ""
+    lines = str(text).splitlines()
+    clipped_lines = lines[:HTML_SNIPPET_LINES]
+    snippet = "\n".join(clipped_lines)
+    if len(snippet) > HTML_SNIPPET_CHARS:
+        snippet = snippet[:HTML_SNIPPET_CHARS].rstrip()
+    clipped = len(lines) > HTML_SNIPPET_LINES or len(str(text)) > len(snippet)
+    return f"{snippet}\n... [truncated]" if clipped else snippet
+
+
+def _html_json(value) -> str:
+    """Return a JSON-ish display string for HTML trace blocks."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return value
+        return pretty_json(parsed)
+    try:
+        return pretty_json(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _render_trace_block(
+    title: str, snippet: str, full_label: str, full_text: str, initial_level: int
+) -> str:
+    """Render a progressive-disclosure trace block."""
+    parts = [
+        f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+        f'<div class="trace-title">{_html_escape(title)}</div>',
+        '<div class="trace-body">',
+    ]
+    if snippet:
+        parts.append(_html_pre(snippet, "snippet"))
+    if full_text:
+        open_attr = " open" if initial_level >= HTML_FULL_ACTION_LEVEL else ""
+        parts.extend(
+            [
+                f'<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} '
+                f'data-open-level="{HTML_FULL_ACTION_LEVEL}"{open_attr}>',
+                f"<summary>{_html_escape(full_label)}</summary>",
+                _html_pre(full_text),
+                "</details>",
+            ]
+        )
+    parts.extend(["</div>", "</section>"])
+    return "\n".join(parts)
+
+
+def _render_claude_tool_blocks(msg: dict, initial_level: int) -> list:
+    """Render Claude tool_use/tool_result content blocks."""
+    rendered = []
+    for block in msg.get("content_blocks", []):
+        kind = block.get("kind")
+        if kind == "tool_call":
+            name = block.get("name", "unknown")
+            tool_id = block.get("id", "")
+            full = _html_json(block.get("input", {}))
+            title = f"Tool call: {name}" + (f" ({tool_id})" if tool_id else "")
+            rendered.append(
+                _render_trace_block(title, _html_snippet(full), "Full input", full, initial_level)
+            )
+        elif kind == "tool_result":
+            status = "error" if block.get("is_error") else "success"
+            tool_id = block.get("tool_use_id", "")
+            full = block.get("output", "")
+            title = f"Tool result: {status}" + (f" ({tool_id})" if tool_id else "")
+            rendered.append(
+                _render_trace_block(title, _html_snippet(full), "Full output", full, initial_level)
+            )
+    return rendered
+
+
+def _render_codex_tool_blocks(msg: dict, initial_level: int) -> list:
+    """Render Codex function call and output messages."""
+    payload = msg.get("raw_payload") or {}
+    if msg.get("is_tool_call"):
+        name = payload.get("name", "unknown")
+        call_id = payload.get("call_id", "")
+        full = _html_json(payload.get("arguments", "{}"))
+        title = f"Tool call: {name}" + (f" ({call_id})" if call_id else "")
+        return [
+            _render_trace_block(title, _html_snippet(full), "Full input", full, initial_level)
+        ]
+    if msg.get("is_tool_result"):
+        call_id = payload.get("call_id", "")
+        full = payload.get("output", msg.get("content", ""))
+        title = "Tool result" + (f" ({call_id})" if call_id else "")
+        return [
+            _render_trace_block(title, _html_snippet(full), "Full output", full, initial_level)
+        ]
+    return []
+
+
+def _render_gemini_tool_blocks(msg: dict, initial_level: int) -> list:
+    """Render Gemini tool calls."""
+    rendered = []
+    for tool_call in msg.get("tool_calls", []):
+        name = tool_call.get("displayName") or tool_call.get("name", "unknown")
+        status = tool_call.get("status", "")
+        title = f"Tool call: {name}" + (f" ({status})" if status else "")
+        full_parts = []
+        if tool_call.get("args"):
+            full_parts.extend(["Input:", _html_json(tool_call.get("args"))])
+        if tool_call.get("result"):
+            full_parts.extend(["Result:", _html_json(tool_call.get("result"))])
+        full = "\n".join(full_parts)
+        rendered.append(
+            _render_trace_block(
+                title, _html_snippet(full), "Full input/output", full, initial_level
+            )
+        )
+    return rendered
+
+
+def _render_html_tool_blocks(msg: dict, agent: str, initial_level: int) -> list:
+    """Render tool details for one normalized message."""
+    if agent == AGENT_CODEX:
+        return _render_codex_tool_blocks(msg, initial_level)
+    if agent == AGENT_GEMINI:
+        return _render_gemini_tool_blocks(msg, initial_level)
+    return _render_claude_tool_blocks(msg, initial_level)
+
+
+def _html_message_text(msg: dict, agent: str) -> str:
+    """Return user/assistant-visible text for the message."""
+    if agent == AGENT_CLAUDE and msg.get("content_blocks") is not None:
+        text_blocks = [
+            block.get("text", "")
+            for block in msg.get("content_blocks", [])
+            if block.get("kind") == "text"
+        ]
+        return "\n".join(text for text in text_blocks if text)
+    if agent == AGENT_CODEX and (msg.get("is_tool_call") or msg.get("is_tool_result")):
+        return ""
+    return msg.get("content", "")
+
+
+def _html_message_has_tools(msg: dict, agent: str) -> bool:
+    """Return True if the message carries tool call/result detail."""
+    if agent == AGENT_CODEX:
+        return bool(msg.get("is_tool_call") or msg.get("is_tool_result"))
+    if agent == AGENT_GEMINI:
+        return bool(msg.get("tool_calls"))
+    return any(
+        block.get("kind") in ("tool_call", "tool_result")
+        for block in msg.get("content_blocks", [])
+    )
+
+
+def _html_message_has_tool_result(msg: dict, agent: str) -> bool:
+    """Return True if the message carries tool output."""
+    if agent == AGENT_CODEX:
+        return bool(msg.get("is_tool_result"))
+    if agent == AGENT_GEMINI:
+        return any(tool_call.get("result") for tool_call in msg.get("tool_calls", []))
+    return any(block.get("kind") == "tool_result" for block in msg.get("content_blocks", []))
+
+
+def _html_message_has_tool_call(msg: dict, agent: str) -> bool:
+    """Return True if the message carries tool input/call detail."""
+    if agent == AGENT_CODEX:
+        return bool(msg.get("is_tool_call"))
+    if agent == AGENT_GEMINI:
+        return bool(msg.get("tool_calls"))
+    return any(block.get("kind") == "tool_call" for block in msg.get("content_blocks", []))
+
+
+def _html_message_min_level(msg: dict, agent: str) -> int:
+    """Return the minimum detail level where this message should appear."""
+    text = _html_message_text(msg, agent).strip()
+    has_tools = _html_message_has_tools(msg, agent)
+    role = msg.get("role")
+    if msg.get("role") == "assistant" and has_tools:
+        return 2
+    if not text and has_tools:
+        return 2
+    if role not in ("user", "assistant") and not has_tools:
+        return 4
+    return 1
+
+
+def _html_is_user_input(msg: dict, agent: str) -> bool:
+    """Return True when a message represents an end-user turn boundary."""
+    if msg.get("role") != "user":
+        return False
+    if agent == AGENT_CLAUDE and msg.get("content_blocks") is not None:
+        has_tool_result = any(
+            block.get("kind") == "tool_result" for block in msg.get("content_blocks", [])
+        )
+        return bool(_html_message_text(msg, agent).strip()) and not has_tool_result
+    return True
+
+
+def _html_is_assistant_final_candidate(msg: dict, agent: str) -> bool:
+    """Return True when a message can be the final visible assistant output for a turn."""
+    return (
+        msg.get("role") == "assistant"
+        and bool(_html_message_text(msg, agent).strip())
+        and not _html_message_has_tools(msg, agent)
+    )
+
+
+def _html_turn_min_levels(messages: list, agent: str) -> list[int]:
+    """Compute message visibility levels with a turn-aware final-output heuristic."""
+    levels = [_html_message_min_level(msg, agent) for msg in messages]
+    current_turn: list[int] = []
+
+    def finalize_turn() -> None:
+        final_idx = None
+        for idx in reversed(current_turn):
+            if _html_is_assistant_final_candidate(messages[idx], agent):
+                final_idx = idx
+                break
+        for idx in current_turn:
+            if _html_is_assistant_final_candidate(messages[idx], agent):
+                levels[idx] = 1 if idx == final_idx else max(levels[idx], 2)
+
+    for idx, msg in enumerate(messages):
+        if _html_is_user_input(msg, agent):
+            finalize_turn()
+            current_turn = [idx]
+            levels[idx] = 1
+        else:
+            current_turn.append(idx)
+    finalize_turn()
+    return levels
+
+
+def _html_classify_message(
+    msg: dict,
+    agent: str,
+    text: str,
+    has_tool_call: bool,
+    has_tool_result: bool,
+    has_tools: bool,
+    is_user_input: bool,
+) -> tuple[str, int]:
+    """Classify one normalized message for conversation-focused HTML export."""
+    if is_user_input:
+        return "user_input", 1
+    if _html_is_assistant_final_candidate(msg, agent):
+        return "assistant_intermediate", HTML_ACTION_SUMMARY_LEVEL
+    if has_tool_result:
+        return "tool_result", HTML_ACTION_SUMMARY_LEVEL
+    if has_tool_call or has_tools:
+        return "tool_action", HTML_ACTION_SUMMARY_LEVEL
+    if msg.get("role") == "assistant" and text.strip():
+        return "assistant_intermediate", HTML_ACTION_SUMMARY_LEVEL
+    if msg.get("role") in ("user", "assistant"):
+        return "raw_event", HTML_FULL_TRACE_LEVEL
+    return "system", HTML_FULL_TRACE_LEVEL
+
+
+def annotate_conversation_messages(messages: list, agent: str) -> list:
+    """Annotate normalized messages with conversation-turn metadata for export.
+
+    The annotations stay on the existing normalized message dictionaries so the
+    renderer can group by turns without introducing a parallel transcript model.
+    """
+    current_turn = 0
+    turn_indexes: dict[int, list[int]] = {}
+
+    for index, msg in enumerate(messages):
+        text = _html_message_text(msg, agent)
+        has_tool_call = _html_message_has_tool_call(msg, agent)
+        has_tool_result = _html_message_has_tool_result(msg, agent)
+        has_tools = has_tool_call or has_tool_result
+        is_user_input = _html_is_user_input(msg, agent)
+
+        if is_user_input:
+            current_turn += 1
+
+        conversation_role, detail_level = _html_classify_message(
+            msg, agent, text, has_tool_call, has_tool_result, has_tools, is_user_input
+        )
+
+        msg["_html_visible_text"] = text
+        msg["_html_has_tool_call"] = has_tool_call
+        msg["_html_has_tool_result"] = has_tool_result
+        msg["_html_has_tools"] = has_tools
+        msg["_html_is_end_user_input"] = is_user_input
+        msg["_html_conversation_role"] = conversation_role
+        msg["_html_detail_level"] = detail_level
+        msg["_html_session_turn_index"] = current_turn
+        msg["_html_export_turn_index"] = None
+        msg["_html_turn_offset"] = 0
+        turn_indexes.setdefault(current_turn, []).append(index)
+
+    for turn_index, indexes in turn_indexes.items():
+        if turn_index <= 0:
+            continue
+        final_idx = None
+        for index in reversed(indexes):
+            if _html_is_assistant_final_candidate(messages[index], agent):
+                final_idx = index
+                break
+        if final_idx is not None:
+            messages[final_idx]["_html_conversation_role"] = "assistant_final"
+            messages[final_idx]["_html_detail_level"] = 1
+
+    return messages
+
+
+def _annotate_export_turn_numbers(sessions: list) -> None:
+    """Assign contiguous turn numbers across rendered sessions."""
+    offset = 0
+    for session in sessions:
+        messages = session.get("messages") or []
+        max_session_turn = max(
+            (int(msg.get("_html_session_turn_index") or 0) for msg in messages),
+            default=0,
+        )
+        for msg in messages:
+            session_turn = int(msg.get("_html_session_turn_index") or 0)
+            msg["_html_turn_offset"] = offset
+            msg["_html_export_turn_index"] = offset + session_turn if session_turn else None
+        session["_html_turn_offset"] = offset
+        session["_html_turn_count"] = max_session_turn
+        offset += max_session_turn
+
+
+def _html_group_messages_by_turn(messages: list) -> list[tuple[int, list]]:
+    """Group annotated messages by session turn in original order."""
+    grouped: dict[int, list] = {}
+    order = []
+    for msg in messages:
+        turn_index = int(msg.get("_html_session_turn_index") or 0)
+        if turn_index not in grouped:
+            grouped[turn_index] = []
+            order.append(turn_index)
+        grouped[turn_index].append(msg)
+    return [(turn_index, grouped[turn_index]) for turn_index in order]
+
+
+def _render_html_reasoning(msg: dict, initial_level: int) -> str:
+    """Render model reasoning/thoughts where available."""
+    thoughts = msg.get("thoughts") or []
+    if not thoughts:
+        return ""
+    lines = []
+    for thought in thoughts:
+        if isinstance(thought, dict):
+            subject = thought.get("subject", "")
+            description = thought.get("description", "")
+            lines.append(f"{subject}: {description}" if subject else str(description))
+        else:
+            lines.append(str(thought))
+    text = "\n".join(line for line in lines if line)
+    return "\n".join(
+        [
+            f'<section class="trace-block reasoning-block" {_html_level_attrs(4, initial_level)}>',
+            '<div class="trace-title">Reasoning</div>',
+            '<div class="trace-body">',
+            _html_pre(text),
+            "</div>",
+            "</section>",
+        ]
+    )
+
+
+def _render_html_metadata(msg: dict, initial_level: int) -> str:
+    """Render message metadata for full-trace mode."""
+    excluded = {"content", "thoughts"}
+    metadata = {k: v for k, v in msg.items() if k not in excluded and v not in (None, "", [])}
+    if not metadata:
+        return ""
+    return "\n".join(
+        [
+            f'<section class="trace-block metadata-block" {_html_level_attrs(4, initial_level)}>',
+            '<div class="trace-title">Metadata</div>',
+            '<div class="trace-body">',
+            _html_pre(_html_json(metadata)),
+            "</div>",
+            "</section>",
+        ]
+    )
+
+
+def _html_role_label(msg: dict, agent: str) -> str:
+    """Return a readable role label for HTML."""
+    if agent == AGENT_CODEX:
+        if msg.get("is_tool_call"):
+            return "Tool Call"
+        if msg.get("is_tool_result"):
+            return "Tool Result"
+    role = msg.get("role", "unknown")
+    if agent == AGENT_GEMINI:
+        return _GEMINI_ROLE_DISPLAY_NAMES.get(role, role.title())
+    return role.title()
+
+
+def _html_conversation_label(msg: dict, agent: str) -> str:
+    """Return a turn-focused label for an annotated message."""
+    role = msg.get("_html_conversation_role")
+    if role == "user_input":
+        return "User"
+    if role == "assistant_final":
+        return "Assistant"
+    if role == "assistant_intermediate":
+        return "Assistant draft"
+    if role == "tool_action":
+        return "Tool call"
+    if role == "tool_result":
+        return "Tool result"
+    if role == "system":
+        return "System"
+    return _html_role_label(msg, agent)
+
+
+def _html_message_kind(msg: dict) -> str:
+    """Return a CSS-facing message kind."""
+    role = msg.get("_html_conversation_role")
+    if role == "user_input":
+        return "user"
+    if role == "assistant_final":
+        return "assistant"
+    if role in ("assistant_intermediate", "tool_action", "tool_result"):
+        return "action"
+    return "raw"
+
+
+def _render_html_message(
+    msg: dict,
+    agent: str,
+    initial_level: int,
+    min_level: Optional[int] = None,
+    label: Optional[str] = None,
+    include_details: bool = True,
+) -> str:
+    """Render one message article."""
+    role = label or _html_conversation_label(msg, agent)
+    timestamp = msg.get("timestamp", "")
+    text = msg.get("_html_visible_text")
+    if text is None:
+        text = _html_message_text(msg, agent)
+    min_level = min_level if min_level is not None else int(msg.get("_html_detail_level") or 1)
+    message_kind = _html_message_kind(msg)
+    parts = [
+        f'<article class="message message-{_html_attr(message_kind)}" '
+        f'{_html_level_attrs(min_level, initial_level)}>',
+        '<div class="message-header">',
+        f'<div class="role">{_html_escape(role)}</div>',
+        f'<div class="timestamp">{_html_escape(timestamp)}</div>',
+        "</div>",
+    ]
+    if text.strip():
+        parts.append(_html_pre(text, "message-text"))
+    if include_details:
+        parts.extend(_render_html_tool_blocks(msg, agent, initial_level))
+        reasoning = _render_html_reasoning(msg, initial_level)
+        if reasoning:
+            parts.append(reasoning)
+        metadata = _render_html_metadata(msg, initial_level)
+        if metadata:
+            parts.append(metadata)
+    parts.append("</article>")
+    return "\n".join(parts)
+
+
+def _html_turn_action_summary(messages: list) -> str:
+    """Return a compact readable summary for a turn's non-conversation activity."""
+    tool_calls = sum(1 for msg in messages if msg.get("_html_has_tool_call"))
+    tool_results = sum(1 for msg in messages if msg.get("_html_has_tool_result"))
+    assistant_notes = sum(
+        1
+        for msg in messages
+        if msg.get("_html_conversation_role") in ("assistant_intermediate", "tool_action")
+        and msg.get("_html_visible_text", "").strip()
+    )
+    parts = []
+    if tool_calls:
+        parts.append(f"{tool_calls} tool call{'s' if tool_calls != 1 else ''}")
+    if tool_results:
+        parts.append(f"{tool_results} tool result{'s' if tool_results != 1 else ''}")
+    if assistant_notes:
+        parts.append(
+            f"{assistant_notes} assistant note{'s' if assistant_notes != 1 else ''}"
+        )
+    return ", ".join(parts) if parts else "No recorded actions"
+
+
+def _html_turn_nav_button(target_turn: Optional[int], label: str, direction: str) -> str:
+    """Render a previous/next turn navigation button."""
+    if target_turn is None:
+        return (
+            f'<button class="turn-nav-button" type="button" aria-label="{_html_attr(direction)} turn" '
+            f"disabled>{_html_escape(label)}</button>"
+        )
+    return (
+        f'<button class="turn-nav-button" type="button" data-scroll-turn="{_html_attr(target_turn)}" '
+        f'aria-label="{_html_attr(direction)} turn">{_html_escape(label)}</button>'
+    )
+
+
+def _render_html_turn(
+    turn_index: int,
+    messages: list,
+    agent: str,
+    initial_level: int,
+    total_turns: int,
+) -> str:
+    """Render one annotated conversation turn."""
+    export_turn = next(
+        (msg.get("_html_export_turn_index") for msg in messages if msg.get("_html_export_turn_index")),
+        None,
+    )
+    display_turn = export_turn or turn_index
+    first_ts = next((msg.get("timestamp", "") for msg in messages if msg.get("timestamp")), "")
+    conversation_messages = [
+        msg
+        for msg in messages
+        if msg.get("_html_conversation_role") in ("user_input", "assistant_final")
+    ]
+    action_messages = [
+        msg
+        for msg in messages
+        if msg.get("_html_detail_level") in (2, 3)
+        and msg.get("_html_conversation_role") not in ("user_input", "assistant_final")
+    ]
+    raw_messages = [
+        msg
+        for msg in messages
+        if msg.get("_html_detail_level", HTML_FULL_TRACE_LEVEL) >= HTML_FULL_TRACE_LEVEL
+    ]
+    action_summary = _html_turn_action_summary(messages)
+    previous_turn = display_turn - 1 if display_turn > 1 else None
+    next_turn = display_turn + 1 if display_turn < total_turns else None
+
+    parts = [
+        f'<article class="turn" id="turn-{_html_attr(display_turn)}" data-turn-index="{_html_attr(display_turn)}">',
+        '<header class="turn-header">',
+        '<div class="turn-heading">',
+        f'<h3 class="turn-title">Turn {_html_escape(display_turn)}</h3>',
+        '<div class="turn-nav">',
+        _html_turn_nav_button(previous_turn, "<", "Previous"),
+        _html_turn_nav_button(next_turn, ">", "Next"),
+        "</div>",
+        "</div>",
+        '<div class="turn-meta">',
+        f'<div>{_html_escape(first_ts)}</div>' if first_ts else "",
+        (
+            f'<div {_html_level_attrs(4, initial_level)}>session turn '
+            f'{_html_escape(turn_index)}</div>'
+        ),
+        "</div>",
+        "</header>",
+        '<section class="turn-conversation">',
+    ]
+
+    if conversation_messages:
+        for msg in conversation_messages:
+            parts.append(
+                _render_html_message(
+                    msg,
+                    agent,
+                    initial_level,
+                    min_level=1,
+                    label=_html_conversation_label(msg, agent),
+                    include_details=False,
+                )
+            )
+    else:
+        parts.append(
+            f'<p class="empty" {_html_level_attrs(4, initial_level)}>No conversation text in this turn.</p>'
+        )
+    parts.append("</section>")
+
+    if action_messages:
+        open_attr = " open" if initial_level >= HTML_ACTION_SUMMARY_LEVEL else ""
+        parts.extend(
+            [
+                f'<details class="turn-actions" {_html_level_attrs(HTML_ACTION_SUMMARY_LEVEL, initial_level)} '
+                f'data-open-level="{HTML_ACTION_SUMMARY_LEVEL}"{open_attr}>',
+                f"<summary>Actions: {_html_escape(action_summary)}</summary>",
+            ]
+        )
+        for msg in action_messages:
+            parts.append(
+                _render_html_message(
+                    msg,
+                    agent,
+                    initial_level,
+                    min_level=max(HTML_ACTION_SUMMARY_LEVEL, int(msg.get("_html_detail_level") or 2)),
+                    label=_html_conversation_label(msg, agent),
+                    include_details=True,
+                )
+            )
+        parts.append("</details>")
+
+    if raw_messages or initial_level >= HTML_FULL_TRACE_LEVEL:
+        open_attr = " open" if initial_level >= HTML_FULL_TRACE_LEVEL else ""
+        parts.extend(
+            [
+                f'<details class="turn-trace" {_html_level_attrs(HTML_FULL_TRACE_LEVEL, initial_level)} '
+                f'data-open-level="{HTML_FULL_TRACE_LEVEL}"{open_attr}>',
+                "<summary>Full trace</summary>",
+            ]
+        )
+        for msg in messages:
+            parts.append(
+                _render_html_message(
+                    msg,
+                    agent,
+                    initial_level,
+                    min_level=HTML_FULL_TRACE_LEVEL,
+                    label=f"Raw {_html_role_label(msg, agent)}",
+                    include_details=True,
+                )
+            )
+        parts.append("</details>")
+
+    parts.append("</article>")
+    return "\n".join(part for part in parts if part != "")
+
+
+def _html_session_is_subagent(messages: list, agent: str) -> bool:
+    """Return True when a session is a Claude sidechain/subagent transcript."""
+    return agent == AGENT_CLAUDE and any(msg.get("isSidechain") for msg in messages)
+
+
+def _html_session_meta(jsonl_file: Path, agent: str) -> dict:
+    """Read session-level metadata for HTML headers."""
+    if agent == AGENT_CODEX:
+        _, meta = codex_read_jsonl_messages(jsonl_file)
+        return meta or {}
+    if agent == AGENT_GEMINI:
+        _, meta = gemini_read_json_messages(jsonl_file)
+        return meta or {}
+    return {}
+
+
+def _build_html_session_data(
+    jsonl_file: Path,
+    agent: str,
+    messages: list,
+    session_info: Optional[dict] = None,
+    display_file: Optional[str] = None,
+) -> dict:
+    """Build renderer input for one HTML session."""
+    annotate_conversation_messages(messages, agent)
+    first_ts = messages[0].get("timestamp", "") if messages else ""
+    last_ts = messages[-1].get("timestamp", "") if messages else ""
+    workspace = (session_info or {}).get("workspace") or ""
+    return {
+        "file": display_file or str(jsonl_file),
+        "filename": (session_info or {}).get("filename") or jsonl_file.name,
+        "agent": agent,
+        "workspace": workspace,
+        "messages": messages,
+        "message_count": len(messages),
+        "first_timestamp": first_ts,
+        "last_timestamp": last_ts,
+        "is_subagent": _html_session_is_subagent(messages, agent),
+        "meta": _html_session_meta(jsonl_file, agent),
+    }
+
+
+def _render_html_session(session: dict, initial_level: int, total_turns: int) -> str:
+    """Render one session block."""
+    agent = session["agent"]
+    messages = session["messages"]
+    turn_count = session.get("_html_turn_count") or max(
+        (int(msg.get("_html_session_turn_index") or 0) for msg in messages),
+        default=0,
+    )
+    badges = [
+        f'<span class="badge">{_html_escape(agent)}</span>',
+    ]
+
+    parts = [
+        '<section class="session">',
+        '<header class="session-header">',
+        f'<h2>{_html_escape(session["filename"])}</h2>',
+        f'<div class="meta-row">{"".join(badges)}</div>',
+        f'<div class="meta-row" {_html_level_attrs(4, initial_level)}>',
+        f'<span>{_html_escape(session["message_count"])} messages</span>',
+        f'<span>{_html_escape(turn_count)} turns</span>',
+    ]
+    if session.get("first_timestamp"):
+        parts.append(f'<span>first: {_html_escape(session["first_timestamp"])}</span>')
+    if session.get("last_timestamp"):
+        parts.append(f'<span>last: {_html_escape(session["last_timestamp"])}</span>')
+    parts.extend(
+        [
+            f'<span>{_html_escape(session["file"])}</span>',
+            "</div>",
+            "</header>",
+        ]
+    )
+    if session.get("is_subagent"):
+        parts.append(
+            f'<div class="subagent-note" {_html_level_attrs(1, initial_level, max_level=3)}>'
+            "Subagent transcript hidden until level 4."
+            "</div>"
+        )
+        parts.append(f'<div {_html_level_attrs(4, initial_level)}>')
+
+    if session.get("meta"):
+        parts.append(
+            "\n".join(
+                [
+                    f'<section class="trace-block metadata-block" {_html_level_attrs(4, initial_level)}>',
+                    '<div class="trace-title">Session Metadata</div>',
+                    '<div class="trace-body">',
+                    _html_pre(_html_json(session["meta"])),
+                    "</div>",
+                    "</section>",
+                ]
+            )
+        )
+
+    if not messages:
+        parts.append('<p class="empty">No messages parsed.</p>')
+    for turn_index, turn_messages in _html_group_messages_by_turn(messages):
+        if turn_index <= 0:
+            preamble = "\n".join(
+                _render_html_message(
+                    msg,
+                    agent,
+                    initial_level,
+                    min_level=HTML_FULL_TRACE_LEVEL,
+                    label=f"Raw {_html_role_label(msg, agent)}",
+                    include_details=True,
+                )
+                for msg in turn_messages
+            )
+            parts.extend(
+                [
+                    f'<details class="turn-trace" {_html_level_attrs(HTML_FULL_TRACE_LEVEL, initial_level)} '
+                    f'data-open-level="{HTML_FULL_TRACE_LEVEL}">',
+                    "<summary>Session preamble</summary>",
+                    preamble,
+                    "</details>",
+                ]
+            )
+            continue
+        parts.append(
+            _render_html_turn(turn_index, turn_messages, agent, initial_level, total_turns)
+        )
+
+    if session.get("is_subagent"):
+        parts.append("</div>")
+    parts.append("</section>")
+    return "\n".join(parts)
+
+
+def _render_html_controls(initial_level: int) -> str:
+    """Render display flag buttons."""
+    buttons = []
+    for flag, (label, level) in HTML_DETAIL_FLAGS.items():
+        pressed = "true" if initial_level >= level else "false"
+        buttons.append(
+            f'<button class="toggle-control" type="button" data-flag-button="{_html_attr(flag)}" '
+            f'aria-pressed="{pressed}">{_html_escape(label)}</button>'
+        )
+    utility_buttons = [
+        '<button class="utility-control" type="button" data-expand-all>Expand all</button>',
+        '<button class="utility-control" type="button" data-collapse-all>Collapse all</button>',
+    ]
+    return "".join(
+        [
+            '<div class="controls">',
+            '<div class="control-group control-flags" role="group" aria-label="Display details">',
+            "\n".join(buttons),
+            "</div>",
+            '<div class="control-group control-actions" role="group" aria-label="Disclosure controls">',
+            "\n".join(utility_buttons),
+            "</div>",
+            "</div>",
+        ]
+    )
+
+
+def _html_export_signature(html_level: int, html_split: str) -> str:
+    """Return a stable signature for HTML render options that affect output."""
+    return json.dumps(
+        {
+            "format": EXPORT_FORMAT_HTML,
+            "html_level": int(html_level or HTML_DEFAULT_LEVEL),
+            "html_split": html_split,
+        },
+        sort_keys=True,
+    )
+
+
+def _html_export_meta_comment(html_level: int, html_split: str) -> str:
+    """Return an HTML comment recording render options for incremental export."""
+    return f"<!-- agent-history-export {_html_escape(_html_export_signature(html_level, html_split))} -->"
+
+
+def _html_export_options_match(output_file: Path, html_level: int, html_split: str) -> bool:
+    """Return True if an existing HTML export was rendered with the same options."""
+    try:
+        prefix = output_file.read_text(encoding="utf-8")[:2048]
+    except OSError:
+        return False
+    return _html_export_signature(html_level, html_split) in prefix
+
+
+def render_html_document(
+    title: str,
+    sessions: list,
+    initial_level: int = HTML_DEFAULT_LEVEL,
+    html_split: str = HTML_SPLIT_SESSION,
+) -> str:
+    """Render a complete offline HTML export document."""
+    safe_level = max(1, min(HTML_MAX_LEVEL, int(initial_level or HTML_DEFAULT_LEVEL)))
+    _annotate_export_turn_numbers(sessions)
+    total_turns = sum(int(session.get("_html_turn_count") or 0) for session in sessions)
+    subtitle = (
+        f"{len(sessions)} session{'s' if len(sessions) != 1 else ''}; "
+        "offline HTML with progressive detail controls"
+    )
+    rendered_sessions = "\n".join(
+        _render_html_session(session, safe_level, total_turns) for session in sessions
+    )
+    generated = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return "\n".join(
+        [
+            "<!doctype html>",
+            _html_export_meta_comment(safe_level, html_split),
+            f'<html lang="en" data-level="{safe_level}">',
+            "<head>",
+            '<meta charset="utf-8">',
+            '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            f"<title>{_html_escape(title)}</title>",
+            f"<style>{HTML_STYLE}</style>",
+            "</head>",
+            f'<body data-initial-level="{safe_level}">',
+            '<header class="topbar"><div class="topbar-inner">',
+            f"<h1>{_html_escape(title)}</h1>",
+            f'<div class="subtitle">{_html_escape(subtitle)}</div>',
+            _render_html_controls(safe_level),
+            "</div></header>",
+            "<main>",
+            rendered_sessions,
+            f'<div class="footer">Generated by agent-history at {_html_escape(generated)}</div>',
+            "</main>",
+            f"<script>{HTML_SCRIPT}</script>",
+            "</body>",
+            "</html>",
+        ]
+    )
+
+
+# ============================================================================
 # Codex Backend - JSONL Parsing
 # ============================================================================
 
@@ -2294,6 +3726,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                                 "role": payload.get("role"),
                                 "content": codex_extract_content(payload),
                                 "timestamp": timestamp,
+                                "raw_payload": payload,
                             }
                         )
                     elif payload_type in ("function_call", "custom_tool_call"):
@@ -2303,6 +3736,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                                 "content": codex_format_function_call(payload),
                                 "timestamp": timestamp,
                                 "is_tool_call": True,
+                                "raw_payload": payload,
                             }
                         )
                     elif payload_type in ("function_call_output", "custom_tool_call_output"):
@@ -2312,6 +3746,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                                 "content": codex_format_function_result(payload),
                                 "timestamp": timestamp,
                                 "is_tool_result": True,
+                                "raw_payload": payload,
                             }
                         )
             except json.JSONDecodeError:
@@ -7722,6 +9157,9 @@ def _get_alias_export_options(args) -> dict:
         "flat": getattr(args, "flat", False),
         "quiet": getattr(args, "quiet", False),
         "agent": getattr(args, "agent", None) or "auto",
+        "output_format": getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN),
+        "html_level": getattr(args, "html_level", HTML_DEFAULT_LEVEL),
+        "html_split": getattr(args, "html_split", HTML_SPLIT_SESSION),
     }
 
 
@@ -7737,9 +9175,20 @@ def _get_ws_output_path(output_path: Path, workspace: str, flat: bool) -> Path:
     return ws_path
 
 
-def _build_output_filename(jsonl_file: Path, source_tag: str, messages: list) -> str:
+def _get_export_extension(output_format: str) -> str:
+    """Return file extension for an export format."""
+    return ".html" if output_format == EXPORT_FORMAT_HTML else ".md"
+
+
+def _build_output_filename(
+    jsonl_file: Path,
+    source_tag: str,
+    messages: list,
+    output_format: str = EXPORT_FORMAT_MARKDOWN,
+) -> str:
     """Build output filename with optional timestamp prefix."""
     ts_prefix = None
+    extension = _get_export_extension(output_format)
     if messages and messages[0].get("timestamp"):
         try:
             dt = datetime.fromisoformat(messages[0]["timestamp"].replace("Z", "+00:00"))
@@ -7747,9 +9196,9 @@ def _build_output_filename(jsonl_file: Path, source_tag: str, messages: list) ->
         except (ValueError, AttributeError):
             pass
     return (
-        f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
+        f"{source_tag}{ts_prefix}_{jsonl_file.stem}{extension}"
         if ts_prefix
-        else f"{source_tag}{jsonl_file.stem}.md"
+        else f"{source_tag}{jsonl_file.stem}{extension}"
     )
 
 
@@ -7790,7 +9239,9 @@ def _export_session_file(
         stats["failed"] += 1
         return
 
-    output_name = _build_output_filename(jsonl_file, source_tag, messages)
+    output_name = _build_output_filename(
+        jsonl_file, source_tag, messages, opts.get("output_format", EXPORT_FORMAT_MARKDOWN)
+    )
     output_file = ws_output_path / output_name
 
     # Check incremental skip
@@ -7806,14 +9257,179 @@ def _export_session_file(
             output_name,
             agent_type,
             messages,
-            opts["minimal"],
-            opts["split_lines"],
-            opts["quiet"],
+            ExportRenderOptions(
+                minimal=opts["minimal"],
+                split_lines=opts["split_lines"],
+                quiet=opts["quiet"],
+                output_format=opts.get("output_format", EXPORT_FORMAT_MARKDOWN),
+                html_level=opts.get("html_level", HTML_DEFAULT_LEVEL),
+            ),
         )
         stats["exported"] += 1
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error exporting {jsonl_file}: {e}\n")
         stats["failed"] += 1
+
+
+def _alias_html_output_path(
+    output_path: Path, workspace_name: str, source_tag: str, flat: bool
+) -> Path:
+    """Return output path for an alias workspace-level HTML bundle."""
+    normalized = normalize_workspace_name(workspace_name).replace("/", "-").replace("\\", "-")
+    if normalized.startswith("-"):
+        normalized = normalized[1:]
+    if flat:
+        return output_path / f"{source_tag}{normalized}.html"
+    ws_output_path = output_path / normalized
+    ws_output_path.mkdir(parents=True, exist_ok=True)
+    return ws_output_path / (f"{source_tag[:-1]}.html" if source_tag else "index.html")
+
+
+def _export_alias_html_group(
+    output_file: Path,
+    group: list,
+    opts: dict,
+    stats: dict,
+) -> None:
+    """Export one alias HTML workspace bundle."""
+    html_level = opts.get("html_level", HTML_DEFAULT_LEVEL)
+    if (
+        not opts["force"]
+        and output_file.exists()
+        and output_file.stat().st_mtime
+        >= max((item["session"]["file"].stat().st_mtime for item in group), default=0)
+        and _html_export_options_match(output_file, html_level, HTML_SPLIT_WORKSPACE)
+    ):
+        stats["skipped"] += 1
+        return
+
+    rendered_sessions = []
+    for item in sorted(group, key=lambda i: _session_sort_key(i["session"])):
+        session = item["session"]
+        jsonl_file = session["file"]
+        agent_type = session.get("agent") or detect_agent_from_path(jsonl_file)
+        messages = _read_session_messages(jsonl_file, agent_type)
+        if messages is None:
+            stats["failed"] += 1
+            continue
+        rendered_sessions.append(
+            _build_html_session_data(jsonl_file, agent_type, messages, session_info=session)
+        )
+
+    if not rendered_sessions:
+        return
+
+    title = f"agent-history - {group[0]['workspace_name']}"
+    output_file.write_text(
+        render_html_document(
+            title, rendered_sessions, html_level, html_split=HTML_SPLIT_WORKSPACE
+        ),
+        encoding="utf-8",
+    )
+    stats["exported"] += 1
+    if not opts["quiet"]:
+        print(output_file)
+
+
+def _export_alias_html_workspace_sessions(items: list, output_path: Path, opts: dict, stats: dict):
+    """Export alias sessions as one HTML bundle per workspace/source."""
+    groups = {}
+    for item in items:
+        output_file = _alias_html_output_path(
+            output_path, item["workspace_name"], item["source_tag"], opts["flat"]
+        )
+        groups.setdefault(output_file, []).append(item)
+
+    for output_file, group in groups.items():
+        _export_alias_html_group(output_file, group, opts, stats)
+
+
+def _alias_export_or_collect_html(
+    session: dict,
+    workspace_name: str,
+    source_tag: str,
+    output_path: Path,
+    opts: dict,
+    stats: dict,
+    alias_html_items: list,
+) -> None:
+    """Export an alias session, or collect it for workspace-level HTML bundling."""
+    if (
+        opts["output_format"] == EXPORT_FORMAT_HTML
+        and opts["html_split"] == HTML_SPLIT_WORKSPACE
+    ):
+        alias_html_items.append(
+            {
+                "session": session,
+                "workspace_name": workspace_name,
+                "source_tag": source_tag,
+            }
+        )
+        return
+
+    ws_output_path = _get_ws_output_path(output_path, workspace_name, opts["flat"])
+    _export_session_file(session, ws_output_path, source_tag, opts, stats)
+
+
+def _export_alias_claude_sessions(
+    alias_config: dict,
+    opts: dict,
+    output_path: Path,
+    stats: dict,
+    alias_html_items: list,
+) -> None:
+    """Export Claude sessions for an alias."""
+    for source_key, workspaces in alias_config.items():
+        source_tag = "" if source_key == "local" else source_key.replace(":", "_") + "_"
+
+        for workspace in workspaces:
+            sessions = get_sessions_for_source(
+                source_key,
+                workspace,
+                since_date=opts["since_date"],
+                until_date=opts["until_date"],
+                fetch_remote=True,
+            )
+            for session in sessions:
+                _alias_export_or_collect_html(
+                    session,
+                    workspace,
+                    source_tag,
+                    output_path,
+                    opts,
+                    stats,
+                    alias_html_items,
+                )
+
+
+def _export_alias_non_claude_sessions(
+    alias_config: dict,
+    opts: dict,
+    output_path: Path,
+    stats: dict,
+    alias_html_items: list,
+) -> None:
+    """Export Codex and Gemini sessions for an alias."""
+    sessions = _collect_non_claude_alias_sessions(
+        _get_alias_workspace_patterns(alias_config),
+        opts["since_date"],
+        opts["until_date"],
+        opts.get("agent", "auto"),
+        source_keys=list(alias_config.keys()),
+    )
+    for session in sessions:
+        source_key = session.get("source", "local")
+        source_tag = "" if source_key == "local" else source_key.replace(":", "_") + "_"
+        workspace_name = session.get("workspace_readable") or session.get("workspace", "")
+        _alias_export_or_collect_html(
+            session,
+            workspace_name,
+            source_tag,
+            output_path,
+            opts,
+            stats,
+            alias_html_items,
+        )
 
 
 def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
@@ -7830,41 +9446,18 @@ def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
     output_path.mkdir(parents=True, exist_ok=True)
 
     stats = {"exported": 0, "skipped": 0, "failed": 0}
+    alias_html_items = []
 
     if agent_filter in ("auto", AGENT_CLAUDE):
-        for source_key, workspaces in alias_config.items():
-            source_tag = "" if source_key == "local" else source_key.replace(":", "_") + "_"
-
-            for workspace in workspaces:
-                sessions = get_sessions_for_source(
-                    source_key,
-                    workspace,
-                    since_date=opts["since_date"],
-                    until_date=opts["until_date"],
-                    fetch_remote=True,
-                )
-                if not sessions:
-                    continue
-
-                ws_output_path = _get_ws_output_path(output_path, workspace, opts["flat"])
-                for session in sessions:
-                    _export_session_file(session, ws_output_path, source_tag, opts, stats)
+        _export_alias_claude_sessions(alias_config, opts, output_path, stats, alias_html_items)
 
     if agent_filter in ("auto", AGENT_CODEX, AGENT_GEMINI):
-        patterns = _get_alias_workspace_patterns(alias_config)
-        sessions = _collect_non_claude_alias_sessions(
-            patterns,
-            opts["since_date"],
-            opts["until_date"],
-            agent_filter,
-            source_keys=list(alias_config.keys()),
+        _export_alias_non_claude_sessions(
+            alias_config, opts, output_path, stats, alias_html_items
         )
-        for session in sessions:
-            source_key = session.get("source", "local")
-            source_tag = "" if source_key == "local" else source_key.replace(":", "_") + "_"
-            workspace_name = session.get("workspace_readable") or session.get("workspace", "")
-            ws_output_path = _get_ws_output_path(output_path, workspace_name, opts["flat"])
-            _export_session_file(session, ws_output_path, source_tag, opts, stats)
+
+    if alias_html_items:
+        _export_alias_html_workspace_sessions(alias_html_items, output_path, opts, stats)
 
     if stats["exported"] > 0 or stats["skipped"] > 0:
         print(
@@ -10582,7 +12175,7 @@ def _download_remote_file(remote_host: str, remote_path: str, local_path: Path) 
 
 
 def _convert_remote_file(args, remote_host: str):
-    """Convert a remote file to markdown."""
+    """Convert a remote file to markdown or HTML."""
     if not check_ssh_connection(remote_host):
         sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
         sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
@@ -10597,42 +12190,78 @@ def _convert_remote_file(args, remote_host: str):
             sys.exit(1)
 
         filename = Path(args.jsonl_file).name
-        output_file = Path(args.output) if args.output else Path(filename).with_suffix(".md")
+        output_format = getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN)
+        extension = _get_export_extension(output_format)
+        output_file = Path(args.output) if args.output else Path(filename).with_suffix(extension)
         agent_type = detect_agent_from_path(Path(args.jsonl_file))
 
         display_file = f"{remote_host}:{args.jsonl_file}"
-        markdown = _parse_file_to_markdown_with_display(tmp_path, agent_type, display_file)
-        output_file.write_text(markdown, encoding="utf-8")
-        if not getattr(args, "quiet", False):
-            print(output_file)
+        if output_format == EXPORT_FORMAT_HTML:
+            messages = _read_session_messages(tmp_path, agent_type) or []
+            _write_html_session_file(
+                tmp_path,
+                output_file,
+                agent_type,
+                messages,
+                ExportRenderOptions(
+                    html_level=getattr(args, "html_level", HTML_DEFAULT_LEVEL),
+                    quiet=getattr(args, "quiet", False),
+                    output_format=EXPORT_FORMAT_HTML,
+                ),
+                display_file=display_file,
+            )
+        else:
+            markdown = _parse_file_to_markdown_with_display(tmp_path, agent_type, display_file)
+            output_file.write_text(markdown, encoding="utf-8")
+            if not getattr(args, "quiet", False):
+                print(output_file)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
 
 
 def _convert_local_file(args):
-    """Convert a local file to markdown."""
+    """Convert a local file to markdown or HTML."""
     jsonl_file = Path(args.jsonl_file)
 
     if not jsonl_file.exists():
         sys.stderr.write(f"Error: {jsonl_file} not found\n")
         sys.exit(1)
 
-    output_file = Path(args.output) if args.output else jsonl_file.with_suffix(".md")
+    output_format = getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN)
+    output_file = (
+        Path(args.output)
+        if args.output
+        else jsonl_file.with_suffix(_get_export_extension(output_format))
+    )
 
     try:
         agent_type = detect_agent_from_path(jsonl_file)
-        markdown = _parse_file_to_markdown(jsonl_file, agent_type)
-        output_file.write_text(markdown, encoding="utf-8")
-        if not getattr(args, "quiet", False):
-            print(output_file)
+        if output_format == EXPORT_FORMAT_HTML:
+            messages = _read_session_messages(jsonl_file, agent_type) or []
+            _write_html_session_file(
+                jsonl_file,
+                output_file,
+                agent_type,
+                messages,
+                ExportRenderOptions(
+                    html_level=getattr(args, "html_level", HTML_DEFAULT_LEVEL),
+                    quiet=getattr(args, "quiet", False),
+                    output_format=EXPORT_FORMAT_HTML,
+                ),
+            )
+        else:
+            markdown = _parse_file_to_markdown(jsonl_file, agent_type)
+            output_file.write_text(markdown, encoding="utf-8")
+            if not getattr(args, "quiet", False):
+                print(output_file)
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error converting file: {e}\n")
         sys.exit(1)
 
 
 def cmd_convert(args):
-    """Convert a single .jsonl file to markdown."""
+    """Convert a single session file to markdown or HTML."""
     remote_host = getattr(args, "remote", None)
 
     if remote_host:
@@ -11011,6 +12640,7 @@ def _get_export_output_path(
     output_dir: Path,
     flat: bool,
     remote_host: Optional[str],
+    output_format: str = EXPORT_FORMAT_MARKDOWN,
 ) -> tuple:
     """Get output path and name for export file.
 
@@ -11018,27 +12648,34 @@ def _get_export_output_path(
         Tuple of (output_file, output_name)
     """
     jsonl_file = session["file"]
+    extension = _get_export_extension(output_format)
 
     if flat:
-        output_name = f"{ts_prefix}_{jsonl_file.stem}.md" if ts_prefix else f"{jsonl_file.stem}.md"
+        output_name = (
+            f"{ts_prefix}_{jsonl_file.stem}{extension}"
+            if ts_prefix
+            else f"{jsonl_file.stem}{extension}"
+        )
         return output_dir / output_name, output_name
 
     source_tag = get_source_tag(remote_host)
     output_name = (
-        f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
+        f"{source_tag}{ts_prefix}_{jsonl_file.stem}{extension}"
         if ts_prefix
-        else f"{source_tag}{jsonl_file.stem}.md"
+        else f"{source_tag}{jsonl_file.stem}{extension}"
     )
-    workspace = session["workspace"]
-    # Handle absolute paths (Gemini returns real paths like /home/user/project)
-    if workspace.startswith("/") or (len(workspace) > 1 and workspace[1] == ":"):
-        # Use last path component for absolute paths
-        workspace_name = Path(workspace).name
-    else:
-        workspace_name = get_workspace_name_from_path(workspace)
+    workspace_name = _get_export_workspace_name(session)
     workspace_subdir = output_dir / workspace_name
     workspace_subdir.mkdir(parents=True, exist_ok=True)
     return workspace_subdir / output_name, output_name
+
+
+def _get_export_workspace_name(session: dict) -> str:
+    """Return a stable workspace directory/file stem for exports."""
+    workspace = session["workspace"]
+    if workspace.startswith("/") or (len(workspace) > 1 and workspace[1] == ":"):
+        return Path(workspace).name
+    return get_workspace_name_from_path(workspace)
 
 
 def _read_session_messages(jsonl_file: Path, agent_type: str) -> Optional[list]:
@@ -11079,43 +12716,70 @@ def _export_single_session(
     output_name: str,
     agent_type: str,
     messages: list,
-    minimal: bool,
-    split_lines: Optional[int],
-    quiet: bool,
+    options: ExportRenderOptions,
 ):
-    """Export a single session to markdown file(s)."""
+    """Export a single session to markdown or HTML file(s)."""
     try:
+        if options.output_format == EXPORT_FORMAT_HTML:
+            _write_html_session_file(
+                jsonl_file,
+                output_file,
+                agent_type,
+                messages,
+                options,
+                html_split=HTML_SPLIT_SESSION,
+            )
+            return
+
         # Codex/Gemini files don't support splitting yet; use direct export
         if agent_type in (AGENT_CODEX, AGENT_GEMINI):
             _write_single_file(
                 jsonl_file,
                 output_file,
-                minimal,
+                options.minimal,
                 messages=messages,
                 agent=agent_type,
-                quiet=quiet,
+                quiet=options.quiet,
             )
-        elif split_lines and messages:
-            parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+        elif options.split_lines and messages:
+            parts = generate_markdown_parts(
+                messages, jsonl_file, options.minimal, options.split_lines
+            )
             if parts:
-                _write_split_parts(parts, output_name, output_file, quiet)
+                _write_split_parts(parts, output_name, output_file, options.quiet)
             else:
-                _write_single_file(jsonl_file, output_file, minimal, messages=messages, quiet=quiet)
+                _write_single_file(
+                    jsonl_file,
+                    output_file,
+                    options.minimal,
+                    messages=messages,
+                    quiet=options.quiet,
+                )
         else:
-            _write_single_file(jsonl_file, output_file, minimal, messages=messages, quiet=quiet)
+            _write_single_file(
+                jsonl_file, output_file, options.minimal, messages=messages, quiet=options.quiet
+            )
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
 
 
-def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noqa: C901
-    """Export sessions to markdown files.
+def _export_sessions(sessions: list, args, output_dir: Path):  # noqa: C901
+    """Export sessions to markdown or HTML files.
 
     Args:
         sessions: List of session dictionaries
-        args: Parsed arguments (for force, flat, minimal, split, remote)
+        args: Parsed arguments (for force, flat, minimal, split, remote, format)
         output_dir: Output directory path
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_format = getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN)
+    if (
+        output_format == EXPORT_FORMAT_HTML
+        and getattr(args, "html_split", None) == HTML_SPLIT_WORKSPACE
+    ):
+        _export_sessions_to_workspace_html(sessions, args, output_dir)
+        return
 
     force = getattr(args, "force", False)
     flat = getattr(args, "flat", False)
@@ -11123,12 +12787,13 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noq
     minimal = getattr(args, "minimal", False)
     split_lines = getattr(args, "split", None)
     quiet = getattr(args, "quiet", False)
+    html_level = getattr(args, "html_level", HTML_DEFAULT_LEVEL)
     jobs = max(1, int(getattr(args, "jobs", 1) or 1))
     total_sessions = len(sessions)
     progress_interval = 0
 
     if not quiet and total_sessions:
-        sys.stderr.write(f"Exporting {total_sessions} sessions...\n")
+        sys.stderr.write(f"Exporting {total_sessions} sessions to {output_format}...\n")
         if total_sessions >= EXPORT_PROGRESS_MIN:
             progress_interval = max(EXPORT_PROGRESS_MIN, total_sessions // 20)
 
@@ -11142,10 +12807,15 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noq
 
         ts_prefix = _extract_timestamp_prefix(messages)
         output_file, output_name = _get_export_output_path(
-            session, ts_prefix, output_dir, flat, remote_host
+            session, ts_prefix, output_dir, flat, remote_host, output_format
         )
 
-        if _is_export_up_to_date(output_file, jsonl_file, force):
+        up_to_date = _is_export_up_to_date(output_file, jsonl_file, force)
+        html_options_match = (
+            output_format != EXPORT_FORMAT_HTML
+            or _html_export_options_match(output_file, html_level, HTML_SPLIT_SESSION)
+        )
+        if up_to_date and html_options_match:
             return
 
         _export_single_session(
@@ -11154,9 +12824,13 @@ def _export_sessions_to_markdown(sessions: list, args, output_dir: Path):  # noq
             output_name,
             agent_type,
             messages,
-            minimal,
-            split_lines,
-            quiet,
+            ExportRenderOptions(
+                minimal=minimal,
+                split_lines=split_lines,
+                quiet=quiet,
+                output_format=output_format,
+                html_level=html_level,
+            ),
         )
 
     if jobs > 1 and len(sessions) > 1:
@@ -11241,6 +12915,141 @@ def _write_single_file(
         print(output_file)
 
 
+def _write_html_session_file(
+    jsonl_file: Path,
+    output_file: Path,
+    agent: str,
+    messages: list,
+    options: ExportRenderOptions,
+    display_file: Optional[str] = None,
+    session_info: Optional[dict] = None,
+    html_split: str = HTML_SPLIT_SESSION,
+):
+    """Write a single offline HTML session export."""
+    session = _build_html_session_data(
+        jsonl_file,
+        agent,
+        messages,
+        session_info=session_info,
+        display_file=display_file,
+    )
+    title = f"{_html_agent_title(agent)} Conversation - {session['filename']}"
+    output_file.write_text(
+        render_html_document(title, [session], options.html_level, html_split=html_split),
+        encoding="utf-8",
+    )
+    if not options.quiet:
+        print(output_file)
+
+
+def _html_agent_title(agent: str) -> str:
+    """Return display name for an agent in generated titles."""
+    return {
+        AGENT_CLAUDE: "Claude",
+        AGENT_CODEX: "Codex",
+        AGENT_GEMINI: "Gemini",
+    }.get(agent, agent.title())
+
+
+def _html_workspace_output_path(
+    session: dict,
+    output_dir: Path,
+    flat: bool,
+    remote_host: Optional[str],
+) -> Path:
+    """Return output path for a workspace-level HTML bundle."""
+    workspace_name = _get_export_workspace_name(session)
+    source_tag = get_source_tag(remote_host)
+    if flat:
+        return output_dir / f"{source_tag}{workspace_name}.html"
+    workspace_subdir = output_dir / workspace_name
+    workspace_subdir.mkdir(parents=True, exist_ok=True)
+    return workspace_subdir / (f"{source_tag[:-1]}.html" if source_tag else "index.html")
+
+
+def _html_group_sessions_by_output(sessions: list, output_dir: Path, args) -> dict:
+    """Group sessions by their workspace-level HTML output file."""
+    groups = {}
+    flat = getattr(args, "flat", False)
+    remote_host = getattr(args, "remote", None)
+    for session in sessions:
+        output_file = _html_workspace_output_path(session, output_dir, flat, remote_host)
+        groups.setdefault(output_file, []).append(session)
+    return groups
+
+
+def _latest_session_mtime(sessions: list) -> float:
+    """Return latest mtime across a group of sessions."""
+    return max((session["file"].stat().st_mtime for session in sessions), default=0)
+
+
+def _session_sort_key(session: dict):
+    """Sort sessions chronologically when possible."""
+    modified = session.get("modified")
+    return modified or datetime.fromtimestamp(session["file"].stat().st_mtime)
+
+
+def _export_one_workspace_html(
+    output_file: Path,
+    sessions: list,
+    args,
+    stats: dict,
+) -> None:
+    """Export one workspace-level HTML bundle."""
+    force = getattr(args, "force", False)
+    html_level = getattr(args, "html_level", HTML_DEFAULT_LEVEL)
+    if (
+        not force
+        and output_file.exists()
+        and output_file.stat().st_mtime >= _latest_session_mtime(sessions)
+        and _html_export_options_match(output_file, html_level, HTML_SPLIT_WORKSPACE)
+    ):
+        stats["skipped"] += 1
+        return
+
+    rendered_sessions = []
+    for session in sorted(sessions, key=_session_sort_key):
+        jsonl_file = session["file"]
+        agent_type = session.get("agent") or detect_agent_from_path(jsonl_file)
+        messages = _read_session_messages(jsonl_file, agent_type)
+        if messages is None:
+            stats["failed"] += 1
+            continue
+        rendered_sessions.append(
+            _build_html_session_data(jsonl_file, agent_type, messages, session_info=session)
+        )
+
+    if not rendered_sessions:
+        return
+
+    workspace_name = _get_export_workspace_name(sessions[0])
+    title = f"agent-history - {workspace_name}"
+    html = render_html_document(
+        title,
+        rendered_sessions,
+        html_level,
+        html_split=HTML_SPLIT_WORKSPACE,
+    )
+    output_file.write_text(html, encoding="utf-8")
+    stats["exported"] += 1
+    if not getattr(args, "quiet", False):
+        print(output_file)
+
+
+def _export_sessions_to_workspace_html(sessions: list, args, output_dir: Path):
+    """Export one offline HTML file per workspace/source grouping."""
+    groups = _html_group_sessions_by_output(sessions, output_dir, args)
+    stats = {"exported": 0, "skipped": 0, "failed": 0}
+    if not getattr(args, "quiet", False):
+        sys.stderr.write(
+            f"Exporting {len(sessions)} sessions to {len(groups)} HTML bundle(s)...\n"
+        )
+    for output_file, group_sessions in groups.items():
+        _export_one_workspace_html(output_file, group_sessions, args, stats)
+    if stats["failed"] and not getattr(args, "quiet", False):
+        sys.stderr.write(f"HTML export completed with {stats['failed']} failed session(s)\n")
+
+
 def _get_batch_sessions(args, patterns: list, since_date, until_date) -> list:
     """Get batch sessions based on source type."""
     remote_host = getattr(args, "remote", None)
@@ -11296,7 +13105,7 @@ def cmd_batch(args) -> bool:
             patterns, since_date, until_date, getattr(args, "lenient", False)
         )
 
-    _export_sessions_to_markdown(sessions, args, Path(args.output_dir))
+    _export_sessions(sessions, args, Path(args.output_dir))
     return True
 
 
@@ -12491,7 +14300,10 @@ def cmd_export_all(args):  # noqa: C901
 
     _print_export_all_summary(totals["sources"], totals["sessions"], totals["errors"], output_dir)
 
-    if getattr(args, "index", True):
+    if (
+        getattr(args, "index", True)
+        and getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN) == EXPORT_FORMAT_MARKDOWN
+    ):
         generate_index_manifest(output_dir, totals["sources"])
 
 
@@ -12610,6 +14422,8 @@ EXAMPLES:
     agent-history export myproject --minimal       # minimal mode
     agent-history export myproject --split 500     # split long conversations
     agent-history export myproject --flat          # flat structure (no subdirs)
+    agent-history export myproject --format html   # offline HTML with detail controls
+    agent-history export myproject --format html --html-single  # one HTML file per workspace
 
   WSL access (Windows):
     agent-history lsh --wsl                        # list WSL distributions
@@ -12903,8 +14717,8 @@ def _add_export_parser(subparsers):
     """Add export subparser."""
     parser = subparsers.add_parser(
         "export",
-        help="Export to markdown",
-        description="Export workspace or single file to markdown",
+        help="Export to markdown or offline HTML",
+        description="Export workspace or single file to markdown or offline HTML",
     )
 
     parser.add_argument(
@@ -12971,6 +14785,32 @@ def _add_export_parser(subparsers):
         "--minimal",
         action="store_true",
         help="Minimal export: omit metadata, keep only conversation content",
+    )
+    parser.add_argument(
+        "--format",
+        choices=[EXPORT_FORMAT_MARKDOWN, EXPORT_FORMAT_HTML],
+        default=EXPORT_FORMAT_MARKDOWN,
+        dest="output_format",
+        help="Output format: markdown or html (default: markdown)",
+    )
+    parser.add_argument(
+        "--html-level",
+        type=validate_html_level,
+        default=HTML_DEFAULT_LEVEL,
+        help="Initial HTML detail level 1-4 (default: 1)",
+    )
+    parser.add_argument(
+        "--html-split",
+        choices=[HTML_SPLIT_SESSION, HTML_SPLIT_WORKSPACE],
+        default=HTML_SPLIT_SESSION,
+        help="HTML output granularity: session files or one bundle per workspace",
+    )
+    parser.add_argument(
+        "--html-single",
+        action="store_const",
+        const=HTML_SPLIT_WORKSPACE,
+        dest="html_split",
+        help="Alias for --html-split workspace",
     )
     parser.add_argument(
         "--split",
@@ -13840,16 +15680,20 @@ def _build_export_config(
         agent=getattr(args, "agent", None) or "auto",
         jobs=getattr(args, "jobs", 1),
         quiet=getattr(args, "quiet", False),
+        output_format=getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN),
+        html_level=getattr(args, "html_level", HTML_DEFAULT_LEVEL),
+        html_split=getattr(args, "html_split", HTML_SPLIT_SESSION),
     )
 
 
 def _prepare_single_export_output(args, jsonl_file: str) -> tuple[Path, bool]:
     """Return output file path and whether user provided a direct file."""
     output_target = Path(_get_export_output_dir(args)).expanduser()
-    is_output_file = output_target.suffix.lower() == ".md"
+    extension = _get_export_extension(getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN))
+    is_output_file = output_target.suffix.lower() == extension
     if not is_output_file:
         output_target.mkdir(parents=True, exist_ok=True)
-        base_name = Path(Path(jsonl_file).name).with_suffix(".md").name
+        base_name = Path(Path(jsonl_file).name).with_suffix(extension).name
         output_file = output_target / base_name
     else:
         output_file = output_target
@@ -13923,15 +15767,18 @@ def _dispatch_export_single_file(args, jsonl_file: str):
     split_lines = getattr(args, "split", None)
     agent_type = detect_agent_from_path(Path(jsonl_file))
     quiet = getattr(args, "quiet", False)
+    output_format = getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN)
 
     # For Claude, support --minimal and --split in single-file export. For other agents, fall back
     # to the existing convert path (single output file).
-    if agent_type != AGENT_CLAUDE or not split_lines:
+    if output_format == EXPORT_FORMAT_HTML or agent_type != AGENT_CLAUDE or not split_lines:
         convert_args = ConvertCommandArgs(
             jsonl_file=jsonl_file,
             output=str(output_file),
             remote=final_remote,
             quiet=quiet,
+            output_format=output_format,
+            html_level=getattr(args, "html_level", HTML_DEFAULT_LEVEL),
         )
         cmd_convert(convert_args)
         return
@@ -13985,6 +15832,9 @@ def _dispatch_export_all_homes(args, output_dir: Union[str, Path], patterns: lis
         no_wsl=getattr(args, "no_wsl", False),
         no_windows=getattr(args, "no_windows", False),
         no_remote=getattr(args, "no_remote", False),
+        output_format=getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN),
+        html_level=getattr(args, "html_level", HTML_DEFAULT_LEVEL),
+        html_split=getattr(args, "html_split", HTML_SPLIT_SESSION),
     )
     cmd_export_all(export_config)
 
@@ -14055,6 +15905,12 @@ def _route_export(args, output_dir: Union[str, Path], final_patterns: list, fina
 
 def _dispatch_export(args):
     """Dispatch export command."""
+    if (
+        getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN) == EXPORT_FORMAT_HTML
+        and getattr(args, "split", None)
+    ):
+        exit_with_error("HTML export does not support --split; use --html-split instead.")
+
     output_dir = _get_export_output_dir(args)
     targets = args.target if args.target else []
     targets = [_coerce_target_to_workspace_pattern(t) for t in targets]
@@ -14068,7 +15924,7 @@ def _dispatch_export(args):
     if alias_handled:
         return
 
-    if len(targets) == 1 and targets[0].endswith(".jsonl"):
+    if len(targets) == 1 and targets[0].endswith((".jsonl", ".json")):
         _dispatch_export_single_file(args, targets[0])
         return
 
