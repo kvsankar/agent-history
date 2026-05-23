@@ -132,7 +132,7 @@ HTML_SNIPPET_CHARS = 1200
 HTML_TRIM_CHARS = 3000
 HTML_LIGHT_HIGHLIGHT_STYLE = "default"
 HTML_DARK_HIGHLIGHT_STYLE = "github-dark"
-HTML_RENDERER_VERSION = 5
+HTML_RENDERER_VERSION = 6
 HTML_TABLE_MIN_LINES = 2
 
 # Database migration versions
@@ -2931,12 +2931,50 @@ main {
   color: var(--text);
 }
 .code-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
   padding: 7px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--code-title-bg);
   color: var(--code-title-text);
   font-size: 12px;
   font-weight: 700;
+}
+.view-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+}
+.view-toggle button {
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  padding: 2px 7px;
+  font: inherit;
+  cursor: pointer;
+}
+.view-toggle button:first-child {
+  border-left: 0;
+}
+.view-toggle button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.rendered-raw-panel {
+  position: relative;
+}
+.rendered-raw-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
 }
 .code-body {
   padding: 10px;
@@ -3311,6 +3349,25 @@ HTML_SCRIPT = """
     });
   });
 
+  document.querySelectorAll("[data-view-toggle]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var panel = button.closest("[data-view-panel]");
+      if (!panel) {
+        return;
+      }
+      var mode = button.getAttribute("data-view-toggle");
+      panel.querySelectorAll("[data-view-content]").forEach(function (el) {
+        el.hidden = el.getAttribute("data-view-content") !== mode;
+      });
+      panel.querySelectorAll("[data-view-toggle]").forEach(function (modeButton) {
+        modeButton.setAttribute(
+          "aria-pressed",
+          modeButton.getAttribute("data-view-toggle") === mode ? "true" : "false"
+        );
+      });
+    });
+  });
+
   applyTheme(readTheme());
   applyFlags(flagsFromLevel(intValue(document.body.getAttribute("data-initial-level"), 1)));
 })();
@@ -3400,6 +3457,68 @@ def _html_pre(
     )
 
 
+def _html_view_toggle(
+    rendered_label: str = "Rendered",
+    raw_label: str = "Raw",
+) -> str:
+    """Render a compact rendered/raw segmented control."""
+    return "\n".join(
+        [
+            '<span class="view-toggle" role="group" aria-label="Text view">',
+            f'<button type="button" data-view-toggle="rendered" aria-pressed="true">'
+            f"{_html_escape(rendered_label)}</button>",
+            f'<button type="button" data-view-toggle="raw" aria-pressed="false">'
+            f"{_html_escape(raw_label)}</button>",
+            "</span>",
+        ]
+    )
+
+
+def _html_code_title(
+    title: str,
+    raw_toggle: bool = False,
+    rendered_label: str = "Rendered",
+) -> str:
+    """Render a code panel title, optionally with a rendered/raw toggle."""
+    if not raw_toggle:
+        return f'<div class="code-title">{_html_escape(title)}</div>'
+    return "\n".join(
+        [
+            '<div class="code-title">',
+            f'<span class="code-title-label">{_html_escape(title)}</span>',
+            _html_view_toggle(rendered_label, "Raw"),
+            "</div>",
+        ]
+    )
+
+
+def _html_rendered_raw_panel(
+    rendered_html: str,
+    raw_text: str,
+    panel_class: str = "",
+    rendered_label: str = "Rendered",
+    raw_class_name: str = "message-text raw-text",
+    trim_raw: bool = True,
+) -> str:
+    """Render arbitrary friendly HTML with a raw text alternative."""
+    class_attr = " ".join(part for part in ("rendered-raw-panel", panel_class) if part)
+    return "\n".join(
+        [
+            f'<div class="{_html_attr(class_attr)}" data-view-panel>',
+            '<div class="rendered-raw-toolbar">',
+            _html_view_toggle(rendered_label, "Raw"),
+            "</div>",
+            '<div data-view-content="rendered">',
+            rendered_html,
+            "</div>",
+            '<div data-view-content="raw" hidden>',
+            _html_pre(raw_text, raw_class_name, trim=trim_raw),
+            "</div>",
+            "</div>",
+        ]
+    )
+
+
 def _html_code_panel(
     title: str,
     text: str,
@@ -3408,24 +3527,39 @@ def _html_code_panel(
     panel_class: str = "",
     language: str = "",
     highlight_style: str = "",
+    raw_toggle: bool = False,
 ) -> str:
     """Render fixed-width content in a labeled panel."""
     pre_class = " ".join(part for part in ("code-text", class_name) if part)
     section_class = " ".join(part for part in ("code-panel", panel_class) if part)
+    rendered_pre = _html_pre(
+        text,
+        pre_class,
+        trim=trim,
+        language=language,
+        highlighted=bool(language),
+        highlight_style=highlight_style,
+        paired_highlight=bool(language) and not highlight_style,
+    )
+    if raw_toggle:
+        body = "\n".join(
+            [
+                '<div data-view-content="rendered">',
+                rendered_pre,
+                "</div>",
+                '<div data-view-content="raw" hidden>',
+                _html_pre(text, " ".join(part for part in (pre_class, "raw-text") if part), trim=trim),
+                "</div>",
+            ]
+        )
+    else:
+        body = rendered_pre
     return "\n".join(
         [
-            f'<section class="{_html_attr(section_class)}">',
-            f'<div class="code-title">{_html_escape(title)}</div>',
+            f'<section class="{_html_attr(section_class)}"' + (" data-view-panel" if raw_toggle else "") + ">",
+            _html_code_title(title, raw_toggle=raw_toggle, rendered_label="Highlighted"),
             '<div class="code-body">',
-            _html_pre(
-                text,
-                pre_class,
-                trim=trim,
-                language=language,
-                highlighted=bool(language),
-                highlight_style=highlight_style,
-                paired_highlight=bool(language) and not highlight_style,
-            ),
+            body,
             "</div>",
             "</section>",
         ]
@@ -3589,6 +3723,7 @@ def _html_markdown(text: str) -> str:  # noqa: C901, PLR0915
                         f"Code{f' ({fence_lang})' if fence_lang else ''}",
                         "\n".join(fence_lines),
                         language=fence_lang,
+                        raw_toggle=bool(fence_lang),
                     )
                 )
                 in_fence = False
@@ -3661,12 +3796,20 @@ def _html_markdown(text: str) -> str:  # noqa: C901, PLR0915
                 f"Code{f' ({fence_lang})' if fence_lang else ''}",
                 "\n".join(fence_lines),
                 language=fence_lang,
+                raw_toggle=bool(fence_lang),
             )
         )
     flush_paragraph()
     flush_list()
     flush_table()
-    return '<div class="markdown-body">' + "\n".join(parts) + "</div>"
+    rendered = '<div class="markdown-body">' + "\n".join(parts) + "</div>"
+    return _html_rendered_raw_panel(
+        rendered,
+        text,
+        panel_class="markdown-raw-panel",
+        rendered_label="Formatted",
+        raw_class_name="message-text raw-text",
+    )
 
 
 def _html_level_attrs(
@@ -3773,6 +3916,7 @@ def _render_trace_block(
                     "snippet",
                     trim=False,
                     language=snippet_language,
+                    raw_toggle=bool(snippet_language),
                 )
             )
     if full_text:
@@ -3790,6 +3934,7 @@ def _render_trace_block(
                         full_text,
                         trim=True,
                         language=full_language,
+                        raw_toggle=bool(full_language),
                     )
                 ),
                 "</details>",
@@ -3931,10 +4076,15 @@ def _html_diff_panel(title: str, text: str, trim: bool = True) -> str:
         body_parts.append(_html_render_diff_lines(text))
     return "\n".join(
         [
-            '<section class="code-panel diff-panel">',
-            f'<div class="code-title">{_html_escape(title)}</div>',
+            '<section class="code-panel diff-panel" data-view-panel>',
+            _html_code_title(title, raw_toggle=True, rendered_label="Diff"),
             '<div class="code-body">',
+            '<div data-view-content="rendered">',
             *body_parts,
+            "</div>",
+            '<div data-view-content="raw" hidden>',
+            _html_pre(text, "code-text raw-text", trim=trim),
+            "</div>",
             "</div>",
             "</section>",
         ]
@@ -4008,6 +4158,7 @@ def _render_claude_write_tool_block(
     tool_id = block.get("id", "")
     file_path = tool_input.get("file_path", "")
     content = tool_input.get("content", "")
+    language = _html_language_for_path(file_path)
     title = "Tool call: Write" + (f" ({tool_id})" if tool_id else "")
     parts = [
         f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
@@ -4022,7 +4173,8 @@ def _render_claude_write_tool_block(
             content,
             trim=True,
             panel_class="source-panel",
-            language=_html_language_for_path(file_path),
+            language=language,
+            raw_toggle=bool(language),
         )
     )
     parts.extend(
@@ -4101,7 +4253,7 @@ def _render_claude_bash_tool_block(
         f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
         f'<div class="trace-title">{_html_escape(title)}</div>',
         '<div class="trace-body">',
-        _html_code_panel("Command", command, trim=True, language="bash"),
+        _html_code_panel("Command", command, trim=True, language="bash", raw_toggle=True),
     ]
     description = tool_input.get("description")
     if description:
@@ -4128,7 +4280,7 @@ def _render_shell_tool_block(
             f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
             f'<div class="trace-title">{_html_escape(title)}</div>',
             '<div class="trace-body">',
-            _html_code_panel("Command", command, trim=True, language="bash"),
+            _html_code_panel("Command", command, trim=True, language="bash", raw_toggle=True),
             _render_raw_tool_input(full_text, initial_level),
             "</div>",
             "</section>",
@@ -4154,6 +4306,7 @@ def _render_claude_read_result_block(
     content = detail_file.get("content")
     if content is None:
         content = _html_strip_claude_read_line_numbers(full_text)
+    language = _html_language_for_path(file_path)
     meta = _html_line_range_label(
         detail_file.get("startLine") or tool_input.get("offset"),
         detail_file.get("numLines") or tool_input.get("limit"),
@@ -4172,7 +4325,8 @@ def _render_claude_read_result_block(
             str(content or ""),
             trim=True,
             panel_class="source-panel",
-            language=_html_language_for_path(file_path),
+            language=language,
+            raw_toggle=bool(language),
         ),
         _render_raw_tool_output(full_text, initial_level),
         "</div>",

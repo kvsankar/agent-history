@@ -10750,7 +10750,8 @@ class TestHtmlExport:
         assert "Tool call: Bash" in html
         assert "Actions: 1 tool call, 1 tool result, 1 assistant note" in html
         assert 'data-level="3" hidden data-open-level="3"' in html
-        assert '<div class="code-title">Command</div>' in html
+        assert '<span class="code-title-label">Command</span>' in html
+        assert 'data-view-toggle="raw" aria-pressed="false"' in html
         assert "Raw input" in html
         assert "Full output" in html
         assert 'data-level="4"' in html
@@ -10998,13 +10999,14 @@ class TestHtmlExport:
 
         assert '<div class="markdown-body"><h1>Done</h1>' in html
         assert "<li>Render <strong>Markdown</strong></li>" in html
-        assert '<div class="code-title">Code (python)</div>' in html
+        assert '<span class="code-title-label">Code (python)</span>' in html
         assert "pytest -q" in html
-        assert '<div class="code-title">Command</div>' in html
+        assert '<span class="code-title-label">Command</span>' in html
         assert 'code-theme-light' in html
         assert 'code-theme-dark' in html
-        assert '<div class="code-title">Snippet</div>' in html
-        assert '<div class="code-title">Full output</div>' in html
+        assert '<span class="code-title-label">Snippet</span>' in html
+        assert '<span class="code-title-label">Full output</span>' in html
+        assert 'data-view-content="raw" hidden' in html
         assert 'data-trim-panel data-expanded="false"' in html
         assert "data-trim-full hidden" in html
         assert "Show more" in html
@@ -11272,13 +11274,14 @@ class TestHtmlExport:
 
         assert "<strong>Write</strong> <code>tictactoe.py</code>" in html
         assert "/tmp/tictactoe.py" in html
-        assert '<section class="code-panel source-panel">' in html
-        assert '<div class="code-title">File content</div>' in html
+        assert '<section class="code-panel source-panel" data-view-panel>' in html
+        assert '<span class="code-title-label">File content</span>' in html
         assert "def main():" in html
         assert "#ff7b72" in html.lower() or "#79c0ff" in html.lower()
         assert "#008000" in html or "#0000FF" in html
         assert 'code-theme-light' in html
         assert 'code-theme-dark' in html
+        assert 'data-view-toggle="raw" aria-pressed="false"' in html
         assert "<summary>Raw input</summary>" in html
 
     def test_html_renders_read_tool_as_file_panel(self, tmp_path):
@@ -11344,7 +11347,7 @@ class TestHtmlExport:
         assert "<strong>Read</strong> <code>notes.md</code>" in html
         assert "<strong>Read result</strong> <code>notes.md</code>" in html
         assert '<span class="file-meta">lines 1-3 of 3</span>' in html
-        assert '<div class="code-title">File content</div>' in html
+        assert '<span class="code-title-label">File content</span>' in html
         assert "Notes" in html
         source_segment = html[html.find("<strong>Read result") : html.find("<summary>Raw output")]
         assert "1\u2192# Notes" not in source_segment
@@ -11391,12 +11394,16 @@ class TestHtmlExport:
         html = ch.render_html_document("Test Export", [session], initial_level=2)
 
         assert "<strong>Edit</strong> <code>notes.md</code>" in html
-        assert '<section class="code-panel diff-panel">' in html
-        assert '<div class="code-title">Diff</div>' in html
+        assert '<section class="code-panel diff-panel" data-view-panel>' in html
+        assert '<span class="code-title-label">Diff</span>' in html
         assert 'class="diff-line diff-line-add"' in html
         assert 'class="diff-line diff-line-meta"' in html
         assert 'class="diff-line diff-line-hunk"' not in html
-        assert "@@" not in html[html.find('<section class="code-panel diff-panel">') :]
+        rendered_diff = html[
+            html.find('<section class="code-panel diff-panel" data-view-panel>') :
+            html.find('data-view-content="raw" hidden')
+        ]
+        assert "@@" not in rendered_diff
         assert '<span class="diff-content">--- a/notes.md</span>' in html
         assert '<span class="diff-content">+++ b/notes.md</span>' in html
         assert '<span class="diff-marker">+</span>' in html
@@ -11449,13 +11456,17 @@ class TestHtmlExport:
         session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
         html = ch.render_html_document("Test Export", [session], initial_level=2)
 
-        diff_segment = html[html.find('<section class="code-panel diff-panel">') :]
-        assert '<div class="code-title">Snippet</div>' in diff_segment
+        diff_segment = html[
+            html.find('<section class="code-panel diff-panel" data-view-panel>') :
+        ]
+        assert '<span class="code-title-label">Snippet</span>' in diff_segment
         assert 'class="diff-line diff-line-del"' in diff_segment
         assert 'class="diff-line diff-line-add"' in diff_segment
         assert '<span class="diff-content">--- a/notes.md</span>' in diff_segment
         assert '<span class="diff-content">+++ b/notes.md</span>' in diff_segment
-        assert "@@" not in diff_segment
+        rendered_diff = diff_segment[: diff_segment.find('data-view-content="raw" hidden')]
+        assert "@@" not in rendered_diff
+        assert "@@ -1,2 +1,2 @@" in diff_segment
 
     def test_html_renders_codex_shell_command_with_theme_variants(self, tmp_path):
         session_file = tmp_path / "codex.jsonl"
@@ -11503,11 +11514,11 @@ class TestHtmlExport:
         html = ch.render_html_document("Codex Export", [session], initial_level=2)
 
         assert "Tool call: shell_command" in html
-        assert '<div class="code-title">Command</div>' in html
+        assert '<span class="code-title-label">Command</span>' in html
         assert "ls -la" in html
         assert "code-theme-light" in html
         assert "code-theme-dark" in html
-        assert '<div class="code-title">Full output</div>' in html
+        assert '<span class="code-title-label">Full output</span>' in html
 
     def test_html_renders_codex_custom_tool_input_fallback(self, tmp_path):
         session_file = tmp_path / "codex-custom.jsonl"
@@ -11532,7 +11543,7 @@ class TestHtmlExport:
         html = ch.render_html_document("Codex Export", [session], initial_level=2)
 
         assert "Tool call: shell_command" in html
-        assert '<div class="code-title">Command</div>' in html
+        assert '<span class="code-title-label">Command</span>' in html
         assert "pwd" in html
 
     def test_html_keeps_gemini_text_visible_when_message_has_tool_calls(self, tmp_path):
@@ -11582,7 +11593,7 @@ class TestHtmlExport:
 
         assert "I ran the command." in html
         assert 'class="message message-assistant"' in html
-        assert '<div class="code-title">Command</div>' in html
+        assert '<span class="code-title-label">Command</span>' in html
         assert "echo ok" in html
 
     def test_html_export_options_signature_detects_level_changes(self, tmp_path):
