@@ -11281,6 +11281,182 @@ class TestHtmlExport:
         assert 'code-theme-dark' in html
         assert "<summary>Raw input</summary>" in html
 
+    def test_html_renders_read_tool_as_file_panel(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Read notes"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Read",
+                            "input": {"file_path": "/tmp/docs/notes.md"},
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool1",
+                            "content": "     1\u2192# Notes\n     2\u2192\n     3\u2192- item\n",
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:02Z",
+                "uuid": "tr1",
+                "sessionId": "s1",
+                "toolUseResult": {
+                    "type": "text",
+                    "file": {
+                        "filePath": "/tmp/docs/notes.md",
+                        "content": "# Notes\n\n- item\n",
+                        "numLines": 3,
+                        "startLine": 1,
+                        "totalLines": 3,
+                    },
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=2)
+
+        assert "<strong>Read</strong> <code>notes.md</code>" in html
+        assert "<strong>Read result</strong> <code>notes.md</code>" in html
+        assert '<span class="file-meta">lines 1-3 of 3</span>' in html
+        assert '<div class="code-title">File content</div>' in html
+        assert "Notes" in html
+        source_segment = html[html.find("<strong>Read result") : html.find("<summary>Raw output")]
+        assert "1\u2192# Notes" not in source_segment
+        assert "<summary>Raw input</summary>" in html
+        assert "<summary>Raw output</summary>" in html
+
+    def test_html_renders_edit_tool_as_diff_panel(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Update notes"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Edit",
+                            "input": {
+                                "file_path": "/tmp/docs/notes.md",
+                                "old_string": "old line\n",
+                                "new_string": "old line\nnew line\n",
+                                "replace_all": False,
+                            },
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=2)
+
+        assert "<strong>Edit</strong> <code>notes.md</code>" in html
+        assert '<section class="code-panel diff-panel">' in html
+        assert '<div class="code-title">Diff</div>' in html
+        assert 'class="diff-line diff-line-add"' in html
+        assert 'class="diff-line diff-line-meta"' in html
+        assert 'class="diff-line diff-line-hunk"' not in html
+        assert "@@" not in html[html.find('<section class="code-panel diff-panel">') :]
+        assert '<span class="diff-content">--- a/notes.md</span>' in html
+        assert '<span class="diff-content">+++ b/notes.md</span>' in html
+        assert '<span class="diff-marker">+</span>' in html
+        assert '<span class="diff-content">new line</span>' in html
+        assert "#008400" not in html
+        assert "<summary>Raw input</summary>" in html
+
+    def test_html_renders_diff_shaped_tool_output_as_modern_diff(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        diff_output = "\n".join(
+            [
+                "diff --git a/notes.md b/notes.md",
+                "index 1111111..2222222 100644",
+                "--- a/notes.md",
+                "+++ b/notes.md",
+                "@@ -1,2 +1,2 @@",
+                " unchanged",
+                "-old line",
+                "+new line",
+            ]
+        )
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Show diff"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool1",
+                            "content": diff_output,
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "tr1",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=2)
+
+        diff_segment = html[html.find('<section class="code-panel diff-panel">') :]
+        assert '<div class="code-title">Snippet</div>' in diff_segment
+        assert 'class="diff-line diff-line-del"' in diff_segment
+        assert 'class="diff-line diff-line-add"' in diff_segment
+        assert '<span class="diff-content">--- a/notes.md</span>' in diff_segment
+        assert '<span class="diff-content">+++ b/notes.md</span>' in diff_segment
+        assert "@@" not in diff_segment
+
     def test_html_renders_codex_shell_command_with_theme_variants(self, tmp_path):
         session_file = tmp_path / "codex.jsonl"
         records = [

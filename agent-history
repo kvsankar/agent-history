@@ -11,6 +11,7 @@ License: MIT
 
 import argparse
 import base64
+import difflib
 import errno
 import hashlib
 import html as html_lib
@@ -131,7 +132,7 @@ HTML_SNIPPET_CHARS = 1200
 HTML_TRIM_CHARS = 3000
 HTML_LIGHT_HIGHLIGHT_STYLE = "default"
 HTML_DARK_HIGHLIGHT_STYLE = "github-dark"
-HTML_RENDERER_VERSION = 3
+HTML_RENDERER_VERSION = 5
 HTML_TABLE_MIN_LINES = 2
 
 # Database migration versions
@@ -1980,6 +1981,7 @@ def _build_message_dict(
         "userType": entry.get("userType"),
         "model": message_obj.get("model"),
         "usage": message_obj.get("usage"),
+        "tool_result_detail": entry.get("toolUseResult"),
         "stop_reason": message_obj.get("stop_reason"),
         "stop_sequence": message_obj.get("stop_sequence"),
     }
@@ -2518,6 +2520,16 @@ HTML_STYLE = """
   --code-source-bg: #f7f9fc;
   --code-source-title-bg: #eaf0f7;
   --code-source-title-text: #364152;
+  --diff-add-bg: #dafbe1;
+  --diff-add-border: #aceebb;
+  --diff-add-text: #116329;
+  --diff-del-bg: #ffebe9;
+  --diff-del-border: #ffcecb;
+  --diff-del-text: #82071e;
+  --diff-hunk-bg: #ddf4ff;
+  --diff-hunk-text: #0550ae;
+  --diff-meta-bg: #f6f8fa;
+  --diff-meta-text: #57606a;
   --tool: #0f766e;
   --tool-soft: #e4f5f2;
   --trace: #6d3fb6;
@@ -2551,6 +2563,16 @@ html[data-theme="dark"] {
   --code-source-bg: #0d1117;
   --code-source-title-bg: #161b22;
   --code-source-title-text: #c9d1d9;
+  --diff-add-bg: rgba(46, 160, 67, 0.18);
+  --diff-add-border: rgba(46, 160, 67, 0.42);
+  --diff-add-text: #aff5b4;
+  --diff-del-bg: rgba(248, 81, 73, 0.16);
+  --diff-del-border: rgba(248, 81, 73, 0.42);
+  --diff-del-text: #ffdcd7;
+  --diff-hunk-bg: rgba(56, 139, 253, 0.16);
+  --diff-hunk-text: #a5d6ff;
+  --diff-meta-bg: #161b22;
+  --diff-meta-text: #8b949e;
   --tool-soft: #0f2f2b;
   --trace-soft: #261b38;
 }
@@ -2941,6 +2963,66 @@ html[data-theme="dark"] .code-theme-dark {
 }
 .file-action {
   margin-top: 4px;
+}
+.file-meta {
+  color: var(--muted);
+  margin-left: 4px;
+}
+.diff-panel .code-body {
+  padding: 0;
+}
+.diff-view {
+  margin: 0;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.diff-line {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  min-width: max-content;
+  border-left: 3px solid transparent;
+}
+.diff-marker {
+  padding: 1px 8px;
+  user-select: none;
+  text-align: center;
+  color: var(--muted);
+}
+.diff-content {
+  padding: 1px 12px 1px 4px;
+  white-space: pre;
+}
+.diff-line-add {
+  background: var(--diff-add-bg);
+  border-left-color: var(--diff-add-border);
+}
+.diff-line-add .diff-marker,
+.diff-line-add .diff-content {
+  color: var(--diff-add-text);
+}
+.diff-line-del {
+  background: var(--diff-del-bg);
+  border-left-color: var(--diff-del-border);
+}
+.diff-line-del .diff-marker,
+.diff-line-del .diff-content {
+  color: var(--diff-del-text);
+}
+.diff-line-hunk {
+  background: var(--diff-hunk-bg);
+}
+.diff-line-hunk .diff-content {
+  color: var(--diff-hunk-text);
+  font-weight: 600;
+}
+.diff-line-meta {
+  background: var(--diff-meta-bg);
+}
+.diff-line-meta .diff-content {
+  color: var(--diff-meta-text);
+  font-weight: 600;
 }
 .trace-block {
   margin-top: 12px;
@@ -3612,6 +3694,17 @@ def _html_snippet(text: str) -> str:
     return f"{snippet}\n... [truncated]" if clipped else snippet
 
 
+def _html_looks_like_unified_diff(text: str) -> bool:
+    """Return True when text looks like unified diff output."""
+    lines = str(text or "").splitlines()
+    has_hunk = any(line.startswith("@@") for line in lines)
+    has_file_marker = any(
+        line.startswith(("diff --git ", "--- ", "+++ ", "index ")) for line in lines
+    )
+    has_change = any(line.startswith(("+", "-")) for line in lines)
+    return has_hunk and (has_file_marker or has_change)
+
+
 def _html_json(value) -> str:
     """Return a JSON-ish display string for HTML trace blocks."""
     if isinstance(value, str):
@@ -3670,15 +3763,18 @@ def _render_trace_block(
         '<div class="trace-body">',
     ]
     if snippet:
-        parts.append(
-            _html_code_panel(
-                "Snippet",
-                snippet,
-                "snippet",
-                trim=False,
-                language=snippet_language,
+        if _html_looks_like_unified_diff(snippet):
+            parts.append(_html_diff_panel("Snippet", snippet, trim=False))
+        else:
+            parts.append(
+                _html_code_panel(
+                    "Snippet",
+                    snippet,
+                    "snippet",
+                    trim=False,
+                    language=snippet_language,
+                )
             )
-        )
     if full_text:
         open_attr = " open" if initial_level >= HTML_FULL_ACTION_LEVEL else ""
         parts.extend(
@@ -3686,7 +3782,16 @@ def _render_trace_block(
                 f'<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} '
                 f'data-open-level="{HTML_FULL_ACTION_LEVEL}"{open_attr}>',
                 f"<summary>{_html_escape(full_label)}</summary>",
-                _html_code_panel(full_label, full_text, trim=True, language=full_language),
+                (
+                    _html_diff_panel(full_label, full_text, trim=True)
+                    if _html_looks_like_unified_diff(full_text)
+                    else _html_code_panel(
+                        full_label,
+                        full_text,
+                        trim=True,
+                        language=full_language,
+                    )
+                ),
                 "</details>",
             ]
         )
@@ -3698,6 +3803,142 @@ def _html_basename(path_value: str) -> str:
     """Return a display filename from a path string."""
     path_text = str(path_value or "")
     return path_text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or path_text
+
+
+def _html_line_range_label(start_line, num_lines, total_lines) -> str:
+    """Return a compact line range label for file read output."""
+    try:
+        start = int(start_line)
+        count = int(num_lines)
+    except (TypeError, ValueError):
+        return ""
+    if start <= 0 or count <= 0:
+        return ""
+    end = start + count - 1
+    label = f"lines {start}-{end}"
+    try:
+        total = int(total_lines)
+    except (TypeError, ValueError):
+        return label
+    return f"{label} of {total}" if total > 0 else label
+
+
+def _html_file_heading(action: str, file_path: str, meta: str = "") -> str:
+    """Render a compact file-action heading."""
+    filename = _html_basename(file_path)
+    heading = f'<strong>{_html_escape(action)}</strong>'
+    if filename:
+        heading += f" <code>{_html_escape(filename)}</code>"
+    parts = [f"<div>{heading}</div>"]
+    if file_path:
+        path_line = _html_escape(file_path)
+        if meta:
+            path_line = f"{path_line} <span class=\"file-meta\">{_html_escape(meta)}</span>"
+        parts.append(f'<div class="snippet">{path_line}</div>')
+    return "\n".join(parts)
+
+
+def _html_claude_read_file_from_detail(detail: dict) -> dict:
+    """Return Claude Read result file metadata from toolUseResult."""
+    if not isinstance(detail, dict):
+        return {}
+    file_detail = detail.get("file")
+    return file_detail if isinstance(file_detail, dict) else {}
+
+
+def _html_strip_claude_read_line_numbers(output: str) -> str:
+    """Strip Claude Read's visual line-number prefix when no structured file is present."""
+    stripped_lines = []
+    matched = False
+    for line in str(output or "").splitlines():
+        match = re.match(r"^\s*\d+\u2192(.*)$", line)
+        if match:
+            matched = True
+            stripped_lines.append(match.group(1))
+        else:
+            stripped_lines.append(line)
+    return "\n".join(stripped_lines) if matched else str(output or "")
+
+
+def _html_unified_diff(old_text: str, new_text: str, file_path: str = "") -> str:
+    """Return a unified diff for an Edit-style replacement."""
+    filename = _html_basename(file_path) or "file"
+    diff_lines = difflib.unified_diff(
+        str(old_text or "").splitlines(),
+        str(new_text or "").splitlines(),
+        fromfile=f"a/{filename}",
+        tofile=f"b/{filename}",
+        lineterm="",
+    )
+    diff = "\n".join(diff_lines)
+    if diff:
+        return diff
+    return "(replacement text is unchanged)"
+
+
+def _html_diff_line_class(line: str) -> str:
+    """Return the CSS class for one unified diff line."""
+    if line.startswith("@@"):
+        return "diff-line-hunk"
+    if line.startswith(("--- ", "+++ ", "diff --git ", "index ")):
+        return "diff-line-meta"
+    if line.startswith("+"):
+        return "diff-line-add"
+    if line.startswith("-"):
+        return "diff-line-del"
+    return "diff-line-context"
+
+
+def _html_render_diff_lines(text: str) -> str:
+    """Render unified diff text as color-coded rows."""
+    rows = []
+    for raw_line in str(text or "").splitlines() or [""]:
+        if raw_line.startswith("@@"):
+            continue
+        line_class = _html_diff_line_class(raw_line)
+        is_change_line = line_class in ("diff-line-add", "diff-line-del")
+        marker = raw_line[:1] if is_change_line else ""
+        content = raw_line[1:] if is_change_line else raw_line
+        rows.append(
+            "\n".join(
+                [
+                    f'<div class="diff-line {line_class}">',
+                    f'<span class="diff-marker">{_html_escape(marker)}</span>',
+                    f'<span class="diff-content">{_html_escape(content)}</span>',
+                    "</div>",
+                ]
+            )
+        )
+    return '<div class="diff-view">' + "\n".join(rows) + "</div>"
+
+
+def _html_diff_panel(title: str, text: str, trim: bool = True) -> str:
+    """Render a modern color-coded diff panel."""
+    text = "" if text is None else str(text)
+    body_parts = []
+    if trim and len(text) > HTML_TRIM_CHARS:
+        short_text = text[:HTML_TRIM_CHARS].rstrip() + "\n... [truncated]"
+        body_parts.extend(
+            [
+                '<div class="trim-panel" data-trim-panel data-expanded="false">',
+                f'<div data-trim-short>{_html_render_diff_lines(short_text)}</div>',
+                f'<div data-trim-full hidden>{_html_render_diff_lines(text)}</div>',
+                '<button class="trim-toggle" type="button" data-trim-toggle>Show more</button>',
+                "</div>",
+            ]
+        )
+    else:
+        body_parts.append(_html_render_diff_lines(text))
+    return "\n".join(
+        [
+            '<section class="code-panel diff-panel">',
+            f'<div class="code-title">{_html_escape(title)}</div>',
+            '<div class="code-body">',
+            *body_parts,
+            "</div>",
+            "</section>",
+        ]
+    )
 
 
 def _render_raw_tool_input(full_text: str, initial_level: int) -> str:
@@ -3714,6 +3955,49 @@ def _render_raw_tool_input(full_text: str, initial_level: int) -> str:
     )
 
 
+def _render_raw_tool_output(full_text: str, initial_level: int) -> str:
+    """Render raw tool output behind the Full I/O flag."""
+    open_attr = " open" if initial_level >= HTML_FULL_ACTION_LEVEL else ""
+    return "\n".join(
+        [
+            f'<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} '
+            f'data-open-level="{HTML_FULL_ACTION_LEVEL}"{open_attr}>',
+            "<summary>Raw output</summary>",
+            _html_code_panel("Raw output", full_text, trim=True, language="console"),
+            "</details>",
+        ]
+    )
+
+
+def _render_claude_read_tool_block(
+    block: dict,
+    tool_input: dict,
+    full_text: str,
+    initial_level: int,
+) -> str:
+    """Render Claude Read tool calls as a file reference plus raw details."""
+    tool_id = block.get("id", "")
+    file_path = tool_input.get("file_path", "")
+    line_meta = _html_line_range_label(
+        tool_input.get("offset"),
+        tool_input.get("limit"),
+        "",
+    )
+    title = "Tool call: Read" + (f" ({tool_id})" if tool_id else "")
+    parts = [
+        f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+        f'<div class="trace-title">{_html_escape(title)}</div>',
+        '<div class="trace-body">',
+        '<section class="file-action">',
+        _html_file_heading("Read", file_path, line_meta),
+        "</section>",
+        _render_raw_tool_input(full_text, initial_level),
+        "</div>",
+        "</section>",
+    ]
+    return "\n".join(parts)
+
+
 def _render_claude_write_tool_block(
     block: dict,
     tool_input: dict,
@@ -3724,17 +4008,14 @@ def _render_claude_write_tool_block(
     tool_id = block.get("id", "")
     file_path = tool_input.get("file_path", "")
     content = tool_input.get("content", "")
-    filename = _html_basename(file_path)
     title = "Tool call: Write" + (f" ({tool_id})" if tool_id else "")
     parts = [
         f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
         f'<div class="trace-title">{_html_escape(title)}</div>',
         '<div class="trace-body">',
         '<section class="file-action">',
-        f'<div><strong>Write</strong> <code>{_html_escape(filename)}</code></div>',
+        _html_file_heading("Write", file_path),
     ]
-    if file_path:
-        parts.append(f'<div class="snippet">{_html_escape(file_path)}</div>')
     parts.append(
         _html_code_panel(
             "File content",
@@ -3747,6 +4028,57 @@ def _render_claude_write_tool_block(
     parts.extend(
         [
             "</section>",
+            _render_raw_tool_input(full_text, initial_level),
+            "</div>",
+            "</section>",
+        ]
+    )
+    return "\n".join(parts)
+
+
+def _render_claude_edit_tool_block(
+    block: dict,
+    tool_input: dict,
+    full_text: str,
+    initial_level: int,
+) -> str:
+    """Render Claude Edit/MultiEdit tool calls as source diffs plus raw details."""
+    tool_id = block.get("id", "")
+    tool_name = block.get("name", "Edit")
+    file_path = tool_input.get("file_path", "")
+    title = f"Tool call: {tool_name}" + (f" ({tool_id})" if tool_id else "")
+    parts = [
+        f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+        f'<div class="trace-title">{_html_escape(title)}</div>',
+        '<div class="trace-body">',
+        '<section class="file-action">',
+        _html_file_heading(tool_name, file_path),
+        "</section>",
+    ]
+
+    diffs = []
+    if tool_name == "MultiEdit" and isinstance(tool_input.get("edits"), list):
+        for idx, edit in enumerate(tool_input.get("edits") or [], 1):
+            if not isinstance(edit, dict):
+                continue
+            diff = _html_unified_diff(
+                edit.get("old_string", ""),
+                edit.get("new_string", ""),
+                file_path,
+            )
+            diffs.append(f"# Edit {idx}\n{diff}")
+    else:
+        diffs.append(
+            _html_unified_diff(
+                tool_input.get("old_string", ""),
+                tool_input.get("new_string", ""),
+                file_path,
+            )
+        )
+
+    parts.extend(
+        [
+            _html_diff_panel("Diff", "\n\n".join(diff for diff in diffs if diff), trim=True),
             _render_raw_tool_input(full_text, initial_level),
             "</div>",
             "</section>",
@@ -3804,6 +4136,75 @@ def _render_shell_tool_block(
     )
 
 
+def _render_claude_read_result_block(
+    block: dict,
+    full_text: str,
+    initial_level: int,
+) -> str:
+    """Render Claude Read tool results as source file content when metadata is available."""
+    tool_id = block.get("tool_use_id", "")
+    detail_file = _html_claude_read_file_from_detail(block.get("tool_result_detail") or {})
+    tool_input = block.get("tool_input") or {}
+    file_path = (
+        detail_file.get("filePath")
+        or detail_file.get("file_path")
+        or tool_input.get("file_path")
+        or ""
+    )
+    content = detail_file.get("content")
+    if content is None:
+        content = _html_strip_claude_read_line_numbers(full_text)
+    meta = _html_line_range_label(
+        detail_file.get("startLine") or tool_input.get("offset"),
+        detail_file.get("numLines") or tool_input.get("limit"),
+        detail_file.get("totalLines"),
+    )
+    title = "Tool result: Read" + (f" ({tool_id})" if tool_id else "")
+    parts = [
+        f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+        f'<div class="trace-title">{_html_escape(title)}</div>',
+        '<div class="trace-body">',
+        '<section class="file-action">',
+        _html_file_heading("Read result", file_path, meta),
+        "</section>",
+        _html_code_panel(
+            "File content",
+            str(content or ""),
+            trim=True,
+            panel_class="source-panel",
+            language=_html_language_for_path(file_path),
+        ),
+        _render_raw_tool_output(full_text, initial_level),
+        "</div>",
+        "</section>",
+    ]
+    return "\n".join(parts)
+
+
+def _annotate_claude_tool_result_links(messages: list) -> None:
+    """Attach preceding tool call metadata to Claude tool result blocks."""
+    tool_calls_by_id = {}
+    for msg in messages:
+        for block in msg.get("content_blocks") or []:
+            if block.get("kind") == "tool_call":
+                tool_id = block.get("id")
+                if tool_id:
+                    tool_calls_by_id[tool_id] = {
+                        "name": block.get("name"),
+                        "input": block.get("input") or {},
+                    }
+                continue
+            if block.get("kind") != "tool_result":
+                continue
+            tool_use_id = block.get("tool_use_id")
+            tool_call = tool_calls_by_id.get(tool_use_id) or {}
+            if tool_call:
+                block["tool_name"] = tool_call.get("name")
+                block["tool_input"] = tool_call.get("input") or {}
+            if msg.get("tool_result_detail"):
+                block["tool_result_detail"] = msg.get("tool_result_detail")
+
+
 def _render_claude_tool_blocks(msg: dict, initial_level: int) -> list:
     """Render Claude tool_use/tool_result content blocks."""
     rendered = []
@@ -3814,6 +4215,20 @@ def _render_claude_tool_blocks(msg: dict, initial_level: int) -> list:
             tool_id = block.get("id", "")
             tool_input = block.get("input", {})
             full = _html_json(tool_input)
+            if name == "Read" and isinstance(tool_input, dict):
+                rendered.append(
+                    _render_claude_read_tool_block(block, tool_input, full, initial_level)
+                )
+                continue
+            if (
+                name in ("Edit", "MultiEdit")
+                and isinstance(tool_input, dict)
+                and tool_input.get("file_path")
+            ):
+                rendered.append(
+                    _render_claude_edit_tool_block(block, tool_input, full, initial_level)
+                )
+                continue
             if (
                 name == "Write"
                 and isinstance(tool_input, dict)
@@ -3850,6 +4265,9 @@ def _render_claude_tool_blocks(msg: dict, initial_level: int) -> list:
             status = "error" if block.get("is_error") else "success"
             tool_id = block.get("tool_use_id", "")
             full = block.get("output", "")
+            if block.get("tool_name") == "Read":
+                rendered.append(_render_claude_read_result_block(block, full, initial_level))
+                continue
             title = f"Tool result: {status}" + (f" ({tool_id})" if tool_id else "")
             rendered.append(
                 _render_trace_block(
@@ -4129,6 +4547,9 @@ def annotate_conversation_messages(messages: list, agent: str) -> list:
     The annotations stay on the existing normalized message dictionaries so the
     renderer can group by turns without introducing a parallel transcript model.
     """
+    if agent == AGENT_CLAUDE:
+        _annotate_claude_tool_result_links(messages)
+
     current_turn = 0
     turn_indexes: dict[int, list[int]] = {}
 
@@ -4232,7 +4653,14 @@ def _render_html_reasoning(msg: dict, initial_level: int) -> str:
 
 def _render_html_metadata(msg: dict, initial_level: int) -> str:
     """Render message metadata for full-trace mode."""
-    excluded = {"content", "thoughts"}
+    excluded = {
+        "content",
+        "content_blocks",
+        "raw_payload",
+        "thoughts",
+        "tool_result_detail",
+        "tool_calls",
+    }
     metadata = {k: v for k, v in msg.items() if k not in excluded and v not in (None, "", [])}
     if not metadata:
         return ""
