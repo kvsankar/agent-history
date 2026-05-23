@@ -675,6 +675,9 @@ class TestCodexJSONLReading:
         user_msgs = [m for m in messages if m["role"] == "user"]
         assert len(user_msgs) == 1
         assert "Hello Codex" in user_msgs[0]["content"]
+        assert user_msgs[0]["raw_role"] == "user"
+        assert user_msgs[0]["input_origin"] == ch.INPUT_ORIGIN_HUMAN
+        assert user_msgs[0]["is_end_user_input"] is True
 
     def test_read_assistant_messages(self, temp_codex_session_file):
         """Should extract assistant messages."""
@@ -682,6 +685,9 @@ class TestCodexJSONLReading:
         asst_msgs = [m for m in messages if m["role"] == "assistant" and not m.get("is_tool_call")]
         assert len(asst_msgs) == 1
         assert "You are in" in asst_msgs[0]["content"]
+        assert asst_msgs[0]["raw_role"] == "assistant"
+        assert asst_msgs[0]["input_origin"] == ch.INPUT_ORIGIN_ASSISTANT
+        assert asst_msgs[0]["is_end_user_input"] is False
 
     def test_read_function_calls(self, temp_codex_session_file):
         """Should extract function calls."""
@@ -689,6 +695,8 @@ class TestCodexJSONLReading:
         tool_calls = [m for m in messages if m.get("is_tool_call")]
         assert len(tool_calls) == 1
         assert "shell_command" in tool_calls[0]["content"]
+        assert tool_calls[0]["input_origin"] == ch.INPUT_ORIGIN_TOOL_CALL
+        assert tool_calls[0]["is_end_user_input"] is False
 
     def test_read_function_results(self, temp_codex_session_file):
         """Should extract function results."""
@@ -696,6 +704,10 @@ class TestCodexJSONLReading:
         tool_results = [m for m in messages if m.get("is_tool_result")]
         assert len(tool_results) == 1
         assert "call_123" in tool_results[0]["content"]
+        assert tool_results[0]["raw_role"] == "tool"
+        assert tool_results[0]["input_origin"] == ch.INPUT_ORIGIN_TOOL_RESULT
+        assert tool_results[0]["is_end_user_input"] is False
+        assert tool_results[0]["has_tool_result"] is True
 
     def test_read_handles_empty_file(self, tmp_path):
         """Should handle empty file gracefully."""
@@ -831,6 +843,33 @@ class TestCodexMarkdownGeneration:
         """Mirror: test_generates_markdown_header"""
         md = ch.codex_parse_jsonl_to_markdown(temp_codex_session_file)
         assert "# Codex Conversation" in md
+        assert "## User (Message 1)" in md
+        assert "*Raw Role: user*" in md
+        assert "*Input Origin: human*" in md
+        assert "## Tool Call (Message 2)" in md
+        assert "## Tool Result (Message 3)" in md
+
+    def test_origin_metadata_without_timestamp(self, tmp_path):
+        """Origin metadata should not depend on timestamp presence."""
+        session_file = tmp_path / "codex.jsonl"
+        session_file.write_text(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "No timestamp"}],
+                    },
+                }
+            )
+        )
+
+        md = ch.codex_parse_jsonl_to_markdown(session_file)
+
+        assert "No timestamp" in md
+        assert "*Raw Role: user*" in md
+        assert "*Input Origin: human*" in md
 
     def test_includes_message_content(self, temp_codex_session_file):
         """Mirror: test_includes_message_content"""
@@ -1265,6 +1304,9 @@ class TestGeminiJSONReading:
 
         assert len(user_msgs) == 1
         assert user_msgs[0]["content"] == "Hello Gemini"
+        assert user_msgs[0]["raw_role"] == "user"
+        assert user_msgs[0]["input_origin"] == ch.INPUT_ORIGIN_HUMAN
+        assert user_msgs[0]["is_end_user_input"] is True
 
     def test_read_assistant_messages(self, tmp_path, sample_gemini_session):
         """Should read assistant (gemini) messages from JSON."""
@@ -1277,6 +1319,32 @@ class TestGeminiJSONReading:
         assert len(assistant_msgs) == 1
         assert "How can I help you?" in assistant_msgs[0]["content"]
         assert assistant_msgs[0]["model"] == "gemini-2.5-flash"
+        assert assistant_msgs[0]["raw_role"] == "gemini"
+        assert assistant_msgs[0]["input_origin"] == ch.INPUT_ORIGIN_ASSISTANT
+        assert assistant_msgs[0]["is_end_user_input"] is False
+        assert assistant_msgs[0]["has_tool_call"] is False
+
+    def test_read_info_messages_as_system_context(self, tmp_path, sample_gemini_session):
+        """Should distinguish Gemini info records from human user input."""
+        session = dict(sample_gemini_session)
+        session["messages"] = [
+            *sample_gemini_session["messages"],
+            {
+                "type": "info",
+                "content": "Loaded project context",
+                "timestamp": "2025-12-08T10:30:06.000Z",
+            },
+        ]
+        json_file = tmp_path / "session.json"
+        json_file.write_text(json.dumps(session), encoding="utf-8")
+
+        messages, _meta = ch.gemini_read_json_messages(json_file)
+        info_msg = next(m for m in messages if m["role"] == "info")
+
+        assert info_msg["raw_role"] == "info"
+        assert info_msg["input_origin"] == ch.INPUT_ORIGIN_SYSTEM
+        assert info_msg["is_end_user_input"] is False
+        assert info_msg["has_tool_call"] is False
 
     def test_read_session_metadata(self, tmp_path, sample_gemini_session):
         """Should extract session metadata."""
@@ -1410,6 +1478,11 @@ class TestGeminiMarkdownGeneration:
 
         assert "# Gemini Conversation" in md
         assert "Session ID" in md
+        assert "## User (Message 1)" in md
+        assert "*Raw Role: user*" in md
+        assert "*Input Origin: human*" in md
+        assert "## Assistant (Message 2)" in md
+        assert "*Raw Role: gemini*" in md
 
     def test_includes_message_content(self, tmp_path, sample_gemini_session):
         """Should include message content in markdown."""
@@ -10981,6 +11054,185 @@ class TestHtmlExport:
         assert "<td><strong>Tests</strong> pass</td>" in html
         assert "<p>| # | Issue | Fix |" not in html
 
+    def test_html_keeps_claude_skill_context_inside_triggering_turn(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Use the agent-history skill"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Skill",
+                            "input": {"skill": "agent-history", "args": "export history"},
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "parentUuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool1",
+                            "content": "Launching skill: agent-history\nLoaded skill instructions.",
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:02Z",
+                "uuid": "tr1",
+                "parentUuid": "a1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Base directory for this skill: "
+                                "/home/sankar/.claude/skills/agent-history\n\n"
+                                "# Agent History Skill\n\nUse this skill to inspect history."
+                            ),
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:03Z",
+                "uuid": "ctx1",
+                "parentUuid": "tr1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "I exported the history."}],
+                },
+                "timestamp": "2025-01-01T10:00:04Z",
+                "uuid": "a2",
+                "parentUuid": "ctx1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Now summarize it"},
+                "timestamp": "2025-01-01T10:00:05Z",
+                "uuid": "u2",
+                "parentUuid": "a2",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        skill_context = next(msg for msg in messages if msg.get("uuid") == "ctx1")
+        assert skill_context["is_internal_context"] is True
+        assert skill_context["internal_context_type"] == "skill"
+        assert skill_context["internal_context_name"] == "agent-history"
+        assert skill_context["raw_role"] == "user"
+        assert skill_context["input_origin"] == ch.INPUT_ORIGIN_INTERNAL_CONTEXT
+        assert skill_context["is_end_user_input"] is False
+        human_user = next(msg for msg in messages if msg.get("uuid") == "u1")
+        skill_call = next(msg for msg in messages if msg.get("uuid") == "a1")
+        tool_result = next(msg for msg in messages if msg.get("uuid") == "tr1")
+        assert human_user["input_origin"] == ch.INPUT_ORIGIN_HUMAN
+        assert human_user["is_end_user_input"] is True
+        assert skill_call["input_origin"] == ch.INPUT_ORIGIN_TOOL_CALL
+        assert skill_call["has_tool_call"] is True
+        assert tool_result["input_origin"] == ch.INPUT_ORIGIN_TOOL_RESULT
+        assert tool_result["is_end_user_input"] is False
+        assert tool_result["has_tool_result"] is True
+
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        annotated_context = next(
+            msg for msg in session["messages"] if msg.get("uuid") == "ctx1"
+        )
+        next_user = next(msg for msg in session["messages"] if msg.get("uuid") == "u2")
+        assert annotated_context["_html_is_end_user_input"] is False
+        assert annotated_context["_html_conversation_role"] == "internal_context"
+        assert annotated_context["_html_session_turn_index"] == 1
+        assert next_user["_html_session_turn_index"] == 2
+
+        html = ch.render_html_document("Test Export", [session], initial_level=2)
+        assert 'id="turn-1"' in html
+        assert 'id="turn-2"' in html
+        assert "Skill context: agent-history" in html
+        turn_2 = html[html.find('id="turn-2"') : html.find('id="turn-2"') + 1200]
+        assert "Now summarize it" in turn_2
+        assert "Base directory for this skill" not in turn_2
+
+        markdown = ch.parse_jsonl_to_markdown(session_file)
+        assert "## Message 4 - Skill Context: agent-history" in markdown
+        assert "- **Raw Role:** `user`" in markdown
+        assert "- **Input Origin:** `internal_context`" in markdown
+        assert "- **End User Input:** `False`" in markdown
+
+    def test_split_score_ignores_internal_context_user_role(self):
+        assistant = {
+            "role": "assistant",
+            "content": "Done",
+            "timestamp": "2025-01-01T10:00:00Z",
+            "is_end_user_input": False,
+        }
+        internal_context = {
+            "role": "user",
+            "content": "Base directory for this skill: /tmp/skill",
+            "timestamp": "2025-01-01T10:00:01Z",
+            "is_end_user_input": False,
+            "input_origin": ch.INPUT_ORIGIN_INTERNAL_CONTEXT,
+        }
+        human_user = {
+            "role": "user",
+            "content": "Next request",
+            "timestamp": "2025-01-01T10:00:01Z",
+            "is_end_user_input": True,
+            "input_origin": ch.INPUT_ORIGIN_HUMAN,
+        }
+
+        internal_score = ch._calculate_split_score(
+            [assistant, internal_context], 0, assistant, 100, 100
+        )
+        human_score = ch._calculate_split_score(
+            [assistant, human_user], 0, assistant, 100, 100
+        )
+
+        assert internal_score < ch.SCORE_USER_MESSAGE_NEXT
+        assert human_score >= ch.SCORE_USER_MESSAGE_NEXT
+
+    def test_mixed_assistant_text_and_tool_call_keeps_origin_and_tool_flag(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content_blocks": [
+                    {"kind": "text", "text": "I will check."},
+                    {"kind": "tool_call", "name": "Read", "id": "tool1", "input": {}},
+                ],
+            }
+        ]
+
+        ch.annotate_message_origins(messages)
+
+        assert messages[0]["input_origin"] == ch.INPUT_ORIGIN_ASSISTANT
+        assert messages[0]["has_tool_call"] is True
+        assert messages[0]["has_tool_result"] is False
+
     def test_html_renders_write_tool_as_source_panel_with_raw_input(self, tmp_path):
         session_file = tmp_path / "session.jsonl"
         records = [
@@ -11143,6 +11395,10 @@ class TestHtmlExport:
         session_file.write_text(json.dumps(session_data), encoding="utf-8")
 
         messages, meta = ch.gemini_read_json_messages(session_file)
+        assistant_msg = next(msg for msg in messages if msg["role"] == "assistant")
+        assert assistant_msg["input_origin"] == ch.INPUT_ORIGIN_ASSISTANT
+        assert assistant_msg["has_tool_call"] is True
+        assert assistant_msg["has_tool_result"] is True
         session = ch._build_html_session_data(
             session_file, ch.AGENT_GEMINI, messages, session_info=meta
         )

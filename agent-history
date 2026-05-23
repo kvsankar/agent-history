@@ -49,6 +49,15 @@ AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
 AGENT_GEMINI = "gemini"
 
+# Normalized message origins. These distinguish raw model/protocol roles from
+# who or what actually supplied the content.
+INPUT_ORIGIN_HUMAN = "human"
+INPUT_ORIGIN_ASSISTANT = "assistant"
+INPUT_ORIGIN_TOOL_CALL = "tool_call"
+INPUT_ORIGIN_TOOL_RESULT = "tool_result"
+INPUT_ORIGIN_INTERNAL_CONTEXT = "internal_context"
+INPUT_ORIGIN_SYSTEM = "system_context"
+
 # Codex content types for text extraction
 CODEX_TEXT_TYPES = frozenset(["input_text", "output_text"])
 
@@ -1572,6 +1581,95 @@ def _normalize_claude_content_blocks(content) -> list:
     return blocks
 
 
+def _message_has_normalized_block(msg: dict, kind: str) -> bool:
+    """Return True when a normalized message has a content block of the given kind."""
+    return any(block.get("kind") == kind for block in msg.get("content_blocks") or [])
+
+
+def _message_has_tool_call_origin(msg: dict) -> bool:
+    """Return True when a normalized message carries a tool call."""
+    return bool(
+        msg.get("is_tool_call")
+        or _message_has_normalized_block(msg, "tool_call")
+        or msg.get("tool_calls")
+    )
+
+
+def _message_has_tool_result_origin(msg: dict) -> bool:
+    """Return True when a normalized message carries a tool result."""
+    if msg.get("is_tool_result") or _message_has_normalized_block(msg, "tool_result"):
+        return True
+    return any(tool_call.get("result") for tool_call in msg.get("tool_calls", []))
+
+
+def _message_input_origin(msg: dict) -> str:
+    """Infer the semantic origin of a normalized message."""
+    if msg.get("is_internal_context"):
+        return INPUT_ORIGIN_INTERNAL_CONTEXT
+
+    role = msg.get("role")
+    has_text_block = _message_has_normalized_block(msg, "text")
+    has_visible_text = has_text_block or bool(str(msg.get("content") or "").strip())
+    if role == "tool" or msg.get("is_tool_result"):
+        return INPUT_ORIGIN_TOOL_RESULT
+    if role == "user" and _message_has_normalized_block(msg, "tool_result"):
+        return INPUT_ORIGIN_TOOL_RESULT
+    if (
+        msg.get("is_tool_call")
+        or (_message_has_normalized_block(msg, "tool_call") and not has_text_block)
+        or (msg.get("tool_calls") and not has_visible_text)
+    ):
+        return INPUT_ORIGIN_TOOL_CALL
+
+    if role == "user":
+        return INPUT_ORIGIN_HUMAN
+    if role == "assistant":
+        return INPUT_ORIGIN_ASSISTANT
+    if role == "tool":
+        return INPUT_ORIGIN_TOOL_RESULT
+    return INPUT_ORIGIN_SYSTEM
+
+
+def _annotate_message_origin(msg: dict) -> dict:
+    """Annotate a normalized message with raw role and semantic input origin."""
+    msg.setdefault("raw_role", msg.get("role"))
+    msg["has_tool_call"] = _message_has_tool_call_origin(msg)
+    msg["has_tool_result"] = _message_has_tool_result_origin(msg)
+    origin = _message_input_origin(msg)
+    msg["input_origin"] = origin
+    msg["is_end_user_input"] = origin == INPUT_ORIGIN_HUMAN
+    msg["is_internal_context"] = origin == INPUT_ORIGIN_INTERNAL_CONTEXT
+    return msg
+
+
+def annotate_message_origins(messages: list) -> list:
+    """Annotate normalized messages with human/tool/internal origin metadata."""
+    for msg in messages:
+        _annotate_message_origin(msg)
+    return messages
+
+
+def _message_origin_label(msg: dict) -> str:
+    """Return a readable label from semantic message origin metadata."""
+    origin = msg.get("input_origin")
+    if origin == INPUT_ORIGIN_HUMAN:
+        return "User"
+    if origin == INPUT_ORIGIN_ASSISTANT:
+        return "Assistant"
+    if origin == INPUT_ORIGIN_TOOL_CALL:
+        return "Tool Call"
+    if origin == INPUT_ORIGIN_TOOL_RESULT:
+        return "Tool Result"
+    if origin == INPUT_ORIGIN_INTERNAL_CONTEXT:
+        context_name = msg.get("internal_context_name")
+        if msg.get("internal_context_type") == "skill" and context_name:
+            return f"Skill Context: {context_name}"
+        return "Internal Context"
+    if origin == INPUT_ORIGIN_SYSTEM:
+        return "System Context"
+    return str(msg.get("role", "unknown")).title()
+
+
 def _format_tool_use_block(block: dict) -> list:
     """Format a tool_use block as markdown lines."""
     tool_name = block.get("name", "unknown")
@@ -1804,8 +1902,8 @@ def _calculate_split_score(
     """Calculate score for splitting after message at index."""
     score = 0
 
-    # Priority 1: Next message is User (best - starting new topic)
-    if index + 1 < len(messages) and messages[index + 1]["role"] == "user":
+    # Priority 1: Next message is human input (best - starting new topic)
+    if index + 1 < len(messages) and messages[index + 1].get("is_end_user_input"):
         score += SCORE_USER_MESSAGE_NEXT
 
     # Priority 2: Current message is tool result (action complete)
@@ -1866,6 +1964,7 @@ def _build_message_dict(
     """
     return {
         "role": role,
+        "raw_role": role,
         "content": content,
         "content_blocks": _normalize_claude_content_blocks(message_obj.get("content")),
         "timestamp": timestamp,
@@ -1884,6 +1983,72 @@ def _build_message_dict(
         "stop_reason": message_obj.get("stop_reason"),
         "stop_sequence": message_obj.get("stop_sequence"),
     }
+
+
+def _claude_skill_launch_from_result(msg: dict) -> tuple[Optional[str], Optional[str]]:
+    """Return launched skill name and tool id for a Claude skill tool result."""
+    if msg.get("role") != "user":
+        return None, None
+    for block in msg.get("content_blocks") or []:
+        if block.get("kind") != "tool_result":
+            continue
+        first_line = next(
+            (line.strip() for line in str(block.get("output") or "").splitlines() if line.strip()),
+            "",
+        )
+        if first_line.startswith("Launching skill:"):
+            skill_name = first_line.removeprefix("Launching skill:").strip() or None
+            return skill_name, block.get("tool_use_id")
+    return None, None
+
+
+def _claude_skill_call_matches(
+    msg: Optional[dict], skill_name: str, tool_use_id: Optional[str]
+) -> bool:
+    """Return True when a Claude assistant message requested this Skill call."""
+    if not msg or msg.get("role") != "assistant":
+        return False
+    for block in msg.get("content_blocks") or []:
+        if block.get("kind") != "tool_call" or block.get("name") != "Skill":
+            continue
+        tool_input = block.get("input") or {}
+        called_skill = str(tool_input.get("skill") or "").strip()
+        if called_skill != skill_name:
+            continue
+        if tool_use_id and block.get("id") != tool_use_id:
+            continue
+        return True
+    return False
+
+
+def _claude_message_text_from_blocks(msg: dict) -> str:
+    """Return text blocks from a normalized Claude message."""
+    return "\n".join(
+        str(block.get("text") or "")
+        for block in msg.get("content_blocks") or []
+        if block.get("kind") == "text"
+    ).strip()
+
+
+def _annotate_claude_internal_context_messages(messages: list) -> None:
+    """Mark Claude context-injection records that are not human user input."""
+    uuid_to_message = {msg.get("uuid"): msg for msg in messages if msg.get("uuid")}
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        text = _claude_message_text_from_blocks(msg)
+        if not text.startswith("Base directory for this skill:"):
+            continue
+
+        parent = uuid_to_message.get(msg.get("parentUuid"))
+        skill_name, tool_use_id = _claude_skill_launch_from_result(parent or {})
+        skill_call = uuid_to_message.get(parent.get("parentUuid")) if parent else None
+        if not skill_name or not _claude_skill_call_matches(skill_call, skill_name, tool_use_id):
+            continue
+
+        msg["is_internal_context"] = True
+        msg["internal_context_type"] = "skill"
+        msg["internal_context_name"] = skill_name
 
 
 def read_jsonl_messages(jsonl_file: Path, quiet: bool = False):
@@ -1936,7 +2101,8 @@ def read_jsonl_messages(jsonl_file: Path, quiet: bool = False):
                     if isinstance(entry, dict):
                         handle_entry(entry)
 
-    return messages
+    _annotate_claude_internal_context_messages(messages)
+    return annotate_message_origins(messages)
 
 
 def _generate_message_section(
@@ -1946,10 +2112,10 @@ def _generate_message_section(
     lines = []
 
     # Determine message label
-    if is_agent and msg_num == 1 and msg["role"] == "user":
+    if is_agent and msg_num == 1 and msg.get("is_end_user_input", msg["role"] == "user"):
         role_label = "Task Prompt (from Parent Claude)"
     else:
-        role_label = msg["role"].title()
+        role_label = _message_origin_label(msg)
 
     # Add HTML anchor (skip in minimal mode)
     if not minimal and msg.get("uuid"):
@@ -2185,6 +2351,12 @@ def _generate_message_metadata(msg: dict, uuid_to_index: dict) -> list[str]:
     _add_metadata_field(md_lines, msg, "gitBranch", "Git Branch")
     _add_metadata_field(md_lines, msg, "version", "Version")
     _add_metadata_field(md_lines, msg, "userType", "User Type")
+    _add_metadata_field(md_lines, msg, "raw_role", "Raw Role")
+    _add_metadata_field(md_lines, msg, "input_origin", "Input Origin")
+    if msg.get("is_end_user_input") is not None:
+        md_lines.append(f"- **End User Input:** `{msg['is_end_user_input']}`")
+    _add_metadata_field(md_lines, msg, "internal_context_type", "Internal Context Type")
+    _add_metadata_field(md_lines, msg, "internal_context_name", "Internal Context Name")
 
     if msg.get("isSidechain") is not None:
         md_lines.append(f"- **Is Sidechain:** `{msg['isSidechain']}`")
@@ -2210,9 +2382,9 @@ def _generate_message_metadata(msg: dict, uuid_to_index: dict) -> list[str]:
 
 def _get_role_label(msg: dict, is_agent: bool, index: int, start_msg_num: int) -> str:
     """Get display label for message role."""
-    if is_agent and index == start_msg_num and msg["role"] == "user":
+    if is_agent and index == start_msg_num and msg.get("is_end_user_input", msg["role"] == "user"):
         return "Task Prompt (from Parent Claude)"
-    return msg["role"].title()
+    return _message_origin_label(msg)
 
 
 def _generate_message_block(
@@ -3875,6 +4047,8 @@ def _html_message_min_level(msg: dict, agent: str) -> int:
 
 def _html_is_user_input(msg: dict, agent: str) -> bool:
     """Return True when a message represents an end-user turn boundary."""
+    if "is_end_user_input" in msg:
+        return bool(msg.get("is_end_user_input"))
     if msg.get("role") != "user":
         return False
     if agent == AGENT_CLAUDE and msg.get("content_blocks") is not None:
@@ -3934,6 +4108,8 @@ def _html_classify_message(
     """Classify one normalized message for conversation-focused HTML export."""
     if is_user_input:
         return "user_input", 1
+    if msg.get("input_origin") == INPUT_ORIGIN_INTERNAL_CONTEXT:
+        return "internal_context", HTML_ACTION_SUMMARY_LEVEL
     if _html_is_assistant_final_candidate(msg, agent):
         return "assistant_intermediate", HTML_ACTION_SUMMARY_LEVEL
     if has_tool_result:
@@ -4088,19 +4264,20 @@ def _html_role_label(msg: dict, agent: str) -> str:
 def _html_conversation_label(msg: dict, agent: str) -> str:
     """Return a turn-focused label for an annotated message."""
     role = msg.get("_html_conversation_role")
-    if role == "user_input":
-        return "User"
-    if role == "assistant_final":
-        return "Assistant"
-    if role == "assistant_intermediate":
-        return "Assistant draft"
-    if role == "tool_action":
-        return "Tool call"
-    if role == "tool_result":
-        return "Tool result"
-    if role == "system":
-        return "System"
-    return _html_role_label(msg, agent)
+    if role == "internal_context":
+        context_name = msg.get("internal_context_name")
+        if msg.get("internal_context_type") == "skill" and context_name:
+            return f"Skill context: {context_name}"
+        return "Internal context"
+    labels = {
+        "user_input": "User",
+        "assistant_final": "Assistant",
+        "assistant_intermediate": "Assistant draft",
+        "tool_action": "Tool call",
+        "tool_result": "Tool result",
+        "system": "System",
+    }
+    return labels.get(role, _html_role_label(msg, agent))
 
 
 def _html_message_kind(msg: dict) -> str:
@@ -4110,7 +4287,7 @@ def _html_message_kind(msg: dict) -> str:
         return "user"
     if role == "assistant_final":
         return "assistant"
-    if role in ("assistant_intermediate", "tool_action", "tool_result"):
+    if role in ("assistant_intermediate", "tool_action", "tool_result", "internal_context"):
         return "action"
     return "raw"
 
@@ -4175,6 +4352,9 @@ def _html_turn_action_summary(messages: list) -> str:
         if msg.get("_html_conversation_role") in ("assistant_intermediate", "tool_action")
         and msg.get("_html_visible_text", "").strip()
     )
+    internal_contexts = sum(
+        1 for msg in messages if msg.get("_html_conversation_role") == "internal_context"
+    )
     parts = []
     if tool_calls:
         parts.append(f"{tool_calls} tool call{'s' if tool_calls != 1 else ''}")
@@ -4183,6 +4363,10 @@ def _html_turn_action_summary(messages: list) -> str:
     if assistant_notes:
         parts.append(
             f"{assistant_notes} assistant note{'s' if assistant_notes != 1 else ''}"
+        )
+    if internal_contexts:
+        parts.append(
+            f"{internal_contexts} internal context{'s' if internal_contexts != 1 else ''}"
         )
     return ", ".join(parts) if parts else "No recorded actions"
 
@@ -4672,6 +4856,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                         messages.append(
                             {
                                 "role": payload.get("role"),
+                                "raw_role": payload.get("role"),
                                 "content": codex_extract_content(payload),
                                 "timestamp": timestamp,
                                 "raw_payload": payload,
@@ -4681,6 +4866,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                         messages.append(
                             {
                                 "role": "assistant",
+                                "raw_role": "assistant",
                                 "content": codex_format_function_call(payload),
                                 "timestamp": timestamp,
                                 "is_tool_call": True,
@@ -4691,6 +4877,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                         messages.append(
                             {
                                 "role": "tool",
+                                "raw_role": "tool",
                                 "content": codex_format_function_result(payload),
                                 "timestamp": timestamp,
                                 "is_tool_result": True,
@@ -4700,7 +4887,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
             except json.JSONDecodeError:
                 continue
 
-    return messages, session_meta
+    return annotate_message_origins(messages), session_meta
 
 
 def codex_get_first_timestamp(jsonl_file: Path) -> Optional[str]:
@@ -4753,24 +4940,16 @@ def codex_parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> st
     md_lines.extend(["---", ""])
 
     for i, msg in enumerate(messages, 1):
-        role = msg.get("role", "unknown")
         content = msg.get("content", "")
         timestamp = msg.get("timestamp", "")
 
-        if role == "user":
-            md_lines.append(f"## User (Message {i})")
-        elif role == "assistant":
-            if msg.get("is_tool_call"):
-                md_lines.append(f"## Tool Call (Message {i})")
-            else:
-                md_lines.append(f"## Assistant (Message {i})")
-        elif role == "tool":
-            md_lines.append(f"## Tool Result (Message {i})")
-        else:
-            md_lines.append(f"## {role.title()} (Message {i})")
+        md_lines.append(f"## {_message_origin_label(msg)} (Message {i})")
 
-        if timestamp and not minimal:
-            md_lines.append(f"*{timestamp}*")
+        if not minimal:
+            if timestamp:
+                md_lines.append(f"*{timestamp}*")
+            md_lines.append(f"*Raw Role: {msg.get('raw_role', msg.get('role', 'unknown'))}*")
+            md_lines.append(f"*Input Origin: {msg.get('input_origin', 'unknown')}*")
 
         md_lines.extend(["", content, "", "---", ""])
 
@@ -5308,10 +5487,16 @@ def _build_gemini_message(msg: dict, content: str) -> Optional[dict]:
     timestamp = msg.get("timestamp", "")
 
     if msg_type == "user":
-        return {"role": "user", "content": content, "timestamp": timestamp}
+        return {
+            "role": "user",
+            "raw_role": msg_type,
+            "content": content,
+            "timestamp": timestamp,
+        }
     if msg_type == "gemini":
         return {
             "role": "assistant",
+            "raw_role": msg_type,
             "content": content,
             "timestamp": timestamp,
             "thoughts": msg.get("thoughts", []),
@@ -5320,7 +5505,12 @@ def _build_gemini_message(msg: dict, content: str) -> Optional[dict]:
             "tool_calls": msg.get("toolCalls", []),
         }
     if msg_type in ("info", "error", "warning"):
-        return {"role": msg_type, "content": content, "timestamp": timestamp}
+        return {
+            "role": msg_type,
+            "raw_role": msg_type,
+            "content": content,
+            "timestamp": timestamp,
+        }
     return None
 
 
@@ -5359,7 +5549,7 @@ def gemini_read_json_messages(json_file: Path) -> tuple:
         if normalized:
             messages.append(normalized)
 
-    return messages, session_meta
+    return annotate_message_origins(messages), session_meta
 
 
 def gemini_format_tool_call(tool_call: dict) -> str:
@@ -5468,19 +5658,21 @@ def _gemini_format_session_metadata(session_meta: dict) -> list:
     return lines
 
 
-def _gemini_get_role_header(role: str, msg_num: int) -> str:
-    """Get the markdown header for a message role."""
-    name = _GEMINI_ROLE_DISPLAY_NAMES.get(role, role.title())
+def _gemini_get_role_header(msg: dict, msg_num: int) -> str:
+    """Get the markdown header for a message."""
+    name = _message_origin_label(msg)
     return f"## {name} (Message {msg_num})"
 
 
 def _gemini_format_message(msg: dict, msg_num: int, minimal: bool) -> list:
     """Format a single Gemini message as markdown lines."""
-    lines = [_gemini_get_role_header(msg.get("role", "unknown"), msg_num)]
+    lines = [_gemini_get_role_header(msg, msg_num)]
 
     if not minimal:
         if msg.get("timestamp"):
             lines.append(f"*{msg['timestamp']}*")
+        lines.append(f"*Raw Role: {msg.get('raw_role', msg.get('role', 'unknown'))}*")
+        lines.append(f"*Input Origin: {msg.get('input_origin', 'unknown')}*")
         if msg.get("model"):
             lines.append(f"*Model: {msg['model']}*")
 
