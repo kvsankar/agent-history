@@ -10658,10 +10658,16 @@ class TestHtmlExport:
         session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
         html = ch.render_html_document("Test Export", [session], initial_level=2)
 
-        assert '<html lang="en" data-level="2">' in html
+        assert '<html lang="en" data-level="2" data-theme="light">' in html
+        assert 'data-theme="light"' in html
+        assert 'class="theme-control" type="button" data-theme-toggle' in html
+        assert "position: fixed;" in html
         assert 'data-flag-button="actions" aria-pressed="true"' in html
         assert 'data-flag-button="full-io" aria-pressed="false"' in html
         assert 'data-flag-button="trace" aria-pressed="false"' in html
+        assert 'data-turn-flag-button="actions" aria-pressed="false"' in html
+        assert 'data-turn-flag-button="full-io" aria-pressed="false"' in html
+        assert "turn.dataset[&quot;" not in html
         assert 'class="utility-control" type="button" data-expand-all' in html
         assert "Turn 1" in html
         assert "Message 1" not in html
@@ -10671,7 +10677,8 @@ class TestHtmlExport:
         assert "Tool call: Bash" in html
         assert "Actions: 1 tool call, 1 tool result, 1 assistant note" in html
         assert 'data-level="3" hidden data-open-level="3"' in html
-        assert "Full input" in html
+        assert '<div class="code-title">Command</div>' in html
+        assert "Raw input" in html
         assert "Full output" in html
         assert 'data-level="4"' in html
 
@@ -10850,6 +10857,302 @@ class TestHtmlExport:
         html = ch.render_html_document("Test Export", [session], initial_level=3)
         assert 'data-open-level="3" open' in html
 
+    def test_html_renders_assistant_markdown_and_trims_long_tool_output(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        long_output = "line\n" * 900
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Summarize and run"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "# Done\n\n- Render **Markdown**\n\n```python\nprint('ok')\n```",
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Bash",
+                            "input": {"cmd": "pytest -q", "timeout": 120000},
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:02Z",
+                "uuid": "a2",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool1",
+                            "content": long_output,
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:03Z",
+                "uuid": "u2",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=3)
+
+        assert '<div class="markdown-body"><h1>Done</h1>' in html
+        assert "<li>Render <strong>Markdown</strong></li>" in html
+        assert '<div class="code-title">Code (python)</div>' in html
+        assert "pytest -q" in html
+        assert '<div class="code-title">Command</div>' in html
+        assert 'code-theme-light' in html
+        assert 'code-theme-dark' in html
+        assert '<div class="code-title">Snippet</div>' in html
+        assert '<div class="code-title">Full output</div>' in html
+        assert 'data-trim-panel data-expanded="false"' in html
+        assert "data-trim-full hidden" in html
+        assert "Show more" in html
+
+    def test_html_renders_assistant_markdown_tables(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Summarize fixes"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "All tests pass.\n\n"
+                                "| # | Issue | Fix |\n"
+                                "|---|-------|-----|\n"
+                                "| 1 | No Board abstraction | `Board` class |\n"
+                                "| 2 | Missing coverage | **Tests** pass |\n"
+                            ),
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=1)
+
+        assert "<table>" in html
+        assert "<th>#</th>" in html
+        assert "<th>Issue</th>" in html
+        assert "<td><code>Board</code> class</td>" in html
+        assert "<td><strong>Tests</strong> pass</td>" in html
+        assert "<p>| # | Issue | Fix |" not in html
+
+    def test_html_renders_write_tool_as_source_panel_with_raw_input(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Create the file"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Write",
+                            "input": {
+                                "file_path": "/tmp/tictactoe.py",
+                                "content": "def main():\n    print('ok')\n",
+                            },
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(session_file, ch.AGENT_CLAUDE, messages)
+        html = ch.render_html_document("Test Export", [session], initial_level=2)
+
+        assert "<strong>Write</strong> <code>tictactoe.py</code>" in html
+        assert "/tmp/tictactoe.py" in html
+        assert '<section class="code-panel source-panel">' in html
+        assert '<div class="code-title">File content</div>' in html
+        assert "def main():" in html
+        assert "#ff7b72" in html.lower() or "#79c0ff" in html.lower()
+        assert "#008000" in html or "#0000FF" in html
+        assert 'code-theme-light' in html
+        assert 'code-theme-dark' in html
+        assert "<summary>Raw input</summary>" in html
+
+    def test_html_renders_codex_shell_command_with_theme_variants(self, tmp_path):
+        session_file = tmp_path / "codex.jsonl"
+        records = [
+            {
+                "timestamp": "2025-01-01T10:00:00Z",
+                "type": "session_meta",
+                "payload": {"cwd": "/tmp/project"},
+            },
+            {
+                "timestamp": "2025-01-01T10:00:01Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "List files"}],
+                },
+            },
+            {
+                "timestamp": "2025-01-01T10:00:02Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "shell_command",
+                    "arguments": json.dumps({"command": "ls -la", "workdir": "/tmp/project"}),
+                    "call_id": "call1",
+                },
+            },
+            {
+                "timestamp": "2025-01-01T10:00:03Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call1",
+                    "output": "Exit code: 0\nOutput:\ntotal 0\n",
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages, meta = ch.codex_read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(
+            session_file, ch.AGENT_CODEX, messages, session_info=meta
+        )
+        html = ch.render_html_document("Codex Export", [session], initial_level=2)
+
+        assert "Tool call: shell_command" in html
+        assert '<div class="code-title">Command</div>' in html
+        assert "ls -la" in html
+        assert "code-theme-light" in html
+        assert "code-theme-dark" in html
+        assert '<div class="code-title">Full output</div>' in html
+
+    def test_html_renders_codex_custom_tool_input_fallback(self, tmp_path):
+        session_file = tmp_path / "codex-custom.jsonl"
+        records = [
+            {
+                "timestamp": "2025-01-01T10:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "shell_command",
+                    "input": json.dumps({"command": "pwd"}),
+                    "call_id": "call1",
+                },
+            }
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages, meta = ch.codex_read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(
+            session_file, ch.AGENT_CODEX, messages, session_info=meta
+        )
+        html = ch.render_html_document("Codex Export", [session], initial_level=2)
+
+        assert "Tool call: shell_command" in html
+        assert '<div class="code-title">Command</div>' in html
+        assert "pwd" in html
+
+    def test_html_keeps_gemini_text_visible_when_message_has_tool_calls(self, tmp_path):
+        session_file = tmp_path / "gemini.json"
+        session_data = {
+            "sessionId": "gemini-test",
+            "projectHash": "hash",
+            "messages": [
+                {
+                    "type": "user",
+                    "content": "Run the command",
+                    "timestamp": "2025-01-01T10:00:00Z",
+                },
+                {
+                    "type": "gemini",
+                    "content": "I ran the command.",
+                    "timestamp": "2025-01-01T10:00:01Z",
+                    "toolCalls": [
+                        {
+                            "name": "shell_command",
+                            "displayName": "Shell",
+                            "status": "success",
+                            "args": {"command": "echo ok"},
+                            "result": [
+                                {
+                                    "functionResponse": {
+                                        "response": {"output": "ok\n"}
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+        session_file.write_text(json.dumps(session_data), encoding="utf-8")
+
+        messages, meta = ch.gemini_read_json_messages(session_file)
+        session = ch._build_html_session_data(
+            session_file, ch.AGENT_GEMINI, messages, session_info=meta
+        )
+        html = ch.render_html_document("Gemini Export", [session], initial_level=1)
+
+        assert "I ran the command." in html
+        assert 'class="message message-assistant"' in html
+        assert '<div class="code-title">Command</div>' in html
+        assert "echo ok" in html
+
     def test_html_export_options_signature_detects_level_changes(self, tmp_path):
         output_file = tmp_path / "session.html"
         html = ch.render_html_document("Test Export", [], initial_level=1)
@@ -10857,6 +11160,7 @@ class TestHtmlExport:
 
         assert ch._html_export_options_match(output_file, 1, ch.HTML_SPLIT_SESSION)
         assert not ch._html_export_options_match(output_file, 2, ch.HTML_SPLIT_SESSION)
+        assert f'"renderer_version": {ch.HTML_RENDERER_VERSION}' in html
 
     def test_markdown_export_does_not_leak_html_structural_fields(self, tmp_path):
         session_file = tmp_path / "session.jsonl"

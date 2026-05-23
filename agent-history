@@ -119,6 +119,11 @@ HTML_FULL_ACTION_LEVEL = 3
 HTML_FULL_TRACE_LEVEL = 4
 HTML_SNIPPET_LINES = 8
 HTML_SNIPPET_CHARS = 1200
+HTML_TRIM_CHARS = 3000
+HTML_LIGHT_HIGHLIGHT_STYLE = "default"
+HTML_DARK_HIGHLIGHT_STYLE = "github-dark"
+HTML_RENDERER_VERSION = 3
+HTML_TABLE_MIN_LINES = 2
 
 # Database migration versions
 DB_VERSION_TIME_TRACKING = 3  # Version that added time tracking
@@ -2324,6 +2329,7 @@ HTML_STYLE = """
   --border: #d9e0ea;
   --accent: #3158d4;
   --accent-soft: #e8edff;
+  --topbar-bg: rgba(247, 248, 251, 0.96);
   --user-soft: #edf8f2;
   --user-border: #cce7d7;
   --assistant-soft: #f4f2ff;
@@ -2331,11 +2337,50 @@ HTML_STYLE = """
   --action-soft: #fff7e6;
   --action-border: #f2ddb2;
   --raw-soft: #f8f9fb;
+  --detail-bg: #fbfcfe;
+  --inline-code-bg: rgba(255, 255, 255, 0.65);
+  --subagent-text: #3f2569;
+  --code-bg: #f7f9fc;
+  --code-title-bg: #f1f4f8;
+  --code-title-text: #5c6778;
+  --code-source-bg: #f7f9fc;
+  --code-source-title-bg: #eaf0f7;
+  --code-source-title-text: #364152;
   --tool: #0f766e;
   --tool-soft: #e4f5f2;
   --trace: #6d3fb6;
   --trace-soft: #f2eafd;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --panel: #161b22;
+  --panel-muted: #21262d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --border: #30363d;
+  --accent: #79c0ff;
+  --accent-soft: #13233a;
+  --topbar-bg: rgba(13, 17, 23, 0.96);
+  --user-soft: #10251b;
+  --user-border: #1f6f43;
+  --assistant-soft: #1d2038;
+  --assistant-border: #3b4280;
+  --action-soft: #2b2111;
+  --action-border: #7c5b1f;
+  --raw-soft: #1c2128;
+  --detail-bg: #161b22;
+  --inline-code-bg: rgba(110, 118, 129, 0.25);
+  --subagent-text: #d8c8ff;
+  --code-bg: #0d1117;
+  --code-title-bg: #161b22;
+  --code-title-text: #c9d1d9;
+  --code-source-bg: #0d1117;
+  --code-source-title-bg: #161b22;
+  --code-source-title-text: #c9d1d9;
+  --tool-soft: #0f2f2b;
+  --trace-soft: #261b38;
 }
 * { box-sizing: border-box; }
 body {
@@ -2349,7 +2394,7 @@ body {
   top: 0;
   z-index: 10;
   border-bottom: 1px solid var(--border);
-  background: rgba(247, 248, 251, 0.96);
+  background: var(--topbar-bg);
   backdrop-filter: blur(8px);
 }
 .topbar-inner {
@@ -2392,6 +2437,25 @@ h1 {
   padding: 7px 10px;
   font: inherit;
   cursor: pointer;
+}
+.theme-control {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 30;
+  min-width: 112px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 13px;
+  box-shadow: 0 6px 18px rgba(18, 25, 38, 0.16);
+  cursor: pointer;
+}
+html[data-theme="dark"] .theme-control {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .toggle-control[aria-pressed="true"] {
   border-color: var(--accent);
@@ -2455,7 +2519,7 @@ main {
   border-radius: 6px;
   background: var(--trace-soft);
   padding: 10px 12px;
-  color: #3f2569;
+  color: var(--subagent-text);
 }
 .turn {
   border-top: 1px solid var(--border);
@@ -2486,6 +2550,11 @@ main {
   display: inline-flex;
   gap: 4px;
 }
+.turn-local-controls {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 4px;
+}
 .turn-nav-button {
   width: 28px;
   height: 28px;
@@ -2506,6 +2575,21 @@ main {
   opacity: 0.35;
   cursor: default;
 }
+.turn-detail-button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  padding: 3px 7px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.turn-detail-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .turn-meta {
   color: var(--muted);
   font-size: 12px;
@@ -2518,7 +2602,7 @@ main {
 .turn-actions, .turn-trace {
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fbfcfe;
+  background: var(--detail-bg);
   padding: 10px 12px 12px;
 }
 .message {
@@ -2570,16 +2654,127 @@ main {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.message-text {
+.message-text, .code-panel pre {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
+}
+.markdown-body {
+  font-size: 14px;
+}
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  margin: 14px 0 8px;
+  letter-spacing: 0;
+}
+.markdown-body h1 {
+  font-size: 20px;
+}
+.markdown-body h2 {
+  font-size: 17px;
+}
+.markdown-body h3 {
+  font-size: 15px;
+}
+.markdown-body p {
+  margin: 8px 0;
+}
+.markdown-body ul, .markdown-body ol {
+  margin: 8px 0 8px 22px;
+  padding: 0;
+}
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-body th {
+  background: var(--panel-muted);
+  font-weight: 700;
+}
+.markdown-body tr:nth-child(even) td {
+  background: var(--detail-bg);
+}
+.markdown-body code {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: var(--inline-code-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+.code-panel {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--code-bg);
+}
+.source-panel {
+  border-color: var(--border);
+  background: var(--code-source-bg);
+}
+.source-panel .code-title {
+  background: var(--code-source-title-bg);
+  color: var(--code-source-title-text);
+}
+.source-panel .code-body {
+  background: var(--code-source-bg);
+}
+.source-panel pre {
+  color: var(--text);
+}
+.code-title {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--code-title-bg);
+  color: var(--code-title-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.code-body {
+  padding: 10px;
+}
+.code-theme-dark {
+  display: none;
+}
+html[data-theme="dark"] .code-theme-light {
+  display: none;
+}
+html[data-theme="dark"] .code-theme-dark {
+  display: block;
+}
+.trim-toggle {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--accent);
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.file-action {
+  margin-top: 4px;
 }
 .trace-block {
   margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fbfcfe;
+  background: var(--panel);
 }
 .trace-title {
   padding: 9px 11px;
@@ -2625,10 +2820,35 @@ summary {
 HTML_SCRIPT = """
 (function () {
   var flagOrder = ["actions", "full-io", "trace"];
+  var themeOrder = ["light", "dark"];
 
   function intValue(value, fallback) {
     var parsed = parseInt(value, 10);
     return isNaN(parsed) ? fallback : parsed;
+  }
+
+  function systemTheme() {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  }
+
+  function readTheme() {
+    var stored = "";
+    try {
+      stored = window.localStorage ? window.localStorage.getItem("agentHistoryTheme") : "";
+    } catch (error) {
+      stored = "";
+    }
+    return themeOrder.indexOf(stored) >= 0 ? stored : systemTheme();
+  }
+
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    document.querySelectorAll("[data-theme-toggle]").forEach(function (button) {
+      button.textContent = theme === "dark" ? "Light mode" : "Dark mode";
+      button.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+    });
   }
 
   function flagsFromLevel(level) {
@@ -2683,6 +2903,20 @@ HTML_SCRIPT = """
     return normalizeFlags(flags);
   }
 
+  function readTurnFlags(turn) {
+    var flags = {};
+    flagOrder.forEach(function (flag) {
+      flags[flag] = turn.dataset["turn" + flag.replace("-", "")] === "true";
+    });
+    return normalizeFlags(flags);
+  }
+
+  function writeTurnFlags(turn, flags) {
+    flagOrder.forEach(function (flag) {
+      turn.dataset["turn" + flag.replace("-", "")] = flags[flag] ? "true" : "false";
+    });
+  }
+
   function writeFlags(flags) {
     flagOrder.forEach(function (flag) {
       document.documentElement.dataset[flag.replace("-", "")] = flags[flag] ? "true" : "false";
@@ -2690,22 +2924,41 @@ HTML_SCRIPT = """
     document.documentElement.dataset.level = String(displayLevel(flags));
   }
 
-  function applyFlags(flags) {
-    flags = normalizeFlags(flags);
-    writeFlags(flags);
-    var currentLevel = displayLevel(flags);
+  function applyVisibility() {
+    var globalFlags = readFlags();
+    var globalLevel = displayLevel(globalFlags);
     document.querySelectorAll("[data-level]").forEach(function (el) {
       var min = intValue(el.getAttribute("data-level"), 1);
       var max = intValue(el.getAttribute("data-max-level"), 99);
-      el.hidden = !levelVisible(min, flags) || currentLevel > max;
+      var turn = el.closest(".turn");
+      var turnFlags = turn ? readTurnFlags(turn) : {};
+      var turnLevel = turn ? displayLevel(turnFlags) : 1;
+      var effectiveLevel = Math.max(globalLevel, turnLevel);
+      var visible = levelVisible(min, globalFlags) || (turn && levelVisible(min, turnFlags));
+      el.hidden = !visible || effectiveLevel > max;
     });
     document.querySelectorAll("[data-flag-button]").forEach(function (button) {
       var flag = button.getAttribute("data-flag-button");
-      button.setAttribute("aria-pressed", flags[flag] ? "true" : "false");
+      button.setAttribute("aria-pressed", globalFlags[flag] ? "true" : "false");
+    });
+    document.querySelectorAll("[data-turn-flag-button]").forEach(function (button) {
+      var turn = button.closest(".turn");
+      var flag = button.getAttribute("data-turn-flag-button");
+      var turnFlags = turn ? readTurnFlags(turn) : {};
+      button.setAttribute("aria-pressed", turnFlags[flag] ? "true" : "false");
     });
     document.querySelectorAll("details[data-open-level]").forEach(function (details) {
-      details.open = levelVisible(intValue(details.getAttribute("data-open-level"), 99), flags);
+      var level = intValue(details.getAttribute("data-open-level"), 99);
+      var turn = details.closest(".turn");
+      var turnFlags = turn ? readTurnFlags(turn) : {};
+      details.open = levelVisible(level, globalFlags) || (turn && levelVisible(level, turnFlags));
     });
+  }
+
+  function applyFlags(flags) {
+    flags = normalizeFlags(flags);
+    writeFlags(flags);
+    applyVisibility();
   }
 
   document.querySelectorAll("[data-flag-button]").forEach(function (button) {
@@ -2721,6 +2974,41 @@ HTML_SCRIPT = """
         flags.trace = false;
       }
       applyFlags(flags);
+    });
+  });
+
+  document.querySelectorAll("[data-turn-flag-button]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var turn = button.closest(".turn");
+      if (!turn) {
+        return;
+      }
+      var flags = readTurnFlags(turn);
+      var flag = button.getAttribute("data-turn-flag-button");
+      flags[flag] = !flags[flag];
+      if (flag === "actions" && !flags.actions) {
+        flags["full-io"] = false;
+        flags.trace = false;
+      }
+      if (flag === "full-io" && !flags["full-io"]) {
+        flags.trace = false;
+      }
+      writeTurnFlags(turn, normalizeFlags(flags));
+      applyVisibility();
+    });
+  });
+
+  document.querySelectorAll("[data-theme-toggle]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      try {
+        if (window.localStorage) {
+          window.localStorage.setItem("agentHistoryTheme", nextTheme);
+        }
+      } catch (error) {
+        // Ignore storage failures; theme still applies for this page view.
+      }
+      applyTheme(nextTheme);
     });
   });
 
@@ -2751,6 +3039,25 @@ HTML_SCRIPT = """
     });
   });
 
+  document.querySelectorAll("[data-trim-toggle]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var panel = button.closest("[data-trim-panel]");
+      if (!panel) {
+        return;
+      }
+      var expanded = panel.getAttribute("data-expanded") === "true";
+      panel.setAttribute("data-expanded", expanded ? "false" : "true");
+      panel.querySelectorAll("[data-trim-short]").forEach(function (el) {
+        el.hidden = !expanded;
+      });
+      panel.querySelectorAll("[data-trim-full]").forEach(function (el) {
+        el.hidden = expanded;
+      });
+      button.textContent = expanded ? "Show more" : "Show less";
+    });
+  });
+
+  applyTheme(readTheme());
   applyFlags(flagsFromLevel(intValue(document.body.getAttribute("data-initial-level"), 1)));
 })();
 """
@@ -2766,10 +3073,346 @@ def _html_attr(value) -> str:
     return html_lib.escape("" if value is None else str(value), quote=True)
 
 
-def _html_pre(text, class_name: str = "") -> str:
+def _html_highlight_code(text: str, language: str = "", style: str = "") -> str:
+    """Return syntax-highlighted HTML when Pygments is available."""
+    try:
+        from pygments import highlight
+        from pygments.formatters import HtmlFormatter
+        from pygments.lexers import TextLexer, get_lexer_by_name
+    except ImportError:
+        return _html_escape(text)
+
+    try:
+        lexer = get_lexer_by_name(language) if language else TextLexer()
+    except Exception:
+        lexer = TextLexer()
+    try:
+        formatter = HtmlFormatter(
+            nowrap=True,
+            noclasses=True,
+            style=style or HTML_LIGHT_HIGHLIGHT_STYLE,
+        )
+        return highlight(text, lexer, formatter).rstrip("\n")
+    except Exception:
+        return _html_escape(text)
+
+
+def _html_pre(
+    text,
+    class_name: str = "",
+    trim: bool = False,
+    language: str = "",
+    highlighted: bool = False,
+    highlight_style: str = "",
+    paired_highlight: bool = False,
+) -> str:
     """Render text in a wrapped pre block."""
     class_attr = f' class="{_html_attr(class_name)}"' if class_name else ""
-    return f"<pre{class_attr}>{_html_escape(text)}</pre>"
+    text = "" if text is None else str(text)
+
+    def render_text(value: str, style: str = "") -> str:
+        return (
+            _html_highlight_code(value, language, style or highlight_style)
+            if highlighted
+            else _html_escape(value)
+        )
+
+    def render_pre(value: str, extra_attrs: str = "") -> str:
+        if highlighted and paired_highlight:
+            light_class = " ".join(part for part in (class_name, "code-theme-light") if part)
+            dark_class = " ".join(part for part in (class_name, "code-theme-dark") if part)
+            return "\n".join(
+                [
+                    f'<pre class="{_html_attr(light_class)}"{extra_attrs}>'
+                    f"{render_text(value, HTML_LIGHT_HIGHLIGHT_STYLE)}</pre>",
+                    f'<pre class="{_html_attr(dark_class)}"{extra_attrs}>'
+                    f"{render_text(value, HTML_DARK_HIGHLIGHT_STYLE)}</pre>",
+                ]
+            )
+        return f"<pre{class_attr}{extra_attrs}>{render_text(value)}</pre>"
+
+    if not trim or len(text) <= HTML_TRIM_CHARS:
+        return render_pre(text)
+
+    short_text = text[:HTML_TRIM_CHARS].rstrip() + "\n... [truncated]"
+    return "\n".join(
+        [
+            '<div class="trim-panel" data-trim-panel data-expanded="false">',
+            render_pre(short_text, " data-trim-short"),
+            render_pre(text, " data-trim-full hidden"),
+            '<button class="trim-toggle" type="button" data-trim-toggle>Show more</button>',
+            "</div>",
+        ]
+    )
+
+
+def _html_code_panel(
+    title: str,
+    text: str,
+    class_name: str = "",
+    trim: bool = True,
+    panel_class: str = "",
+    language: str = "",
+    highlight_style: str = "",
+) -> str:
+    """Render fixed-width content in a labeled panel."""
+    pre_class = " ".join(part for part in ("code-text", class_name) if part)
+    section_class = " ".join(part for part in ("code-panel", panel_class) if part)
+    return "\n".join(
+        [
+            f'<section class="{_html_attr(section_class)}">',
+            f'<div class="code-title">{_html_escape(title)}</div>',
+            '<div class="code-body">',
+            _html_pre(
+                text,
+                pre_class,
+                trim=trim,
+                language=language,
+                highlighted=bool(language),
+                highlight_style=highlight_style,
+                paired_highlight=bool(language) and not highlight_style,
+            ),
+            "</div>",
+            "</section>",
+        ]
+    )
+
+
+def _html_language_for_path(path_value: str) -> str:
+    """Infer a syntax highlighting language from a file path."""
+    suffix = Path(str(path_value or "")).suffix.lower()
+    return {
+        ".py": "python",
+        ".pyw": "python",
+        ".js": "javascript",
+        ".jsx": "jsx",
+        ".ts": "typescript",
+        ".tsx": "tsx",
+        ".json": "json",
+        ".md": "markdown",
+        ".sh": "bash",
+        ".bash": "bash",
+        ".zsh": "bash",
+        ".diff": "diff",
+        ".patch": "diff",
+        ".html": "html",
+        ".css": "css",
+        ".java": "java",
+        ".go": "go",
+        ".rs": "rust",
+        ".rb": "ruby",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+    }.get(suffix, "")
+
+
+def _html_safe_link_url(url: str) -> str:
+    """Return a safe href for rendered Markdown links."""
+    stripped = str(url).strip()
+    if stripped.startswith(("#", "/", "./", "../")):
+        return stripped
+    if re.match(r"^(https?|mailto):", stripped, flags=re.IGNORECASE):
+        return stripped
+    return "#"
+
+
+def _html_inline_markdown(text: str) -> str:
+    """Render a conservative subset of inline Markdown after escaping text."""
+    escaped = _html_escape(text)
+
+    def link_repl(match: re.Match) -> str:
+        label = match.group(1)
+        url = _html_safe_link_url(html_lib.unescape(match.group(2)))
+        return f'<a href="{_html_attr(url)}">{label}</a>'
+
+    escaped = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", link_repl, escaped)
+    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    escaped = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", escaped)
+    return escaped
+
+
+def _html_render_paragraph(lines: list[str]) -> str:
+    """Render one Markdown paragraph."""
+    text = " ".join(line.strip() for line in lines).strip()
+    return f"<p>{_html_inline_markdown(text)}</p>" if text else ""
+
+
+def _html_render_list(items: list[str], ordered: bool) -> str:
+    """Render a Markdown list."""
+    tag = "ol" if ordered else "ul"
+    rendered_items = "\n".join(
+        f"<li>{_html_inline_markdown(item.strip())}</li>" for item in items
+    )
+    return f"<{tag}>\n{rendered_items}\n</{tag}>"
+
+
+def _html_split_table_row(line: str) -> list[str]:
+    """Split a simple Markdown table row into cells."""
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _html_is_table_separator(line: str) -> bool:
+    """Return True for a Markdown table separator row."""
+    cells = _html_split_table_row(line)
+    if not cells:
+        return False
+    return all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in cells)
+
+
+def _html_render_table(table_lines: list[str]) -> str:
+    """Render a simple GitHub-style Markdown table."""
+    if len(table_lines) < HTML_TABLE_MIN_LINES:
+        return _html_render_paragraph(table_lines)
+    headers = _html_split_table_row(table_lines[0])
+    rows = [_html_split_table_row(line) for line in table_lines[2:]]
+    column_count = len(headers)
+
+    def normalize(row: list[str]) -> list[str]:
+        return (row + [""] * column_count)[:column_count]
+
+    header_html = "".join(
+        f"<th>{_html_inline_markdown(cell)}</th>" for cell in normalize(headers)
+    )
+    body_rows = []
+    for row in rows:
+        cells = "".join(f"<td>{_html_inline_markdown(cell)}</td>" for cell in normalize(row))
+        body_rows.append(f"<tr>{cells}</tr>")
+    return "\n".join(
+        [
+            "<table>",
+            f"<thead><tr>{header_html}</tr></thead>",
+            "<tbody>",
+            "\n".join(body_rows),
+            "</tbody>",
+            "</table>",
+        ]
+    )
+
+
+def _html_markdown(text: str) -> str:  # noqa: C901, PLR0915
+    """Render a small safe Markdown subset for assistant-visible output."""
+    lines = str(text).splitlines()
+    parts = []
+    paragraph = []
+    list_items = []
+    list_ordered = False
+    table_lines = []
+    in_fence = False
+    fence_lang = ""
+    fence_lines = []
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph
+        rendered = _html_render_paragraph(paragraph)
+        if rendered:
+            parts.append(rendered)
+        paragraph = []
+
+    def flush_list() -> None:
+        nonlocal list_items
+        if list_items:
+            parts.append(_html_render_list(list_items, list_ordered))
+        list_items = []
+
+    def flush_table() -> None:
+        nonlocal table_lines
+        if table_lines:
+            parts.append(_html_render_table(table_lines))
+        table_lines = []
+
+    for index, line in enumerate(lines):
+        fence_match = re.match(r"^```([A-Za-z0-9_-]*)\s*$", line)
+        if fence_match:
+            if in_fence:
+                parts.append(
+                    _html_code_panel(
+                        f"Code{f' ({fence_lang})' if fence_lang else ''}",
+                        "\n".join(fence_lines),
+                        language=fence_lang,
+                    )
+                )
+                in_fence = False
+                fence_lang = ""
+                fence_lines = []
+            else:
+                flush_paragraph()
+                flush_list()
+                flush_table()
+                in_fence = True
+                fence_lang = fence_match.group(1)
+            continue
+
+        if in_fence:
+            fence_lines.append(line)
+            continue
+
+        if not line.strip():
+            flush_paragraph()
+            flush_list()
+            flush_table()
+            continue
+
+        if "|" in line:
+            if table_lines:
+                table_lines.append(line)
+                continue
+            next_index = index + 1
+            if next_index < len(lines) and _html_is_table_separator(lines[next_index]):
+                flush_paragraph()
+                flush_list()
+                table_lines.append(line)
+                continue
+
+        if table_lines:
+            if _html_is_table_separator(line) or "|" in line:
+                table_lines.append(line)
+                continue
+            flush_table()
+
+        heading = re.match(r"^(#{1,3})\s+(.+)$", line)
+        if heading:
+            flush_paragraph()
+            flush_list()
+            flush_table()
+            level = len(heading.group(1))
+            parts.append(f"<h{level}>{_html_inline_markdown(heading.group(2).strip())}</h{level}>")
+            continue
+
+        bullet = re.match(r"^\s*[-*]\s+(.+)$", line)
+        numbered = re.match(r"^\s*\d+[.)]\s+(.+)$", line)
+        if bullet or numbered:
+            flush_paragraph()
+            flush_table()
+            ordered = bool(numbered)
+            item = (numbered or bullet).group(1)
+            if list_items and ordered != list_ordered:
+                flush_list()
+            list_ordered = ordered
+            list_items.append(item)
+            continue
+
+        flush_list()
+        flush_table()
+        paragraph.append(line)
+
+    if in_fence:
+        parts.append(
+            _html_code_panel(
+                f"Code{f' ({fence_lang})' if fence_lang else ''}",
+                "\n".join(fence_lines),
+                language=fence_lang,
+            )
+        )
+    flush_paragraph()
+    flush_list()
+    flush_table()
+    return '<div class="markdown-body">' + "\n".join(parts) + "</div>"
 
 
 def _html_level_attrs(
@@ -2811,8 +3454,42 @@ def _html_json(value) -> str:
         return str(value)
 
 
+def _html_parse_jsonish(value) -> dict:
+    """Return dict for JSON-like tool arguments when possible."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _html_shell_command(tool_name: str, tool_input: dict) -> str:
+    """Return a shell command from a known shell-like tool input."""
+    name = str(tool_name or "").lower()
+    if isinstance(tool_input, str) and any(
+        marker in name for marker in ("bash", "shell", "terminal")
+    ):
+        return tool_input
+    if not isinstance(tool_input, dict):
+        return ""
+    command = tool_input.get("cmd") or tool_input.get("command") or ""
+    if command and any(marker in name for marker in ("bash", "shell", "terminal")):
+        return str(command)
+    return ""
+
+
 def _render_trace_block(
-    title: str, snippet: str, full_label: str, full_text: str, initial_level: int
+    title: str,
+    snippet: str,
+    full_label: str,
+    full_text: str,
+    initial_level: int,
+    snippet_language: str = "",
+    full_language: str = "",
 ) -> str:
     """Render a progressive-disclosure trace block."""
     parts = [
@@ -2821,7 +3498,15 @@ def _render_trace_block(
         '<div class="trace-body">',
     ]
     if snippet:
-        parts.append(_html_pre(snippet, "snippet"))
+        parts.append(
+            _html_code_panel(
+                "Snippet",
+                snippet,
+                "snippet",
+                trim=False,
+                language=snippet_language,
+            )
+        )
     if full_text:
         open_attr = " open" if initial_level >= HTML_FULL_ACTION_LEVEL else ""
         parts.extend(
@@ -2829,12 +3514,122 @@ def _render_trace_block(
                 f'<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} '
                 f'data-open-level="{HTML_FULL_ACTION_LEVEL}"{open_attr}>',
                 f"<summary>{_html_escape(full_label)}</summary>",
-                _html_pre(full_text),
+                _html_code_panel(full_label, full_text, trim=True, language=full_language),
                 "</details>",
             ]
         )
     parts.extend(["</div>", "</section>"])
     return "\n".join(parts)
+
+
+def _html_basename(path_value: str) -> str:
+    """Return a display filename from a path string."""
+    path_text = str(path_value or "")
+    return path_text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or path_text
+
+
+def _render_raw_tool_input(full_text: str, initial_level: int) -> str:
+    """Render raw tool input behind the Full I/O flag."""
+    open_attr = " open" if initial_level >= HTML_FULL_ACTION_LEVEL else ""
+    return "\n".join(
+        [
+            f'<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} '
+            f'data-open-level="{HTML_FULL_ACTION_LEVEL}"{open_attr}>',
+            "<summary>Raw input</summary>",
+            _html_code_panel("Raw input", full_text, trim=True, language="json"),
+            "</details>",
+        ]
+    )
+
+
+def _render_claude_write_tool_block(
+    block: dict,
+    tool_input: dict,
+    full_text: str,
+    initial_level: int,
+) -> str:
+    """Render Claude Write tool calls as a source file panel plus raw details."""
+    tool_id = block.get("id", "")
+    file_path = tool_input.get("file_path", "")
+    content = tool_input.get("content", "")
+    filename = _html_basename(file_path)
+    title = "Tool call: Write" + (f" ({tool_id})" if tool_id else "")
+    parts = [
+        f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+        f'<div class="trace-title">{_html_escape(title)}</div>',
+        '<div class="trace-body">',
+        '<section class="file-action">',
+        f'<div><strong>Write</strong> <code>{_html_escape(filename)}</code></div>',
+    ]
+    if file_path:
+        parts.append(f'<div class="snippet">{_html_escape(file_path)}</div>')
+    parts.append(
+        _html_code_panel(
+            "File content",
+            content,
+            trim=True,
+            panel_class="source-panel",
+            language=_html_language_for_path(file_path),
+        )
+    )
+    parts.extend(
+        [
+            "</section>",
+            _render_raw_tool_input(full_text, initial_level),
+            "</div>",
+            "</section>",
+        ]
+    )
+    return "\n".join(parts)
+
+
+def _render_claude_bash_tool_block(
+    block: dict,
+    tool_input: dict,
+    full_text: str,
+    initial_level: int,
+) -> str:
+    """Render Claude Bash tool calls as shell command panels plus raw details."""
+    tool_id = block.get("id", "")
+    command = _html_shell_command("Bash", tool_input)
+    title = "Tool call: Bash" + (f" ({tool_id})" if tool_id else "")
+    parts = [
+        f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+        f'<div class="trace-title">{_html_escape(title)}</div>',
+        '<div class="trace-body">',
+        _html_code_panel("Command", command, trim=True, language="bash"),
+    ]
+    description = tool_input.get("description")
+    if description:
+        parts.append(f'<p class="snippet">{_html_escape(description)}</p>')
+    parts.extend(
+        [
+            _render_raw_tool_input(full_text, initial_level),
+            "</div>",
+            "</section>",
+        ]
+    )
+    return "\n".join(parts)
+
+
+def _render_shell_tool_block(
+    title: str,
+    command: str,
+    full_text: str,
+    initial_level: int,
+) -> str:
+    """Render shell-like tool calls as command panels plus raw details."""
+    return "\n".join(
+        [
+            f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+            f'<div class="trace-title">{_html_escape(title)}</div>',
+            '<div class="trace-body">',
+            _html_code_panel("Command", command, trim=True, language="bash"),
+            _render_raw_tool_input(full_text, initial_level),
+            "</div>",
+            "</section>",
+        ]
+    )
 
 
 def _render_claude_tool_blocks(msg: dict, initial_level: int) -> list:
@@ -2845,10 +3640,39 @@ def _render_claude_tool_blocks(msg: dict, initial_level: int) -> list:
         if kind == "tool_call":
             name = block.get("name", "unknown")
             tool_id = block.get("id", "")
-            full = _html_json(block.get("input", {}))
+            tool_input = block.get("input", {})
+            full = _html_json(tool_input)
+            if (
+                name == "Write"
+                and isinstance(tool_input, dict)
+                and isinstance(tool_input.get("content"), str)
+            ):
+                rendered.append(
+                    _render_claude_write_tool_block(block, tool_input, full, initial_level)
+                )
+                continue
+            if (
+                name == "Bash"
+                and isinstance(tool_input, dict)
+                and (tool_input.get("cmd") or tool_input.get("command"))
+            ):
+                rendered.append(
+                    _render_claude_bash_tool_block(block, tool_input, full, initial_level)
+                )
+                continue
+            snippet_source = full
+            snippet_language = "json"
             title = f"Tool call: {name}" + (f" ({tool_id})" if tool_id else "")
             rendered.append(
-                _render_trace_block(title, _html_snippet(full), "Full input", full, initial_level)
+                _render_trace_block(
+                    title,
+                    _html_snippet(snippet_source),
+                    "Full input",
+                    full,
+                    initial_level,
+                    snippet_language=snippet_language,
+                    full_language="json",
+                )
             )
         elif kind == "tool_result":
             status = "error" if block.get("is_error") else "success"
@@ -2856,7 +3680,15 @@ def _render_claude_tool_blocks(msg: dict, initial_level: int) -> list:
             full = block.get("output", "")
             title = f"Tool result: {status}" + (f" ({tool_id})" if tool_id else "")
             rendered.append(
-                _render_trace_block(title, _html_snippet(full), "Full output", full, initial_level)
+                _render_trace_block(
+                    title,
+                    _html_snippet(full),
+                    "Full output",
+                    full,
+                    initial_level,
+                    snippet_language="console",
+                    full_language="console",
+                )
             )
     return rendered
 
@@ -2867,17 +3699,38 @@ def _render_codex_tool_blocks(msg: dict, initial_level: int) -> list:
     if msg.get("is_tool_call"):
         name = payload.get("name", "unknown")
         call_id = payload.get("call_id", "")
-        full = _html_json(payload.get("arguments", "{}"))
+        arguments = payload.get("arguments", payload.get("input", payload.get("content", "{}")))
+        full = _html_json(arguments)
         title = f"Tool call: {name}" + (f" ({call_id})" if call_id else "")
+        tool_input = _html_parse_jsonish(arguments)
+        command = _html_shell_command(name, tool_input or arguments)
+        if command:
+            return [_render_shell_tool_block(title, command, full, initial_level)]
         return [
-            _render_trace_block(title, _html_snippet(full), "Full input", full, initial_level)
+            _render_trace_block(
+                title,
+                _html_snippet(full),
+                "Full input",
+                full,
+                initial_level,
+                snippet_language="json",
+                full_language="json",
+            )
         ]
     if msg.get("is_tool_result"):
         call_id = payload.get("call_id", "")
         full = payload.get("output", msg.get("content", ""))
         title = "Tool result" + (f" ({call_id})" if call_id else "")
         return [
-            _render_trace_block(title, _html_snippet(full), "Full output", full, initial_level)
+            _render_trace_block(
+                title,
+                _html_snippet(full),
+                "Full output",
+                full,
+                initial_level,
+                snippet_language="console",
+                full_language="console",
+            )
         ]
     return []
 
@@ -2889,18 +3742,68 @@ def _render_gemini_tool_blocks(msg: dict, initial_level: int) -> list:
         name = tool_call.get("displayName") or tool_call.get("name", "unknown")
         status = tool_call.get("status", "")
         title = f"Tool call: {name}" + (f" ({status})" if status else "")
-        full_parts = []
-        if tool_call.get("args"):
-            full_parts.extend(["Input:", _html_json(tool_call.get("args"))])
-        if tool_call.get("result"):
-            full_parts.extend(["Result:", _html_json(tool_call.get("result"))])
-        full = "\n".join(full_parts)
-        rendered.append(
-            _render_trace_block(
-                title, _html_snippet(full), "Full input/output", full, initial_level
+        args = tool_call.get("args") or {}
+        args_text = _html_json(args) if args else ""
+        result_text, result_markdown = _html_gemini_result_text(tool_call)
+        full = "\n".join(
+            part
+            for part in (
+                f"Input:\n{args_text}" if args_text else "",
+                f"Result:\n{result_text}" if result_text else "",
             )
+            if part
         )
+        tool_input = _html_parse_jsonish(args)
+        command = _html_shell_command(name, tool_input)
+        if command:
+            rendered.append(_render_shell_tool_block(title, command, full, initial_level))
+            continue
+        parts = [
+            f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+            f'<div class="trace-title">{_html_escape(title)}</div>',
+            '<div class="trace-body">',
+        ]
+        if args_text:
+            parts.append(_html_code_panel("Input", args_text, trim=True, language="json"))
+        if result_text:
+            if result_markdown:
+                parts.extend(
+                    [
+                        '<section class="code-panel">',
+                        '<div class="code-title">Result</div>',
+                        '<div class="code-body">',
+                        _html_markdown(result_text),
+                        "</div>",
+                        "</section>",
+                    ]
+                )
+            else:
+                parts.append(
+                    _html_code_panel("Result", result_text, trim=True, language="console")
+                )
+        parts.extend(["</div>", "</section>"])
+        rendered.append("\n".join(parts))
     return rendered
+
+
+def _html_gemini_result_text(tool_call: dict) -> tuple[str, bool]:
+    """Return Gemini tool result display text and whether it is Markdown."""
+    if tool_call.get("resultDisplay"):
+        return str(tool_call.get("resultDisplay") or ""), bool(
+            tool_call.get("renderOutputAsMarkdown")
+        )
+    outputs = []
+    for result in tool_call.get("result") or []:
+        if not isinstance(result, dict):
+            outputs.append(str(result))
+            continue
+        func_resp = result.get("functionResponse", {})
+        output = func_resp.get("response", {}).get("output")
+        if output:
+            outputs.append(str(output))
+        elif result:
+            outputs.append(_html_json(result))
+    return "\n".join(outputs), bool(tool_call.get("renderOutputAsMarkdown"))
 
 
 def _render_html_tool_blocks(msg: dict, agent: str, initial_level: int) -> list:
@@ -2984,6 +3887,8 @@ def _html_is_user_input(msg: dict, agent: str) -> bool:
 
 def _html_is_assistant_final_candidate(msg: dict, agent: str) -> bool:
     """Return True when a message can be the final visible assistant output for a turn."""
+    if agent == AGENT_GEMINI:
+        return msg.get("role") == "assistant" and bool(_html_message_text(msg, agent).strip())
     return (
         msg.get("role") == "assistant"
         and bool(_html_message_text(msg, agent).strip())
@@ -3210,6 +4115,15 @@ def _html_message_kind(msg: dict) -> str:
     return "raw"
 
 
+def _html_message_uses_markdown(msg: dict) -> bool:
+    """Return True when visible message text should render as Markdown."""
+    return msg.get("role") == "assistant" and msg.get("_html_conversation_role") in (
+        "assistant_final",
+        "assistant_intermediate",
+        "tool_action",
+    )
+
+
 def _render_html_message(
     msg: dict,
     agent: str,
@@ -3235,7 +4149,10 @@ def _render_html_message(
         "</div>",
     ]
     if text.strip():
-        parts.append(_html_pre(text, "message-text"))
+        if _html_message_uses_markdown(msg):
+            parts.append(_html_markdown(text))
+        else:
+            parts.append(_html_pre(text, "message-text", trim=True))
     if include_details:
         parts.extend(_render_html_tool_blocks(msg, agent, initial_level))
         reasoning = _render_html_reasoning(msg, initial_level)
@@ -3283,6 +4200,18 @@ def _html_turn_nav_button(target_turn: Optional[int], label: str, direction: str
     )
 
 
+def _render_html_turn_detail_controls() -> str:
+    """Render per-turn detail override controls."""
+    buttons = []
+    for flag, (label, _) in HTML_DETAIL_FLAGS.items():
+        buttons.append(
+            f'<button class="turn-detail-button" type="button" '
+            f'data-turn-flag-button="{_html_attr(flag)}" aria-pressed="false">'
+            f"{_html_escape(label)}</button>"
+        )
+    return '<div class="turn-local-controls">' + "\n".join(buttons) + "</div>"
+
+
 def _render_html_turn(
     turn_index: int,
     messages: list,
@@ -3305,8 +4234,11 @@ def _render_html_turn(
     action_messages = [
         msg
         for msg in messages
-        if msg.get("_html_detail_level") in (2, 3)
-        and msg.get("_html_conversation_role") not in ("user_input", "assistant_final")
+        if (
+            msg.get("_html_detail_level") in (2, 3)
+            or msg.get("_html_has_tools")
+        )
+        and msg.get("_html_conversation_role") != "user_input"
     ]
     raw_messages = [
         msg
@@ -3326,6 +4258,7 @@ def _render_html_turn(
         _html_turn_nav_button(previous_turn, "<", "Previous"),
         _html_turn_nav_button(next_turn, ">", "Next"),
         "</div>",
+        _render_html_turn_detail_controls(),
         "</div>",
         '<div class="turn-meta">',
         f'<div>{_html_escape(first_ts)}</div>' if first_ts else "",
@@ -3562,6 +4495,14 @@ def _render_html_controls(initial_level: int) -> str:
     )
 
 
+def _render_html_theme_control() -> str:
+    """Render fixed page theme selector."""
+    return (
+        '<button class="theme-control" type="button" data-theme-toggle '
+        'aria-pressed="false">Dark mode</button>'
+    )
+
+
 def _html_export_signature(html_level: int, html_split: str) -> str:
     """Return a stable signature for HTML render options that affect output."""
     return json.dumps(
@@ -3569,6 +4510,12 @@ def _html_export_signature(html_level: int, html_split: str) -> str:
             "format": EXPORT_FORMAT_HTML,
             "html_level": int(html_level or HTML_DEFAULT_LEVEL),
             "html_split": html_split,
+            "renderer_version": HTML_RENDERER_VERSION,
+            "trim_chars": HTML_TRIM_CHARS,
+            "highlight_styles": [
+                HTML_LIGHT_HIGHLIGHT_STYLE,
+                HTML_DARK_HIGHLIGHT_STYLE,
+            ],
         },
         sort_keys=True,
     )
@@ -3610,7 +4557,7 @@ def render_html_document(
         [
             "<!doctype html>",
             _html_export_meta_comment(safe_level, html_split),
-            f'<html lang="en" data-level="{safe_level}">',
+            f'<html lang="en" data-level="{safe_level}" data-theme="light">',
             "<head>",
             '<meta charset="utf-8">',
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -3618,6 +4565,7 @@ def render_html_document(
             f"<style>{HTML_STYLE}</style>",
             "</head>",
             f'<body data-initial-level="{safe_level}">',
+            _render_html_theme_control(),
             '<header class="topbar"><div class="topbar-inner">',
             f"<h1>{_html_escape(title)}</h1>",
             f'<div class="subtitle">{_html_escape(subtitle)}</div>',
