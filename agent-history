@@ -6737,7 +6737,7 @@ def _get_wsl_username(distro_name: str) -> Optional[str]:
             return username if username else None
         usernames = _get_wsl_usernames_from_unc(distro_name)
         return usernames[0] if usernames else None
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         pass
     return None
 
