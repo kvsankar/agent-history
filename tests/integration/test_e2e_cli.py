@@ -43,13 +43,21 @@ def make_workspace(root: Path, encoded_name: str, files: int = 1):
     return ws
 
 
+def isolated_agent_env(projects: Path) -> dict:
+    env = os.environ.copy()
+    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env["CODEX_SESSIONS_DIR"] = str(projects / "_missing_codex")
+    env["GEMINI_SESSIONS_DIR"] = str(projects / "_missing_gemini")
+    env["PI_CODING_AGENT_SESSION_DIR"] = str(projects / "_missing_pi")
+    return env
+
+
 def test_e2e_local_lsh_lsw_lss(tmp_path: Path):
     projects = tmp_path
     make_workspace(projects, "-home-user-e2e-one", files=2)
     make_workspace(projects, "-home-user-e2e-two", files=1)
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
 
     # lsh local
     r1 = run_cli(["lsh", "--local"], env=env)
@@ -84,8 +92,7 @@ def test_e2e_windows_from_windows(tmp_path: Path):
     make_workspace(projects, ws1_encoded, files=1)
     make_workspace(projects, ws2_encoded, files=1)
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)  # local still needs a valid root
+    env = isolated_agent_env(projects)  # local still needs a valid root
     env["CLAUDE_WINDOWS_PROJECTS_DIR"] = str(projects)
 
     # Use --agent claude to avoid Codex/Gemini backends which don't respect CLAUDE_PROJECTS_DIR
@@ -106,8 +113,7 @@ def test_e2e_wsl_from_windows(tmp_path: Path):
     empty_ws = projects / "-home-test-distro-blogging-platform"
     empty_ws.mkdir(parents=True, exist_ok=True)
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
     env["CLAUDE_WSL_TEST_DISTRO"] = "TestWSL"
     env["CLAUDE_WSL_PROJECTS_DIR"] = str(projects)
 
@@ -132,8 +138,7 @@ def test_e2e_wsl_unc_path_without_flag(tmp_path: Path):
     projects = tmp_path
     make_workspace(projects, "-home-test-distro-noflag", files=1)
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
     env["CLAUDE_WSL_TEST_DISTRO"] = "TestWSL"
     env["CLAUDE_WSL_PROJECTS_DIR"] = str(projects)
 
@@ -150,8 +155,7 @@ def test_e2e_export_local(tmp_path: Path):
     projects.mkdir(parents=True, exist_ok=True)
     make_workspace(projects, "-home-user-export", files=1)
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
 
     r = run_cli(["export", "--local", "--out", str(outdir), "user-export"], env=env, timeout=40)
     assert r.returncode == 0, r.stderr
@@ -180,8 +184,7 @@ def test_e2e_export_variants(tmp_path: Path):
 
     make_ws("-home-user-flags")
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
 
     # Minimal export
     r1 = run_cli(
@@ -217,8 +220,7 @@ def test_e2e_export_absolute_path_target(tmp_path: Path):
     encoded_workspace = _claude_cli._coerce_target_to_workspace_pattern(target_path)
     make_workspace(projects, encoded_workspace, files=1)
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
 
     r = run_cli(["export", "--local", "--out", str(outdir), target_path], env=env, timeout=40)
     assert r.returncode == 0, r.stderr
@@ -256,8 +258,7 @@ def test_e2e_all_homes_windows(tmp_path: Path):
     (wsl / "-home-test-distro-ws").mkdir()
     (wsl / "-home-test-distro-ws" / "b.jsonl").write_text("{}\n")
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(local)
+    env = isolated_agent_env(local)
     env["CLAUDE_WSL_TEST_DISTRO"] = "TestWSL"
     env["CLAUDE_WSL_PROJECTS_DIR"] = str(wsl)
 

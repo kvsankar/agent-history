@@ -10021,6 +10021,7 @@ class TestStatsAndExportEndToEnd:
         # Mock Codex and Gemini home dirs to avoid picking up real sessions
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: tmp_path / "nonexistent_codex")
         monkeypatch.setattr(ch, "gemini_get_home_dir", lambda: tmp_path / "nonexistent_gemini")
+        monkeypatch.setattr(ch, "pi_get_home_dir", lambda: tmp_path / "nonexistent_pi")
 
         args = SimpleNamespace(
             output_dir=str(output_dir),
@@ -10257,6 +10258,9 @@ class TestAliasEndToEnd:
                     monkeypatch.setattr(
                         ch, "codex_get_home_dir", lambda: alias_e2e_env["tmp_path"] / "nonexistent"
                     )
+                    monkeypatch.setattr(
+                        ch, "pi_get_home_dir", lambda: alias_e2e_env["tmp_path"] / "nonexistent"
+                    )
 
                     # Get all sessions (agent=auto)
                     aliases_data = ch.load_aliases()
@@ -10355,7 +10359,11 @@ class TestAliasEndToEnd:
             source_keys=["windows:kvsan"],
         )
 
-        assert {s["agent"] for s in sessions} == {ch.AGENT_CODEX, ch.AGENT_GEMINI}
+        assert {s["agent"] for s in sessions} == {
+            ch.AGENT_CODEX,
+            ch.AGENT_GEMINI,
+            ch.AGENT_PI,
+        }
         assert all(s["source"] == "windows:kvsan" for s in sessions)
 
     def test_collect_non_claude_alias_sessions_windows_default_user(self, monkeypatch, tmp_path):
@@ -10390,7 +10398,11 @@ class TestAliasEndToEnd:
         )
 
         assert set(seen_users) == {"kvsan"}
-        assert {s["agent"] for s in sessions} == {ch.AGENT_CODEX, ch.AGENT_GEMINI}
+        assert {s["agent"] for s in sessions} == {
+            ch.AGENT_CODEX,
+            ch.AGENT_GEMINI,
+            ch.AGENT_PI,
+        }
         assert all(s["source"] == "windows" for s in sessions)
 
     def test_alias_export_uses_non_claude_sessions(self, monkeypatch, tmp_path):
@@ -10548,6 +10560,7 @@ class TestCommandCombinationMatrix:
         # Mock Codex and Gemini home dirs to avoid picking up real sessions
         monkeypatch.setattr(ch, "codex_get_home_dir", lambda: projects_dir / "nonexistent_codex")
         monkeypatch.setattr(ch, "gemini_get_home_dir", lambda: projects_dir / "nonexistent_gemini")
+        monkeypatch.setattr(ch, "pi_get_home_dir", lambda: projects_dir / "nonexistent_pi")
 
         def fake_fetch(remote_host, remote_workspace, local_projects_dir, hostname):
             src = env["remote_template"] / remote_workspace

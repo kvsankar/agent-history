@@ -8812,7 +8812,7 @@ def _get_wsl_distro_names() -> list:
             if cleaned:
                 names.append(cleaned)
         return names
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         return []
 
 
@@ -8891,7 +8891,7 @@ def _get_wsl_distro_info(distro_name: str) -> Optional[dict]:
 
         username = user_result.stdout.strip()
         return _build_wsl_distro_info(distro_name, [username])
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         usernames = _get_wsl_usernames_from_unc(distro_name)
         return _build_wsl_distro_info(distro_name, usernames) if usernames else None
 
@@ -9048,7 +9048,7 @@ def _get_wsl_home_path(distro_name: str) -> Optional[str]:
         home = result.stdout.strip()
         # basic sanity: must look like an absolute path
         return home if home.startswith("/") else None
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
 
 
@@ -11492,7 +11492,7 @@ def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912, PLR0915
     agent: str,
     source_keys: Optional[list] = None,
 ) -> list:
-    """Collect Codex and Gemini sessions for alias patterns."""
+    """Collect non-Claude sessions for alias patterns."""
     source_keys = source_keys or ["local"]
     sessions = []
     for source_key in source_keys:

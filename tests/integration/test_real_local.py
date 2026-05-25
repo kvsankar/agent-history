@@ -35,14 +35,22 @@ def make_workspace(root: Path, encoded_name: str, files: int = 1):
     return ws_dir
 
 
+def isolated_agent_env(projects: Path) -> dict:
+    env = os.environ.copy()
+    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env["CODEX_SESSIONS_DIR"] = str(projects / "_missing_codex")
+    env["GEMINI_SESSIONS_DIR"] = str(projects / "_missing_gemini")
+    env["PI_CODING_AGENT_SESSION_DIR"] = str(projects / "_missing_pi")
+    return env
+
+
 def test_lsw_local_lists_workspaces(tmp_path: Path):
     # Prepare a synthetic projects dir with two workspaces
     projects = tmp_path
     make_workspace(projects, "-home-user-alpha")
     make_workspace(projects, "-home-user-beta")
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
 
     # List workspaces locally
     res = run_cli(["lsw", "--local"], env=env)
@@ -57,8 +65,7 @@ def test_lss_local_lists_sessions_for_pattern(tmp_path: Path):
     projects = tmp_path
     make_workspace(projects, "-home-user-mysvc", files=2)
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
 
     # List sessions for pattern 'mysvc'
     res = run_cli(["lss", "--local", "mysvc"], env=env)
@@ -75,8 +82,7 @@ def test_lss_local_all_lists_any(tmp_path: Path):
     make_workspace(projects, "-home-user-foo", files=1)
     make_workspace(projects, "-home-user-bar", files=1)
 
-    env = os.environ.copy()
-    env["CLAUDE_PROJECTS_DIR"] = str(projects)
+    env = isolated_agent_env(projects)
 
     res = run_cli(["lss", "--local", "all"], env=env)
     assert res.returncode == 0, res.stderr
