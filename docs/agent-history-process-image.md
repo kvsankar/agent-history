@@ -24,7 +24,7 @@ understand the main moving parts without reading the repository.
 Show agent-history as a unified browse-and-export front end for fragmented AI
 coding assistant history:
 
-- It reads existing session files from Claude Code, Codex CLI, and Gemini CLI;
+- It reads existing session files from Claude Code, Codex CLI, Gemini CLI, and Pi;
   it does not record new conversations or modify the agents.
 - It reaches across multiple "homes" (local, WSL, Windows-from-WSL, SSH remotes).
 - It normalizes per-agent storage layouts into a consistent workspace/session view.
@@ -53,7 +53,7 @@ Recommended layout:
    Claude skill integration).
 5. Bottom: shared services and storage boundaries.
 
-The three agent adapters (Claude Code, Codex CLI, Gemini CLI) should be visually
+The agent adapters (Claude Code, Codex CLI, Gemini CLI, Pi) should be visually
 parallel but distinguishable, since each has a different storage layout and
 metadata shape.
 

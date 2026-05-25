@@ -11596,6 +11596,387 @@ class TestHtmlExport:
         assert '<span class="code-title-label">Command</span>' in html
         assert "echo ok" in html
 
+    def test_pi_read_jsonl_normalizes_roles_and_tool_calls(self, tmp_path):
+        session_file = tmp_path / ".pi" / "agent" / "sessions" / "--home-sankar-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {
+                "type": "session",
+                "id": "pi-session",
+                "version": "v3",
+                "cwd": "/home/sankar/project",
+                "createdAt": "2026-01-01T10:00:00Z",
+            },
+            {
+                "type": "message",
+                "id": "u1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"role": "user", "content": [{"type": "text", "text": "List files"}]},
+            },
+            {
+                "type": "message",
+                "id": "a1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I will inspect."},
+                        {
+                            "type": "toolCall",
+                            "id": "call1",
+                            "name": "bash",
+                            "arguments": {"command": "ls -la"},
+                        },
+                    ],
+                    "model": "pi-model",
+                    "usage": {"input": 10, "output": 5},
+                },
+            },
+            {
+                "type": "message",
+                "id": "t1",
+                "timestamp": "2026-01-01T10:00:03Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call1",
+                    "toolName": "bash",
+                    "content": "total 0",
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+        messages, meta = ch.pi_read_jsonl_messages(session_file)
+
+        assert meta["id"] == "pi-session"
+        assert ch.pi_get_workspace_from_session(session_file) == "/home/sankar/project"
+        assert [msg["input_origin"] for msg in messages] == [
+            ch.INPUT_ORIGIN_HUMAN,
+            ch.INPUT_ORIGIN_ASSISTANT,
+            ch.INPUT_ORIGIN_TOOL_RESULT,
+        ]
+        assert messages[1]["has_tool_call"] is True
+        assert messages[1]["tool_calls"][0]["arguments"]["command"] == "ls -la"
+        assert messages[2]["is_end_user_input"] is False
+        metrics = ch.pi_extract_metrics_from_jsonl(session_file)
+        assert len(metrics["tool_uses"]) == 1
+        assert metrics["tool_uses"][0]["tool_use_id"] == "call1"
+
+    def test_pi_scan_sessions_uses_workspace_filters(self, tmp_path):
+        sessions_dir = tmp_path / "sessions"
+        session_file = sessions_dir / "--home-sankar-pi-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {"type": "session", "id": "pi-session", "version": "v3"},
+            {
+                "type": "message",
+                "id": "u1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"role": "user", "content": "Hello"},
+            },
+            {
+                "type": "message",
+                "id": "a1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {"role": "assistant", "content": "Hi"},
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+        sessions = ch.pi_scan_sessions(pattern="pi", sessions_dir=sessions_dir)
+
+        assert len(sessions) == 1
+        assert sessions[0]["agent"] == ch.AGENT_PI
+        assert sessions[0]["workspace_readable"] == "/home/sankar/pi/project"
+        assert sessions[0]["message_count"] == 2
+
+    def test_pi_home_dir_uses_project_settings_session_dir(self, tmp_path, monkeypatch):
+        project_dir = tmp_path / "project"
+        settings_dir = project_dir / ".pi"
+        settings_dir.mkdir(parents=True)
+        settings_file = settings_dir / "settings.json"
+        settings_file.write_text(json.dumps({"sessionDir": "sessions"}), encoding="utf-8")
+        monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+        monkeypatch.delenv("PI_SESSIONS_DIR", raising=False)
+        monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "agent"))
+        monkeypatch.chdir(project_dir)
+
+        assert ch.pi_get_home_dir() == tmp_path / "agent" / "sessions"
+        assert ch.pi_get_home_dir(include_project_settings=True) == settings_dir / "sessions"
+
+    def test_pi_read_jsonl_keeps_latest_active_branch(self, tmp_path):
+        session_file = tmp_path / ".pi" / "agent" / "sessions" / "--home-sankar-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {"type": "session", "id": "pi-session", "cwd": "/home/sankar/project"},
+            {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"role": "user", "content": "Start"},
+            },
+            {
+                "type": "message",
+                "id": "a-old",
+                "parentId": "u1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {"role": "assistant", "content": "Abandoned branch"},
+            },
+            {
+                "type": "message",
+                "id": "a-new",
+                "parentId": "u1",
+                "timestamp": "2026-01-01T10:00:03Z",
+                "message": {"role": "assistant", "content": "Active branch"},
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+        messages, _ = ch.pi_read_jsonl_messages(session_file)
+
+        assert [msg["id"] for msg in messages] == ["u1", "a-new"]
+        assert messages[0]["pi_omitted_branch_entries"] == 1
+
+    def test_pi_internal_entries_and_bash_metadata_are_preserved(self, tmp_path):
+        session_file = tmp_path / ".pi" / "agent" / "sessions" / "--home-sankar-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {"type": "session", "id": "pi-session", "cwd": "/home/sankar/project"},
+            {
+                "type": "model_change",
+                "id": "m1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "provider": "openai",
+                "modelId": "gpt-test",
+            },
+            {
+                "type": "message",
+                "id": "b1",
+                "parentId": "m1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {
+                    "role": "bashExecution",
+                    "command": "sleep 10",
+                    "output": "cancelled",
+                    "cancelled": True,
+                    "truncated": True,
+                    "fullOutputPath": "/tmp/out.txt",
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+        messages, _ = ch.pi_read_jsonl_messages(session_file)
+
+        assert messages[0]["input_origin"] == ch.INPUT_ORIGIN_INTERNAL_CONTEXT
+        assert messages[0]["internal_context_type"] == "model_change"
+        assert messages[1]["is_tool_result"] is True
+        assert messages[1]["is_error"] is True
+        assert messages[1]["truncated"] is True
+        assert messages[1]["full_output_path"] == "/tmp/out.txt"
+
+    def test_html_keeps_pi_text_visible_when_message_has_tool_calls(self, tmp_path):
+        session_file = tmp_path / ".pi" / "agent" / "sessions" / "--home-sankar-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {"type": "session", "id": "pi-session", "cwd": "/home/sankar/project"},
+            {
+                "type": "message",
+                "id": "u1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"role": "user", "content": "Run tests"},
+            },
+            {
+                "type": "message",
+                "id": "a1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I ran the tests."},
+                        {
+                            "type": "toolCall",
+                            "id": "call1",
+                            "name": "bash",
+                            "arguments": {"command": "pytest"},
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "message",
+                "id": "b1",
+                "timestamp": "2026-01-01T10:00:03Z",
+                "message": {
+                    "role": "bashExecution",
+                    "command": "pytest",
+                    "output": "1 passed",
+                    "exitCode": 0,
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+        messages, meta = ch.pi_read_jsonl_messages(session_file)
+        session = ch._build_html_session_data(
+            session_file, ch.AGENT_PI, messages, session_info=meta
+        )
+        html = ch.render_html_document("Pi Export", [session], initial_level=1)
+
+        assert "I ran the tests." in html
+        assert 'class="message message-assistant"' in html
+        assert "Tool call: bash" in html
+        assert '<span class="code-title-label">Command</span>' in html
+        assert '<span class="code-title-label">Output</span>' in html
+        assert "pytest" in html
+
+    def test_pi_sync_file_to_db(self, tmp_path):
+        session_file = tmp_path / ".pi" / "agent" / "sessions" / "--home-sankar-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {"type": "session", "id": "pi-session", "cwd": "/home/sankar/project"},
+            {
+                "type": "message",
+                "id": "u1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"role": "user", "content": "Hello"},
+            },
+            {
+                "type": "message",
+                "id": "a1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Hi"},
+                        {
+                            "type": "toolCall",
+                            "id": "call1",
+                            "name": "bash",
+                            "arguments": {"command": "echo ok"},
+                        },
+                    ],
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+        conn = ch.init_metrics_db(tmp_path / "metrics.db")
+        try:
+            assert ch.sync_file_to_db(conn, session_file, source="local", force=True)
+            session_row = conn.execute(
+                "SELECT agent, workspace, message_count FROM sessions WHERE file_path = ?",
+                (str(session_file),),
+            ).fetchone()
+            tool_row = conn.execute(
+                "SELECT tool_name FROM tool_uses WHERE file_path = ?",
+                (str(session_file),),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert session_row["agent"] == ch.AGENT_PI
+        assert session_row["workspace"] == "sankar-project"
+        assert session_row["message_count"] == 2
+        assert tool_row["tool_name"] == "bash"
+
+    def test_pi_sync_custom_session_dir_outside_pi_uses_pi_parser(self, tmp_path):
+        sessions_dir = tmp_path / "custom-sessions"
+        session_file = sessions_dir / "--home-sankar-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {"type": "session", "id": "pi-session", "cwd": "/home/sankar/project"},
+            {
+                "type": "message",
+                "id": "u1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"role": "user", "content": "Hello"},
+            },
+            {
+                "type": "message",
+                "id": "a1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {"role": "assistant", "content": "Hi"},
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+        conn = ch.init_metrics_db(tmp_path / "metrics.db")
+        try:
+            stats = ch._sync_pi_to_db(
+                conn,
+                [""],
+                force=True,
+                sessions_dir=sessions_dir,
+                source_key="pi-custom",
+            )
+            row = conn.execute(
+                "SELECT agent, source FROM sessions WHERE file_path = ?",
+                (str(session_file),),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert stats["synced"] == 1
+        assert row["agent"] == ch.AGENT_PI
+        assert row["source"] == "pi-custom"
+
+    def test_pi_tool_calls_dedupe_metadata_and_content_blocks(self, tmp_path):
+        session_file = tmp_path / ".pi" / "agent" / "sessions" / "--home-sankar-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {"type": "session", "id": "pi-session", "cwd": "/home/sankar/project"},
+            {
+                "type": "message",
+                "id": "a1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "call1",
+                            "name": "bash",
+                            "arguments": {"command": "echo content"},
+                        }
+                    ],
+                    "metadata": {
+                        "toolCalls": [
+                            {"id": "call1", "name": "bash", "arguments": {"command": "echo meta"}}
+                        ]
+                    },
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+        messages, _ = ch.pi_read_jsonl_messages(session_file)
+
+        assert len(messages[0]["tool_calls"]) == 1
+        assert messages[0]["tool_calls"][0]["arguments"]["command"] == "echo content"
+
+    def test_pi_metrics_preserve_cache_write_tokens(self, tmp_path):
+        session_file = tmp_path / ".pi" / "agent" / "sessions" / "--home-sankar-project--" / "session.jsonl"
+        session_file.parent.mkdir(parents=True)
+        records = [
+            {"type": "session", "id": "pi-session", "cwd": "/home/sankar/project"},
+            {
+                "type": "message",
+                "id": "a1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {
+                    "role": "assistant",
+                    "content": "Hi",
+                    "usage": {"input": 1, "output": 2, "cacheWrite": 3, "cacheRead": 4},
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+        metrics = ch.pi_extract_metrics_from_jsonl(session_file)
+
+        assert metrics["messages"][0]["cache_creation_tokens"] == 3
+        assert metrics["tokens_summary"]["cache_creation_tokens"] == 3
+
     def test_html_export_options_signature_detects_level_changes(self, tmp_path):
         output_file = tmp_path / "session.html"
         html = ch.render_html_document("Test Export", [], initial_level=1)
@@ -12981,6 +13362,25 @@ class TestPrintTimeSummary:
 
 class TestExportPathHandling:
     """Test _get_export_output_path handles various path formats."""
+
+    def test_resolve_export_targets_uses_cwd_patterns_for_pi(self, tmp_path, monkeypatch):
+        args = SimpleNamespace(
+            all_workspaces=False,
+            all_homes=False,
+            this_only=False,
+            agent=ch.AGENT_PI,
+            local=False,
+            wsl=False,
+            windows=False,
+            remotes=[],
+            remote=None,
+        )
+        monkeypatch.setattr(ch, "infer_non_claude_patterns_from_cwd", lambda: ["pi-project"])
+
+        targets, alias_handled = ch._resolve_export_targets(args, [], tmp_path)
+
+        assert targets == ["pi-project"]
+        assert alias_handled is False
 
     def test_export_path_with_flat_flag(self, tmp_path):
         """Test flat mode puts files directly in output dir."""

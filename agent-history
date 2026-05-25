@@ -2,8 +2,9 @@
 """
 agent-history - Manage and export AI coding assistant conversation sessions
 
-A unified tool to list, filter, and export conversation sessions from Claude Code
-and Codex CLI, organized by workspace. Supports both agents with auto-detection.
+A unified tool to list, filter, and export conversation sessions from Claude Code,
+Codex CLI, Gemini CLI, and Pi, organized by workspace. Supports automatic
+backend detection.
 
 Author: Built with Claude Code
 License: MIT
@@ -49,6 +50,7 @@ DEFAULT_CLEANUP_DAYS = 99999
 AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
 AGENT_GEMINI = "gemini"
+AGENT_PI = "pi"
 
 # Normalized message origins. These distinguish raw model/protocol roles from
 # who or what actually supplied the content.
@@ -77,6 +79,9 @@ CODEX_HOME_DIR = Path.home() / ".codex" / "sessions"
 # Gemini home directory (sessions stored in ~/.gemini/tmp/<hash>/chats/)
 GEMINI_HOME_DIR = Path.home() / ".gemini" / "tmp"
 
+# Pi home directory (sessions stored in ~/.pi/agent/sessions/<workspace>/)
+PI_HOME_DIR = Path.home() / ".pi" / "agent" / "sessions"
+
 # ============================================================================
 # Named Constants (for readability and maintainability)
 # ============================================================================
@@ -87,6 +92,7 @@ MIN_WSL_MNT_PATH_LEN = len("/mnt/c")  # WSL mount prefix length
 WSL_UNC_MIN_PARTS = len(["", "wsl.localhost", "Distro"])  # Parts in //wsl.localhost/Distro
 WSL_LOCALHOST_SKIP_PARTS = len(["", "", "wsl.localhost", "Distro"])  # Parts to skip
 MIN_ENCODED_PATH_LEN = len("C--")  # Minimum for Windows encoded paths
+PI_WRAPPED_WORKSPACE_MARKER_LEN = len("----")  # Minimum wrapped Pi workspace name length
 
 # Splitting constants
 MIN_SPLIT_POINTS = 2  # Minimum split points (start + end) for no-split case
@@ -205,6 +211,7 @@ class TokensSummary(TypedDict, total=False):
 
     input_tokens: int
     output_tokens: int
+    cache_creation_tokens: int
     cache_read_tokens: int
     timestamp: Optional[str]
 
@@ -301,6 +308,56 @@ def gemini_get_home_dir() -> Path:
     return GEMINI_HOME_DIR
 
 
+def _pi_agent_dir() -> Path:
+    """Return Pi's agent config directory."""
+    env_override = os.environ.get("PI_CODING_AGENT_DIR")
+    if env_override:
+        return Path(env_override).expanduser()
+    return Path.home() / ".pi" / "agent"
+
+
+def _pi_session_dir_from_settings(settings_file: Path, base_dir: Path) -> Optional[Path]:
+    """Read Pi sessionDir from a settings file if configured."""
+    try:
+        data = load_json(settings_file)
+    except (OSError, json.JSONDecodeError):
+        return None
+    session_dir = data.get("sessionDir")
+    if not isinstance(session_dir, str) or not session_dir.strip():
+        return None
+    expanded = Path(session_dir).expanduser()
+    if expanded.is_absolute():
+        return expanded
+    return base_dir / expanded
+
+
+def pi_get_home_dir(include_project_settings: bool = False) -> Path:
+    """Get Pi sessions directory (~/.pi/agent/sessions/).
+
+    Pi documents PI_CODING_AGENT_SESSION_DIR as the session directory override,
+    and supports sessionDir in global/project settings. Project settings are
+    opt-in here so global scans do not change behavior based on process cwd.
+    """
+    env_override = os.environ.get("PI_CODING_AGENT_SESSION_DIR") or os.environ.get(
+        "PI_SESSIONS_DIR"
+    )
+    if env_override:
+        return Path(env_override).expanduser()
+
+    agent_dir = _pi_agent_dir()
+    if include_project_settings:
+        project_settings = Path.cwd() / ".pi" / "settings.json"
+        project_dir = _pi_session_dir_from_settings(project_settings, project_settings.parent)
+        if project_dir:
+            return project_dir
+
+    global_dir = _pi_session_dir_from_settings(agent_dir / "settings.json", agent_dir)
+    if global_dir:
+        return global_dir
+
+    return agent_dir / "sessions"
+
+
 def detect_agent_from_path(path: Path) -> str:
     """Detect agent type from file path.
 
@@ -310,6 +367,7 @@ def detect_agent_from_path(path: Path) -> str:
     Returns:
         AGENT_GEMINI if path contains .gemini,
         AGENT_CODEX if path contains .codex,
+        AGENT_PI if path contains .pi,
         otherwise AGENT_CLAUDE
     """
     path_str = str(path)
@@ -317,11 +375,15 @@ def detect_agent_from_path(path: Path) -> str:
         return AGENT_GEMINI
     if "/.codex/" in path_str or "\\.codex\\" in path_str:
         return AGENT_CODEX
+    if "/.pi/" in path_str or "\\.pi\\" in path_str:
+        return AGENT_PI
     path_parts = [part.lower() for part in path.parts]
     if any(part.startswith("remote_") and part.endswith("_gemini") for part in path_parts):
         return AGENT_GEMINI
     if any(part.startswith("remote_") and part.endswith("_codex") for part in path_parts):
         return AGENT_CODEX
+    if any(part.startswith("remote_") and part.endswith("_pi") for part in path_parts):
+        return AGENT_PI
     if path.suffix.lower() == ".json":
         return AGENT_GEMINI
     return AGENT_CLAUDE
@@ -1198,7 +1260,7 @@ def _find_git_root(start: Path) -> Optional[Path]:
 
 
 def infer_non_claude_patterns_from_cwd() -> list[str]:
-    """Infer useful workspace patterns for Codex/Gemini when none are provided.
+    """Infer useful workspace patterns for non-Claude agents when none are provided.
 
     Most users run the CLI from some subdirectory of a repo; using only
     `cwd.name` breaks in that case (e.g. project/docs -> "docs").
@@ -1252,7 +1314,7 @@ def resolve_patterns_for_command(
         this_only: If True, skip alias checking
         require_workspace: If True, exit with error if not in workspace
         error_message: Custom error message for require_workspace
-        agent: Agent type (auto, claude, codex, gemini). Aliases only apply to Claude.
+        agent: Agent type (auto, claude, codex, gemini, pi). Aliases only apply to Claude.
 
     Returns:
         Tuple of (patterns, alias_name) where alias_name is set if
@@ -1262,7 +1324,7 @@ def resolve_patterns_for_command(
         return workspace_list, None
 
     # For non-Claude agents, use CWD path as pattern (matches against workspace_readable)
-    if agent in ("gemini", "codex"):
+    if agent in ("gemini", "codex", "pi"):
         return infer_non_claude_patterns_from_cwd(), None
 
     if this_only:
@@ -1363,8 +1425,8 @@ def collect_sessions_with_dedup(  # noqa: PLR0913
     # Filter out cached workspaces (only for Claude backend)
     # M2: Extracted predicate for readability
     def _should_include_session(session: dict[str, Any]) -> bool:
-        """Check if session should be included (Codex/Gemini or native workspace)."""
-        if session.get("agent") in (AGENT_CODEX, AGENT_GEMINI):
+        """Check if session should be included (non-Claude or native workspace)."""
+        if session.get("agent") in (AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
             return True
         return is_native_workspace(session["workspace"])
 
@@ -4530,6 +4592,69 @@ def _render_gemini_tool_blocks(msg: dict, initial_level: int) -> list:
     return rendered
 
 
+def _render_pi_tool_blocks(msg: dict, initial_level: int) -> list:
+    """Render Pi tool calls and tool result messages."""
+    rendered = []
+    for tool_call in msg.get("tool_calls", []):
+        name = tool_call.get("name", "unknown")
+        call_id = tool_call.get("id", "")
+        arguments = tool_call.get("arguments") or tool_call.get("args") or tool_call.get("input") or {}
+        full = _html_json(arguments)
+        title = f"Tool call: {name}" + (f" ({call_id})" if call_id else "")
+        command = _html_shell_command(name, arguments)
+        if command:
+            rendered.append(_render_shell_tool_block(title, command, full, initial_level))
+            continue
+        rendered.append(
+            _render_trace_block(
+                title,
+                _html_snippet(full),
+                "Full input",
+                full,
+                initial_level,
+                snippet_language="json",
+                full_language="json",
+            )
+        )
+    if msg.get("is_tool_result"):
+        payload = msg.get("raw_payload") or {}
+        tool_name = msg.get("tool_name") or payload.get("toolName") or payload.get("role", "tool")
+        call_id = msg.get("tool_call_id") or payload.get("toolCallId") or ""
+        status = "error" if msg.get("is_error") else "success"
+        title = f"Tool result: {tool_name} {status}".strip()
+        if call_id:
+            title += f" ({call_id})"
+        command = msg.get("command") or payload.get("command")
+        full = msg.get("content", "")
+        if command:
+            rendered.append(
+                "\n".join(
+                    [
+                        f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
+                        f'<div class="trace-title">{_html_escape(title)}</div>',
+                        '<div class="trace-body">',
+                        _html_code_panel("Command", str(command), trim=True, language="bash", raw_toggle=True),
+                        _html_code_panel("Output", full, trim=True, language="console", raw_toggle=True),
+                        "</div>",
+                        "</section>",
+                    ]
+                )
+            )
+        else:
+            rendered.append(
+                _render_trace_block(
+                    title,
+                    _html_snippet(full),
+                    "Full output",
+                    full,
+                    initial_level,
+                    snippet_language="console",
+                    full_language="console",
+                )
+            )
+    return rendered
+
+
 def _html_gemini_result_text(tool_call: dict) -> tuple[str, bool]:
     """Return Gemini tool result display text and whether it is Markdown."""
     if tool_call.get("resultDisplay"):
@@ -4556,6 +4681,8 @@ def _render_html_tool_blocks(msg: dict, agent: str, initial_level: int) -> list:
         return _render_codex_tool_blocks(msg, initial_level)
     if agent == AGENT_GEMINI:
         return _render_gemini_tool_blocks(msg, initial_level)
+    if agent == AGENT_PI:
+        return _render_pi_tool_blocks(msg, initial_level)
     return _render_claude_tool_blocks(msg, initial_level)
 
 
@@ -4568,7 +4695,9 @@ def _html_message_text(msg: dict, agent: str) -> str:
             if block.get("kind") == "text"
         ]
         return "\n".join(text for text in text_blocks if text)
-    if agent == AGENT_CODEX and (msg.get("is_tool_call") or msg.get("is_tool_result")):
+    if agent in (AGENT_CODEX, AGENT_PI) and (
+        msg.get("is_tool_call") or msg.get("is_tool_result")
+    ):
         return ""
     return msg.get("content", "")
 
@@ -4577,6 +4706,8 @@ def _html_message_has_tools(msg: dict, agent: str) -> bool:
     """Return True if the message carries tool call/result detail."""
     if agent == AGENT_CODEX:
         return bool(msg.get("is_tool_call") or msg.get("is_tool_result"))
+    if agent == AGENT_PI:
+        return bool(msg.get("is_tool_call") or msg.get("is_tool_result") or msg.get("tool_calls"))
     if agent == AGENT_GEMINI:
         return bool(msg.get("tool_calls"))
     return any(
@@ -4589,6 +4720,8 @@ def _html_message_has_tool_result(msg: dict, agent: str) -> bool:
     """Return True if the message carries tool output."""
     if agent == AGENT_CODEX:
         return bool(msg.get("is_tool_result"))
+    if agent == AGENT_PI:
+        return bool(msg.get("is_tool_result"))
     if agent == AGENT_GEMINI:
         return any(tool_call.get("result") for tool_call in msg.get("tool_calls", []))
     return any(block.get("kind") == "tool_result" for block in msg.get("content_blocks", []))
@@ -4598,6 +4731,8 @@ def _html_message_has_tool_call(msg: dict, agent: str) -> bool:
     """Return True if the message carries tool input/call detail."""
     if agent == AGENT_CODEX:
         return bool(msg.get("is_tool_call"))
+    if agent == AGENT_PI:
+        return bool(msg.get("is_tool_call") or msg.get("tool_calls"))
     if agent == AGENT_GEMINI:
         return bool(msg.get("tool_calls"))
     return any(block.get("kind") == "tool_call" for block in msg.get("content_blocks", []))
@@ -4633,7 +4768,7 @@ def _html_is_user_input(msg: dict, agent: str) -> bool:
 
 def _html_is_assistant_final_candidate(msg: dict, agent: str) -> bool:
     """Return True when a message can be the final visible assistant output for a turn."""
-    if agent == AGENT_GEMINI:
+    if agent in (AGENT_GEMINI, AGENT_PI):
         return msg.get("role") == "assistant" and bool(_html_message_text(msg, agent).strip())
     return (
         msg.get("role") == "assistant"
@@ -4832,7 +4967,7 @@ def _render_html_metadata(msg: dict, initial_level: int) -> str:
 
 def _html_role_label(msg: dict, agent: str) -> str:
     """Return a readable role label for HTML."""
-    if agent == AGENT_CODEX:
+    if agent in (AGENT_CODEX, AGENT_PI):
         if msg.get("is_tool_call"):
             return "Tool Call"
         if msg.get("is_tool_result"):
@@ -5115,6 +5250,9 @@ def _html_session_meta(jsonl_file: Path, agent: str) -> dict:
         return meta or {}
     if agent == AGENT_GEMINI:
         _, meta = gemini_read_json_messages(jsonl_file)
+        return meta or {}
+    if agent == AGENT_PI:
+        _, meta = pi_read_jsonl_messages(jsonl_file)
         return meta or {}
     return {}
 
@@ -6776,6 +6914,552 @@ def gemini_scan_sessions(
 
 
 # ============================================================================
+# Pi Backend - JSONL Parsing and Session Scanning
+# ============================================================================
+
+
+def _pi_format_timestamp(value) -> str:
+    """Return a readable timestamp from Pi entry/message timestamp values."""
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (int, float)):
+        # Pi message timestamps are Unix milliseconds; entry timestamps are ISO strings.
+        try:
+            return datetime.utcfromtimestamp(float(value) / 1000).isoformat() + "Z"
+        except (OSError, OverflowError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def _pi_extract_content(content) -> str:  # noqa: C901, PLR0911
+    """Extract visible text from Pi string or content-block arrays."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        block_type = content.get("type")
+        if block_type == "text":
+            return str(content.get("text", ""))
+        if block_type == "image":
+            return f"[Image: {content.get('mimeType', 'unknown')}]"
+        if block_type == "thinking":
+            return ""
+        if "text" in content:
+            return str(content.get("text") or "")
+        if "content" in content:
+            return _pi_extract_content(content.get("content"))
+        return pretty_json(content)
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "toolCall":
+                continue
+            text = _pi_extract_content(block)
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
+    return str(content)
+
+
+def _pi_extract_thoughts(content) -> list:
+    """Extract Pi thinking blocks for full-trace HTML rendering."""
+    if not isinstance(content, list):
+        return []
+    thoughts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "thinking":
+            thinking = block.get("thinking")
+            if thinking:
+                thoughts.append({"subject": "thinking", "description": str(thinking)})
+    return thoughts
+
+
+def _pi_extract_tool_calls(message: dict) -> list:
+    """Extract Pi assistant tool calls from content blocks or metadata."""
+    calls = []
+    seen_ids = set()
+    content = message.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "toolCall":
+                call_id = block.get("id")
+                if call_id:
+                    seen_ids.add(call_id)
+                calls.append(
+                    {
+                        "id": call_id,
+                        "name": block.get("name", "unknown"),
+                        "arguments": block.get("arguments") or block.get("input") or {},
+                    }
+                )
+    metadata_calls = (message.get("metadata") or {}).get("toolCalls")
+    if isinstance(metadata_calls, list):
+        for call in metadata_calls:
+            if isinstance(call, dict):
+                call_id = call.get("id")
+                if call_id and call_id in seen_ids:
+                    continue
+                if call_id:
+                    seen_ids.add(call_id)
+                calls.append(call)
+    return calls
+
+
+def _pi_message_role(raw_role: str) -> str:
+    """Map Pi raw roles to normalized agent-history roles."""
+    if raw_role in ("user", "assistant"):
+        return raw_role
+    if raw_role in ("toolResult", "bashExecution"):
+        return "tool"
+    return "system"
+
+
+def _pi_entry_message(entry: dict) -> Optional[dict]:
+    """Return the Pi AgentMessage object from a session entry."""
+    if isinstance(entry.get("message"), dict):
+        return entry["message"]
+    if entry.get("type") == "message":
+        return entry
+    if entry.get("type") == "custom_message":
+        return {
+            "role": "custom",
+            "content": entry.get("content", ""),
+            "display": entry.get("display", False),
+            "customType": entry.get("customType"),
+            "details": entry.get("details"),
+        }
+    if entry.get("type") == "compaction":
+        return {
+            "role": "compactionSummary",
+            "content": entry.get("summary", ""),
+            "tokensBefore": entry.get("tokensBefore"),
+        }
+    if entry.get("type") == "branch_summary":
+        return {
+            "role": "branchSummary",
+            "content": entry.get("summary", ""),
+            "fromId": entry.get("fromId"),
+        }
+    if entry.get("type") in (
+        "model_change",
+        "thinking_level_change",
+        "custom",
+        "label",
+        "session_info",
+    ):
+        entry_type = entry.get("type")
+        content = pretty_json({k: v for k, v in entry.items() if k != "type"})
+        return {
+            "role": entry_type,
+            "content": content,
+            "customType": entry_type,
+        }
+    return None
+
+
+def _pi_normalize_entry(entry: dict) -> Optional[dict]:
+    """Convert a Pi JSONL entry to the common normalized message shape."""
+    message = _pi_entry_message(entry)
+    if not message:
+        return None
+
+    raw_role = message.get("role", entry.get("role", "system"))
+    role = _pi_message_role(raw_role)
+    timestamp = _pi_format_timestamp(entry.get("timestamp") or message.get("timestamp"))
+    content = _pi_extract_content(message.get("content"))
+    tool_calls = _pi_extract_tool_calls(message)
+    normalized = {
+        "role": role,
+        "raw_role": raw_role,
+        "content": content,
+        "timestamp": timestamp,
+        "raw_payload": message,
+        "id": entry.get("id"),
+        "parent_id": entry.get("parentId"),
+    }
+    if entry.get("children") is not None:
+        normalized["children"] = entry.get("children")
+    if message.get("model"):
+        normalized["model"] = message.get("model")
+    if message.get("usage"):
+        normalized["tokens"] = message.get("usage")
+    thoughts = _pi_extract_thoughts(message.get("content"))
+    if thoughts:
+        normalized["thoughts"] = thoughts
+    if tool_calls:
+        normalized["tool_calls"] = tool_calls
+    if raw_role == "toolResult":
+        normalized.update(
+            {
+                "is_tool_result": True,
+                "tool_call_id": message.get("toolCallId"),
+                "tool_name": message.get("toolName", "unknown"),
+                "is_error": bool(message.get("isError")),
+            }
+        )
+    elif raw_role == "bashExecution":
+        output = message.get("output", content)
+        command = message.get("command", "")
+        exit_code = message.get("exitCode")
+        is_error = bool(message.get("cancelled")) or (
+            exit_code is not None and exit_code != 0
+        )
+        normalized.update(
+            {
+                "is_tool_result": True,
+                "tool_name": "bash",
+                "content": str(output or ""),
+                "command": command,
+                "exit_code": exit_code,
+                "is_error": is_error,
+                "cancelled": bool(message.get("cancelled")),
+                "truncated": bool(message.get("truncated")),
+                "full_output_path": message.get("fullOutputPath"),
+                "exclude_from_context": bool(message.get("excludeFromContext")),
+            }
+        )
+    elif raw_role in (
+        "custom",
+        "compactionSummary",
+        "branchSummary",
+        "model_change",
+        "thinking_level_change",
+        "label",
+        "session_info",
+    ):
+        normalized["is_internal_context"] = True
+        normalized["internal_context_type"] = raw_role
+        normalized["internal_context_name"] = message.get("customType") or raw_role
+    return normalized
+
+
+def _pi_active_branch_messages(messages: list) -> list:
+    """Return messages on Pi's latest active branch path."""
+    by_id = {msg.get("id"): msg for msg in messages if msg.get("id")}
+    if not by_id or not any(msg.get("parent_id") for msg in messages):
+        return messages
+
+    leaf = next((msg for msg in reversed(messages) if msg.get("id")), None)
+    if not leaf:
+        return messages
+
+    active_ids = set()
+    current = leaf
+    while current and current.get("id") and current.get("id") not in active_ids:
+        active_ids.add(current["id"])
+        current = by_id.get(current.get("parent_id"))
+
+    omitted = sum(1 for msg in messages if msg.get("id") and msg.get("id") not in active_ids)
+    active = [msg for msg in messages if not msg.get("id") or msg.get("id") in active_ids]
+    if omitted:
+        for msg in active:
+            msg["pi_omitted_branch_entries"] = omitted
+    return active
+
+
+def pi_read_jsonl_messages(jsonl_file: Path) -> tuple:
+    """Read messages from a Pi JSONL session file."""
+    messages = []
+    session_meta = None
+    try:
+        with open(jsonl_file, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                entry_type = entry.get("type")
+                if entry_type in ("session", "tree"):
+                    session_meta = entry
+                    continue
+                msg = _pi_normalize_entry(entry)
+                if msg:
+                    messages.append(msg)
+    except OSError:
+        raise
+    return annotate_message_origins(_pi_active_branch_messages(messages)), session_meta
+
+
+def pi_get_first_timestamp(jsonl_file: Path) -> Optional[str]:
+    """Get the first timestamp from a Pi session file."""
+    try:
+        with open(jsonl_file, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                timestamp = entry.get("timestamp")
+                if timestamp:
+                    return _pi_format_timestamp(timestamp)
+    except OSError:
+        pass
+    return None
+
+
+def _pi_decode_workspace_dir(name: str) -> str:
+    """Decode Pi's --path-- workspace directory name when cwd metadata is absent."""
+    trimmed = name
+    if (
+        trimmed.startswith("--")
+        and trimmed.endswith("--")
+        and len(trimmed) > PI_WRAPPED_WORKSPACE_MARKER_LEN
+    ):
+        trimmed = trimmed[2:-2]
+    else:
+        trimmed = trimmed.strip("-")
+    if not trimmed:
+        return "unknown"
+    parts = [part for part in trimmed.split("-") if part]
+    if parts and re.fullmatch(r"[A-Za-z]:", parts[0]):
+        return str(PureWindowsPath(*parts))
+    return "/" + "/".join(parts)
+
+
+def pi_get_workspace_from_session(jsonl_file: Path) -> str:
+    """Extract workspace path from Pi session header or encoded parent folder."""
+    try:
+        with open(jsonl_file, encoding="utf-8") as f:
+            for line in f:
+                entry = json.loads(line)
+                if entry.get("type") in ("session", "tree"):
+                    cwd = entry.get("cwd") or entry.get("workspace")
+                    if cwd:
+                        return cwd
+                    break
+    except (OSError, json.JSONDecodeError):
+        pass
+    try:
+        return _pi_decode_workspace_dir(jsonl_file.parent.name)
+    except (AttributeError, IndexError):
+        return "unknown"
+
+
+def pi_get_workspace_readable(workspace: str) -> str:
+    """Convert a Pi workspace identifier to a readable path string."""
+    if not workspace:
+        return ""
+    if workspace.startswith("--"):
+        return _pi_decode_workspace_dir(workspace)
+    return workspace
+
+
+def pi_count_messages(jsonl_file: Path) -> int:
+    """Count user/assistant messages in a Pi session."""
+    try:
+        messages, _ = pi_read_jsonl_messages(jsonl_file)
+    except OSError:
+        return 0
+    return sum(1 for msg in messages if msg.get("role") in ("user", "assistant"))
+
+
+def pi_parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> str:
+    """Convert Pi JSONL to markdown format."""
+    messages, session_meta = pi_read_jsonl_messages(jsonl_file)
+    md_lines = ["# Pi Conversation", ""]
+
+    if session_meta and not minimal:
+        md_lines.extend(
+            [
+                "## Session Metadata",
+                "",
+                f"- **Session ID:** `{session_meta.get('id', 'unknown')}`",
+                f"- **Working Directory:** `{session_meta.get('cwd', pi_get_workspace_from_session(jsonl_file))}`",
+                f"- **Version:** `{session_meta.get('version', 'unknown')}`",
+                "",
+            ]
+        )
+
+    md_lines.extend(["---", ""])
+    for i, msg in enumerate(messages, 1):
+        md_lines.append(f"## {_message_origin_label(msg)} (Message {i})")
+        if not minimal:
+            if msg.get("timestamp"):
+                md_lines.append(f"*{msg['timestamp']}*")
+            md_lines.append(f"*Raw Role: {msg.get('raw_role', msg.get('role', 'unknown'))}*")
+            md_lines.append(f"*Input Origin: {msg.get('input_origin', 'unknown')}*")
+        md_lines.append("")
+        if msg.get("content"):
+            md_lines.extend([msg["content"], ""])
+        for tool_call in msg.get("tool_calls", []):
+            md_lines.extend(
+                [
+                    f"**[Tool: {tool_call.get('name', 'unknown')}]**",
+                    f"Call ID: `{tool_call.get('id', '')}`",
+                    "```json",
+                    _html_json(tool_call.get("arguments") or {}),
+                    "```",
+                    "",
+                ]
+            )
+        md_lines.extend(["---", ""])
+
+    return "\n".join(md_lines)
+
+
+def pi_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:  # noqa: C901
+    """Extract metrics from Pi JSONL files for stats database."""
+    messages, session_meta = pi_read_jsonl_messages(jsonl_file)
+    session: SessionMetrics = {
+        "id": session_meta.get("id") if session_meta else None,
+        "cwd": session_meta.get("cwd") if session_meta else pi_get_workspace_from_session(jsonl_file),
+        "cli_version": None,
+        "model": None,
+        "startTime": None,
+        "lastUpdated": None,
+    }
+    metrics: MetricsDict = {"session": session, "messages": [], "tool_uses": []}
+    timestamps = []
+    tokens_summary: TokensSummary = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "timestamp": None,
+    }
+
+    tool_uses_by_id = {}
+    for msg in messages:
+        timestamp = msg.get("timestamp")
+        if timestamp:
+            timestamps.append(timestamp)
+        role = msg.get("role")
+        if role == "assistant" and not session["model"]:
+            session["model"] = msg.get("model")
+        tokens = msg.get("tokens") or {}
+        if isinstance(tokens, dict):
+            tokens_summary["input_tokens"] += int(tokens.get("input", 0) or 0)
+            tokens_summary["output_tokens"] += int(tokens.get("output", 0) or 0)
+            tokens_summary["cache_creation_tokens"] += int(tokens.get("cacheWrite", 0) or 0)
+            tokens_summary["cache_read_tokens"] += int(tokens.get("cacheRead", 0) or 0)
+            if timestamp:
+                tokens_summary["timestamp"] = timestamp
+        if role in ("user", "assistant"):
+            metrics["messages"].append(
+                {
+                    "uuid": msg.get("id"),
+                    "role": role,
+                    "timestamp": timestamp,
+                    "model": msg.get("model"),
+                        "input_tokens": tokens.get("input", 0) if isinstance(tokens, dict) else 0,
+                        "output_tokens": tokens.get("output", 0) if isinstance(tokens, dict) else 0,
+                        "cache_creation_tokens": tokens.get("cacheWrite", 0)
+                        if isinstance(tokens, dict)
+                        else 0,
+                        "cache_read_tokens": tokens.get("cacheRead", 0)
+                        if isinstance(tokens, dict)
+                        else 0,
+                }
+            )
+        for tool_call in msg.get("tool_calls", []):
+            tool_record = {
+                "tool_use_id": tool_call.get("id"),
+                "message_uuid": msg.get("id"),
+                "tool_name": tool_call.get("name", "unknown"),
+                "timestamp": timestamp,
+            }
+            metrics["tool_uses"].append(tool_record)
+            if tool_record["tool_use_id"]:
+                tool_uses_by_id[tool_record["tool_use_id"]] = tool_record
+        if msg.get("is_tool_result"):
+            tool_call_id = msg.get("tool_call_id")
+            existing = tool_uses_by_id.get(tool_call_id)
+            if existing:
+                existing["is_error"] = msg.get("is_error", False)
+                continue
+            metrics["tool_uses"].append(
+                {
+                    "tool_use_id": tool_call_id,
+                    "message_uuid": msg.get("id"),
+                    "tool_name": msg.get("tool_name", "unknown"),
+                    "timestamp": timestamp,
+                    "is_error": msg.get("is_error", False),
+                }
+            )
+
+    if timestamps:
+        session["startTime"] = min(timestamps)
+        session["lastUpdated"] = max(timestamps)
+    if any(
+        tokens_summary.get(k, 0)
+        for k in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+        )
+    ):
+        metrics["tokens_summary"] = tokens_summary
+    return metrics
+
+
+def _pi_build_session_dict(
+    jsonl_file: Path,
+    workspace: str,
+    modified: datetime,
+    skip_message_count: bool,
+    use_cached_counts: bool = False,
+) -> dict:
+    """Build a session dictionary for a Pi session file."""
+    message_count = 0
+    if not skip_message_count:
+        cached = None
+        if use_cached_counts:
+            cached = _get_cached_message_count(jsonl_file, modified.timestamp())
+        message_count = cached if cached is not None else pi_count_messages(jsonl_file)
+    return {
+        "agent": AGENT_PI,
+        "workspace": workspace,
+        "workspace_readable": pi_get_workspace_readable(workspace),
+        "file": jsonl_file,
+        "filename": jsonl_file.name,
+        "message_count": message_count,
+        "message_count_skipped": skip_message_count,
+        "modified": modified,
+        "source": "local",
+    }
+
+
+def pi_scan_sessions(
+    pattern: str = "",
+    since_date=None,
+    until_date=None,
+    sessions_dir: Optional[Path] = None,
+    skip_message_count: bool = False,
+    use_cached_counts: bool = False,
+) -> list:
+    """Scan ~/.pi/agent/sessions/*/*.jsonl files."""
+    if sessions_dir is None:
+        sessions_dir = pi_get_home_dir()
+    if not sessions_dir.exists():
+        return []
+
+    sessions = []
+    for jsonl_file in sessions_dir.glob("*/*.jsonl"):
+        workspace = pi_get_workspace_from_session(jsonl_file)
+        modified = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
+        if _session_matches_filters(
+            workspace,
+            modified,
+            pattern,
+            since_date,
+            until_date,
+            get_readable=pi_get_workspace_readable,
+        ):
+            sessions.append(
+                _pi_build_session_dict(
+                    jsonl_file,
+                    workspace,
+                    modified,
+                    skip_message_count,
+                    use_cached_counts=use_cached_counts,
+                )
+            )
+    return sorted(sessions, key=lambda s: s["modified"], reverse=True)
+
+
+# ============================================================================
 # Unified Backend Dispatch
 # ============================================================================
 
@@ -6798,11 +7482,11 @@ def get_active_backends(agent: str, projects_dir: Optional[Path] = None) -> list
     """Return list of active backends based on agent flag.
 
     Args:
-        agent: Agent selection - 'auto', 'claude', 'codex', or 'gemini'
+        agent: Agent selection - 'auto', 'claude', 'codex', 'gemini', or 'pi'
         projects_dir: Optional override for Claude projects directory (for testing)
 
     Returns:
-        List of backend identifiers (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI) that exist
+        List of backend identifiers that exist
     """
     claude_projects = projects_dir if projects_dir else _get_claude_projects_path()
 
@@ -6812,6 +7496,8 @@ def get_active_backends(agent: str, projects_dir: Optional[Path] = None) -> list
         return [AGENT_CODEX] if codex_get_home_dir().exists() else []
     elif agent == AGENT_GEMINI:
         return [AGENT_GEMINI] if gemini_get_home_dir().exists() else []
+    elif agent == AGENT_PI:
+        return [AGENT_PI] if pi_get_home_dir().exists() else []
     else:  # auto
         backends = []
         if claude_projects.exists():
@@ -6820,6 +7506,8 @@ def get_active_backends(agent: str, projects_dir: Optional[Path] = None) -> list
             backends.append(AGENT_CODEX)
         if gemini_get_home_dir().exists():
             backends.append(AGENT_GEMINI)
+        if pi_get_home_dir().exists():
+            backends.append(AGENT_PI)
         return backends
 
 
@@ -6837,7 +7525,7 @@ def _scan_backend(
     M6: Consolidated agent dispatch for cleaner code and easier extension.
 
     Args:
-        backend: Backend identifier (AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI)
+        backend: Backend identifier
         pattern: Workspace pattern to filter
         since_date: Start date filter
         until_date: End date filter
@@ -6867,6 +7555,14 @@ def _scan_backend(
             )
         elif backend == AGENT_GEMINI:
             sessions = gemini_scan_sessions(
+                pattern=pattern,
+                since_date=since_date,
+                until_date=until_date,
+                skip_message_count=skip_message_count,
+                use_cached_counts=use_cached_counts,
+            )
+        elif backend == AGENT_PI:
+            sessions = pi_scan_sessions(
                 pattern=pattern,
                 since_date=since_date,
                 until_date=until_date,
@@ -8142,19 +8838,23 @@ def _build_wsl_distro_info(distro_name: str, usernames: list) -> Optional[dict]:
         claude_path = _locate_wsl_projects_dir(distro_name, username)
         codex_path = _locate_wsl_agent_dir(distro_name, username, AGENT_CODEX)
         gemini_path = _locate_wsl_agent_dir(distro_name, username, AGENT_GEMINI)
+        pi_path = _locate_wsl_agent_dir(distro_name, username, AGENT_PI)
         has_claude = claude_path is not None
         has_codex = codex_path is not None
         has_gemini = gemini_path is not None
-        if has_claude or has_codex or has_gemini:
+        has_pi = pi_path is not None
+        if has_claude or has_codex or has_gemini or has_pi:
             return {
                 "name": distro_name,
                 "username": username,
                 "has_claude": has_claude,
                 "has_codex": has_codex,
                 "has_gemini": has_gemini,
+                "has_pi": has_pi,
                 "path": str(claude_path) if claude_path else None,
                 "codex_path": str(codex_path) if codex_path else None,
                 "gemini_path": str(gemini_path) if gemini_path else None,
+                "pi_path": str(pi_path) if pi_path else None,
             }
 
     if not usernames:
@@ -8167,9 +8867,11 @@ def _build_wsl_distro_info(distro_name: str, usernames: list) -> Optional[dict]:
         "has_claude": False,
         "has_codex": False,
         "has_gemini": False,
+        "has_pi": False,
         "path": None,
         "codex_path": None,
         "gemini_path": None,
+        "pi_path": None,
     }
 
 
@@ -8226,9 +8928,11 @@ def get_wsl_distributions() -> list:
                     "has_claude": True,
                     "has_codex": False,
                     "has_gemini": False,
+                    "has_pi": False,
                     "path": str(p),
                     "codex_path": None,
                     "gemini_path": None,
+                    "pi_path": None,
                 }
             ]
 
@@ -8253,7 +8957,14 @@ def _wsl_distro_has_agent(distro: dict, agent: str) -> bool:
         return bool(distro.get("has_codex"))
     if agent == AGENT_GEMINI:
         return bool(distro.get("has_gemini"))
-    return bool(distro.get("has_claude") or distro.get("has_codex") or distro.get("has_gemini"))
+    if agent == AGENT_PI:
+        return bool(distro.get("has_pi"))
+    return bool(
+        distro.get("has_claude")
+        or distro.get("has_codex")
+        or distro.get("has_gemini")
+        or distro.get("has_pi")
+    )
 
 
 def _filter_wsl_distros_for_agent(wsl_distros: list, agent: Optional[str]) -> list:
@@ -8266,7 +8977,7 @@ def _select_wsl_distro_for_agent(wsl_distros: list, agent: Optional[str]) -> Opt
     """Pick the first WSL distro that matches the requested agent."""
     agent_key = agent or "auto"
     if agent_key == "auto":
-        for flag in ("has_claude", "has_codex", "has_gemini"):
+        for flag in ("has_claude", "has_codex", "has_gemini", "has_pi"):
             for distro in wsl_distros:
                 if distro.get(flag):
                     return distro
@@ -8415,6 +9126,14 @@ def _get_wsl_codex_candidate_paths(distro_name: str, username: str) -> list:
     ]
 
 
+def _get_wsl_pi_candidate_paths(distro_name: str, username: str) -> list:
+    """Return candidate UNC paths for Pi sessions in a WSL distro."""
+    return [
+        Path(f"//wsl.localhost/{distro_name}/home/{username}/.pi/agent/sessions"),
+        Path(f"//wsl$/{distro_name}/home/{username}/.pi/agent/sessions"),
+    ]
+
+
 def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Optional[Path]:
     """Find the first accessible UNC path for an agent in a WSL distro."""
     if agent == AGENT_CLAUDE:
@@ -8423,6 +9142,8 @@ def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Option
         candidates = _get_wsl_gemini_candidate_paths(distro_name, username)
     elif agent == AGENT_CODEX:
         candidates = _get_wsl_codex_candidate_paths(distro_name, username)
+    elif agent == AGENT_PI:
+        candidates = _get_wsl_pi_candidate_paths(distro_name, username)
     else:
         return None
 
@@ -8515,6 +9236,11 @@ def codex_get_wsl_sessions_dir(distro_name: str) -> Optional[Path]:
     return _get_wsl_agent_sessions_dir(distro_name, AGENT_CODEX, "CODEX_WSL_SESSIONS_DIR")
 
 
+def pi_get_wsl_sessions_dir(distro_name: str) -> Optional[Path]:
+    """Get Pi sessions directory for a WSL distribution."""
+    return _get_wsl_agent_sessions_dir(distro_name, AGENT_PI, "PI_WSL_SESSIONS_DIR")
+
+
 def gemini_get_windows_sessions_dir(username: Optional[str] = None):
     """Get Gemini sessions directory for Windows from WSL.
 
@@ -8577,6 +9303,23 @@ def codex_get_windows_sessions_dir(username: Optional[str] = None):
     return sessions_dir
 
 
+def pi_get_windows_sessions_dir(username: Optional[str] = None):
+    """Get Pi sessions directory for Windows from WSL."""
+    override = os.environ.get("PI_WINDOWS_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    if not is_running_in_wsl():
+        return None
+
+    windows_home = get_windows_home_from_wsl(username)
+    if not windows_home:
+        return None
+
+    sessions_dir = windows_home / ".pi" / "agent" / "sessions"
+    return sessions_dir if sessions_dir.exists() else None
+
+
 def get_agent_wsl_dir(distro_name: str, agent: str):
     """Get session directory for any agent from WSL distribution.
 
@@ -8593,6 +9336,8 @@ def get_agent_wsl_dir(distro_name: str, agent: str):
         return codex_get_wsl_sessions_dir(distro_name)
     elif agent == AGENT_GEMINI:
         return gemini_get_wsl_sessions_dir(distro_name)
+    elif agent == AGENT_PI:
+        return pi_get_wsl_sessions_dir(distro_name)
     return None
 
 
@@ -8617,6 +9362,8 @@ def get_agent_windows_dir(username: Optional[str], agent: str):
         return codex_get_windows_sessions_dir(username)
     elif agent == AGENT_GEMINI:
         return gemini_get_windows_sessions_dir(username)
+    elif agent == AGENT_PI:
+        return pi_get_windows_sessions_dir(username)
     return None
 
 
@@ -9690,6 +10437,62 @@ def codex_fetch_remote_sessions(
 
 
 # ============================================================================
+# Pi Remote Operations (SSH)
+# ============================================================================
+
+
+def pi_fetch_remote_sessions(
+    remote_host: Optional[str], local_cache_dir: Path, hostname: str
+) -> dict:
+    """Fetch Pi sessions from remote using rsync."""
+    if not validate_remote_host(remote_host):
+        return {"success": False, "files_copied": 0, "error": f"Invalid remote host: {remote_host}"}
+
+    local_dir = local_cache_dir / f"remote_{hostname}_pi"
+    local_dir.mkdir(parents=True, exist_ok=True)
+    remote_path = f"{remote_host}:~/.pi/agent/sessions/"
+
+    try:
+        local_path_str = _convert_to_rsync_path(local_dir)
+        rsync_cmd = [
+            get_command_path("rsync"),
+            "-avh",
+            "--partial",
+            "--include=*/",
+            "--include=*/*.jsonl",
+            "--exclude=*",
+            remote_path,
+            local_path_str,
+        ]
+        result = _run_rsync_with_wsl_fallback(rsync_cmd, local_dir, SSH_TIMEOUT)
+        if result.returncode != 0:
+            is_partial, error_msg = _interpret_rsync_exit_code(result.returncode)
+            if is_partial:
+                return {
+                    "success": True,
+                    "files_copied": _count_rsync_files(result.stdout),
+                    "local_dir": str(local_dir),
+                    "output": result.stdout,
+                    "warning": error_msg,
+                }
+            return {
+                "success": False,
+                "files_copied": 0,
+                "error": f"{error_msg}: {result.stderr}",
+            }
+        return {
+            "success": True,
+            "files_copied": _count_rsync_files(result.stdout),
+            "local_dir": str(local_dir),
+            "output": result.stdout,
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "files_copied": 0, "error": "Timeout"}
+    except FileNotFoundError:
+        return {"success": False, "files_copied": 0, "error": "rsync not found"}
+
+
+# ============================================================================
 # Alias Storage
 # ============================================================================
 
@@ -10709,6 +11512,13 @@ def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912, PLR0915
                     for s in gemini_sessions:
                         s["source"] = "local"
                     sessions.extend(gemini_sessions)
+                if agent in ("auto", AGENT_PI):
+                    pi_sessions = pi_scan_sessions(
+                        pattern=pattern, since_date=since_date, until_date=until_date
+                    )
+                    for s in pi_sessions:
+                        s["source"] = "local"
+                    sessions.extend(pi_sessions)
             continue
 
         if source_key.startswith("windows"):
@@ -10716,7 +11526,7 @@ def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912, PLR0915
             windows_users = None
             if username is None:
                 windows_users = get_windows_users_with_claude()
-            for agent_type in (AGENT_CODEX, AGENT_GEMINI):
+            for agent_type in (AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
                 if agent not in ("auto", agent_type):
                     continue
                 if windows_users is not None:
@@ -10765,7 +11575,7 @@ def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912, PLR0915
 
         if source_key.startswith("wsl:"):
             distro_name = source_key.split(":", 1)[1]
-            for agent_type in (AGENT_CODEX, AGENT_GEMINI):
+            for agent_type in (AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
                 if agent not in ("auto", agent_type):
                     continue
                 sessions_dir = get_agent_wsl_dir(distro_name, agent_type)
@@ -10809,6 +11619,13 @@ def _collect_non_claude_alias_sessions(  # noqa: C901, PLR0912, PLR0915
                 for s in gemini_sessions:
                     s["source"] = source_key
                 sessions.extend(gemini_sessions)
+            if agent in ("auto", AGENT_PI):
+                pi_sessions = _get_batch_ssh_pi_sessions(
+                    remote_host, patterns, since_date, until_date, hostname
+                )
+                for s in pi_sessions:
+                    s["source"] = source_key
+                sessions.extend(pi_sessions)
     return sessions
 
 
@@ -10844,8 +11661,8 @@ def cmd_alias_lss(
     if agent in ("auto", AGENT_CLAUDE):
         all_sessions = _collect_alias_sessions(alias_config, since_date, until_date)
 
-    # Collect Codex/Gemini sessions
-    if agent in ("auto", AGENT_CODEX, AGENT_GEMINI):
+    # Collect non-Claude sessions
+    if agent in ("auto", AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
         patterns = _get_alias_workspace_patterns(alias_config)
         all_sessions.extend(
             _collect_non_claude_alias_sessions(
@@ -11173,7 +11990,7 @@ def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
     if agent_filter in ("auto", AGENT_CLAUDE):
         _export_alias_claude_sessions(alias_config, opts, output_path, stats, alias_html_items)
 
-    if agent_filter in ("auto", AGENT_CODEX, AGENT_GEMINI):
+    if agent_filter in ("auto", AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
         _export_alias_non_claude_sessions(
             alias_config, opts, output_path, stats, alias_html_items
         )
@@ -11771,6 +12588,29 @@ def _prepare_codex_session(
             session["end_time"] = max(timestamps)
 
 
+def _prepare_pi_session(
+    session: dict[str, Any], metrics: MetricsDict, source: str, mtime: float
+) -> None:
+    """Prepare Pi session dict with required fields (modifies session in place)."""
+    if session.get("cwd"):
+        encoded = path_to_encoded_workspace(session["cwd"])
+        session["workspace"] = get_workspace_name_from_path(encoded)
+    else:
+        session["workspace"] = "pi-unknown"
+
+    session["source"] = source
+    session["file_mtime"] = mtime
+    session["is_agent"] = False
+    session["parent_session_id"] = None
+    session["start_time"] = session.get("startTime")
+    session["end_time"] = session.get("lastUpdated")
+    session["message_count"] = len(metrics["messages"])
+    session["git_branch"] = None
+    session["claude_version"] = session.get("cli_version")
+    session["work_period_seconds"] = 0
+    session["num_work_periods"] = 1
+
+
 def _write_metrics_to_db(
     conn: sqlite3.Connection,
     file_path: str,
@@ -11898,7 +12738,11 @@ def _write_metrics_to_db(
 
 
 def sync_file_to_db(
-    conn: sqlite3.Connection, jsonl_file: Path, source: str = "local", force: bool = False
+    conn: sqlite3.Connection,
+    jsonl_file: Path,
+    source: str = "local",
+    force: bool = False,
+    agent_override: Optional[str] = None,
 ) -> bool:
     """Sync a single JSONL file to the database.
 
@@ -11912,7 +12756,7 @@ def sync_file_to_db(
         return False
 
     # Detect agent type and extract metrics
-    agent = detect_agent_from_path(jsonl_file)
+    agent = agent_override or detect_agent_from_path(jsonl_file)
 
     if agent == AGENT_GEMINI:
         metrics = gemini_extract_metrics_from_json(jsonl_file)
@@ -11922,6 +12766,10 @@ def sync_file_to_db(
         metrics = codex_extract_metrics_from_jsonl(jsonl_file)
         session = cast(dict[str, Any], metrics["session"])
         _prepare_codex_session(session, metrics, source, current_mtime)
+    elif agent == AGENT_PI:
+        metrics = pi_extract_metrics_from_jsonl(jsonl_file)
+        session = cast(dict[str, Any], metrics["session"])
+        _prepare_pi_session(session, metrics, source, current_mtime)
     else:
         metrics = extract_metrics_from_jsonl(jsonl_file, source)
         session = metrics["session"]
@@ -12082,6 +12930,42 @@ def _sync_gemini_to_db(
     return stats
 
 
+def _sync_pi_to_db(
+    conn,
+    patterns: list,
+    force: bool,
+    sessions_dir: Optional[Path] = None,
+    source_key: str = "pi",
+    source_label: Optional[str] = None,
+) -> dict:
+    """Sync Pi sessions from ~/.pi/agent/sessions/ to database."""
+    stats = {"synced": 0, "skipped": 0, "errors": 0}
+    sessions_dir = sessions_dir or pi_get_home_dir()
+
+    if not sessions_dir.exists():
+        return stats
+
+    label = source_label or "Pi sessions"
+    print(f"Scanning {label}...")
+
+    for jsonl_file in sessions_dir.glob("*/*.jsonl"):
+        if patterns and patterns[0]:
+            workspace = pi_get_workspace_from_session(jsonl_file)
+            if not _matches_pattern(workspace, patterns):
+                continue
+
+        try:
+            if sync_file_to_db(conn, jsonl_file, source_key, force, agent_override=AGENT_PI):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
+            sys.stderr.write(f"  Error syncing {jsonl_file.name}: {e}\n")
+            stats["errors"] += 1
+
+    return stats
+
+
 def _filter_workspaces_by_pattern(workspaces: list, patterns: list) -> list:
     """Filter workspaces by patterns (substring match)."""
     if not patterns or not patterns[0]:
@@ -12210,6 +13094,41 @@ def _sync_ssh_remote_codex_to_db(
             stats["errors"] += 1
 
 
+def _sync_ssh_remote_pi_to_db(
+    conn, remote: str, hostname: str, patterns: list, stats: dict, force: bool
+):
+    """Sync Pi sessions from SSH remote to database."""
+    local_cache_dir = get_config_dir()
+    result = pi_fetch_remote_sessions(remote, local_cache_dir, hostname)
+    if not result.get("success"):
+        if result.get("error") and "No such file" not in result.get("error", ""):
+            sys.stderr.write(f"    Pi fetch failed: {result.get('error')}\n")
+        return
+    if result.get("warning"):
+        sys.stderr.write(f"Warning: pi: {result['warning']}\n")
+
+    local_pi_dir = local_cache_dir / f"remote_{hostname}_pi"
+    if not local_pi_dir.exists():
+        return
+
+    print("  Syncing Pi sessions...")
+
+    for jsonl_file in local_pi_dir.glob("*/*.jsonl"):
+        if patterns and patterns[0]:
+            workspace = pi_get_workspace_from_session(jsonl_file)
+            if not _matches_pattern(workspace, patterns):
+                continue
+
+        try:
+            if sync_file_to_db(conn, jsonl_file, f"remote:{hostname}", force, agent_override=AGENT_PI):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except (OSError, json.JSONDecodeError, sqlite3.Error) as e:
+            sys.stderr.write(f"    Error syncing {jsonl_file.name}: {e}\n")
+            stats["errors"] += 1
+
+
 def _sync_ssh_remote_to_db(conn, remote: str, patterns: list, force: bool) -> dict:
     """Sync SSH remote to the metrics database. Returns stats dict."""
     stats = {"synced": 0, "skipped": 0, "errors": 0}
@@ -12230,6 +13149,9 @@ def _sync_ssh_remote_to_db(conn, remote: str, patterns: list, force: bool) -> di
     # Sync Codex sessions
     _sync_ssh_remote_codex_to_db(conn, remote, hostname, patterns, stats, force)
 
+    # Sync Pi sessions
+    _sync_ssh_remote_pi_to_db(conn, remote, hostname, patterns, stats, force)
+
     return stats
 
 
@@ -12240,7 +13162,7 @@ def _accumulate_stats(totals: dict, new_stats: dict):
     totals["errors"] += new_stats["errors"]
 
 
-def _sync_wsl_windows_to_db(  # noqa: C901
+def _sync_wsl_windows_to_db(  # noqa: C901, PLR0912
     conn,
     totals: dict,
     patterns: list,
@@ -12289,6 +13211,18 @@ def _sync_wsl_windows_to_db(  # noqa: C901
                         source_label=f"WSL ({distro['name']}) Gemini sessions",
                     )
                     _accumulate_stats(totals, stats)
+            if distro.get("has_pi"):
+                pi_sessions = get_agent_wsl_dir(distro["name"], AGENT_PI)
+                if pi_sessions:
+                    stats = _sync_pi_to_db(
+                        conn,
+                        patterns,
+                        force,
+                        sessions_dir=pi_sessions,
+                        source_key=f"wsl:{distro['name']}",
+                        source_label=f"WSL ({distro['name']}) Pi sessions",
+                    )
+                    _accumulate_stats(totals, stats)
 
     if include_windows:
         try:
@@ -12328,6 +13262,17 @@ def _sync_wsl_windows_to_db(  # noqa: C901
                         source_label=f"Windows ({user['username']}) Gemini sessions",
                     )
                     _accumulate_stats(totals, stats)
+                pi_sessions = get_agent_windows_dir(user["username"], AGENT_PI)
+                if pi_sessions:
+                    stats = _sync_pi_to_db(
+                        conn,
+                        patterns,
+                        force,
+                        sessions_dir=pi_sessions,
+                        source_key=f"windows:{user['username']}",
+                        source_label=f"Windows ({user['username']}) Pi sessions",
+                    )
+                    _accumulate_stats(totals, stats)
         except (OSError, PermissionError):
             pass
 
@@ -12362,6 +13307,17 @@ def _sync_remote_to_db(conn, remote: str, totals: dict, patterns: list, force: b
                 sessions_dir=gemini_sessions,
                 source_key=f"wsl:{distro}",
                 source_label=f"WSL ({distro}) Gemini sessions",
+            )
+            _accumulate_stats(totals, stats)
+        pi_sessions = get_agent_wsl_dir(distro, AGENT_PI)
+        if pi_sessions:
+            stats = _sync_pi_to_db(
+                conn,
+                patterns,
+                force,
+                sessions_dir=pi_sessions,
+                source_key=f"wsl:{distro}",
+                source_label=f"WSL ({distro}) Pi sessions",
             )
             _accumulate_stats(totals, stats)
     elif remote == "windows" or remote.startswith("windows:"):
@@ -12434,6 +13390,10 @@ def cmd_stats_sync(args):  # noqa: C901
 
     # Sync local Gemini sessions (~/.gemini/tmp/)
     stats = _sync_gemini_to_db(conn, patterns, force)
+    _accumulate_stats(totals, stats)
+
+    # Sync local Pi sessions (~/.pi/agent/sessions/)
+    stats = _sync_pi_to_db(conn, patterns, force)
     _accumulate_stats(totals, stats)
 
     # Sync WSL/Windows if --ah flag
@@ -13362,7 +14322,7 @@ def _scan_codex_gemini_sessions(
     skip_message_count: bool = True,
     use_cached_counts: bool = False,
 ) -> list:
-    """Scan Codex or Gemini sessions from a directory."""
+    """Scan Codex, Gemini, or Pi sessions from a directory."""
     pattern_str = patterns[0] if patterns else ""
     if scan_agent == AGENT_CODEX:
         sessions = codex_scan_sessions(
@@ -13373,8 +14333,17 @@ def _scan_codex_gemini_sessions(
             skip_message_count=skip_message_count,
             use_cached_counts=use_cached_counts,
         )
-    else:  # AGENT_GEMINI
+    elif scan_agent == AGENT_GEMINI:
         sessions = gemini_scan_sessions(
+            pattern=pattern_str,
+            since_date=since_date,
+            until_date=until_date,
+            sessions_dir=sessions_dir,
+            skip_message_count=skip_message_count,
+            use_cached_counts=use_cached_counts,
+        )
+    else:  # AGENT_PI
+        sessions = pi_scan_sessions(
             pattern=pattern_str,
             since_date=since_date,
             until_date=until_date,
@@ -13392,7 +14361,7 @@ def _show_no_sessions_error(agent: str, location: str, platform_flag: str):
     if agent == "auto":
         sys.stderr.write(f"Error: No matching sessions found in {location}\n")
         sys.stderr.write("\nTips:\n")
-        sys.stderr.write("  • Check that Claude/Codex/Gemini is installed\n")
+        sys.stderr.write("  • Check that Claude/Codex/Gemini/Pi is installed\n")
         sys.stderr.write(f"  • Try: agent-history lsh {platform_flag}\n")
         sys.stderr.write("  • Try: agent-history lss --aw (all workspaces)\n")
     else:
@@ -13413,7 +14382,7 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
     username = remote_host[10:] if remote_host and remote_host.startswith("windows://") else None
 
     all_sessions = []
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
 
     for scan_agent in agents_to_scan:
         sessions_dir = get_agent_windows_dir(username, scan_agent)
@@ -13485,7 +14454,7 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
     distro_name = remote_host[WSL_PREFIX_LEN:]
 
     all_sessions = []
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
     source = f"wsl:{distro_name}"
     skip_counts = _should_skip_wsl_message_count(args, workspaces_only)
     use_cached_counts = getattr(args, "counts", False) or getattr(args, "wsl_counts", False)
@@ -13702,6 +14671,31 @@ def _collect_remote_codex_session_details(
     return sessions
 
 
+def _list_remote_pi_workspaces_only(remote_host: Optional[str], patterns: list):
+    """List Pi workspaces for remote host."""
+    hostname = get_remote_hostname(remote_host)
+    sessions = _get_batch_ssh_pi_sessions(remote_host, patterns, None, None, hostname)
+    seen = set()
+    result = []
+    for session in sessions:
+        workspace = session.get("workspace_readable") or session.get("workspace")
+        if workspace and workspace not in seen:
+            seen.add(workspace)
+            result.append({"decoded": workspace, "agent": AGENT_PI})
+    return result
+
+
+def _collect_remote_pi_session_details(
+    remote_host: Optional[str], patterns: list, since_date, until_date
+):
+    """Collect detailed Pi session info from remote."""
+    hostname = get_remote_hostname(remote_host)
+    sessions = _get_batch_ssh_pi_sessions(remote_host, patterns, since_date, until_date, hostname)
+    for session in sessions:
+        session.setdefault("workspace_readable", pi_get_workspace_readable(session["workspace"]))
+    return sessions
+
+
 # ============================================================================
 # SSH Remote Session Listing - Unified Dispatch
 # ============================================================================
@@ -13711,7 +14705,7 @@ def _list_remote_workspaces_only(remote_host: Optional[str], patterns: list, age
     """List workspaces for remote host, dispatching by agent type."""
     all_workspaces = []
 
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX]
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
 
     for scan_agent in agents_to_scan:
         if scan_agent == AGENT_CLAUDE:
@@ -13720,6 +14714,8 @@ def _list_remote_workspaces_only(remote_host: Optional[str], patterns: list, age
             all_workspaces.extend(_list_remote_gemini_workspaces_only(remote_host, patterns))
         elif scan_agent == AGENT_CODEX:
             all_workspaces.extend(_list_remote_codex_workspaces_only(remote_host, patterns))
+        elif scan_agent == AGENT_PI:
+            all_workspaces.extend(_list_remote_pi_workspaces_only(remote_host, patterns))
 
     if not all_workspaces:
         pattern_str = ", ".join(patterns) if len(patterns) > 1 else patterns[0]
@@ -13742,7 +14738,7 @@ def _collect_remote_session_details(
     """Collect detailed session info from remote workspaces, dispatching by agent type."""
     all_sessions = []
 
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX]
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
 
     for scan_agent in agents_to_scan:
         if scan_agent == AGENT_CLAUDE:
@@ -13760,6 +14756,10 @@ def _collect_remote_session_details(
         elif scan_agent == AGENT_CODEX:
             all_sessions.extend(
                 _collect_remote_codex_session_details(remote_host, patterns, since_date, until_date)
+            )
+        elif scan_agent == AGENT_PI:
+            all_sessions.extend(
+                _collect_remote_pi_session_details(remote_host, patterns, since_date, until_date)
             )
 
     return all_sessions
@@ -13863,6 +14863,8 @@ def _parse_file_to_markdown(jsonl_file: Path, agent_type: str) -> str:
         return gemini_parse_json_to_markdown(jsonl_file)
     if agent_type == AGENT_CODEX:
         return codex_parse_jsonl_to_markdown(jsonl_file)
+    if agent_type == AGENT_PI:
+        return pi_parse_jsonl_to_markdown(jsonl_file)
     return parse_jsonl_to_markdown(jsonl_file)
 
 
@@ -13878,6 +14880,8 @@ def _parse_file_to_markdown_with_display(
         return gemini_parse_json_to_markdown(local_file)
     if agent_type == AGENT_CODEX:
         return codex_parse_jsonl_to_markdown(local_file)
+    if agent_type == AGENT_PI:
+        return pi_parse_jsonl_to_markdown(local_file)
     return parse_jsonl_to_markdown(local_file, display_file=display_file)
 
 
@@ -14052,7 +15056,7 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
     distro_name = remote_host[WSL_PREFIX_LEN:]  # Remove 'wsl://' prefix
 
     agent = getattr(args, "agent", None) or "auto"
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
 
     sessions = []
     for scan_agent in agents_to_scan:
@@ -14290,6 +15294,55 @@ def _get_batch_ssh_codex_sessions(
     return sessions
 
 
+def _get_batch_ssh_pi_sessions(
+    remote_host: Optional[str], patterns: list, since_date, until_date, hostname: str
+) -> list:
+    """Get Pi sessions from SSH remote for batch export."""
+    local_cache_dir = get_config_dir()
+    result = pi_fetch_remote_sessions(remote_host, local_cache_dir, hostname)
+
+    if not result["success"]:
+        sys.stderr.write(
+            f"Warning: Failed to fetch Pi sessions: {result.get('error', 'Unknown')}\n"
+        )
+        return []
+    if result.get("warning"):
+        sys.stderr.write(f"Warning: pi: {result['warning']}\n")
+
+    local_pi_dir = local_cache_dir / f"remote_{hostname}_pi"
+    if not local_pi_dir.exists():
+        return []
+
+    sessions = []
+    for jsonl_file in local_pi_dir.glob("*/*.jsonl"):
+        workspace = pi_get_workspace_from_session(jsonl_file)
+        workspace_readable = pi_get_workspace_readable(workspace)
+        if not (
+            matches_any_pattern(workspace, patterns)
+            or matches_any_pattern(workspace_readable, patterns)
+        ):
+            continue
+
+        modified = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
+        if not is_date_in_range(modified, since_date, until_date):
+            continue
+
+        sessions.append(
+            {
+                "file": jsonl_file,
+                "workspace": workspace,
+                "workspace_readable": workspace_readable,
+                "filename": jsonl_file.name,
+                "modified": modified,
+                "message_count": pi_count_messages(jsonl_file),
+                "size_kb": jsonl_file.stat().st_size / 1024,
+                "agent": AGENT_PI,
+            }
+        )
+
+    return sessions
+
+
 def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> list:
     """Get sessions from SSH remote for batch export."""
     remote_host = getattr(args, "remote", None)
@@ -14303,7 +15356,7 @@ def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> lis
     hostname = get_remote_hostname(remote_host)
     all_sessions = []
 
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX]
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
 
     for scan_agent in agents_to_scan:
         if scan_agent == AGENT_CLAUDE:
@@ -14321,6 +15374,12 @@ def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> lis
         elif scan_agent == AGENT_CODEX:
             all_sessions.extend(
                 _get_batch_ssh_codex_sessions(
+                    remote_host, patterns, since_date, until_date, hostname
+                )
+            )
+        elif scan_agent == AGENT_PI:
+            all_sessions.extend(
+                _get_batch_ssh_pi_sessions(
                     remote_host, patterns, since_date, until_date, hostname
                 )
             )
@@ -14411,6 +15470,8 @@ def _read_session_messages(jsonl_file: Path, agent_type: str) -> Optional[list]:
             messages, _ = gemini_read_json_messages(jsonl_file)
         elif agent_type == AGENT_CODEX:
             messages, _ = codex_read_jsonl_messages(jsonl_file)
+        elif agent_type == AGENT_PI:
+            messages, _ = pi_read_jsonl_messages(jsonl_file)
         else:
             messages = read_jsonl_messages(jsonl_file)
         return messages
@@ -14453,8 +15514,8 @@ def _export_single_session(
             )
             return
 
-        # Codex/Gemini files don't support splitting yet; use direct export
-        if agent_type in (AGENT_CODEX, AGENT_GEMINI):
+        # Codex/Gemini/Pi files don't support splitting yet; use direct export
+        if agent_type in (AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
             _write_single_file(
                 jsonl_file,
                 output_file,
@@ -14624,12 +15685,14 @@ def _write_single_file(
         output_file: Destination markdown file path
         minimal: If True, produce minimal output without metadata
         messages: Pre-read messages (optional, avoids re-reading file)
-        agent: Agent type (claude, codex, or gemini)
+        agent: Agent type (claude, codex, gemini, or pi)
     """
     if agent == AGENT_GEMINI:
         markdown = gemini_parse_json_to_markdown(jsonl_file, minimal=minimal)
     elif agent == AGENT_CODEX:
         markdown = codex_parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+    elif agent == AGENT_PI:
+        markdown = pi_parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
     else:
         markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal, messages=messages)
     output_file.write_text(markdown, encoding="utf-8")
@@ -14670,6 +15733,7 @@ def _html_agent_title(agent: str) -> str:
         AGENT_CLAUDE: "Claude",
         AGENT_CODEX: "Codex",
         AGENT_GEMINI: "Gemini",
+        AGENT_PI: "Pi",
     }.get(agent, agent.title())
 
 
@@ -14862,9 +15926,15 @@ def cmd_list_wsl(args):
             agents.append(AGENT_CODEX)
         if distro.get("has_gemini"):
             agents.append(AGENT_GEMINI)
+        if distro.get("has_pi"):
+            agents.append(AGENT_PI)
         agents_label = ",".join(agents) if agents else "none"
         path_hint = (
-            distro.get("path") or distro.get("codex_path") or distro.get("gemini_path") or ""
+            distro.get("path")
+            or distro.get("codex_path")
+            or distro.get("gemini_path")
+            or distro.get("pi_path")
+            or ""
         )
         print(f"{distro['name']}\t{distro['username']}\t{agents_label}\t{path_hint}")
 
@@ -14915,7 +15985,7 @@ def _collect_windows_sessions_from_wsl(
     results = []
     try:
         windows_users = get_windows_users_with_claude()
-        agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+        agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
         for user in windows_users:
             try:
                 all_sessions = []
@@ -14966,8 +16036,8 @@ def _collect_wsl_sessions_from_windows(
     try:
         wsl_distros = get_wsl_distributions()
         filtered_distros = _filter_wsl_distros_for_agent(wsl_distros, agent)
-        agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
-        unknown_agent = agent not in ("auto", AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI)
+        agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+        unknown_agent = agent not in ("auto", AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI)
         skip_counts = workspaces_only or not wsl_counts
         for distro in filtered_distros:
             try:
@@ -15129,7 +16199,7 @@ def _collect_remote_sessions(remote, patterns, since_date, until_date, agent: st
     hostname = get_remote_hostname(remote)
     all_sessions = []
 
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX]
+    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
 
     for scan_agent in agents_to_scan:
         if scan_agent == AGENT_CLAUDE:
@@ -15267,6 +16337,8 @@ def _lsh_show_wsl():
                     agents.append(AGENT_CODEX)
                 if distro.get("has_gemini"):
                     agents.append(AGENT_GEMINI)
+                if distro.get("has_pi"):
+                    agents.append(AGENT_PI)
                 agents_label = ",".join(agents) if agents else "none"
 
                 workspace_count = "n/a"
@@ -15284,7 +16356,12 @@ def _lsh_show_wsl():
                 path_hint = (
                     str(projects_dir)
                     if projects_dir
-                    else (distro.get("codex_path") or distro.get("gemini_path") or "")
+                    else (
+                        distro.get("codex_path")
+                        or distro.get("gemini_path")
+                        or distro.get("pi_path")
+                        or ""
+                    )
                 )
                 print(
                     f"  {distro['name']}\t{distro['username']}\t{agents_label}\t"
@@ -15644,7 +16721,7 @@ def _validate_windows_from_wsl() -> list:
     return errors
 
 
-def _validate_wsl_from_windows(agent: Optional[str] = None) -> list:
+def _validate_wsl_from_windows(agent: Optional[str] = None) -> list:  # noqa: C901
     """Validate WSL access from Windows. Returns list of errors."""
     errors = []
     try:
@@ -15663,6 +16740,10 @@ def _validate_wsl_from_windows(agent: Optional[str] = None) -> list:
                     gemini_dir = get_agent_wsl_dir(distro["name"], AGENT_GEMINI)
                     if not gemini_dir or not gemini_dir.exists():
                         errors.append(f"WSL ({distro['name']}): Gemini sessions not accessible")
+                if agent in (None, "auto", AGENT_PI) and distro.get("has_pi"):
+                    pi_dir = get_agent_wsl_dir(distro["name"], AGENT_PI)
+                    if not pi_dir or not pi_dir.exists():
+                        errors.append(f"WSL ({distro['name']}): Pi sessions not accessible")
             except (OSError, PermissionError) as e:
                 errors.append(f"WSL ({distro['name']}): {e}")
     except (OSError, subprocess.SubprocessError) as e:
@@ -15803,7 +16884,7 @@ def _export_wsl_from_windows(args, output_dir: Path, patterns: list) -> dict:
                 try:
                     distro_name = distro["name"]
                     agents_to_scan = (
-                        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI]
+                        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
                     )
 
                     wsl_sessions = []
@@ -16297,7 +17378,7 @@ def _add_lsw_parser(subparsers):
     )
     parser.add_argument(
         "--agent",
-        choices=["auto", "claude", "codex", "gemini"],
+        choices=["auto", "claude", "codex", "gemini", "pi"],
         default=argparse.SUPPRESS,
         help="Agent backend to use (default: auto-detect)",
     )
@@ -16393,7 +17474,7 @@ def _add_lss_parser(subparsers):
     )
     parser.add_argument(
         "--agent",
-        choices=["auto", "claude", "codex", "gemini"],
+        choices=["auto", "claude", "codex", "gemini", "pi"],
         default=argparse.SUPPRESS,
         help="Agent backend to use (default: auto-detect)",
     )
@@ -16577,7 +17658,7 @@ def _add_export_parser(subparsers):
     )
     parser.add_argument(
         "--agent",
-        choices=["auto", "claude", "codex", "gemini"],
+        choices=["auto", "claude", "codex", "gemini", "pi"],
         default=argparse.SUPPRESS,
         help="Agent backend to use (default: auto-detect)",
     )
@@ -16787,7 +17868,7 @@ def _add_stats_parser(subparsers):
     )
     parser.add_argument(
         "--agent",
-        choices=["auto", "claude", "codex", "gemini"],
+        choices=["auto", "claude", "codex", "gemini", "pi"],
         default=argparse.SUPPRESS,
         help="Agent backend to use (default: auto-detect)",
     )
@@ -16821,7 +17902,10 @@ def _create_argument_parser():
     """
     parser = argparse.ArgumentParser(
         prog="agent-history",
-        description="Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)",
+        description=(
+            "Browse and export AI coding assistant conversation history "
+            "(Claude Code, Codex CLI, Gemini CLI, Pi)"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=HELP_EPILOG,
     )
@@ -16831,7 +17915,7 @@ def _create_argument_parser():
     # Global agent selection flag (before subcommand)
     parser.add_argument(
         "--agent",
-        choices=["auto", "claude", "codex", "gemini"],
+        choices=["auto", "claude", "codex", "gemini", "pi"],
         default="auto",
         help="Agent backend to use (default: auto-detect based on available data)",
     )
@@ -17575,7 +18659,7 @@ def _resolve_export_targets(args, targets: list, output_dir: Union[str, Path]) -
     source_hint = _get_source_hint_from_args(args)
 
     # For non-Claude agents, use CWD name as pattern (matches against workspace_readable)
-    if agent in ("gemini", "codex"):
+    if agent in ("gemini", "codex", "pi"):
         patterns, _ = resolve_patterns_for_command([], agent=agent)
         return patterns, False
 
@@ -17889,7 +18973,7 @@ def _extract_agent_override(argv: list) -> tuple:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
         "--agent",
-        choices=["auto", "claude", "codex", "gemini"],
+        choices=["auto", "claude", "codex", "gemini", "pi"],
         default=None,
     )
     args, remaining = parser.parse_known_args(argv)

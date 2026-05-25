@@ -6,7 +6,7 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 ![How agent-history collects, normalizes, and exports AI coding assistant session history](docs/images/agent-history-process.png)
 
-*How agent-history collects fragmented Claude Code, Codex CLI, and Gemini CLI session files across local, WSL, Windows, and SSH homes, normalizes them into a unified workspace/session model, and produces listings, markdown exports, and usage metrics. See [docs/agent-history-process-image.md](docs/agent-history-process-image.md) for the diagram brief.*
+*How agent-history collects fragmented Claude Code, Codex CLI, Gemini CLI, and Pi session files across local, WSL, Windows, and SSH homes, normalizes them into a unified workspace/session model, and produces listings, markdown exports, and usage metrics. See [docs/agent-history-process-image.md](docs/agent-history-process-image.md) for the diagram brief.*
 
 ## Supported Agents
 
@@ -22,7 +22,7 @@ See [AGENTS.md](AGENTS.md) for a detailed comparison of storage locations, featu
 
 ## Why This Tool?
 
-Claude Code, Codex CLI, and Gemini CLI leave conversation data fragmented across session files. This tool solves the pain points:
+Claude Code, Codex CLI, Gemini CLI, and Pi leave conversation data fragmented across session files. This tool solves the pain points:
 - Finding past work by project, not by opaque session IDs.
 - Getting readable exports for sharing, backup, or audits.
 - Seeing where and how you code across homes (local/WSL/Windows/SSH) with session/token/tool/time metrics.
@@ -96,10 +96,10 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 <!-- help-snippet:start -->
 ```
-usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini}]
+usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini,pi}]
                      {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index} ...
 
-Browse and export AI coding assistant conversation history (Claude Code, Codex CLI)
+Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI, Pi)
 
 positional arguments:
   {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index}
@@ -107,7 +107,7 @@ positional arguments:
     lsw                 List workspaces
     lss                 List sessions
     lsh                 List homes and manage SSH remotes
-    export              Export to Markdown or offline HTML
+    export              Export to markdown or offline HTML
     alias               Manage workspace aliases
     stats               Show usage statistics and metrics
     reset               Reset stored data (database, settings, aliases)
@@ -117,8 +117,9 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
-  --agent {auto,claude,codex,gemini}
-                        Agent backend to use (default: auto-detect based on available data)
+  --agent {auto,claude,codex,gemini,pi}
+                        Agent backend to use (default: auto-detect based on
+                        available data)
 
 EXAMPLES:
 
@@ -244,7 +245,7 @@ docker-compose down -v            # Cleanup
 ```
 
 This creates containers with:
-- **node-alpha**: Users alice, bob with synthetic Claude/Codex/Gemini sessions
+- **node-alpha**: Users alice, bob with synthetic Claude/Codex/Gemini/Pi sessions
 - **node-beta**: Users charlie, dave with synthetic sessions
 - **test-runner**: Executes tests with real SSH connections between nodes
 
