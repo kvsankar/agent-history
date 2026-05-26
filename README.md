@@ -60,7 +60,7 @@ cd /path/to/project
 # Export offline HTML with progressive detail controls
 /path/to/agent-history export --format html --html-single
 
-# Output goes to ./ai-chats/
+# Output goes to ./.agent-history/exports/
 ```
 
 **Windows:**

@@ -126,6 +126,7 @@ SECONDS_PER_MINUTE = 60
 # Export formats
 EXPORT_FORMAT_MARKDOWN = "markdown"
 EXPORT_FORMAT_HTML = "html"
+DEFAULT_EXPORT_DIR = "./.agent-history/exports"
 HTML_SPLIT_SESSION = "session"
 HTML_SPLIT_WORKSPACE = "workspace"
 DETAIL_CONVERSATION_LEVEL = 1
@@ -17913,8 +17914,11 @@ def _add_export_parser(subparsers):
     parser.add_argument(
         "output_dir",
         nargs="?",
-        default="./ai-chats",
-        help="Output directory (default: ./ai-chats); use -o - only with one full session file path",
+        default=DEFAULT_EXPORT_DIR,
+        help=(
+            f"Output directory (default: {DEFAULT_EXPORT_DIR}); "
+            "use -o - only with one full session file path"
+        ),
     )
     parser.add_argument(
         "-o",

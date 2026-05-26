@@ -192,7 +192,7 @@ agent-history export [WORKSPACE...] [OPTIONS]
 - `WORKSPACE`: One or more workspace patterns (default: current workspace or its alias)
 
 **Options:**
-- `-o`, `--output DIR|-`: Output directory (default: `./ai-chats`); use `-o -` only with one full `.jsonl`/`.json` session file path for Markdown stdout
+- `-o`, `--output DIR|-`: Output directory (default: `./.agent-history/exports`); use `-o -` only with one full `.jsonl`/`.json` session file path for Markdown stdout
 - `--wsl`: Export from WSL (auto-detects distribution)
 - `--windows`: Export from Windows (auto-detects user)
 - `-r`, `--remote HOST`: Add SSH remote source (repeatable)

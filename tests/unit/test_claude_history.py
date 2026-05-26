@@ -11392,6 +11392,12 @@ class TestHtmlExport:
         assert "one full session file path" in captured.out
         assert "/full/path/to/session.jsonl -o -" in captured.out
 
+    def test_export_default_output_dir_is_hidden_agent_history_exports(self):
+        args = ch._create_argument_parser().parse_args(["export", "myproject"])
+
+        assert args.output_dir == ch.DEFAULT_EXPORT_DIR
+        assert ch._get_export_output_dir(args) == "./.agent-history/exports"
+
     def test_html_keeps_claude_skill_context_inside_triggering_turn(self, tmp_path):
         session_file = tmp_path / "session.jsonl"
         records = [

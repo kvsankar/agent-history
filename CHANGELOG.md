@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clearer CLI help, docs, and validation errors for stdout exports, including the
   requirement to pass exactly one full `.jsonl`/`.json` session file path.
 
+### Changed
+
+- Default export directory changed from `./ai-chats` to `./.agent-history/exports`.
+
 ## [2.0.0-alpha.2] - 2026-05-26
 
 ### Added

@@ -123,7 +123,7 @@ The diagram should show these major inputs:
 The diagram should show agent-history producing these major outputs:
 
 - **Terminal listings**: `lsw` (workspaces), `lss` (sessions), `lsh` (homes)
-- **Markdown exports**: per-workspace or per-session, in `./ai-chats/`
+- **Markdown exports**: per-workspace or per-session, in `./.agent-history/exports/`
   - export modes: default, `--minimal`, `--flat`, `--split N`
 - **Offline HTML exports**: per-session or per-workspace/source bundles
   - export controls: `--format html`, `--html-single`, `--html-level 1..4`
@@ -232,7 +232,7 @@ Show the top-level commands as gates between the shared model and the outputs:
 - **`lsh`** -> list homes and manage SSH remotes
 - **`lsw`** -> list workspaces
 - **`lss`** -> list sessions
-- **`export`** -> markdown bundle in `./ai-chats/`
+- **`export`** -> markdown bundle in `./.agent-history/exports/`
   (modes: default / `--minimal` / `--flat` / `--split N`)
 - **`alias`** -> create / apply workspace aliases
 - **`stats`** -> usage metrics (sessions, tokens, tools, time, daily breakdown)
@@ -243,7 +243,7 @@ Show the top-level commands as gates between the shared model and the outputs:
 Output cards on the right side:
 
 - `Terminal Listings: lsw / lss / lsh`
-- `Markdown Exports: ./ai-chats/`
+- `Markdown Exports: ./.agent-history/exports/`
 - `Usage Stats: tokens / tools / time`
 - `Metrics SQLite DB`
 - `Gemini Hash Index`
@@ -286,7 +286,7 @@ Storage boundary accuracy:
   agent-history's perspective.
 - The metrics DB, aliases config, and Gemini hash index are agent-history's
   own data, used to accelerate and group queries.
-- Markdown and HTML exports under `./ai-chats/` are generated outputs in the user's
+- Markdown and HTML exports under `./.agent-history/exports/` are generated outputs in the user's
   current project, not authoritative session storage.
 - agent-history has no vector store, no embedding service, and no LLM backend.
 
@@ -342,7 +342,7 @@ Agent Sessions across Homes (Local / WSL / Windows / SSH)
        lsw      lss     export   stats   alias
         |        |        |        |        |
         v        v        v        v        v
-   Terminal  Terminal  ./ai-chats  Stats  Aliases
+   Terminal  Terminal  .agent-history/exports  Stats  Aliases
                                  + DB
 
    Shared layer: Metrics DB, Aliases, Gemini Hash Index,
@@ -385,7 +385,7 @@ Use short labels where possible:
 - `install`
 - `--this` / `--aw` / `--ah`
 - `--minimal` / `--flat` / `--split N`
-- `./ai-chats/`
+- `./.agent-history/exports/`
 - `[missing]`
 
 Do not use these labels:
