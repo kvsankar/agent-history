@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`agent-history` is a single-file Python CLI tool that browses and exports AI coding assistant conversation history (Claude Code, Codex CLI, and Gemini CLI). It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
+`agent-history` is a single-file Python CLI tool that browses and exports AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI, and Pi). It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
 
 > **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
@@ -85,6 +85,8 @@ chmod +x agent-history
 ./agent-history export myproject --flat          # flat structure (no workspace subdirs)
 ./agent-history export myproject --jobs 4        # parallel export
 ./agent-history export myproject --quiet         # suppress per-file output
+./agent-history export myproject --format html   # offline HTML with detail controls
+./agent-history export myproject --format html --html-single  # one HTML file per workspace/source
 ./agent-history export --ah --no-remote          # skip SSH remotes
 ./agent-history export --ah --no-wsl             # skip WSL sources
 ./agent-history export --ah --no-windows         # skip Windows sources
@@ -114,6 +116,7 @@ chmod +x agent-history
 ./agent-history export myproject --wsl     # export from WSL
 ./agent-history lss --wsl --agent codex    # list Codex WSL sessions
 ./agent-history lss --wsl --agent gemini   # list Gemini WSL sessions
+./agent-history lss --wsl --agent pi       # list Pi WSL sessions
 
 ./agent-history lsw --windows              # list Windows workspaces
 ./agent-history lss myproject --windows    # list Windows sessions
@@ -217,7 +220,7 @@ Docker coverage is bind-mounted to `.coverage-data/` for easy merging on the hos
 The Docker setup creates:
 - `node-alpha`: SSH node with users alice, bob
 - `node-beta`: SSH node with users charlie, dave
-- Synthetic Claude/Codex/Gemini session fixtures
+- Synthetic Claude/Codex/Gemini/Pi session fixtures
 - Real SSH key-based authentication between containers
 
 See [docker/README.md](docker/README.md) for details.

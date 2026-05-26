@@ -6,7 +6,7 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 ![How agent-history collects, normalizes, and exports AI coding assistant session history](docs/images/agent-history-process.png)
 
-*How agent-history collects fragmented Claude Code, Codex CLI, Gemini CLI, and Pi session files across local, WSL, Windows, and SSH homes, normalizes them into a unified workspace/session model, and produces listings, markdown exports, and usage metrics. See [docs/agent-history-process-image.md](docs/agent-history-process-image.md) for the diagram brief.*
+*How agent-history collects fragmented Claude Code, Codex CLI, Gemini CLI, and Pi session files across local, WSL, Windows, and SSH homes, normalizes them into a unified workspace/session model, and produces listings, markdown/HTML exports, and usage metrics. See [docs/agent-history-process-image.md](docs/agent-history-process-image.md) for the diagram brief.*
 
 ## Supported Agents
 
@@ -15,7 +15,7 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 | [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-format.md](docs/claude-format.md) |
 | [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-format.md](docs/codex-format.md) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-format.md](docs/gemini-format.md) |
-| [Pi](https://pi.dev) | ✅ Full support | JSONL | [AGENTS.md](AGENTS.md) |
+| [Pi](https://pi.dev) | ✅ Full support | JSONL | [pi-format.md](docs/pi-format.md) |
 
 Use `--agent claude`, `--agent codex`, `--agent gemini`, `--agent pi`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
 
@@ -158,6 +158,8 @@ EXAMPLES:
     agent-history export myproject --minimal       # minimal mode
     agent-history export myproject --split 500     # split long conversations
     agent-history export myproject --flat          # flat structure (no subdirs)
+    agent-history export myproject --format html   # offline HTML with detail controls
+    agent-history export myproject --format html --html-single  # one HTML file per workspace
 
   WSL access (Windows):
     agent-history lsh --wsl                        # list WSL distributions

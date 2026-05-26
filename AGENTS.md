@@ -282,7 +282,8 @@ agent-history export myproject --ah -o ./consolidated
 
 ## See Also
 
-- [USAGE.md](USAGE.md) - Full command reference
-- [CLAUDE-FORMAT.md](CLAUDE-FORMAT.md) - Claude Code session format details
-- [CODEX-FORMAT.md](CODEX-FORMAT.md) - Codex CLI session format details
-- [GEMINI-FORMAT.md](GEMINI-FORMAT.md) - Gemini CLI session format details
+- [docs/usage.md](docs/usage.md) - Full command reference
+- [docs/claude-format.md](docs/claude-format.md) - Claude Code session format details
+- [docs/codex-format.md](docs/codex-format.md) - Codex CLI session format details
+- [docs/gemini-format.md](docs/gemini-format.md) - Gemini CLI session format details
+- [docs/pi-format.md](docs/pi-format.md) - Pi session format details

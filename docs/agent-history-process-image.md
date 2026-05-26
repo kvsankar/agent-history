@@ -29,7 +29,7 @@ coding assistant history:
 - It reaches across multiple "homes" (local, WSL, Windows-from-WSL, SSH remotes).
 - It normalizes per-agent storage layouts into a consistent workspace/session view.
 - It groups workspaces across homes via aliases.
-- It produces terminal listings, markdown exports, and a small SQLite metrics db.
+- It produces terminal listings, markdown/HTML exports, and a small SQLite metrics db.
 - It ships as a single stdlib-only Python file, plus an optional Claude skill.
 
 The diagram should communicate this core idea:
@@ -49,7 +49,7 @@ Recommended layout:
 2. Left: agent session sources across multiple homes.
 3. Middle: agent-history CLI as the unifying core, with per-agent adapters
    feeding a shared workspace/session model.
-4. Right: outputs (terminal listings, markdown exports, SQLite metrics,
+4. Right: outputs (terminal listings, markdown/HTML exports, SQLite metrics,
    Claude skill integration).
 5. Bottom: shared services and storage boundaries.
 
@@ -114,6 +114,7 @@ The diagram should show these major inputs:
 - **Claude Code sessions**: JSONL files under `~/.claude/projects/<encoded-path>/`
 - **Codex CLI sessions**: JSONL files under `~/.codex/sessions/YYYY/MM/DD/`
 - **Gemini CLI sessions**: JSON files under `~/.gemini/tmp/<sha256-hash>/chats/`
+- **Pi sessions**: JSONL files under `~/.pi/agent/sessions/<encoded-path>/`
 - **Homes**: local, WSL distros, Windows-from-WSL, SSH remotes
 - **User workspace**: the current project directory the CLI is invoked from
 - **Aliases**: user-defined groups of workspaces across homes/sources
@@ -124,6 +125,9 @@ The diagram should show agent-history producing these major outputs:
 - **Terminal listings**: `lsw` (workspaces), `lss` (sessions), `lsh` (homes)
 - **Markdown exports**: per-workspace or per-session, in `./ai-chats/`
   - export modes: default, `--minimal`, `--flat`, `--split N`
+- **Offline HTML exports**: per-session or per-workspace/source bundles
+  - export controls: `--format html`, `--html-single`, `--html-level 1..4`
+  - self-contained CSS/JavaScript; no backend required
 - **Usage metrics**: `stats` summaries with sessions, tokens, tools, and time
 - **Metrics SQLite database**: small local db used by `stats`
 - **Gemini hash index**: `gemini-index` mapping SHA-256 hashes back to project paths
@@ -278,10 +282,11 @@ Required storage/service blocks:
 Storage boundary accuracy:
 
 - Agent session files (`~/.claude/projects/`, `~/.codex/sessions/`,
-  `~/.gemini/tmp/`) are read-only inputs from agent-history's perspective.
+  `~/.gemini/tmp/`, `~/.pi/agent/sessions/`) are read-only inputs from
+  agent-history's perspective.
 - The metrics DB, aliases config, and Gemini hash index are agent-history's
   own data, used to accelerate and group queries.
-- Markdown exports under `./ai-chats/` are generated outputs in the user's
+- Markdown and HTML exports under `./ai-chats/` are generated outputs in the user's
   current project, not authoritative session storage.
 - agent-history has no vector store, no embedding service, and no LLM backend.
 

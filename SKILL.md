@@ -1,6 +1,6 @@
 ---
 name: agent-history
-description: Search and analyze Claude Code conversation history. Use when user asks about past conversations, previous solutions, what was discussed earlier, finding something from history, or analyzing usage patterns. Triggers include "what did we discuss", "find that conversation", "search history", "past sessions", "how much time", "token usage", "which tools".
+description: Search and analyze AI coding assistant conversation history from Claude Code, Codex CLI, Gemini CLI, and Pi. Use when user asks about past conversations, previous solutions, what was discussed earlier, finding something from history, or analyzing usage patterns. Triggers include "what did we discuss", "find that conversation", "search history", "past sessions", "how much time", "token usage", "which tools".
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
@@ -16,7 +16,7 @@ chmod +x ~/.claude/skills/agent-history
 
 Once installed, Claude Code will automatically use this skill when you ask about past conversations, usage patterns, or want to search your history.
 
-Browse, search, and analyze Claude Code conversation history using the `agent-history` CLI tool.
+Browse, search, and analyze AI coding assistant conversation history using the `agent-history` CLI tool.
 
 ## When to Activate
 
@@ -44,7 +44,7 @@ agent-history lss --since 2025-11-01
 agent-history lss --since 2025-11-01 --until 2025-11-30
 ```
 
-### Export to Markdown
+### Export
 ```bash
 # Export current workspace sessions
 agent-history export
@@ -60,6 +60,9 @@ agent-history export --minimal
 
 # Export to specific directory
 agent-history export -o /tmp/history-export
+
+# Export offline HTML with progressive detail controls
+agent-history export --format html --html-single
 ```
 
 ### Usage Statistics
@@ -94,11 +97,13 @@ agent-history lsw myproject
 
 ## Data Location
 
-Claude Code stores conversations in `~/.claude/projects/` as JSONL files:
-- Main sessions: `{uuid}.jsonl`
-- Agent tasks: `agent-{id}.jsonl`
+Supported agents store conversations in different locations:
+- Claude Code: `~/.claude/projects/` as JSONL files
+- Codex CLI: `~/.codex/sessions/` as JSONL files organized by date
+- Gemini CLI: `~/.gemini/tmp/` as JSON files under project-hash folders
+- Pi: `~/.pi/agent/sessions/` as JSONL files under workspace folders
 
-Workspace directories are encoded paths (e.g., `-home-user-myproject` = `/home/user/myproject`).
+Workspace directories may be encoded paths, date folders, or hashes depending on the agent. Use `agent-history lsw` and `agent-history lss` instead of assuming a single storage layout.
 
 ## Search Strategy (No Built-in Search Yet)
 
@@ -113,13 +118,16 @@ agent-history export --aw --since 2025-11-24 -o /tmp/history-search --minimal
 grep -r -i "search term" /tmp/history-search/
 ```
 
-### Method 2: Direct JSONL Search
+### Method 2: Direct Raw Session Search
 ```bash
-# Find the workspace directory
+# Claude example: find the workspace directory
 ls ~/.claude/projects/ | grep myproject
 
 # Search within JSONL files (content is in message.content)
 grep -i "search term" ~/.claude/projects/-home-user-myproject/*.jsonl
+
+# Multi-agent broad search
+grep -r -i "search term" ~/.claude/projects ~/.codex/sessions ~/.gemini/tmp ~/.pi/agent/sessions 2>/dev/null
 ```
 
 ### Method 3: Multi-term Semantic Search
@@ -197,7 +205,7 @@ agent-history stats --by-day --since 2025-11-01
 ### "Export everything for backup"
 
 ```bash
-agent-history export --ah --aw -o ~/claude-backup/
+agent-history export --ah --aw -o ~/agent-history-backup/
 ```
 
 ## Tips
@@ -205,17 +213,23 @@ agent-history export --ah --aw -o ~/claude-backup/
 - **Use `--minimal` for reading**: Omits UUIDs and metadata, much cleaner
 - **Use `--since` to narrow scope**: Faster searches on recent history
 - **Check multiple workspaces**: Use `lsw` to see all available workspaces
-- **Agent files exist**: Tasks spawn `agent-*.jsonl` files with sub-conversations
+- **Claude subagent files exist**: Claude tasks spawn `agent-*.jsonl` files with sub-conversations
 - **Incremental export**: Re-running export skips unchanged files
 
 ## Output Formats
 
-Exported markdown includes:
+Markdown exports include:
 - Message timestamps
 - User/Assistant labels
 - Tool use details (name, input, output)
 - Token usage (in non-minimal mode)
 - Navigation links between messages (in non-minimal mode)
+
+Offline HTML exports add:
+- Turn-centered conversation layout
+- Light/dark mode
+- Per-turn and global detail controls
+- Raw views for friendly-rendered text, code, tool output, and diffs
 
 ## Limitations
 

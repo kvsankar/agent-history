@@ -492,6 +492,9 @@ HTML controls:
 - `Actions` toggles compact tool call/output snippets and assistant action notes.
 - `Full I/O` toggles complete tool call inputs and outputs.
 - `Trace` toggles subagent transcripts and trace metadata.
+- A sticky light/dark selector controls the page theme and matching code highlighting.
+- Friendly-rendered markdown, code, tool output, and diffs include raw-text views.
+- Long code and tool-output blocks are trimmed by default with Show more / Show less controls.
 
 The `--html-level 1..4` option remains as the initial preset: `1` enables no toggles,
 `2` enables `Actions`, `3` enables `Actions` and `Full I/O`, and `4` enables all toggles.
