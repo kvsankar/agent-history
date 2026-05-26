@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Markdown export detail levels via `--markdown-level 1..4`.
 - Single-session Markdown export to stdout via `agent-history export SESSION.jsonl -o -`.
+- Clearer CLI help, docs, and validation errors for stdout exports, including the
+  requirement to pass exactly one full `.jsonl`/`.json` session file path.
 
 ## [2.0.0-alpha.2] - 2026-05-26
 

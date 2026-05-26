@@ -11173,6 +11173,156 @@ class TestHtmlExport:
         assert "### Actions" in markdown
         assert "pytest -q" in markdown
 
+    def test_markdown_level_one_hides_gemini_tool_details_on_final_message(self, tmp_path):
+        session_file = tmp_path / "session.json"
+        messages = [
+            {
+                "role": "user",
+                "content": "Summarize",
+                "timestamp": "2025-01-01T10:00:00Z",
+            },
+            {
+                "role": "assistant",
+                "content": "Final summary.",
+                "timestamp": "2025-01-01T10:00:01Z",
+                "tool_calls": [
+                    {
+                        "name": "read_file",
+                        "args": {"path": "secret.txt"},
+                        "status": "success",
+                        "result": [
+                            {
+                                "functionResponse": {
+                                    "response": {"output": "sensitive tool output"}
+                                }
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+
+        markdown = ch.render_markdown_document(
+            session_file,
+            ch.AGENT_GEMINI,
+            messages,
+            markdown_level=1,
+        )
+
+        assert "Final summary." in markdown
+        assert "secret.txt" not in markdown
+        assert "sensitive tool output" not in markdown
+
+    def test_markdown_level_one_hides_pi_tool_details_on_final_message(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        messages = [
+            {
+                "role": "user",
+                "content": "Summarize",
+                "timestamp": "2025-01-01T10:00:00Z",
+            },
+            {
+                "role": "assistant",
+                "content": "Final summary.",
+                "timestamp": "2025-01-01T10:00:01Z",
+                "tool_calls": [
+                    {
+                        "id": "tool1",
+                        "name": "read_file",
+                        "arguments": {"path": "secret.txt"},
+                    }
+                ],
+            },
+        ]
+
+        markdown = ch.render_markdown_document(
+            session_file,
+            ch.AGENT_PI,
+            messages,
+            markdown_level=1,
+        )
+
+        assert "Final summary." in markdown
+        assert "secret.txt" not in markdown
+        assert "tool1" not in markdown
+
+    def test_markdown_level_three_keeps_full_gemini_tool_output(self, tmp_path):
+        session_file = tmp_path / "session.json"
+        long_output = ("x" * 2100) + "END"
+        messages = [
+            {"role": "user", "content": "Run tool", "timestamp": "2025-01-01T10:00:00Z"},
+            {
+                "role": "assistant",
+                "content": "Done.",
+                "timestamp": "2025-01-01T10:00:01Z",
+                "tool_calls": [
+                    {
+                        "name": "run_shell_command",
+                        "args": {"command": "generate"},
+                        "status": "success",
+                        "result": [
+                            {"functionResponse": {"response": {"output": long_output}}}
+                        ],
+                    }
+                ],
+            },
+        ]
+
+        markdown = ch.render_markdown_document(
+            session_file,
+            ch.AGENT_GEMINI,
+            messages,
+            markdown_level=3,
+        )
+
+        assert "END" in markdown
+        assert "... [truncated]" not in markdown
+
+    def test_absolute_json_session_to_stdout_is_not_coerced(self, tmp_path, capsys):
+        session_file = tmp_path / "session.json"
+        session_file.write_text(
+            json.dumps(
+                {
+                    "sessionId": "g1",
+                    "messages": [
+                        {
+                            "type": "user",
+                            "content": "Hello",
+                            "timestamp": "2025-01-01T10:00:00Z",
+                        },
+                        {
+                            "type": "gemini",
+                            "content": "Hi",
+                            "timestamp": "2025-01-01T10:00:01Z",
+                        },
+                    ],
+                }
+            )
+        )
+        args = ch._create_argument_parser().parse_args(
+            ["export", str(session_file), "-o", "-", "--markdown-level", "1"]
+        )
+
+        ch._dispatch_export(args)
+        captured = capsys.readouterr()
+
+        assert "# Gemini Conversation" in captured.out
+        assert "Hello" in captured.out
+        assert "Hi" in captured.out
+        assert captured.err == ""
+
+    def test_markdown_level_affects_incremental_compatibility(self, tmp_path):
+        output_file = tmp_path / "session.md"
+        output_file.write_text("# Claude Conversation\n\nlegacy output\n", encoding="utf-8")
+
+        assert ch._markdown_export_options_match(output_file, ch.MARKDOWN_DEFAULT_LEVEL)
+        assert not ch._markdown_export_options_match(output_file, 1)
+
+        output_file.write_text(
+            "# Claude Conversation\n\n**Markdown detail level:** 1\n", encoding="utf-8"
+        )
+        assert ch._markdown_export_options_match(output_file, 1)
+
     def test_export_single_session_to_stdout_markdown(self, tmp_path, capsys):
         session_file = tmp_path / "session.jsonl"
         records = [
@@ -11211,7 +11361,36 @@ class TestHtmlExport:
             ch._dispatch_export(args)
 
         captured = capsys.readouterr()
-        assert "requires a single session" in captured.err
+        assert "requires exactly one session file target" in captured.err
+        assert "Pass the full path to the session file" in captured.err
+
+    def test_stdout_export_rejects_workspace_plus_session_filename(self, capsys):
+        args = ch._create_argument_parser().parse_args(
+            [
+                "export",
+                "/home/user/project",
+                "459ef8a3-7ef0-43ed-92a4-bf3e91715a9e.jsonl",
+                "-o",
+                "-",
+            ]
+        )
+
+        with pytest.raises(SystemExit):
+            ch._dispatch_export(args)
+
+        captured = capsys.readouterr()
+        assert "Received 2 targets" in captured.err
+        assert "separate filename arguments are not supported with -o -" in captured.err
+
+    def test_export_help_documents_stdout_requires_full_session_path(self, capsys):
+        parser = ch._create_argument_parser()
+
+        with pytest.raises(SystemExit):
+            parser.parse_args(["export", "--help"])
+
+        captured = capsys.readouterr()
+        assert "one full session file path" in captured.out
+        assert "/full/path/to/session.jsonl -o -" in captured.out
 
     def test_html_keeps_claude_skill_context_inside_triggering_turn(self, tmp_path):
         session_file = tmp_path / "session.jsonl"

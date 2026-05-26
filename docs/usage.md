@@ -192,7 +192,7 @@ agent-history export [WORKSPACE...] [OPTIONS]
 - `WORKSPACE`: One or more workspace patterns (default: current workspace or its alias)
 
 **Options:**
-- `-o`, `--output DIR`: Output directory (default: `./ai-chats`); use `-o -` for single-session Markdown to stdout
+- `-o`, `--output DIR|-`: Output directory (default: `./ai-chats`); use `-o -` only with one full `.jsonl`/`.json` session file path for Markdown stdout
 - `--wsl`: Export from WSL (auto-detects distribution)
 - `--windows`: Export from Windows (auto-detects user)
 - `-r`, `--remote HOST`: Add SSH remote source (repeatable)
@@ -520,7 +520,23 @@ agent-history export /path/to/session.jsonl -o - --markdown-level 1
 ```
 
 Stdout export is intentionally limited to Markdown and one `.jsonl`/`.json` session file.
-Workspace, alias, split, and HTML exports still write files.
+Workspace names, workspace paths, aliases, split exports, and HTML exports still write files.
+
+Pass the actual session file path as the only target. Do not pass a workspace and a separate filename:
+
+```bash
+# Correct
+agent-history export ~/.claude/projects/-home-user-project/session-id.jsonl -o - --markdown-level 1
+
+# Incorrect: this is two targets, not "file inside workspace"
+agent-history export /home/user/project session-id.jsonl -o -
+```
+
+If you only have a Claude session id, find the full path first:
+
+```bash
+find ~/.claude/projects -name 'session-id.jsonl' -print
+```
 
 ---
 

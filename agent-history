@@ -128,11 +128,15 @@ EXPORT_FORMAT_MARKDOWN = "markdown"
 EXPORT_FORMAT_HTML = "html"
 HTML_SPLIT_SESSION = "session"
 HTML_SPLIT_WORKSPACE = "workspace"
-HTML_DEFAULT_LEVEL = 1
-HTML_MAX_LEVEL = 4
-HTML_ACTION_SUMMARY_LEVEL = 2
-HTML_FULL_ACTION_LEVEL = 3
-HTML_FULL_TRACE_LEVEL = 4
+DETAIL_CONVERSATION_LEVEL = 1
+DETAIL_ACTION_SUMMARY_LEVEL = 2
+DETAIL_FULL_ACTION_LEVEL = 3
+DETAIL_FULL_TRACE_LEVEL = 4
+HTML_DEFAULT_LEVEL = DETAIL_CONVERSATION_LEVEL
+HTML_MAX_LEVEL = DETAIL_FULL_TRACE_LEVEL
+HTML_ACTION_SUMMARY_LEVEL = DETAIL_ACTION_SUMMARY_LEVEL
+HTML_FULL_ACTION_LEVEL = DETAIL_FULL_ACTION_LEVEL
+HTML_FULL_TRACE_LEVEL = DETAIL_FULL_TRACE_LEVEL
 MARKDOWN_DEFAULT_LEVEL = 4
 MARKDOWN_MAX_LEVEL = 4
 HTML_SNIPPET_LINES = 8
@@ -142,6 +146,16 @@ HTML_LIGHT_HIGHLIGHT_STYLE = "default"
 HTML_DARK_HIGHLIGHT_STYLE = "github-dark"
 HTML_RENDERER_VERSION = 6
 HTML_TABLE_MIN_LINES = 2
+CONVERSATION_VISIBLE_TEXT = "_conversation_visible_text"
+CONVERSATION_HAS_TOOL_CALL = "_conversation_has_tool_call"
+CONVERSATION_HAS_TOOL_RESULT = "_conversation_has_tool_result"
+CONVERSATION_HAS_TOOLS = "_conversation_has_tools"
+CONVERSATION_IS_END_USER_INPUT = "_conversation_is_end_user_input"
+CONVERSATION_ROLE = "_conversation_role"
+CONVERSATION_DETAIL_LEVEL = "_conversation_detail_level"
+CONVERSATION_SESSION_TURN_INDEX = "_conversation_session_turn_index"
+CONVERSATION_EXPORT_TURN_INDEX = "_conversation_export_turn_index"
+CONVERSATION_TURN_OFFSET = "_conversation_turn_offset"
 
 # Database migration versions
 DB_VERSION_TIME_TRACKING = 3  # Version that added time tracking
@@ -2568,14 +2582,17 @@ def _markdown_agent_title(agent: str) -> str:
     }.get(agent, str(agent).title())
 
 
-def _markdown_tool_detail_text(msg: dict, agent: str) -> str:
+def _markdown_tool_detail_text(msg: dict, agent: str, full_output: bool = False) -> str:
     """Return complete tool/action detail text for Markdown detail levels."""
     if agent == AGENT_GEMINI:
-        details = [gemini_format_tool_call(tool_call) for tool_call in msg.get("tool_calls", [])]
+        details = [
+            gemini_format_tool_call(tool_call, truncate_output=not full_output)
+            for tool_call in msg.get("tool_calls", [])
+        ]
         return "\n\n".join(detail for detail in details if detail)
 
     details = []
-    visible_text = _html_message_text(msg, agent).strip()
+    visible_text = _conversation_message_text(msg, agent).strip()
     content = str(msg.get("content") or "").strip()
     if content and content != visible_text:
         details.append(content)
@@ -2595,24 +2612,37 @@ def _markdown_tool_detail_text(msg: dict, agent: str) -> str:
     return "\n".join(detail for detail in details if detail)
 
 
-def _markdown_message_body(msg: dict, agent: str, markdown_level: int) -> str:
-    """Return message text for a Markdown detail level."""
-    visible_text = _html_message_text(msg, agent).strip()
-    detail_text = _markdown_tool_detail_text(msg, agent).strip()
-    if markdown_level >= HTML_FULL_ACTION_LEVEL:
+def _markdown_conversation_body(msg: dict, agent: str) -> str:
+    """Return only end-user/assistant-visible conversation text for Markdown."""
+    return _conversation_message_text(msg, agent).strip()
+
+
+def _markdown_action_body(msg: dict, agent: str, markdown_level: int) -> str:
+    """Return action/tool text for a Markdown detail level."""
+    visible_text = _conversation_message_text(msg, agent).strip()
+    detail_text = _markdown_tool_detail_text(
+        msg,
+        agent,
+        full_output=markdown_level >= DETAIL_FULL_ACTION_LEVEL,
+    ).strip()
+    if (msg.get(CONVERSATION_ROLE) or msg.get("_html_conversation_role")) in (
+        "user_input",
+        "assistant_final",
+    ) and detail_text:
+        visible_text = ""
+    if markdown_level >= DETAIL_FULL_ACTION_LEVEL:
         return "\n\n".join(part for part in (visible_text, detail_text) if part)
-    return _html_snippet("\n\n".join(part for part in (visible_text, detail_text) if part))
+    return _conversation_snippet("\n\n".join(part for part in (visible_text, detail_text) if part))
 
 
-def _append_markdown_detail_message(
+def _append_markdown_conversation_message(
     lines: list[str],
     msg: dict,
     agent: str,
     label: str,
-    markdown_level: int,
 ) -> None:
-    """Append one conversation/action message in concise Markdown format."""
-    body = _markdown_message_body(msg, agent, markdown_level)
+    """Append one conversation message in concise Markdown format."""
+    body = _markdown_conversation_body(msg, agent)
     if not body:
         return
     lines.extend([f"### {label}", ""])
@@ -2632,28 +2662,29 @@ def _render_markdown_turn(
     conversation_messages = [
         msg
         for msg in turn_messages
-        if msg.get("_html_conversation_role") in ("user_input", "assistant_final")
+        if (msg.get(CONVERSATION_ROLE) or msg.get("_html_conversation_role"))
+        in ("user_input", "assistant_final")
     ]
     action_messages = [
         msg
         for msg in turn_messages
         if (
-            msg.get("_html_detail_level") in (HTML_ACTION_SUMMARY_LEVEL, HTML_FULL_ACTION_LEVEL)
+            (msg.get(CONVERSATION_DETAIL_LEVEL) or msg.get("_html_detail_level"))
+            in (DETAIL_ACTION_SUMMARY_LEVEL, DETAIL_FULL_ACTION_LEVEL)
+            or msg.get(CONVERSATION_HAS_TOOLS)
             or msg.get("_html_has_tools")
         )
-        and msg.get("_html_conversation_role") != "user_input"
+        and (msg.get(CONVERSATION_ROLE) or msg.get("_html_conversation_role")) != "user_input"
     ]
 
     for msg in conversation_messages:
-        _append_markdown_detail_message(
-            lines, msg, agent, _html_conversation_label(msg, agent), markdown_level
-        )
+        _append_markdown_conversation_message(lines, msg, agent, _conversation_label(msg, agent))
 
-    if markdown_level >= HTML_ACTION_SUMMARY_LEVEL and action_messages:
+    if markdown_level >= DETAIL_ACTION_SUMMARY_LEVEL and action_messages:
         lines.extend(["### Actions", ""])
         for msg in action_messages:
-            label = _html_conversation_label(msg, agent)
-            body = _markdown_message_body(msg, agent, markdown_level)
+            label = _conversation_label(msg, agent)
+            body = _markdown_action_body(msg, agent, markdown_level)
             if not body:
                 continue
             lines.extend([f"#### {label}", ""])
@@ -2743,7 +2774,7 @@ def render_markdown_document(
     lines.extend(["---", ""])
 
     rendered_turn = False
-    for turn_index, turn_messages in _html_group_messages_by_turn(messages):
+    for turn_index, turn_messages in _conversation_group_messages_by_turn(messages):
         if turn_index <= 0:
             continue
         rendered_turn = True
@@ -4106,7 +4137,7 @@ def _html_level_attrs(
     return " ".join(attrs)
 
 
-def _html_snippet(text: str) -> str:
+def _conversation_snippet(text: str) -> str:
     """Return a compact snippet for level 2 action summaries."""
     if not text:
         return ""
@@ -4117,6 +4148,11 @@ def _html_snippet(text: str) -> str:
         snippet = snippet[:HTML_SNIPPET_CHARS].rstrip()
     clipped = len(lines) > HTML_SNIPPET_LINES or len(str(text)) > len(snippet)
     return f"{snippet}\n... [truncated]" if clipped else snippet
+
+
+def _html_snippet(text: str) -> str:
+    """Compatibility wrapper for HTML snippet rendering."""
+    return _conversation_snippet(text)
 
 
 def _html_looks_like_unified_diff(text: str) -> bool:
@@ -4906,7 +4942,7 @@ def _render_html_tool_blocks(msg: dict, agent: str, initial_level: int) -> list:
     return _render_claude_tool_blocks(msg, initial_level)
 
 
-def _html_message_text(msg: dict, agent: str) -> str:
+def _conversation_message_text(msg: dict, agent: str) -> str:
     """Return user/assistant-visible text for the message."""
     if agent == AGENT_CLAUDE and msg.get("content_blocks") is not None:
         text_blocks = [
@@ -4920,6 +4956,11 @@ def _html_message_text(msg: dict, agent: str) -> str:
     ):
         return ""
     return msg.get("content", "")
+
+
+def _html_message_text(msg: dict, agent: str) -> str:
+    """Compatibility wrapper for user/assistant-visible text."""
+    return _conversation_message_text(msg, agent)
 
 
 def _html_message_has_tools(msg: dict, agent: str) -> bool:
@@ -5076,6 +5117,18 @@ def annotate_conversation_messages(messages: list, agent: str) -> list:
             msg, agent, text, has_tool_call, has_tool_result, has_tools, is_user_input
         )
 
+        msg[CONVERSATION_VISIBLE_TEXT] = text
+        msg[CONVERSATION_HAS_TOOL_CALL] = has_tool_call
+        msg[CONVERSATION_HAS_TOOL_RESULT] = has_tool_result
+        msg[CONVERSATION_HAS_TOOLS] = has_tools
+        msg[CONVERSATION_IS_END_USER_INPUT] = is_user_input
+        msg[CONVERSATION_ROLE] = conversation_role
+        msg[CONVERSATION_DETAIL_LEVEL] = detail_level
+        msg[CONVERSATION_SESSION_TURN_INDEX] = current_turn
+        msg[CONVERSATION_EXPORT_TURN_INDEX] = None
+        msg[CONVERSATION_TURN_OFFSET] = 0
+
+        # Keep the previous HTML annotation names as compatibility aliases.
         msg["_html_visible_text"] = text
         msg["_html_has_tool_call"] = has_tool_call
         msg["_html_has_tool_result"] = has_tool_result
@@ -5097,8 +5150,10 @@ def annotate_conversation_messages(messages: list, agent: str) -> list:
                 final_idx = index
                 break
         if final_idx is not None:
+            messages[final_idx][CONVERSATION_ROLE] = "assistant_final"
+            messages[final_idx][CONVERSATION_DETAIL_LEVEL] = DETAIL_CONVERSATION_LEVEL
             messages[final_idx]["_html_conversation_role"] = "assistant_final"
-            messages[final_idx]["_html_detail_level"] = 1
+            messages[final_idx]["_html_detail_level"] = DETAIL_CONVERSATION_LEVEL
 
     return messages
 
@@ -5109,11 +5164,13 @@ def _annotate_export_turn_numbers(sessions: list) -> None:
     for session in sessions:
         messages = session.get("messages") or []
         max_session_turn = max(
-            (int(msg.get("_html_session_turn_index") or 0) for msg in messages),
+            (int(msg.get(CONVERSATION_SESSION_TURN_INDEX) or 0) for msg in messages),
             default=0,
         )
         for msg in messages:
-            session_turn = int(msg.get("_html_session_turn_index") or 0)
+            session_turn = int(msg.get(CONVERSATION_SESSION_TURN_INDEX) or 0)
+            msg[CONVERSATION_TURN_OFFSET] = offset
+            msg[CONVERSATION_EXPORT_TURN_INDEX] = offset + session_turn if session_turn else None
             msg["_html_turn_offset"] = offset
             msg["_html_export_turn_index"] = offset + session_turn if session_turn else None
         session["_html_turn_offset"] = offset
@@ -5121,17 +5178,26 @@ def _annotate_export_turn_numbers(sessions: list) -> None:
         offset += max_session_turn
 
 
-def _html_group_messages_by_turn(messages: list) -> list[tuple[int, list]]:
+def _conversation_group_messages_by_turn(messages: list) -> list[tuple[int, list]]:
     """Group annotated messages by session turn in original order."""
     grouped: dict[int, list] = {}
     order = []
     for msg in messages:
-        turn_index = int(msg.get("_html_session_turn_index") or 0)
+        turn_index = int(
+            msg.get(CONVERSATION_SESSION_TURN_INDEX)
+            or msg.get("_html_session_turn_index")
+            or 0
+        )
         if turn_index not in grouped:
             grouped[turn_index] = []
             order.append(turn_index)
         grouped[turn_index].append(msg)
     return [(turn_index, grouped[turn_index]) for turn_index in order]
+
+
+def _html_group_messages_by_turn(messages: list) -> list[tuple[int, list]]:
+    """Compatibility wrapper for HTML turn grouping."""
+    return _conversation_group_messages_by_turn(messages)
 
 
 def _render_html_reasoning(msg: dict, initial_level: int) -> str:
@@ -5198,9 +5264,9 @@ def _html_role_label(msg: dict, agent: str) -> str:
     return role.title()
 
 
-def _html_conversation_label(msg: dict, agent: str) -> str:
+def _conversation_label(msg: dict, agent: str) -> str:
     """Return a turn-focused label for an annotated message."""
-    role = msg.get("_html_conversation_role")
+    role = msg.get(CONVERSATION_ROLE) or msg.get("_html_conversation_role")
     if role == "internal_context":
         context_name = msg.get("internal_context_name")
         if msg.get("internal_context_type") == "skill" and context_name:
@@ -5215,6 +5281,11 @@ def _html_conversation_label(msg: dict, agent: str) -> str:
         "system": "System",
     }
     return labels.get(role, _html_role_label(msg, agent))
+
+
+def _html_conversation_label(msg: dict, agent: str) -> str:
+    """Compatibility wrapper for HTML conversation labels."""
+    return _conversation_label(msg, agent)
 
 
 def _html_message_kind(msg: dict) -> str:
@@ -5657,6 +5728,18 @@ def _html_export_options_match(output_file: Path, html_level: int, html_split: s
     except OSError:
         return False
     return _html_export_signature(html_level, html_split) in prefix
+
+
+def _markdown_export_options_match(output_file: Path, markdown_level: int) -> bool:
+    """Return True when an existing Markdown export matches level-sensitive options."""
+    level = int(markdown_level or MARKDOWN_DEFAULT_LEVEL)
+    if level >= MARKDOWN_DEFAULT_LEVEL:
+        return True
+    try:
+        prefix = output_file.read_text(encoding="utf-8")[:4096]
+    except OSError:
+        return False
+    return f"**Markdown detail level:** {level}" in prefix
 
 
 def render_html_document(
@@ -6492,11 +6575,12 @@ def gemini_read_json_messages(json_file: Path) -> tuple:
     return annotate_message_origins(messages), session_meta
 
 
-def gemini_format_tool_call(tool_call: dict) -> str:
+def gemini_format_tool_call(tool_call: dict, truncate_output: bool = True) -> str:
     """Format a Gemini tool call as markdown.
 
     Args:
         tool_call: Tool call dict with id, name, args, result, status, etc.
+        truncate_output: Whether long tool outputs should be shortened.
 
     Returns:
         Formatted markdown string for the tool call
@@ -6522,8 +6606,9 @@ def gemini_format_tool_call(tool_call: dict) -> str:
                 func_resp = r.get("functionResponse", {})
                 output = func_resp.get("response", {}).get("output", "")
                 if output:
-                    # Use helper for consistent truncation (M4)
-                    output = _truncate_tool_output(output)
+                    if truncate_output:
+                        # Use helper for consistent truncation (M4)
+                        output = _truncate_tool_output(output)
                     lines.append(f"**Result:**\n```\n{output}\n```")
 
     return "\n".join(lines)
@@ -8031,12 +8116,12 @@ def _projects_dir_from_wsl_unc(path: str) -> Path:
 
 
 def _is_already_encoded_or_special(target: str) -> bool:
-    """Check if target is already encoded, an alias, or a jsonl file."""
+    """Check if target is already encoded, an alias, or a session file."""
     if not target:
         return True
     if target.startswith("-") or target.startswith("@"):
         return True
-    if target.lower().endswith(".jsonl"):
+    if target.lower().endswith((".jsonl", ".json")):
         return True
     return False
 
@@ -12006,7 +12091,15 @@ def _export_session_file(
 
     # Check incremental skip
     if not opts["force"] and output_file.exists():
-        if output_file.stat().st_mtime >= jsonl_file.stat().st_mtime:
+        if (
+            output_file.stat().st_mtime >= jsonl_file.stat().st_mtime
+            and (
+                opts.get("output_format", EXPORT_FORMAT_MARKDOWN) != EXPORT_FORMAT_MARKDOWN
+                or _markdown_export_options_match(
+                    output_file, opts.get("markdown_level", MARKDOWN_DEFAULT_LEVEL)
+                )
+            )
+        ):
             stats["skipped"] += 1
             return
 
@@ -15119,6 +15212,22 @@ def _parse_file_to_markdown_with_display(
     )
 
 
+def _write_markdown_destination(markdown: str, output: Optional[str], quiet: bool = False) -> None:
+    """Write markdown to stdout or a destination file."""
+    if str(output or "") == "-":
+        sys.stdout.write(markdown)
+        if not markdown.endswith("\n"):
+            sys.stdout.write("\n")
+        return
+
+    output_file = Path(output) if output else None
+    if output_file is None:
+        raise ValueError("markdown destination is required")
+    output_file.write_text(markdown, encoding="utf-8")
+    if not quiet:
+        print(output_file)
+
+
 def _download_remote_file(remote_host: str, remote_path: str, local_path: Path) -> bool:
     """Download a file from remote host via scp. Returns True on success."""
     result = subprocess.run(
@@ -15178,14 +15287,11 @@ def _convert_remote_file(args, remote_host: str):
                 minimal=getattr(args, "minimal", False),
                 markdown_level=getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
             )
-            if str(getattr(args, "output", "") or "") == "-":
-                sys.stdout.write(markdown)
-                if not markdown.endswith("\n"):
-                    sys.stdout.write("\n")
-            else:
-                output_file.write_text(markdown, encoding="utf-8")
-            if not getattr(args, "quiet", False) and str(getattr(args, "output", "") or "") != "-":
-                print(output_file)
+            _write_markdown_destination(
+                markdown,
+                getattr(args, "output", None) or str(output_file),
+                quiet=getattr(args, "quiet", False),
+            )
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -15228,14 +15334,11 @@ def _convert_local_file(args):
                 minimal=getattr(args, "minimal", False),
                 markdown_level=getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
             )
-            if str(getattr(args, "output", "") or "") == "-":
-                sys.stdout.write(markdown)
-                if not markdown.endswith("\n"):
-                    sys.stdout.write("\n")
-            else:
-                output_file.write_text(markdown, encoding="utf-8")
-            if not getattr(args, "quiet", False) and str(getattr(args, "output", "") or "") != "-":
-                print(output_file)
+            _write_markdown_destination(
+                markdown,
+                getattr(args, "output", None) or str(output_file),
+                quiet=getattr(args, "quiet", False),
+            )
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error converting file: {e}\n")
         sys.exit(1)
@@ -15861,7 +15964,11 @@ def _export_sessions(sessions: list, args, output_dir: Path):  # noqa: C901
             output_format != EXPORT_FORMAT_HTML
             or _html_export_options_match(output_file, html_level, HTML_SPLIT_SESSION)
         )
-        if up_to_date and html_options_match:
+        markdown_options_match = (
+            output_format != EXPORT_FORMAT_MARKDOWN
+            or _markdown_export_options_match(output_file, markdown_level)
+        )
+        if up_to_date and html_options_match and markdown_options_match:
             return
 
         _export_single_session(
@@ -17473,7 +17580,7 @@ EXAMPLES:
 
     agent-history export myproject           # specific workspace, local
     agent-history export myproject --ah      # specific workspace, all homes
-    agent-history export file.jsonl         # export single file
+    agent-history export file.jsonl         # export single session file
 
     agent-history export -o /tmp/backup      # current workspace, custom output
     agent-history export myproject -o ./out  # specific workspace, custom output
@@ -17489,7 +17596,7 @@ EXAMPLES:
     agent-history export myproject --minimal       # minimal mode
     agent-history export myproject --split 500     # split long conversations
     agent-history export myproject --flat          # flat structure (no subdirs)
-    agent-history export session.jsonl -o - --markdown-level 1  # single session to stdout
+    agent-history export /full/path/to/session.jsonl -o - --markdown-level 1  # single session to stdout
     agent-history export myproject --markdown-level 2  # conversation + action snippets
     agent-history export myproject --format html   # offline HTML with detail controls
     agent-history export myproject --format html --html-single  # one HTML file per workspace
@@ -17788,6 +17895,13 @@ def _add_export_parser(subparsers):
         "export",
         help="Export to markdown or offline HTML",
         description="Export workspace or single file to markdown or offline HTML",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Stdout example:\n"
+            "  agent-history export /full/path/to/session.jsonl -o - --markdown-level 1\n\n"
+            "With -o -, pass exactly one full .jsonl/.json session file path. "
+            "Workspace names and separate session filename arguments are not supported."
+        ),
     )
 
     parser.add_argument(
@@ -17800,14 +17914,14 @@ def _add_export_parser(subparsers):
         "output_dir",
         nargs="?",
         default="./ai-chats",
-        help="Output directory (default: ./ai-chats)",
+        help="Output directory (default: ./ai-chats); use -o - only with one full session file path",
     )
     parser.add_argument(
         "-o",
         "--output",
-        metavar="DIR",
+        metavar="DIR|-",
         dest="output_override",
-        help="Output directory (overrides positional output_dir)",
+        help="Output directory, or '-' for Markdown stdout from one full session file path",
     )
     parser.add_argument(
         "-a",
@@ -18941,6 +19055,29 @@ def _dispatch_export_all_homes(args, output_dir: Union[str, Path], patterns: lis
     cmd_export_all(export_config)
 
 
+def _is_session_file_target(target: str) -> bool:
+    """Return True when a target names one supported session file."""
+    return str(target).lower().endswith((".jsonl", ".json"))
+
+
+def _validate_stdout_export_targets(args, targets: list[str]) -> None:
+    """Validate Markdown stdout export constraints."""
+    if getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN) != EXPORT_FORMAT_MARKDOWN:
+        exit_with_error("Standard output export only supports markdown.")
+    if len(targets) == 1 and _is_session_file_target(targets[0]):
+        return
+
+    received = f" Received {len(targets)} targets." if targets else ""
+    exit_with_error(
+        "Standard output export requires exactly one session file target (.jsonl/.json)."
+        f"{received}\n"
+        "Pass the full path to the session file, for example:\n"
+        "  agent-history export ~/.claude/projects/<workspace>/<session>.jsonl -o -\n"
+        "Workspace names, workspace paths, aliases, and separate filename arguments are not "
+        "supported with -o -."
+    )
+
+
 def _resolve_export_targets(args, targets: list, output_dir: Union[str, Path]) -> tuple:
     """Resolve export targets, handling workspace detection and aliases.
 
@@ -19024,10 +19161,7 @@ def _dispatch_export(args):
     targets = [_coerce_target_to_workspace_pattern(t) for t in targets]
     output_to_stdout = output_dir == "-"
     if output_to_stdout:
-        if getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN) != EXPORT_FORMAT_MARKDOWN:
-            exit_with_error("Standard output export only supports markdown.")
-        if not (len(targets) == 1 and targets[0].endswith((".jsonl", ".json"))):
-            exit_with_error("Standard output export requires a single session .jsonl/.json target.")
+        _validate_stdout_export_targets(args, targets)
 
     alias_name = detect_alias_from_args(args, targets)
     if alias_name:

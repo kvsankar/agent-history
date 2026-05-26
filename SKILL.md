@@ -228,6 +228,10 @@ Markdown exports include:
 - Token usage (in non-minimal mode)
 - Navigation links between messages (in non-minimal mode)
 
+Markdown stdout export (`-o -`) is only for one full `.jsonl`/`.json` session file path.
+Do not pass a workspace and a separate session filename; pass the actual session file as the
+only export target.
+
 Offline HTML exports add:
 - Turn-centered conversation layout
 - Light/dark mode
