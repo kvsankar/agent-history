@@ -15,8 +15,9 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 | [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-format.md](docs/claude-format.md) |
 | [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-format.md](docs/codex-format.md) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-format.md](docs/gemini-format.md) |
+| [Pi](https://pi.dev) | ✅ Full support | JSONL | [AGENTS.md](AGENTS.md) |
 
-Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
+Use `--agent claude`, `--agent codex`, `--agent gemini`, `--agent pi`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
 
 See [AGENTS.md](AGENTS.md) for a detailed comparison of storage locations, features, and behaviors.
 
