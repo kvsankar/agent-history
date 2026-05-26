@@ -11069,6 +11069,150 @@ class TestHtmlExport:
         assert "<td><strong>Tests</strong> pass</td>" in html
         assert "<p>| # | Issue | Fix |" not in html
 
+    def test_markdown_level_one_keeps_conversation_only(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Run tests"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Bash",
+                            "input": {"cmd": "pytest -q"},
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tool1", "content": "1 passed"}
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:02Z",
+                "uuid": "u2",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "Done."}]},
+                "timestamp": "2025-01-01T10:00:03Z",
+                "uuid": "a2",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        markdown = ch.render_markdown_document(
+            session_file,
+            ch.AGENT_CLAUDE,
+            messages,
+            markdown_level=1,
+        )
+
+        assert "## Turn 1" in markdown
+        assert "Run tests" in markdown
+        assert "Done." in markdown
+        assert "pytest -q" not in markdown
+        assert "1 passed" not in markdown
+
+    def test_markdown_level_two_includes_action_snippets(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Run tests"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool1",
+                            "name": "Bash",
+                            "input": {"cmd": "pytest -q"},
+                        }
+                    ],
+                },
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+
+        messages = ch.read_jsonl_messages(session_file)
+        markdown = ch.render_markdown_document(
+            session_file,
+            ch.AGENT_CLAUDE,
+            messages,
+            markdown_level=2,
+        )
+
+        assert "### Actions" in markdown
+        assert "pytest -q" in markdown
+
+    def test_export_single_session_to_stdout_markdown(self, tmp_path, capsys):
+        session_file = tmp_path / "session.jsonl"
+        records = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Hello"},
+                "timestamp": "2025-01-01T10:00:00Z",
+                "uuid": "u1",
+                "sessionId": "s1",
+            },
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
+                "timestamp": "2025-01-01T10:00:01Z",
+                "uuid": "a1",
+                "sessionId": "s1",
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(record) for record in records))
+        args = ch._create_argument_parser().parse_args(
+            ["export", str(session_file), "-o", "-", "--markdown-level", "1"]
+        )
+
+        ch._dispatch_export(args)
+        captured = capsys.readouterr()
+
+        assert "# Claude Conversation" in captured.out
+        assert "Hello" in captured.out
+        assert "Hi" in captured.out
+        assert captured.err == ""
+
+    def test_stdout_export_rejects_workspace_targets(self, capsys):
+        args = ch._create_argument_parser().parse_args(["export", "myproject", "-o", "-"])
+
+        with pytest.raises(SystemExit):
+            ch._dispatch_export(args)
+
+        captured = capsys.readouterr()
+        assert "requires a single session" in captured.err
+
     def test_html_keeps_claude_skill_context_inside_triggering_turn(self, tmp_path):
         session_file = tmp_path / "session.jsonl"
         records = [

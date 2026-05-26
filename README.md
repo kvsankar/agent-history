@@ -158,6 +158,8 @@ EXAMPLES:
     agent-history export myproject --minimal       # minimal mode
     agent-history export myproject --split 500     # split long conversations
     agent-history export myproject --flat          # flat structure (no subdirs)
+    agent-history export session.jsonl -o - --markdown-level 1  # single session to stdout
+    agent-history export myproject --markdown-level 2  # conversation + action snippets
     agent-history export myproject --format html   # offline HTML with detail controls
     agent-history export myproject --format html --html-single  # one HTML file per workspace
 
@@ -313,6 +315,9 @@ agent-history lss --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
 agent-history export myproject --minimal
+
+# Single-session Markdown to stdout
+agent-history export session.jsonl -o - --markdown-level 1
 
 # Offline HTML export, one file per workspace
 agent-history export myproject --format html --html-single

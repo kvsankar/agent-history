@@ -192,7 +192,7 @@ agent-history export [WORKSPACE...] [OPTIONS]
 - `WORKSPACE`: One or more workspace patterns (default: current workspace or its alias)
 
 **Options:**
-- `-o`, `--output DIR`: Output directory (default: `./ai-chats`)
+- `-o`, `--output DIR`: Output directory (default: `./ai-chats`); use `-o -` for single-session Markdown to stdout
 - `--wsl`: Export from WSL (auto-detects distribution)
 - `--windows`: Export from Windows (auto-detects user)
 - `-r`, `--remote HOST`: Add SSH remote source (repeatable)
@@ -204,6 +204,7 @@ agent-history export [WORKSPACE...] [OPTIONS]
 - `--until DATE`: Only include sessions modified on or before this date
 - `--minimal`: Export conversation content only, no metadata
 - `--format markdown|html`: Output format (default: `markdown`)
+- `--markdown-level 1..4`: Markdown detail level (default: `4`, full legacy output)
 - `--html-level 1..4`: Initial HTML detail level (default: `1`)
 - `--html-split session|workspace`: HTML output granularity (default: `session`)
 - `--html-single`: Alias for `--html-split workspace`
@@ -501,6 +502,25 @@ The `--html-level 1..4` option remains as the initial preset: `1` enables no tog
 
 When multiple sessions are bundled into one workspace HTML file, turn labels are renumbered
 across the whole export while session-local turn numbers remain available in full-trace detail.
+
+### Markdown Detail Levels (`--markdown-level`)
+
+Markdown exports default to level `4`, which preserves the legacy full-detail output.
+Lower levels use the same turn annotations as HTML export:
+
+- `1`: end-user input and final assistant response per turn.
+- `2`: level 1 plus action/tool snippets.
+- `3`: level 2 plus full action/tool inputs and outputs.
+- `4`: full legacy markdown with message metadata.
+
+Single-session Markdown exports can write content to stdout:
+
+```bash
+agent-history export /path/to/session.jsonl -o - --markdown-level 1
+```
+
+Stdout export is intentionally limited to Markdown and one `.jsonl`/`.json` session file.
+Workspace, alias, split, and HTML exports still write files.
 
 ---
 

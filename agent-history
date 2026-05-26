@@ -133,6 +133,8 @@ HTML_MAX_LEVEL = 4
 HTML_ACTION_SUMMARY_LEVEL = 2
 HTML_FULL_ACTION_LEVEL = 3
 HTML_FULL_TRACE_LEVEL = 4
+MARKDOWN_DEFAULT_LEVEL = 4
+MARKDOWN_MAX_LEVEL = 4
 HTML_SNIPPET_LINES = 8
 HTML_SNIPPET_CHARS = 1200
 HTML_TRIM_CHARS = 3000
@@ -418,6 +420,7 @@ class ExportConfig:
     output_format: str = EXPORT_FORMAT_MARKDOWN
     html_level: int = HTML_DEFAULT_LEVEL
     html_split: str = HTML_SPLIT_SESSION
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL
 
     @property
     def workspace(self) -> str:
@@ -462,6 +465,7 @@ class ExportConfig:
             output_format=get_field("output_format", EXPORT_FORMAT_MARKDOWN),
             html_level=get_field("html_level", HTML_DEFAULT_LEVEL),
             html_split=get_field("html_split", HTML_SPLIT_SESSION),
+            markdown_level=get_field("markdown_level", MARKDOWN_DEFAULT_LEVEL),
         )
 
 
@@ -564,9 +568,11 @@ class ConvertCommandArgs:
     jsonl_file: str = ""
     output: Optional[str] = None
     remote: Optional[str] = None
+    minimal: bool = False
     quiet: bool = False
     output_format: str = EXPORT_FORMAT_MARKDOWN
     html_level: int = HTML_DEFAULT_LEVEL
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL
 
 
 @dataclass
@@ -594,6 +600,7 @@ class ExportAllConfig:
     output_format: str = EXPORT_FORMAT_MARKDOWN
     html_level: int = HTML_DEFAULT_LEVEL
     html_split: str = HTML_SPLIT_SESSION
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL
 
     @property
     def workspace(self) -> str:
@@ -610,6 +617,7 @@ class ExportRenderOptions:
     quiet: bool = False
     output_format: str = EXPORT_FORMAT_MARKDOWN
     html_level: int = HTML_DEFAULT_LEVEL
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL
 
 
 @dataclass
@@ -674,6 +682,21 @@ def validate_html_level(value):
     if ivalue < 1 or ivalue > HTML_MAX_LEVEL:
         raise argparse.ArgumentTypeError(
             f"html level must be between 1 and {HTML_MAX_LEVEL}, got '{value}'"
+        )
+    return ivalue
+
+
+def validate_markdown_level(value):
+    """Validate Markdown detail level argument for argparse."""
+    try:
+        ivalue = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"markdown level must be an integer, got '{value}'"
+        ) from e
+    if ivalue < 1 or ivalue > MARKDOWN_MAX_LEVEL:
+        raise argparse.ArgumentTypeError(
+            f"markdown level must be between 1 and {MARKDOWN_MAX_LEVEL}, got '{value}'"
         )
     return ivalue
 
@@ -2533,6 +2556,203 @@ def generate_markdown_for_messages(
         )
 
     return "\n".join(md_lines)
+
+
+def _markdown_agent_title(agent: str) -> str:
+    """Return display title for an agent Markdown export."""
+    return {
+        AGENT_CLAUDE: "Claude",
+        AGENT_CODEX: "Codex",
+        AGENT_GEMINI: "Gemini",
+        AGENT_PI: "Pi",
+    }.get(agent, str(agent).title())
+
+
+def _markdown_tool_detail_text(msg: dict, agent: str) -> str:
+    """Return complete tool/action detail text for Markdown detail levels."""
+    if agent == AGENT_GEMINI:
+        details = [gemini_format_tool_call(tool_call) for tool_call in msg.get("tool_calls", [])]
+        return "\n\n".join(detail for detail in details if detail)
+
+    details = []
+    visible_text = _html_message_text(msg, agent).strip()
+    content = str(msg.get("content") or "").strip()
+    if content and content != visible_text:
+        details.append(content)
+
+    if agent == AGENT_PI:
+        for tool_call in msg.get("tool_calls", []):
+            details.extend(
+                [
+                    f"**[Tool: {tool_call.get('name', 'unknown')}]**",
+                    f"Call ID: `{tool_call.get('id', '')}`",
+                    "```json",
+                    _html_json(tool_call.get("arguments") or {}),
+                    "```",
+                ]
+            )
+
+    return "\n".join(detail for detail in details if detail)
+
+
+def _markdown_message_body(msg: dict, agent: str, markdown_level: int) -> str:
+    """Return message text for a Markdown detail level."""
+    visible_text = _html_message_text(msg, agent).strip()
+    detail_text = _markdown_tool_detail_text(msg, agent).strip()
+    if markdown_level >= HTML_FULL_ACTION_LEVEL:
+        return "\n\n".join(part for part in (visible_text, detail_text) if part)
+    return _html_snippet("\n\n".join(part for part in (visible_text, detail_text) if part))
+
+
+def _append_markdown_detail_message(
+    lines: list[str],
+    msg: dict,
+    agent: str,
+    label: str,
+    markdown_level: int,
+) -> None:
+    """Append one conversation/action message in concise Markdown format."""
+    body = _markdown_message_body(msg, agent, markdown_level)
+    if not body:
+        return
+    lines.extend([f"### {label}", ""])
+    if msg.get("timestamp"):
+        lines.extend([f"*{msg['timestamp']}*", ""])
+    lines.extend([body, ""])
+
+
+def _render_markdown_turn(
+    turn_index: int,
+    turn_messages: list,
+    agent: str,
+    markdown_level: int,
+) -> list[str]:
+    """Render one turn for Markdown detail levels 1-3."""
+    lines = [f"## Turn {turn_index}", ""]
+    conversation_messages = [
+        msg
+        for msg in turn_messages
+        if msg.get("_html_conversation_role") in ("user_input", "assistant_final")
+    ]
+    action_messages = [
+        msg
+        for msg in turn_messages
+        if (
+            msg.get("_html_detail_level") in (HTML_ACTION_SUMMARY_LEVEL, HTML_FULL_ACTION_LEVEL)
+            or msg.get("_html_has_tools")
+        )
+        and msg.get("_html_conversation_role") != "user_input"
+    ]
+
+    for msg in conversation_messages:
+        _append_markdown_detail_message(
+            lines, msg, agent, _html_conversation_label(msg, agent), markdown_level
+        )
+
+    if markdown_level >= HTML_ACTION_SUMMARY_LEVEL and action_messages:
+        lines.extend(["### Actions", ""])
+        for msg in action_messages:
+            label = _html_conversation_label(msg, agent)
+            body = _markdown_message_body(msg, agent, markdown_level)
+            if not body:
+                continue
+            lines.extend([f"#### {label}", ""])
+            if msg.get("timestamp"):
+                lines.extend([f"*{msg['timestamp']}*", ""])
+            lines.extend([body, ""])
+
+    lines.extend(["---", ""])
+    return lines
+
+
+def _render_legacy_markdown_document(
+    jsonl_file: Path,
+    agent: str,
+    messages: list,
+    minimal: bool,
+    display_file: Optional[str],
+) -> str:
+    """Render the legacy full-detail Markdown format."""
+    if agent == AGENT_GEMINI:
+        return gemini_parse_json_to_markdown(jsonl_file, minimal=minimal)
+    if agent == AGENT_CODEX:
+        return codex_parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+    if agent == AGENT_PI:
+        return pi_parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
+    return parse_jsonl_to_markdown(
+        jsonl_file, minimal=minimal, messages=messages, display_file=display_file
+    )
+
+
+def _markdown_first_last_timestamps(messages: list) -> tuple[str, str]:
+    """Return first and last non-empty message timestamps."""
+    first_ts = next((msg.get("timestamp", "") for msg in messages if msg.get("timestamp")), "")
+    last_ts = next(
+        (msg.get("timestamp", "") for msg in reversed(messages) if msg.get("timestamp")),
+        "",
+    )
+    return first_ts, last_ts
+
+
+def _render_markdown_level_header(
+    jsonl_file: Path,
+    agent: str,
+    messages: list,
+    minimal: bool,
+    markdown_level: int,
+    display_file: Optional[str],
+) -> list[str]:
+    """Render header for concise Markdown detail levels."""
+    lines = [f"# {_markdown_agent_title(agent)} Conversation", ""]
+    if minimal:
+        return lines
+
+    lines.extend(
+        [
+            f"**File:** {display_file or jsonl_file.name}",
+            f"**Messages:** {len(messages)}",
+            f"**Markdown detail level:** {markdown_level}",
+        ]
+    )
+    first_ts, last_ts = _markdown_first_last_timestamps(messages)
+    if first_ts:
+        lines.append(f"**First message:** {first_ts}")
+    if last_ts:
+        lines.append(f"**Last message:** {last_ts}")
+    lines.append("")
+    return lines
+
+
+def render_markdown_document(
+    jsonl_file: Path,
+    agent: str,
+    messages: list,
+    minimal: bool = False,
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL,
+    display_file: Optional[str] = None,
+) -> str:
+    """Render Markdown with progressive conversation detail levels."""
+    safe_level = max(1, min(MARKDOWN_MAX_LEVEL, int(markdown_level or MARKDOWN_DEFAULT_LEVEL)))
+    if safe_level >= MARKDOWN_DEFAULT_LEVEL:
+        return _render_legacy_markdown_document(jsonl_file, agent, messages, minimal, display_file)
+
+    annotate_conversation_messages(messages, agent)
+    lines = _render_markdown_level_header(
+        jsonl_file, agent, messages, minimal, safe_level, display_file
+    )
+    lines.extend(["---", ""])
+
+    rendered_turn = False
+    for turn_index, turn_messages in _html_group_messages_by_turn(messages):
+        if turn_index <= 0:
+            continue
+        rendered_turn = True
+        lines.extend(_render_markdown_turn(turn_index, turn_messages, agent, safe_level))
+
+    if not rendered_turn:
+        lines.extend(["_No conversation turns found._", ""])
+
+    return "\n".join(lines)
 
 
 # ============================================================================
@@ -11699,6 +11919,7 @@ def _get_alias_export_options(args) -> dict:
         "output_format": getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN),
         "html_level": getattr(args, "html_level", HTML_DEFAULT_LEVEL),
         "html_split": getattr(args, "html_split", HTML_SPLIT_SESSION),
+        "markdown_level": getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
     }
 
 
@@ -11802,6 +12023,7 @@ def _export_session_file(
                 quiet=opts["quiet"],
                 output_format=opts.get("output_format", EXPORT_FORMAT_MARKDOWN),
                 html_level=opts.get("html_level", HTML_DEFAULT_LEVEL),
+                markdown_level=opts.get("markdown_level", MARKDOWN_DEFAULT_LEVEL),
             ),
         )
         stats["exported"] += 1
@@ -14857,32 +15079,44 @@ def cmd_list(args):
         _list_local_sessions(args, patterns, since_date, until_date)
 
 
-def _parse_file_to_markdown(jsonl_file: Path, agent_type: str) -> str:
+def _parse_file_to_markdown(
+    jsonl_file: Path,
+    agent_type: str,
+    minimal: bool = False,
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL,
+) -> str:
     """Parse a file to markdown using the appropriate parser for the agent type."""
-    if agent_type == AGENT_GEMINI:
-        return gemini_parse_json_to_markdown(jsonl_file)
-    if agent_type == AGENT_CODEX:
-        return codex_parse_jsonl_to_markdown(jsonl_file)
-    if agent_type == AGENT_PI:
-        return pi_parse_jsonl_to_markdown(jsonl_file)
-    return parse_jsonl_to_markdown(jsonl_file)
+    messages = _read_session_messages(jsonl_file, agent_type) or []
+    return render_markdown_document(
+        jsonl_file,
+        agent_type,
+        messages,
+        minimal=minimal,
+        markdown_level=markdown_level,
+    )
 
 
 def _parse_file_to_markdown_with_display(
-    local_file: Path, agent_type: str, display_file: Optional[str] = None
+    local_file: Path,
+    agent_type: str,
+    display_file: Optional[str] = None,
+    minimal: bool = False,
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL,
 ) -> str:
     """Parse a file to markdown, overriding the displayed filename for Claude.
 
     This is primarily used for remote conversions where we download to a temporary
     path but want headers to show the original remote location.
     """
-    if agent_type == AGENT_GEMINI:
-        return gemini_parse_json_to_markdown(local_file)
-    if agent_type == AGENT_CODEX:
-        return codex_parse_jsonl_to_markdown(local_file)
-    if agent_type == AGENT_PI:
-        return pi_parse_jsonl_to_markdown(local_file)
-    return parse_jsonl_to_markdown(local_file, display_file=display_file)
+    messages = _read_session_messages(local_file, agent_type) or []
+    return render_markdown_document(
+        local_file,
+        agent_type,
+        messages,
+        minimal=minimal,
+        markdown_level=markdown_level,
+        display_file=display_file,
+    )
 
 
 def _download_remote_file(remote_host: str, remote_path: str, local_path: Path) -> bool:
@@ -14937,9 +15171,20 @@ def _convert_remote_file(args, remote_host: str):
                 display_file=display_file,
             )
         else:
-            markdown = _parse_file_to_markdown_with_display(tmp_path, agent_type, display_file)
-            output_file.write_text(markdown, encoding="utf-8")
-            if not getattr(args, "quiet", False):
+            markdown = _parse_file_to_markdown_with_display(
+                tmp_path,
+                agent_type,
+                display_file,
+                minimal=getattr(args, "minimal", False),
+                markdown_level=getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
+            )
+            if str(getattr(args, "output", "") or "") == "-":
+                sys.stdout.write(markdown)
+                if not markdown.endswith("\n"):
+                    sys.stdout.write("\n")
+            else:
+                output_file.write_text(markdown, encoding="utf-8")
+            if not getattr(args, "quiet", False) and str(getattr(args, "output", "") or "") != "-":
                 print(output_file)
     finally:
         if tmp_path.exists():
@@ -14977,9 +15222,19 @@ def _convert_local_file(args):
                 ),
             )
         else:
-            markdown = _parse_file_to_markdown(jsonl_file, agent_type)
-            output_file.write_text(markdown, encoding="utf-8")
-            if not getattr(args, "quiet", False):
+            markdown = _parse_file_to_markdown(
+                jsonl_file,
+                agent_type,
+                minimal=getattr(args, "minimal", False),
+                markdown_level=getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
+            )
+            if str(getattr(args, "output", "") or "") == "-":
+                sys.stdout.write(markdown)
+                if not markdown.endswith("\n"):
+                    sys.stdout.write("\n")
+            else:
+                output_file.write_text(markdown, encoding="utf-8")
+            if not getattr(args, "quiet", False) and str(getattr(args, "output", "") or "") != "-":
                 print(output_file)
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error converting file: {e}\n")
@@ -15523,6 +15778,7 @@ def _export_single_session(
                 messages=messages,
                 agent=agent_type,
                 quiet=options.quiet,
+                markdown_level=options.markdown_level,
             )
         elif options.split_lines and messages:
             parts = generate_markdown_parts(
@@ -15537,10 +15793,16 @@ def _export_single_session(
                     options.minimal,
                     messages=messages,
                     quiet=options.quiet,
+                    markdown_level=options.markdown_level,
                 )
         else:
             _write_single_file(
-                jsonl_file, output_file, options.minimal, messages=messages, quiet=options.quiet
+                jsonl_file,
+                output_file,
+                options.minimal,
+                messages=messages,
+                quiet=options.quiet,
+                markdown_level=options.markdown_level,
             )
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Error converting {jsonl_file.name}: {e}\n")
@@ -15571,6 +15833,7 @@ def _export_sessions(sessions: list, args, output_dir: Path):  # noqa: C901
     split_lines = getattr(args, "split", None)
     quiet = getattr(args, "quiet", False)
     html_level = getattr(args, "html_level", HTML_DEFAULT_LEVEL)
+    markdown_level = getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL)
     jobs = max(1, int(getattr(args, "jobs", 1) or 1))
     total_sessions = len(sessions)
     progress_interval = 0
@@ -15613,6 +15876,7 @@ def _export_sessions(sessions: list, args, output_dir: Path):  # noqa: C901
                 quiet=quiet,
                 output_format=output_format,
                 html_level=html_level,
+                markdown_level=markdown_level,
             ),
         )
 
@@ -15677,6 +15941,7 @@ def _write_single_file(
     messages: Optional[list] = None,
     agent: str = AGENT_CLAUDE,
     quiet: bool = False,
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL,
 ):
     """Write a single markdown file.
 
@@ -15687,14 +15952,13 @@ def _write_single_file(
         messages: Pre-read messages (optional, avoids re-reading file)
         agent: Agent type (claude, codex, gemini, or pi)
     """
-    if agent == AGENT_GEMINI:
-        markdown = gemini_parse_json_to_markdown(jsonl_file, minimal=minimal)
-    elif agent == AGENT_CODEX:
-        markdown = codex_parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
-    elif agent == AGENT_PI:
-        markdown = pi_parse_jsonl_to_markdown(jsonl_file, minimal=minimal)
-    else:
-        markdown = parse_jsonl_to_markdown(jsonl_file, minimal=minimal, messages=messages)
+    markdown = render_markdown_document(
+        jsonl_file,
+        agent,
+        messages or _read_session_messages(jsonl_file, agent) or [],
+        minimal=minimal,
+        markdown_level=markdown_level,
+    )
     output_file.write_text(markdown, encoding="utf-8")
     if not quiet:
         print(output_file)
@@ -17225,6 +17489,8 @@ EXAMPLES:
     agent-history export myproject --minimal       # minimal mode
     agent-history export myproject --split 500     # split long conversations
     agent-history export myproject --flat          # flat structure (no subdirs)
+    agent-history export session.jsonl -o - --markdown-level 1  # single session to stdout
+    agent-history export myproject --markdown-level 2  # conversation + action snippets
     agent-history export myproject --format html   # offline HTML with detail controls
     agent-history export myproject --format html --html-single  # one HTML file per workspace
 
@@ -17614,6 +17880,12 @@ def _add_export_parser(subparsers):
         const=HTML_SPLIT_WORKSPACE,
         dest="html_split",
         help="Alias for --html-split workspace",
+    )
+    parser.add_argument(
+        "--markdown-level",
+        type=validate_markdown_level,
+        default=MARKDOWN_DEFAULT_LEVEL,
+        help="Markdown detail level 1-4 (default: 4, full legacy output)",
     )
     parser.add_argument(
         "--split",
@@ -18489,6 +18761,7 @@ def _build_export_config(
         output_format=getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN),
         html_level=getattr(args, "html_level", HTML_DEFAULT_LEVEL),
         html_split=getattr(args, "html_split", HTML_SPLIT_SESSION),
+        markdown_level=getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
     )
 
 
@@ -18568,12 +18841,32 @@ def _dispatch_export_single_file(args, jsonl_file: str):
     final_remotes = _resolve_remote_list(args)
     final_remote = final_remotes[0] if final_remotes else None
 
-    output_file, is_output_file = _prepare_single_export_output(args, jsonl_file)
     minimal = getattr(args, "minimal", False)
     split_lines = getattr(args, "split", None)
     agent_type = detect_agent_from_path(Path(jsonl_file))
     quiet = getattr(args, "quiet", False)
     output_format = getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN)
+    markdown_level = getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL)
+    output_to_stdout = _get_export_output_dir(args) == "-"
+
+    if output_to_stdout:
+        if output_format != EXPORT_FORMAT_MARKDOWN:
+            exit_with_error("Standard output export only supports markdown.")
+        if split_lines:
+            exit_with_error("Standard output export does not support --split.")
+        convert_args = ConvertCommandArgs(
+            jsonl_file=jsonl_file,
+            output="-",
+            remote=final_remote,
+            minimal=minimal,
+            quiet=True,
+            output_format=EXPORT_FORMAT_MARKDOWN,
+            markdown_level=markdown_level,
+        )
+        cmd_convert(convert_args)
+        return
+
+    output_file, is_output_file = _prepare_single_export_output(args, jsonl_file)
 
     # For Claude, support --minimal and --split in single-file export. For other agents, fall back
     # to the existing convert path (single output file).
@@ -18582,9 +18875,11 @@ def _dispatch_export_single_file(args, jsonl_file: str):
             jsonl_file=jsonl_file,
             output=str(output_file),
             remote=final_remote,
+            minimal=minimal,
             quiet=quiet,
             output_format=output_format,
             html_level=getattr(args, "html_level", HTML_DEFAULT_LEVEL),
+            markdown_level=markdown_level,
         )
         cmd_convert(convert_args)
         return
@@ -18641,6 +18936,7 @@ def _dispatch_export_all_homes(args, output_dir: Union[str, Path], patterns: lis
         output_format=getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN),
         html_level=getattr(args, "html_level", HTML_DEFAULT_LEVEL),
         html_split=getattr(args, "html_split", HTML_SPLIT_SESSION),
+        markdown_level=getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
     )
     cmd_export_all(export_config)
 
@@ -18716,10 +19012,22 @@ def _dispatch_export(args):
         and getattr(args, "split", None)
     ):
         exit_with_error("HTML export does not support --split; use --html-split instead.")
+    if (
+        getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN) == EXPORT_FORMAT_MARKDOWN
+        and getattr(args, "split", None)
+        and getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL) < MARKDOWN_DEFAULT_LEVEL
+    ):
+        exit_with_error("Markdown --split requires --markdown-level 4.")
 
     output_dir = _get_export_output_dir(args)
     targets = args.target if args.target else []
     targets = [_coerce_target_to_workspace_pattern(t) for t in targets]
+    output_to_stdout = output_dir == "-"
+    if output_to_stdout:
+        if getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN) != EXPORT_FORMAT_MARKDOWN:
+            exit_with_error("Standard output export only supports markdown.")
+        if not (len(targets) == 1 and targets[0].endswith((".jsonl", ".json"))):
+            exit_with_error("Standard output export requires a single session .jsonl/.json target.")
 
     alias_name = detect_alias_from_args(args, targets)
     if alias_name:

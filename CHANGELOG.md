@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Markdown export detail levels via `--markdown-level 1..4`.
+- Single-session Markdown export to stdout via `agent-history export SESSION.jsonl -o -`.
+
 ## [2.0.0-alpha.2] - 2026-05-26
 
 ### Added

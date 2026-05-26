@@ -63,6 +63,9 @@ agent-history export -o /tmp/history-export
 
 # Export offline HTML with progressive detail controls
 agent-history export --format html --html-single
+
+# Print one small session as concise Markdown to stdout
+agent-history export /path/to/session.jsonl -o - --markdown-level 1
 ```
 
 ### Usage Statistics
