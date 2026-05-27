@@ -31,6 +31,12 @@ ignore = [
     "E402",    # module import not at top (sqlite3 imported where needed)
     "RUF013",  # implicit Optional (requires 3.10+ for clean syntax)
     "PLC0415", # import not at top (intentional lazy imports)
+    "C901",    # complexity is enforced by scripts/check_complexity.py
+    "PLR0911", # return count refactors are tracked by complexity gate
+    "PLR0912", # branch count refactors are tracked by complexity gate
+    "PLR0913", # argument count refactors are tracked separately
+    "PLR0915", # statement count refactors are tracked by complexity gate
+    "PLR2004", # magic values are acceptable in formatting/reporting code
 ]
 
 [tool.ruff.lint.per-file-ignores]

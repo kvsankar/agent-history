@@ -21,6 +21,8 @@ See docs/design-v2/pipeline-architecture.md for the algorithm details.
 
 from __future__ import annotations
 
+from typing import Any
+
 from agent_history.backends.gemini import gemini_load_hash_index
 from agent_history.scope.cache import SessionCache
 from agent_history.scope.context import (
@@ -32,6 +34,7 @@ from agent_history.scope.context import (
 from agent_history.scope.home_resolver import get_resolver_for_home
 from agent_history.scope.stages import HomeStage, ProjectStage, SessionStage, WorkspaceStage
 from agent_history.scope.types import (
+    ConcreteScope,
     HomeSpec,
     HomeSpecConcrete,
     HomeSpecFactory,
@@ -1048,7 +1051,6 @@ class ScopeResolver:
         """
         from agent_history.scope.types import (
             ConcreteRecord,
-            ConcreteScope,
             HomeSpecConcrete,
         )
 

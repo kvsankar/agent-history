@@ -60,16 +60,16 @@ def _validate_split_lines(value: str) -> int:
         if lines < MIN_SPLIT_LINES:
             raise argparse.ArgumentTypeError(f"--split must be at least {MIN_SPLIT_LINES} lines")
         return lines
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"Invalid number: {value}")
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"Invalid number: {value}") from err
 
 
 def _validate_markdown_level(value: str) -> int:
     """Validate --markdown-level argument."""
     try:
         level = int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"Invalid markdown level: {value}")
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"Invalid markdown level: {value}") from err
     if level < 1 or level > MARKDOWN_MAX_LEVEL:
         raise argparse.ArgumentTypeError(
             f"--markdown-level must be between 1 and {MARKDOWN_MAX_LEVEL}"
@@ -167,7 +167,7 @@ class CLIParser:
                 and not _looks_like_path(next_arg)
             ):
                 # Insert -n before the pattern
-                result = [*list(argv[:cmd_pos + 1]), "-n", next_arg, *list(argv[cmd_pos + 2:])]
+                result = [*list(argv[: cmd_pos + 1]), "-n", next_arg, *list(argv[cmd_pos + 2 :])]
                 return result
 
         # Case 2: Command with verb followed by pattern (e.g., "session list django")
@@ -911,9 +911,9 @@ class CLIParser:
         result: list[str] = []
         for item in values:
             for part in str(item).split(","):
-                part = part.strip()
-                if part:
-                    result.append(part)
+                stripped = part.strip()
+                if stripped:
+                    result.append(stripped)
         return result
 
     def _normalize_export_args(self, args: argparse.Namespace) -> None:
