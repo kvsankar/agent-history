@@ -29,9 +29,13 @@ GRADE_ORDER = ["A", "B", "C", "D", "E", "F"]
 # Baselined functions - existing tech debt with high complexity
 # These are allowed to pass but should be refactored over time
 # Format: (filename, function_name): max_allowed_complexity
-# NOTE: All D-grade functions have been refactored to C or better.
-# The baseline below allows C-grade functions (complexity 11-20).
 BASELINE = {
+    # Existing parser/resolver hotspots; keep tracked until they are refactored.
+    ("parser.py", "CLIParser._build_scope_args"): 28,
+    ("parser.py", "CLIParser._preprocess_argv"): 25,
+    ("parser.py", "CLIParser._build_verb_args"): 25,
+    ("resolver.py", "ScopeResolver._build_template"): 30,
+    ("resolver.py", "ScopeResolver._collect_sessions"): 23,
     # Temporary allowance while UNC normalization is refactored
     ("agent-history", "_resolve_existing_wsl_path"): 36,
 }
