@@ -19,6 +19,7 @@ from typing import Optional
 AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
 AGENT_GEMINI = "gemini"
+AGENT_PI = "pi"
 
 
 def _get_wsl_timeout() -> float:
@@ -42,31 +43,35 @@ def _get_unc_timeout() -> float:
         return 0.5
     return max(0.1, timeout)
 
+
 __all__ = [
-    # WSL detection
-    "is_running_in_wsl",
-    "get_wsl_distribution_names",
-    "get_wsl_distributions",
-    # Windows detection
-    "get_windows_home_from_wsl",
-    "get_windows_users_with_claude",
-    "get_windows_projects_dir",
-    "get_wsl_projects_dir",
-    "get_wsl_codex_sessions_dir",
-    "get_wsl_gemini_sessions_dir",
-    "get_windows_codex_sessions_dir",
-    "get_windows_gemini_sessions_dir",
-    # Command path resolution
-    "get_command_path",
-    # Cache management (for testing)
-    "windows_home_cache_context",
-    # Remote spec detection
-    "is_wsl_remote",
-    "is_windows_remote",
     # Agent constants
     "AGENT_CLAUDE",
     "AGENT_CODEX",
     "AGENT_GEMINI",
+    "AGENT_PI",
+    # Command path resolution
+    "get_command_path",
+    "get_windows_codex_sessions_dir",
+    "get_windows_gemini_sessions_dir",
+    # Windows detection
+    "get_windows_home_from_wsl",
+    "get_windows_pi_sessions_dir",
+    "get_windows_projects_dir",
+    "get_windows_users_with_claude",
+    "get_wsl_codex_sessions_dir",
+    "get_wsl_distribution_names",
+    "get_wsl_distributions",
+    "get_wsl_gemini_sessions_dir",
+    "get_wsl_pi_sessions_dir",
+    "get_wsl_projects_dir",
+    # WSL detection
+    "is_running_in_wsl",
+    "is_windows_remote",
+    # Remote spec detection
+    "is_wsl_remote",
+    # Cache management (for testing)
+    "windows_home_cache_context",
 ]
 
 
@@ -467,6 +472,14 @@ def _get_wsl_codex_candidate_paths(distro_name: str, username: str) -> list:
     ]
 
 
+def _get_wsl_pi_candidate_paths(distro_name: str, username: str) -> list:
+    """Return candidate UNC paths for Pi sessions in a WSL distro."""
+    return [
+        Path(f"//wsl.localhost/{distro_name}/home/{username}/.pi/agent/sessions"),
+        Path(f"//wsl$/{distro_name}/home/{username}/.pi/agent/sessions"),
+    ]
+
+
 @lru_cache(maxsize=32)
 def _wsl_unc_available(distro_name: str) -> bool:
     """Check whether the WSL UNC base path is reachable."""
@@ -507,6 +520,8 @@ def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Option
         candidates = _get_wsl_gemini_candidate_paths(distro_name, username)
     elif agent == AGENT_CODEX:
         candidates = _get_wsl_codex_candidate_paths(distro_name, username)
+    elif agent == AGENT_PI:
+        candidates = _get_wsl_pi_candidate_paths(distro_name, username)
     else:
         return None
 
@@ -648,9 +663,7 @@ def get_wsl_distributions() -> list:
         If AGENT_HISTORY_HOME_WSL is set, skip WSL scanning entirely (for testing
         with injected fixtures).
     """
-    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get(
-        "CLAUDE_WINDOWS_PROJECTS_DIR"
-    ):
+    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
         if not os.environ.get("CLAUDE_WSL_TEST_DISTRO") and not os.environ.get(
             "AGENT_HISTORY_HOME_WSL"
         ):
@@ -749,7 +762,7 @@ def _get_wsl_username(distro_name: str) -> Optional[str]:
             return username if username else None
         usernames = _get_wsl_usernames_from_unc(distro_name)
         return usernames[0] if usernames else None
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     return None
 
@@ -781,9 +794,7 @@ def get_wsl_projects_dir(distro_name: str) -> Optional[Path]:
     return None
 
 
-def _get_wsl_agent_sessions_dir(
-    distro_name: str, agent: str, env_var: str
-) -> Optional[Path]:
+def _get_wsl_agent_sessions_dir(distro_name: str, agent: str, env_var: str) -> Optional[Path]:
     """Get a WSL agent sessions directory with optional override."""
     override = os.environ.get(env_var)
     if override and Path(override).exists():
@@ -804,6 +815,11 @@ def get_wsl_codex_sessions_dir(distro_name: str) -> Optional[Path]:
 def get_wsl_gemini_sessions_dir(distro_name: str) -> Optional[Path]:
     """Get Gemini sessions directory for a WSL distribution."""
     return _get_wsl_agent_sessions_dir(distro_name, AGENT_GEMINI, "GEMINI_WSL_SESSIONS_DIR")
+
+
+def get_wsl_pi_sessions_dir(distro_name: str) -> Optional[Path]:
+    """Get Pi sessions directory for a WSL distribution."""
+    return _get_wsl_agent_sessions_dir(distro_name, AGENT_PI, "PI_WSL_SESSIONS_DIR")
 
 
 def get_windows_projects_dir(username: Optional[str] = None):
@@ -843,6 +859,9 @@ def get_windows_codex_sessions_dir(username: Optional[str] = None) -> Optional[P
     if override and Path(override).exists():
         return Path(override)
 
+    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+        return None
+
     if not is_running_in_wsl():
         return None
 
@@ -860,6 +879,9 @@ def get_windows_gemini_sessions_dir(username: Optional[str] = None) -> Optional[
     if override and Path(override).exists():
         return Path(override)
 
+    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+        return None
+
     if not is_running_in_wsl():
         return None
 
@@ -868,4 +890,24 @@ def get_windows_gemini_sessions_dir(username: Optional[str] = None) -> Optional[
         return None
 
     sessions_dir = windows_home / ".gemini" / "tmp"
+    return sessions_dir if sessions_dir.exists() else None
+
+
+def get_windows_pi_sessions_dir(username: Optional[str] = None) -> Optional[Path]:
+    """Get Pi sessions directory for Windows (from WSL)."""
+    override = os.environ.get("PI_WINDOWS_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+        return None
+
+    if not is_running_in_wsl():
+        return None
+
+    windows_home = get_windows_home_from_wsl(username)
+    if not windows_home:
+        return None
+
+    sessions_dir = windows_home / ".pi" / "agent" / "sessions"
     return sessions_dir if sessions_dir.exists() else None

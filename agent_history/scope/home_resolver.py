@@ -13,6 +13,7 @@ Usage:
     claude_dir = resolver.get_claude_dir(context)
     codex_dir = resolver.get_codex_dir(context)
     gemini_dir = resolver.get_gemini_dir(context)
+    pi_dir = resolver.get_pi_dir(context)
 """
 
 from __future__ import annotations
@@ -89,6 +90,19 @@ class HomeResolver(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+        """
+        Get the Pi sessions directory for this home.
+
+        Args:
+            context: Resolution context containing environment configuration.
+
+        Returns:
+            Path to Pi sessions directory, or None if not available.
+        """
+        ...
+
 
 class LocalHomeResolver(HomeResolver):
     """
@@ -129,6 +143,15 @@ class LocalHomeResolver(HomeResolver):
         environment variable for testing.
         """
         return context.gemini_sessions_dir
+
+    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+        """
+        Get the local Pi sessions directory.
+
+        Uses context.pi_sessions_dir which respects Pi session directory
+        environment variable overrides.
+        """
+        return context.pi_sessions_dir
 
 
 class WSLHomeResolver(HomeResolver):
@@ -223,6 +246,27 @@ class WSLHomeResolver(HomeResolver):
             return get_wsl_gemini_sessions_dir(self._distro)
         return None
 
+    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+        """
+        Get the Pi sessions directory for WSL home.
+
+        Uses get_wsl_pi_sessions_dir() from platform utils.
+        """
+        import os
+
+        if not self._distro:
+            override = os.environ.get("AGENT_HISTORY_HOME_WSL")
+            if override:
+                candidate = Path(override) / ".pi" / "agent" / "sessions"
+                if candidate.exists():
+                    return candidate
+
+        from agent_history.utils.platform import get_wsl_pi_sessions_dir
+
+        if self._distro:
+            return get_wsl_pi_sessions_dir(self._distro)
+        return None
+
 
 class WindowsHomeResolver(HomeResolver):
     """
@@ -283,6 +327,16 @@ class WindowsHomeResolver(HomeResolver):
 
         return get_windows_gemini_sessions_dir(self._user)
 
+    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+        """
+        Get the Pi sessions directory for Windows home.
+
+        Uses get_windows_pi_sessions_dir() from platform utils.
+        """
+        from agent_history.utils.platform import get_windows_pi_sessions_dir
+
+        return get_windows_pi_sessions_dir(self._user)
+
 
 class RemoteHomeResolver(HomeResolver):
     """
@@ -329,6 +383,14 @@ class RemoteHomeResolver(HomeResolver):
     def get_gemini_dir(self, context: ResolutionContext) -> Optional[Path]:
         """
         Get the Gemini sessions directory for remote home.
+
+        Remote homes are accessed via SSH; there is no local path to return.
+        """
+        return None
+
+    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+        """
+        Get the Pi sessions directory for remote home.
 
         Remote homes are accessed via SSH; there is no local path to return.
         """

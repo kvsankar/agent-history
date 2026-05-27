@@ -16,7 +16,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from agent_history.backends.claude import read_jsonl_messages
+from agent_history.backends.registry import (
+    get_backend,
+    get_default_backend_id,
+    infer_backend_from_file,
+)
+from agent_history.cli.constants import (
+    DEFAULT_OUTPUT_DIR,
+    EXPORT_FORMAT_HTML,
+    EXPORT_FORMAT_MARKDOWN,
+    MARKDOWN_DEFAULT_LEVEL,
+)
 from agent_history.core.workspaces import build_workspace_metadata
 from agent_history.export import (
     MIN_MESSAGES_FOR_SPLIT,
@@ -24,7 +34,6 @@ from agent_history.export import (
     copy_source_file,
     generate_index_manifest,
     generate_markdown_parts,
-    parse_jsonl_to_markdown,
     write_ndjson_export,
 )
 from agent_history.handlers.base import CommandResult, VerbHandler
@@ -32,7 +41,6 @@ from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
 from agent_history.utils.paths import decode_workspace_path
-from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
 from agent_history.utils.workspace_ref import WorkspaceContext
 
 _INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
@@ -72,7 +80,7 @@ class SessionExportHandler(VerbHandler):
         Args:
             scope: Resolved scope with sessions to export.
             verb_args: Export options:
-                - output_dir: Path for output (default: ./ai-chats)
+                - output_dir: Path for output (default: ./.agent-history/exports)
                 - minimal: bool - omit metadata in output
                 - split: int - split at N lines (None to disable)
                 - flat: bool - no workspace subdirs (default: False)
@@ -85,7 +93,13 @@ class SessionExportHandler(VerbHandler):
                 - data['skipped']: count of skipped (up-to-date) sessions
                 - data['failed']: count of failed sessions
         """
-        output_dir = verb_args.get("output_dir", Path.cwd() / "ai-chats")
+        output_dir_value = verb_args.get("output_dir", DEFAULT_OUTPUT_DIR)
+        output_to_stdout = str(output_dir_value) == "-"
+        output_dir = (
+            Path(output_dir_value) if isinstance(output_dir_value, str) else output_dir_value
+        )
+        export_format = verb_args.get("export_format", EXPORT_FORMAT_MARKDOWN)
+        markdown_level = verb_args.get("markdown_level", MARKDOWN_DEFAULT_LEVEL)
         if isinstance(output_dir, str):
             output_dir = Path(output_dir)
 
@@ -97,7 +111,34 @@ class SessionExportHandler(VerbHandler):
         export_json = verb_args.get("export_json", False)
         jobs = verb_args.get("jobs")
         session_ids = verb_args.get("session_ids") or []
+        targets = verb_args.get("targets") or []
         quiet = output_args.quiet
+
+        if export_format == EXPORT_FORMAT_HTML and export_json:
+            return CommandResult(
+                success=False,
+                data=None,
+                data_type="export_result",
+                errors=["Use either --json or --format html, not both"],
+            )
+
+        if export_format == EXPORT_FORMAT_HTML:
+            return CommandResult(
+                success=False,
+                data=None,
+                data_type="export_result",
+                errors=["HTML export has not been ported to the package CLI yet"],
+            )
+
+        if output_to_stdout:
+            return self._export_single_session_to_stdout(
+                targets=targets,
+                minimal=minimal,
+                markdown_level=markdown_level,
+                export_json=export_json,
+                split_lines=split_lines,
+                include_source=include_source,
+            )
 
         # Ensure output directory exists
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -115,9 +156,7 @@ class SessionExportHandler(VerbHandler):
         for record in scope:
             context = WorkspaceContext.from_record(record)
             for session in record.sessions:
-                tasks.append(
-                    (session, context.home, context.workspace, context.workspace_display)
-                )
+                tasks.append((session, context.home, context.workspace, context.workspace_display))
 
         # Filter by explicit session IDs/filenames if provided
         missing_ids: List[str] = []
@@ -142,6 +181,7 @@ class SessionExportHandler(VerbHandler):
                         force=force,
                         include_source=include_source,
                         export_json=export_json,
+                        markdown_level=markdown_level,
                         quiet=quiet,
                     )
                     futures.append((future, session, home))
@@ -177,6 +217,7 @@ class SessionExportHandler(VerbHandler):
                         force=force,
                         include_source=include_source,
                         export_json=export_json,
+                        markdown_level=markdown_level,
                         quiet=quiet,
                     )
                     if result == EXPORT_EXPORTED:
@@ -290,6 +331,78 @@ class SessionExportHandler(VerbHandler):
 
         return False
 
+    def _export_single_session_to_stdout(
+        self,
+        targets: List[str],
+        minimal: bool,
+        markdown_level: int,
+        export_json: bool,
+        split_lines: Optional[int],
+        include_source: bool,
+    ) -> CommandResult:
+        """Render one explicit session file as Markdown to stdout."""
+        if export_json:
+            return CommandResult(
+                success=False,
+                data=None,
+                data_type="export_result",
+                errors=["Markdown stdout export does not support --json"],
+            )
+        if split_lines:
+            return CommandResult(
+                success=False,
+                data=None,
+                data_type="export_result",
+                errors=["Markdown stdout export does not support --split"],
+            )
+        if include_source:
+            return CommandResult(
+                success=False,
+                data=None,
+                data_type="export_result",
+                errors=["Markdown stdout export does not support --source"],
+            )
+        if len(targets) != 1:
+            return CommandResult(
+                success=False,
+                data=None,
+                data_type="export_result",
+                errors=[
+                    "Markdown stdout export requires exactly one session file target",
+                    "Pass the full path to the session file when using -o -",
+                ],
+            )
+
+        session_file = Path(targets[0]).expanduser()
+        if not session_file.is_file():
+            return CommandResult(
+                success=False,
+                data=None,
+                data_type="export_result",
+                errors=[f"Session file does not exist: {session_file}"],
+            )
+
+        agent_type = self._detect_agent_from_file(session_file)
+        messages = self._read_session_messages(session_file, agent_type)
+        if messages is None:
+            return CommandResult(
+                success=False,
+                data=None,
+                data_type="export_result",
+                errors=[f"Could not read messages from {session_file}"],
+            )
+
+        sys.stdout.write(
+            self._render_markdown(
+                jsonl_file=session_file,
+                agent_type=agent_type,
+                messages=messages,
+                minimal=minimal,
+                markdown_level=markdown_level,
+            )
+        )
+        return CommandResult(success=True, data=None, data_type="export_result")
+
     def _export_session_safe(
         self,
         session: SessionDict,
@@ -303,6 +416,7 @@ class SessionExportHandler(VerbHandler):
         force: bool,
         include_source: bool,
         export_json: bool,
+        markdown_level: int,
         quiet: bool,
     ) -> Tuple[Optional[str], Optional[str]]:
         """Export a single session, catching exceptions for thread safety.
@@ -324,6 +438,7 @@ class SessionExportHandler(VerbHandler):
                 force=force,
                 include_source=include_source,
                 export_json=export_json,
+                markdown_level=markdown_level,
                 quiet=quiet,
             )
             return (result, None)
@@ -343,6 +458,7 @@ class SessionExportHandler(VerbHandler):
         force: bool,
         include_source: bool,
         export_json: bool,
+        markdown_level: int,
         quiet: bool,
     ) -> str:
         """Export a single session to markdown.
@@ -382,17 +498,18 @@ class SessionExportHandler(VerbHandler):
 
         # Ensure web sessions are cached locally before reading
         if not jsonl_file.exists() and home == "web":
-            from agent_history.backends.web import WebSessionsError, ensure_web_session_cache
-            from agent_history.backends.web import resolve_web_credentials
+            from agent_history.backends.web import (
+                WebSessionsError,
+                ensure_web_session_cache,
+                resolve_web_credentials,
+            )
 
             session_id = session.get("session_id") or session.get("id") or session.get("filename")
             if not session_id:
                 raise ValueError("Web session missing identifier")
             try:
                 token, org_uuid = resolve_web_credentials()
-                jsonl_file = ensure_web_session_cache(
-                    str(session_id), token, org_uuid, force=force
-                )
+                jsonl_file = ensure_web_session_cache(str(session_id), token, org_uuid, force=force)
             except WebSessionsError as exc:
                 raise ValueError(str(exc)) from exc
 
@@ -400,7 +517,7 @@ class SessionExportHandler(VerbHandler):
             raise ValueError(f"Session file does not exist: {jsonl_file}")
 
         # Determine agent type
-        agent_type = session.get("agent", AGENT_CLAUDE)
+        agent_type = session.get("agent", get_default_backend_id())
 
         # Read messages
         messages = self._read_session_messages(jsonl_file, agent_type)
@@ -457,6 +574,7 @@ class SessionExportHandler(VerbHandler):
             include_source=include_source,
             quiet=quiet,
             ws_output_path=ws_output_path,
+            markdown_level=markdown_level,
         )
 
         return EXPORT_EXPORTED
@@ -474,23 +592,17 @@ class SessionExportHandler(VerbHandler):
             List of messages, or None if reading failed.
         """
         try:
-            if agent_type == AGENT_GEMINI:
-                # Gemini uses JSON files
-                from agent_history.backends.gemini import gemini_read_json_messages
-
-                messages, _ = gemini_read_json_messages(jsonl_file)
-            elif agent_type == AGENT_CODEX:
-                # Codex uses JSONL files
-                from agent_history.backends.codex import codex_read_jsonl_messages
-
-                messages, _ = codex_read_jsonl_messages(jsonl_file)
-            else:
-                # Claude uses JSONL files
-                messages = read_jsonl_messages(jsonl_file)
-            return messages
-        except (OSError, json.JSONDecodeError) as e:
+            backend = get_backend(agent_type)
+            if backend is None:
+                raise ValueError(f"Unsupported agent backend: {agent_type}")
+            return backend.read_messages(jsonl_file)
+        except (OSError, ValueError, json.JSONDecodeError) as e:
             sys.stderr.write(f"Error reading {jsonl_file.name}: {e}\n")
             return None
+
+    def _detect_agent_from_file(self, session_file: Path) -> str:
+        """Infer agent type from a local session file path."""
+        return infer_backend_from_file(session_file).id
 
     def _get_source_tag(self, home: str) -> str:
         """Generate source tag from home identifier.
@@ -618,6 +730,7 @@ class SessionExportHandler(VerbHandler):
         include_source: bool,
         quiet: bool,
         ws_output_path: Path,
+        markdown_level: int = MARKDOWN_DEFAULT_LEVEL,
     ) -> None:
         """Write exported session to file(s).
 
@@ -635,7 +748,13 @@ class SessionExportHandler(VerbHandler):
         """
         # Try to write split parts if enabled
         if split_lines and messages and len(messages) > MIN_MESSAGES_FOR_SPLIT:
-            parts = generate_markdown_parts(messages, jsonl_file, minimal, split_lines)
+            parts = generate_markdown_parts(
+                messages,
+                jsonl_file,
+                minimal,
+                split_lines,
+                markdown_level=markdown_level,
+            )
             if parts:
                 self._write_split_parts(parts, output_name, ws_output_path, quiet)
                 # Copy source file if requested
@@ -644,18 +763,13 @@ class SessionExportHandler(VerbHandler):
                 return
 
         # Write single file
-        if agent_type == AGENT_CODEX:
-            from agent_history.backends.codex import codex_parse_jsonl_to_markdown
-
-            markdown = codex_parse_jsonl_to_markdown(jsonl_file, minimal)
-        elif agent_type == AGENT_GEMINI:
-            from agent_history.backends.gemini import gemini_parse_json_to_markdown
-
-            markdown = gemini_parse_json_to_markdown(jsonl_file, minimal)
-        else:
-            markdown = parse_jsonl_to_markdown(
-                jsonl_file, minimal, messages, agent_type=agent_type
-            )
+        markdown = self._render_markdown(
+            jsonl_file=jsonl_file,
+            agent_type=agent_type,
+            messages=messages,
+            minimal=minimal,
+            markdown_level=markdown_level,
+        )
         output_file.write_text(markdown, encoding="utf-8")
         if not quiet:
             print(output_file)
@@ -663,6 +777,20 @@ class SessionExportHandler(VerbHandler):
         # Copy source file if requested
         if include_source:
             copy_source_file(jsonl_file, ws_output_path, quiet)
+
+    def _render_markdown(
+        self,
+        jsonl_file: Path,
+        agent_type: str,
+        messages: List[MessageDict],
+        minimal: bool,
+        markdown_level: int,
+    ) -> str:
+        """Render Markdown for a parsed session."""
+        backend = get_backend(agent_type)
+        if backend is None:
+            raise ValueError(f"Unsupported agent backend: {agent_type}")
+        return backend.render_markdown(jsonl_file, minimal, messages, markdown_level)
 
     def _write_split_parts(
         self,

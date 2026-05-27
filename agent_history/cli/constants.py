@@ -11,24 +11,33 @@ from __future__ import annotations
 # =============================================================================
 
 # Flags that require a value argument (used in argument preprocessing)
-FLAGS_WITH_VALUES = frozenset({
-    "-n", "--name",
-    "--format",
-    "--since", "--until",
-    "--agent",
-    "-w", "--width",
-    "-o", "--output",
-    "--split",
-    "--jobs",
-    "--home",
-    "-r", "--remote",
-    "--project",
-    "--session", "--session-id",
-    "--by",
-    "--top-ws",
-    "--bin-dir",
-    "--skill-dir",
-})
+FLAGS_WITH_VALUES = frozenset(
+    {
+        "-n",
+        "--name",
+        "--format",
+        "--since",
+        "--until",
+        "--agent",
+        "-w",
+        "--width",
+        "-o",
+        "--output",
+        "--split",
+        "--jobs",
+        "--home",
+        "-r",
+        "--remote",
+        "--project",
+        "--session",
+        "--session-id",
+        "--by",
+        "--top-ws",
+        "--bin-dir",
+        "--skill-dir",
+        "--markdown-level",
+    }
+)
 
 # =============================================================================
 # Resource subcommands
@@ -54,20 +63,33 @@ SESSION_SUBCOMMANDS = frozenset({"list", "show", "export", "stats"})
 # Agent choices
 # =============================================================================
 
-AGENT_CHOICES = ("auto", "claude", "codex", "gemini")
 DEFAULT_AGENT = "auto"
+
+
+def _registered_agent_choices() -> tuple[str, ...]:
+    from agent_history.backends.registry import get_agent_choices
+
+    return get_agent_choices()
+
+
+AGENT_CHOICES = _registered_agent_choices()
 
 # =============================================================================
 # Output format choices
 # =============================================================================
 
 OUTPUT_FORMAT_CHOICES = ("table", "tsv", "json")
+EXPORT_FORMAT_MARKDOWN = "markdown"
+EXPORT_FORMAT_HTML = "html"
+EXPORT_FORMAT_CHOICES = (EXPORT_FORMAT_MARKDOWN, EXPORT_FORMAT_HTML)
+MARKDOWN_DEFAULT_LEVEL = 4
+MARKDOWN_MAX_LEVEL = 4
 
 # =============================================================================
 # Default values
 # =============================================================================
 
-DEFAULT_OUTPUT_DIR = "./ai-chats"
+DEFAULT_OUTPUT_DIR = "./.agent-history/exports"
 MIN_SPLIT_LINES = 10
 
 # =============================================================================

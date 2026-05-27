@@ -11,14 +11,15 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 | [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-code-format.md](docs/specs/agents/formats/claude-code-format.md) |
 | [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-cli-format.md](docs/specs/agents/formats/codex-cli-format.md) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-cli-format.md](docs/specs/agents/formats/gemini-cli-format.md) |
+| Pi | ✅ Full support | JSONL | AGENTS.md |
 
-Use `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
+Use `--agent claude`, `--agent codex`, `--agent gemini`, `--agent pi`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
 
 See [AGENTS.md](AGENTS.md) for a detailed comparison of storage locations, features, and behaviors.
 
 ## Why This Tool?
 
-Claude Code, Codex CLI, and Gemini CLI leave conversation data fragmented across session files. This tool solves the pain points:
+Claude Code, Codex CLI, Gemini CLI, and Pi leave conversation data fragmented across session files. This tool solves the pain points:
 - Finding past work by project, not by opaque session IDs.
 - Getting readable exports for sharing, backup, or audits.
 - Seeing where and how you code across homes (local/WSL/Windows/SSH) with session/token/tool/time metrics.
@@ -89,7 +90,7 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 <!-- help-snippet:start -->
 ```
-usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini}] COMMAND ...
+usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini,pi}] COMMAND ...
 
 Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI)
 
@@ -100,11 +101,14 @@ positional arguments:
     project                   Manage projects
     home                      Manage homes
     gemini-index              Manage Gemini session index
+    install                   Install CLI and Claude skill
+    reset                     Reset stored data
+    fetch                     Fetch remote sessions into cache
 
 options:
   -h, --help                  show this help message and exit
   --version                   show program's version number and exit
-  --agent {auto,claude,codex,gemini}
+  --agent {auto,claude,codex,gemini,pi}
                               Agent backend to use (default: auto-detect based on available data)
 ```
 <!-- help-snippet:end -->

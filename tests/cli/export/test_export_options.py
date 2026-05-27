@@ -10,8 +10,44 @@ from typing import Any, Dict
 import pytest
 
 from tests.helpers.cli import assert_cli_success, run_cli_subprocess
+from tests.helpers.session_builders import ClaudeSessionBuilder
 
 pytestmark = pytest.mark.v1
+
+
+def _write_named_claude_session(claude_dir: Path, workspace: str) -> Path:
+    builder = ClaudeSessionBuilder(workspace=workspace, session_id="positional-export")
+    builder.add_user_message("Hello positional export")
+    builder.add_assistant_message("Done")
+    return builder.write_to(claude_dir)
+
+
+def test_session_export_accepts_positional_output_dir(isolated_home: Dict[str, Any]) -> None:
+    _write_named_claude_session(isolated_home["claude_dir"], "-home-user-positional-session")
+    output_dir = isolated_home["path"] / "session_positional_out"
+
+    result = run_cli_subprocess(
+        ["session", "export", "positional-session", str(output_dir), "--force"],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert_cli_success(result, "session export target output_dir should succeed")
+    assert list(output_dir.rglob("*.md")), "Expected output in positional directory"
+
+
+def test_ws_export_accepts_positional_output_dir(isolated_home: Dict[str, Any]) -> None:
+    _write_named_claude_session(isolated_home["claude_dir"], "-home-user-positional-ws")
+    output_dir = isolated_home["path"] / "ws_positional_out"
+
+    result = run_cli_subprocess(
+        ["ws", "export", "positional-ws", str(output_dir), "--force"],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert_cli_success(result, "ws export target output_dir should succeed")
+    assert list(output_dir.rglob("*.md")), "Expected output in positional directory"
 
 
 def test_session_export_source_copies_raw_files(
@@ -36,7 +72,9 @@ def test_session_export_source_copies_raw_files(
     assert json_copies, "Raw source files should be copied with --source"
 
     # Verify each source file was copied (match by exact content)
-    source_contents = {path.read_text(encoding="utf-8"): path.suffix for path in setup_golden_fixtures.values()}
+    source_contents = {
+        path.read_text(encoding="utf-8"): path.suffix for path in setup_golden_fixtures.values()
+    }
     matched = set()
     for copy in json_copies:
         content = copy.read_text(encoding="utf-8")
@@ -79,7 +117,10 @@ def test_session_export_split_creates_parts(isolated_home: Dict[str, Any]) -> No
             {
                 "type": "user",
                 "timestamp": f"2025-01-01T10:00:0{i}Z",
-                "message": {"role": "user", "content": f"Step {i} details\nMore text to force lines"},
+                "message": {
+                    "role": "user",
+                    "content": f"Step {i} details\nMore text to force lines",
+                },
                 "uuid": f"u{i}",
                 "sessionId": "split-session",
             }
@@ -90,7 +131,9 @@ def test_session_export_split_creates_parts(isolated_home: Dict[str, Any]) -> No
                 "timestamp": f"2025-01-01T10:00:1{i}Z",
                 "message": {
                     "role": "assistant",
-                    "content": [{"type": "text", "text": f"Assistant reply {i}\nwith extra lines\nand more"}],
+                    "content": [
+                        {"type": "text", "text": f"Assistant reply {i}\nwith extra lines\nand more"}
+                    ],
                 },
                 "uuid": f"a{i}",
                 "parentUuid": f"u{i}",

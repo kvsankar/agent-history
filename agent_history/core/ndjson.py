@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
-from agent_history.backends.claude import claude_message_to_unified
+from agent_history.backends.registry import require_backend
 from agent_history.core.conversation import analyze_conversation_graph
-from agent_history.backends.codex import codex_message_to_unified
-from agent_history.backends.gemini import _gemini_message_to_unified
-from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
-
 
 SCHEMA_VERSION = "2.0"
 
 
 def build_ndjson_records(
-    agent_type: str, messages: List[Dict[str, Any]], session: Dict[str, Any]
-) -> List[Dict[str, Any]]:
+    agent_type: str, messages: list[dict[str, Any]], session: dict[str, Any]
+) -> list[dict[str, Any]]:
     """Build NDJSON records with a unified message schema.
 
     Args:
@@ -43,9 +39,10 @@ def build_ndjson_records(
         header["workspace"] = workspace
 
     records = [header]
+    backend = require_backend(agent_type)
 
     for msg in messages:
-        unified = _normalize_message(agent_type, msg)
+        unified = backend.message_to_unified(msg)
         unified["type"] = "message"
         if session_id:
             unified["session_id"] = session_id
@@ -58,7 +55,7 @@ def build_ndjson_records(
         "message_count": len(messages),
         "workspace": workspace or "",
     }
-    if agent_type == AGENT_CLAUDE and messages:
+    if backend.supports_conversation_graph and messages:
         graph = analyze_conversation_graph(messages)
         if not graph.is_linear:
             session_record["forks"] = {
@@ -68,12 +65,3 @@ def build_ndjson_records(
     records.append(session_record)
 
     return records
-
-
-def _normalize_message(agent_type: str, msg: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize a message to unified schema based on agent type."""
-    if agent_type == AGENT_CODEX:
-        return codex_message_to_unified(msg)
-    if agent_type == AGENT_GEMINI:
-        return _gemini_message_to_unified(msg)
-    return claude_message_to_unified(msg)
