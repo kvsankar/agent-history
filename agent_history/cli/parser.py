@@ -10,17 +10,21 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
+from agent_history.backends.registry import get_agent_choices
 from agent_history.cli.constants import (
-    AGENT_CHOICES,
     DEFAULT_AGENT,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_VERB_INDEX,
     DEFAULT_VERB_LIST,
     DEFAULT_VERB_RUN,
+    EXPORT_FORMAT_CHOICES,
+    EXPORT_FORMAT_MARKDOWN,
     FLAGS_WITH_VALUES,
     GLOBAL_FLAGS_WITH_VALUES,
+    MARKDOWN_DEFAULT_LEVEL,
+    MARKDOWN_MAX_LEVEL,
     MIN_SPLIT_LINES,
     OUTPUT_FORMAT_CHOICES,
     RESOURCE_FETCH,
@@ -60,6 +64,19 @@ def _validate_split_lines(value: str) -> int:
         raise argparse.ArgumentTypeError(f"Invalid number: {value}")
 
 
+def _validate_markdown_level(value: str) -> int:
+    """Validate --markdown-level argument."""
+    try:
+        level = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid markdown level: {value}")
+    if level < 1 or level > MARKDOWN_MAX_LEVEL:
+        raise argparse.ArgumentTypeError(
+            f"--markdown-level must be between 1 and {MARKDOWN_MAX_LEVEL}"
+        )
+    return level
+
+
 class CLIParser:
     """Parse command line into structured CommandRequest.
 
@@ -77,7 +94,7 @@ class CLIParser:
         """Initialize the parser."""
         self.parser = self._build_parser()
 
-    def parse(self, argv: List[str]) -> CommandRequest:
+    def parse(self, argv: list[str]) -> CommandRequest:
         """Parse command line arguments.
 
         Args:
@@ -91,7 +108,7 @@ class CLIParser:
         args = self.parser.parse_args(argv)
         return self._build_request(args)
 
-    def _preprocess_argv(self, argv: List[str]) -> List[str]:
+    def _preprocess_argv(self, argv: list[str]) -> list[str]:
         """Preprocess arguments to handle positional patterns.
 
         Converts positional patterns to -n flags for ws and session commands
@@ -150,7 +167,7 @@ class CLIParser:
                 and not _looks_like_path(next_arg)
             ):
                 # Insert -n before the pattern
-                result = list(argv[: cmd_pos + 1]) + ["-n", next_arg] + list(argv[cmd_pos + 2 :])
+                result = [*list(argv[:cmd_pos + 1]), "-n", next_arg, *list(argv[cmd_pos + 2:])]
                 return result
 
         # Case 2: Command with verb followed by pattern (e.g., "session list django")
@@ -161,6 +178,8 @@ class CLIParser:
         if cmd_pos + 2 < len(argv):
             verb = argv[cmd_pos + 1]
             if verb in subcommands:
+                if verb == "export":
+                    return result
                 if cmd_type == RESOURCE_SESSION and verb == "show":
                     return result
                 # Check for patterns after the verb
@@ -208,7 +227,7 @@ class CLIParser:
         # Global agent selection flag (before subcommand)
         parser.add_argument(
             "--agent",
-            choices=AGENT_CHOICES,
+            choices=get_agent_choices(),
             default=DEFAULT_AGENT,
             help="Agent backend to use (default: auto-detect based on available data)",
         )
@@ -618,7 +637,6 @@ class CLIParser:
         self._add_home_scope_flags(fetch_parser)
         self._add_agent_filter(fetch_parser)
 
-
     # =========================================================================
     # Common argument groups
     # =========================================================================
@@ -730,7 +748,7 @@ class CLIParser:
         """Add --agent filter flag to subparser."""
         parser.add_argument(
             "--agent",
-            choices=AGENT_CHOICES,
+            choices=get_agent_choices(),
             default=DEFAULT_AGENT,
             help="Agent backend to use (default: auto-detect)",
         )
@@ -762,6 +780,13 @@ class CLIParser:
             help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
         )
         parser.add_argument(
+            "--format",
+            choices=EXPORT_FORMAT_CHOICES,
+            default=EXPORT_FORMAT_MARKDOWN,
+            dest="export_format",
+            help="Export format: markdown or html (default: markdown)",
+        )
+        parser.add_argument(
             "--force", action="store_true", help="Force re-export (default: incremental)"
         )
         parser.add_argument(
@@ -774,6 +799,15 @@ class CLIParser:
             "--minimal",
             action="store_true",
             help="Minimal export: omit metadata, keep only conversation content",
+        )
+        parser.add_argument(
+            "--markdown-level",
+            type=_validate_markdown_level,
+            default=MARKDOWN_DEFAULT_LEVEL,
+            help=(
+                f"Markdown detail level 1-{MARKDOWN_MAX_LEVEL} "
+                f"(default: {MARKDOWN_DEFAULT_LEVEL}, full output)"
+            ),
         )
         parser.add_argument(
             "--split",
@@ -872,9 +906,9 @@ class CLIParser:
             verb_args=verb_args,
         )
 
-    def _split_csv_list(self, values: List[str]) -> List[str]:
+    def _split_csv_list(self, values: list[str]) -> list[str]:
         """Split comma-separated CLI values into a flat list."""
-        result: List[str] = []
+        result: list[str] = []
         for item in values:
             for part in str(item).split(","):
                 part = part.strip()
@@ -886,11 +920,25 @@ class CLIParser:
         """Normalize export args when positional output_dir is consumed by nargs='*'."""
         command = getattr(args, "command", None)
 
+        if command == RESOURCE_SESSION and getattr(args, "session_verb", None) == "export":
+            if getattr(args, "output_override", None):
+                return
+            targets = list(getattr(args, "target", None) or [])
+            if (
+                getattr(args, "output_dir", DEFAULT_OUTPUT_DIR) == DEFAULT_OUTPUT_DIR
+                and len(targets) > 1
+            ):
+                args.output_dir = targets[-1]
+                args.target = targets[:-1]
+
         if command == RESOURCE_WS and getattr(args, "ws_verb", None) == "export":
             if getattr(args, "output_override", None):
                 return
             targets = list(getattr(args, "target", None) or [])
-            if getattr(args, "output_dir", DEFAULT_OUTPUT_DIR) == DEFAULT_OUTPUT_DIR and len(targets) > 1:
+            if (
+                getattr(args, "output_dir", DEFAULT_OUTPUT_DIR) == DEFAULT_OUTPUT_DIR
+                and len(targets) > 1
+            ):
                 args.output_dir = targets[-1]
                 args.target = targets[:-1]
 
@@ -898,7 +946,10 @@ class CLIParser:
             if getattr(args, "output_override", None):
                 return
             names = list(getattr(args, "names", None) or [])
-            if getattr(args, "output_dir", DEFAULT_OUTPUT_DIR) == DEFAULT_OUTPUT_DIR and len(names) > 1:
+            if (
+                getattr(args, "output_dir", DEFAULT_OUTPUT_DIR) == DEFAULT_OUTPUT_DIR
+                and len(names) > 1
+            ):
                 args.output_dir = names[-1]
                 args.names = names[:-1]
 
@@ -1053,9 +1104,9 @@ class CLIParser:
 
     def _build_verb_args(
         self, args: argparse.Namespace, resource: str, verb: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build verb-specific arguments."""
-        verb_args: Dict[str, Any] = {}
+        verb_args: dict[str, Any] = {}
 
         # Export-specific args
         if verb == "export":
@@ -1065,9 +1116,11 @@ class CLIParser:
                 or getattr(args, "output_dir", None)
                 or DEFAULT_OUTPUT_DIR
             )
+            verb_args["export_format"] = getattr(args, "export_format", EXPORT_FORMAT_MARKDOWN)
             verb_args["force"] = getattr(args, "force", False)
             verb_args["export_json"] = getattr(args, "export_json", False)
             verb_args["minimal"] = getattr(args, "minimal", False)
+            verb_args["markdown_level"] = getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL)
             verb_args["split"] = getattr(args, "split", None)
             verb_args["jobs"] = getattr(args, "jobs", None)
             verb_args["flat"] = getattr(args, "flat", False)
@@ -1075,6 +1128,7 @@ class CLIParser:
             if resource == RESOURCE_SESSION:
                 raw_ids = list(getattr(args, "session_ids", None) or [])
                 verb_args["session_ids"] = self._split_csv_list(raw_ids)
+                verb_args["targets"] = list(getattr(args, "target", None) or [])
 
         # Stats-specific args
         elif verb == "stats":

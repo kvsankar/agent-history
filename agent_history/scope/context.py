@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
@@ -43,6 +43,7 @@ class ResolutionContext:
         claude_projects_dir: Path to Claude's projects directory for session scanning.
         codex_sessions_dir: Path to Codex's sessions directory for session scanning.
         gemini_sessions_dir: Path to Gemini's sessions directory for session scanning.
+        pi_sessions_dir: Path to Pi's sessions directory for session scanning.
     """
 
     # Platform
@@ -51,20 +52,21 @@ class ResolutionContext:
 
     # Current location
     cwd: Path = field(default_factory=Path.cwd)
-    cwd_home: Optional[str] = None
-    cwd_workspace: Optional[str] = None
-    cwd_project: Optional[str] = None
+    cwd_home: str | None = None
+    cwd_workspace: str | None = None
+    cwd_project: str | None = None
 
     # Available resources
-    available_homes: Dict[str, List[str]] = field(default_factory=dict)
+    available_homes: dict[str, list[str]] = field(default_factory=dict)
 
     # Configuration
-    project_config: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    project_config: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Agent paths (for session scanning)
-    claude_projects_dir: Optional[Path] = None
-    codex_sessions_dir: Optional[Path] = None
-    gemini_sessions_dir: Optional[Path] = None
+    claude_projects_dir: Path | None = None
+    codex_sessions_dir: Path | None = None
+    gemini_sessions_dir: Path | None = None
+    pi_sessions_dir: Path | None = None
 
 
 @dataclass
@@ -95,21 +97,21 @@ class ScopeArgs:
 
     # Home selection
     all_homes: bool = False
-    home_type: Optional[str] = None
-    home_value: Optional[str] = None
-    home_names: List[str] = field(default_factory=list)
+    home_type: str | None = None
+    home_value: str | None = None
+    home_names: list[str] = field(default_factory=list)
 
     # Workspace selection
     all_workspaces: bool = False
-    projects: List[str] = field(default_factory=list)
-    patterns: List[str] = field(default_factory=list)  # Positional patterns (exact match)
-    name_patterns: List[str] = field(default_factory=list)  # -n patterns (substring match)
+    projects: list[str] = field(default_factory=list)
+    patterns: list[str] = field(default_factory=list)  # Positional patterns (exact match)
+    name_patterns: list[str] = field(default_factory=list)  # -n patterns (substring match)
     this_only: bool = False
 
     # Session filters
-    agent: Optional[str] = None
-    since: Optional[str] = None
-    until: Optional[str] = None
+    agent: str | None = None
+    since: str | None = None
+    until: str | None = None
 
     # Exclusions (with --ah)
     no_wsl: bool = False
@@ -133,11 +135,11 @@ class OutputArgs:
         width: Maximum table width in columns (None for no limit).
     """
 
-    format: Optional[str] = None
-    output_path: Optional[Path] = None
+    format: str | None = None
+    output_path: Path | None = None
     quiet: bool = False
     human_readable: bool = False
-    width: Optional[int] = None
+    width: int | None = None
 
 
 @dataclass
@@ -159,7 +161,7 @@ class CommandRequest:
     verb: str
     scope_args: ScopeArgs
     output_args: OutputArgs
-    verb_args: Dict[str, Any] = field(default_factory=dict)
+    verb_args: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -180,7 +182,7 @@ class ResolutionError:
     stage: str
     spec: Any
     reason: str
-    suggestions: List[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -198,8 +200,8 @@ class ResolutionResult:
     """
 
     scope: ConcreteScope
-    errors: List[ResolutionError] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    errors: list[ResolutionError] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
@@ -268,10 +270,11 @@ class ContextBuilder:
         ctx.project_config = config.get("projects", {})
 
         # Agent paths (for session scanning)
-        claude_dir, codex_dir, gemini_dir = self._get_agent_paths()
+        claude_dir, codex_dir, gemini_dir, pi_dir = self._get_agent_paths()
         ctx.claude_projects_dir = claude_dir
         ctx.codex_sessions_dir = codex_dir
         ctx.gemini_sessions_dir = gemini_dir
+        ctx.pi_sessions_dir = pi_dir
 
         return ctx
 
@@ -294,7 +297,7 @@ class ContextBuilder:
         else:
             return "linux"
 
-    def _detect_cwd_workspace(self) -> tuple[Optional[str], Optional[str]]:
+    def _detect_cwd_workspace(self) -> tuple[str | None, str | None]:
         """Detect if CWD is within a workspace.
 
         Checks multiple sources:
@@ -405,7 +408,7 @@ class ContextBuilder:
 
         return (None, None)
 
-    def _detect_cwd_project(self, workspace: Optional[str], home: Optional[str]) -> Optional[str]:
+    def _detect_cwd_project(self, workspace: str | None, home: str | None) -> str | None:
         """Check if workspace belongs to a project.
 
         Uses the configuration's project definitions to find if the current
@@ -431,7 +434,7 @@ class ContextBuilder:
         # Use the config function to find the project/alias for this workspace
         return get_alias_for_workspace(encoded_workspace, home)
 
-    def _enumerate_available_homes(self) -> Dict[str, List[str]]:
+    def _enumerate_available_homes(self) -> dict[str, list[str]]:
         """Enumerate all available homes by category.
 
         Discovers available WSL distributions, Windows users (if accessible),
@@ -450,7 +453,7 @@ class ContextBuilder:
             is_running_in_wsl,
         )
 
-        homes: Dict[str, List[str]] = {
+        homes: dict[str, list[str]] = {
             "wsl": [],
             "windows": [],
             "remote": [],
@@ -484,21 +487,23 @@ class ContextBuilder:
         )
 
         if not skip_platform_scan:
+            scan_wsl = not (test_mode and has_windows_override and not has_wsl_override)
+            scan_windows = not (test_mode and has_wsl_override and not has_windows_override)
+
             # WSL distributions (available from Windows)
-            try:
-                wsl_distros = get_wsl_distributions()
-                homes["wsl"] = [d["name"] for d in wsl_distros if d.get("name")]
-            except Exception:
-                # Ignore errors during WSL detection
-                pass
+            if scan_wsl:
+                try:
+                    wsl_distros = get_wsl_distributions()
+                    homes["wsl"] = [d["name"] for d in wsl_distros if d.get("name")]
+                except Exception:
+                    # Ignore errors during WSL detection
+                    pass
 
             # Windows users (available from WSL)
-            if is_running_in_wsl():
+            if scan_windows and is_running_in_wsl():
                 try:
                     windows_users = get_windows_users_with_claude()
-                    homes["windows"] = [
-                        u["username"] for u in windows_users if u.get("username")
-                    ]
+                    homes["windows"] = [u["username"] for u in windows_users if u.get("username")]
                 except Exception:
                     # Ignore errors during Windows user detection
                     pass
@@ -530,13 +535,15 @@ class ContextBuilder:
 
         return homes
 
-    def _get_agent_paths(self) -> tuple[Optional[Path], Optional[Path], Optional[Path]]:
-        """Get paths for Claude, Codex, Gemini session directories.
+    def _get_agent_paths(
+        self,
+    ) -> tuple[Path | None, Path | None, Path | None, Path | None]:
+        """Get paths for Claude, Codex, Gemini, and Pi session directories.
 
         Checks environment variables first, then falls back to default paths.
 
         Returns:
-            Tuple of (claude_projects_dir, codex_sessions_dir, gemini_sessions_dir).
+            Tuple of (claude_projects_dir, codex_sessions_dir, gemini_sessions_dir, pi_sessions_dir).
             Each may be None if the directory doesn't exist.
         """
         import os
@@ -565,7 +572,14 @@ class ContextBuilder:
             gemini_dir = Path.home() / ".gemini" / "tmp"
         gemini_dir = gemini_dir if gemini_dir.exists() else None
 
-        return (claude_dir, codex_dir, gemini_dir)
+        pi_env = os.environ.get("PI_CODING_AGENT_SESSION_DIR") or os.environ.get("PI_SESSIONS_DIR")
+        if pi_env:
+            pi_dir = Path(pi_env)
+        else:
+            pi_dir = Path.home() / ".pi" / "agent" / "sessions"
+        pi_dir = pi_dir if pi_dir.exists() else None
+
+        return (claude_dir, codex_dir, gemini_dir, pi_dir)
 
 
 def build_resolution_context() -> ResolutionContext:

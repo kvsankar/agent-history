@@ -8,6 +8,7 @@ These tests verify platform detection functions, including:
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import mock_open, patch
@@ -21,6 +22,8 @@ from agent_history.utils.platform import (
     _CommandPathCache,
     _WindowsHomeCache,
     get_command_path,
+    get_windows_codex_sessions_dir,
+    get_windows_gemini_sessions_dir,
     get_windows_home_from_wsl,
     get_windows_projects_dir,
     get_windows_users_with_claude,
@@ -166,6 +169,18 @@ class TestGetCommandPath:
 
             path = get_command_path("git")
             assert path == "/usr/bin/git"
+
+
+class TestWslUsername:
+    """Test WSL username lookup edge cases."""
+
+    def test_wsl_username_handles_oserror_from_command_lookup(self) -> None:
+        """Inaccessible WSL command paths should not crash username lookup."""
+        from agent_history.utils import platform as platform_module
+
+        platform_module._get_wsl_username.cache_clear()
+        with patch.object(subprocess, "run", side_effect=OSError("wsl unavailable")):
+            assert platform_module._get_wsl_username("Ubuntu") is None
 
 
 class TestWindowsHomeCache:
@@ -361,6 +376,21 @@ class TestGetWindowsProjectsDir:
                 result = get_windows_projects_dir()
                 assert result is None
 
+    def test_claude_windows_override_does_not_probe_other_agents(self, tmp_path: Path) -> None:
+        """Claude-only Windows fixtures should not imply Codex/Gemini scans."""
+        projects_dir = tmp_path / ".claude" / "projects"
+        projects_dir.mkdir(parents=True)
+
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_HISTORY_TEST_MODE": "1",
+                "CLAUDE_WINDOWS_PROJECTS_DIR": str(projects_dir),
+            },
+        ):
+            assert get_windows_codex_sessions_dir() is None
+            assert get_windows_gemini_sessions_dir() is None
+
 
 class TestAgentConstants:
     """Test agent backend constants."""
@@ -394,7 +424,7 @@ class TestEdgeCases:
 
     def test_get_windows_home_caches_result(self) -> None:
         """Windows home lookup should cache results."""
-        with windows_home_cache_context() as cache:
+        with windows_home_cache_context():
             # First call with a username
             with patch.dict(
                 os.environ,

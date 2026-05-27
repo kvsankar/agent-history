@@ -14,7 +14,7 @@ import sys
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable
 
 from agent_history.handlers.base import CommandResult
 from agent_history.scope.context import OutputArgs
@@ -33,9 +33,7 @@ class FormatterError(Exception):
     pass
 
 
-def _workspace_display(
-    item: Dict[str, Any], display_map: Optional[Dict[str, str]] = None
-) -> str:
+def _workspace_display(item: dict[str, Any], display_map: dict[str, str] | None = None) -> str:
     """Pick a workspace display string from an item or display map."""
     if not item:
         return ""
@@ -69,11 +67,11 @@ def _format_modified_iso(modified: Any) -> str:
 
 
 def _build_session_rows(
-    sessions: List[SessionDict],
+    sessions: list[SessionDict],
     *,
     workspace_formatter: Callable[[str], str],
     modified_formatter: Callable[[Any], str],
-) -> List[List[str]]:
+) -> list[list[str]]:
     rows = []
     for session in sessions:
         workspace = workspace_formatter(_workspace_display(session))
@@ -91,11 +89,11 @@ def _build_session_rows(
 
 
 def _build_workspace_rows(
-    workspaces: List[WorkspaceDict],
+    workspaces: list[WorkspaceDict],
     *,
     workspace_formatter: Callable[[str], str],
     modified_formatter: Callable[[Any], str],
-) -> List[List[str]]:
+) -> list[list[str]]:
     rows = []
     for workspace in workspaces:
         modified = workspace.get("modified") or workspace.get("last_modified")
@@ -118,7 +116,7 @@ def _format_project_sources(sources: Any) -> str:
 
 
 def _format_project_workspaces(
-    workspaces: Any, display_map: Dict[str, str], workspace_count: Any
+    workspaces: Any, display_map: dict[str, str], workspace_count: Any
 ) -> str:
     if isinstance(workspaces, list):
         display_workspaces = [display_map.get(str(ws), str(ws)) for ws in workspaces]
@@ -139,7 +137,7 @@ class DataFormatter(ABC):
     """
 
     @abstractmethod
-    def format(self, data: Any, data_type: str, metadata: Dict[str, Any]) -> str:
+    def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
         """Format data for output.
 
         Args:
@@ -156,7 +154,7 @@ class DataFormatter(ABC):
 class TableFormatter(DataFormatter):
     """Format data as ASCII table."""
 
-    def __init__(self, width: Optional[int] = 120):
+    def __init__(self, width: int | None = 120):
         """Initialize with optional table width.
 
         Args:
@@ -173,7 +171,7 @@ class TableFormatter(DataFormatter):
             "exported_files": self._format_exported_files,
         }
 
-    def format(self, data: Any, data_type: str, metadata: Dict[str, Any]) -> str:
+    def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
         """Format data as ASCII table."""
         formatter = self._formatters.get(data_type)
         if formatter:
@@ -189,7 +187,7 @@ class TableFormatter(DataFormatter):
             return formatter(data)
         return str(data)
 
-    def _format_session_list(self, sessions: List[SessionDict]) -> str:
+    def _format_session_list(self, sessions: list[SessionDict]) -> str:
         """Format session list as table."""
         if not sessions:
             return "No sessions found."
@@ -205,7 +203,7 @@ class TableFormatter(DataFormatter):
 
         return self._render_table(headers, rows)
 
-    def _format_workspace_list(self, workspaces: List[WorkspaceDict]) -> str:
+    def _format_workspace_list(self, workspaces: list[WorkspaceDict]) -> str:
         """Format workspace list as table."""
         if not workspaces:
             return "No workspaces found."
@@ -222,7 +220,7 @@ class TableFormatter(DataFormatter):
         return self._render_table(headers, rows)
 
     def _format_home_list(
-        self, homes: List[HomeDict], metadata: Optional[Dict[str, Any]] = None
+        self, homes: list[HomeDict], metadata: dict[str, Any] | None = None
     ) -> str:
         """Format home list as table."""
         if not homes:
@@ -246,7 +244,7 @@ class TableFormatter(DataFormatter):
 
         return self._render_table(headers, rows)
 
-    def _format_stats(self, stats: StatsDict, metadata: Dict[str, Any]) -> str:
+    def _format_stats(self, stats: StatsDict, metadata: dict[str, Any]) -> str:
         """Format statistics as table."""
         lines = []
         workspace_display_map = (
@@ -299,9 +297,7 @@ class TableFormatter(DataFormatter):
             by_workspace = stats.get("by_workspace", {})
             if by_workspace:
                 lines.append("By Workspace:")
-                sorted_ws = sorted(
-                    by_workspace.items(), key=lambda x: -get_count(x[1], "sessions")
-                )
+                sorted_ws = sorted(by_workspace.items(), key=lambda x: -get_count(x[1], "sessions"))
                 for ws, value in sorted_ws[:10]:
                     ws_display = _workspace_display(
                         {"workspace": ws}, display_map=workspace_display_map
@@ -352,7 +348,7 @@ class TableFormatter(DataFormatter):
         return "\n".join(lines)
 
     def _format_project_list(
-        self, projects: List[ProjectDict], metadata: Optional[Dict[str, Any]] = None
+        self, projects: list[ProjectDict], metadata: dict[str, Any] | None = None
     ) -> str:
         """Format project list as table."""
         if not projects:
@@ -386,7 +382,7 @@ class TableFormatter(DataFormatter):
 
         return self._render_table(headers, rows)
 
-    def _format_project_details(self, data: ProjectDict, metadata: Dict[str, Any]) -> str:
+    def _format_project_details(self, data: ProjectDict, metadata: dict[str, Any]) -> str:
         """Format project details."""
         lines = []
         project_name = data.get("project", "")
@@ -405,7 +401,7 @@ class TableFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_exported_files(self, files: List[Path], metadata: Dict[str, Any]) -> str:
+    def _format_exported_files(self, files: list[Path], metadata: dict[str, Any]) -> str:
         """Format list of exported files."""
         count = metadata.get("count", len(files))
         lines = [f"Exported {count} file(s):"]
@@ -413,7 +409,7 @@ class TableFormatter(DataFormatter):
             lines.append(f"  {f}")
         return "\n".join(lines)
 
-    def _render_table(self, headers: List[str], rows: List[List[str]]) -> str:
+    def _render_table(self, headers: list[str], rows: list[list[str]]) -> str:
         """Render headers and rows as ASCII table."""
         if not rows:
             return ""
@@ -464,7 +460,7 @@ class JsonFormatter(DataFormatter):
         """Initialize with indentation level."""
         self.indent = indent
 
-    def format(self, data: Any, data_type: str, metadata: Dict[str, Any]) -> str:
+    def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
         """Format data as JSON.
 
         Returns plain array for list data types to match legacy behavior.
@@ -500,7 +496,7 @@ class TsvFormatter(DataFormatter):
             "stats": self._format_stats,
         }
 
-    def format(self, data: Any, data_type: str, metadata: Dict[str, Any]) -> str:
+    def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
         """Format data as TSV."""
         formatter = self._formatters.get(data_type)
         if formatter:
@@ -510,7 +506,7 @@ class TsvFormatter(DataFormatter):
         # Fallback to JSON for complex types
         return json.dumps(data, default=str)
 
-    def _format_session_list(self, sessions: List[SessionDict]) -> str:
+    def _format_session_list(self, sessions: list[SessionDict]) -> str:
         """Format session list as TSV."""
         if not sessions:
             return ""
@@ -527,7 +523,7 @@ class TsvFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_workspace_list(self, workspaces: List[WorkspaceDict]) -> str:
+    def _format_workspace_list(self, workspaces: list[WorkspaceDict]) -> str:
         """Format workspace list as TSV."""
         if not workspaces:
             return ""
@@ -545,7 +541,7 @@ class TsvFormatter(DataFormatter):
         return "\n".join(lines)
 
     def _format_home_list(
-        self, homes: List[HomeDict], metadata: Optional[Dict[str, Any]] = None
+        self, homes: list[HomeDict], metadata: dict[str, Any] | None = None
     ) -> str:
         """Format home list as TSV."""
         show_counts = True if metadata is None else metadata.get("show_counts", True)
@@ -567,7 +563,7 @@ class TsvFormatter(DataFormatter):
         return "\n".join(lines)
 
     def _format_project_list(
-        self, projects: List[ProjectDict], metadata: Optional[Dict[str, Any]] = None
+        self, projects: list[ProjectDict], metadata: dict[str, Any] | None = None
     ) -> str:
         """Format project list as TSV."""
         show_counts = True if metadata is None else metadata.get("show_counts", True)
@@ -633,7 +629,7 @@ class OutputFormatter:
 
     def __init__(self):
         """Initialize with available formatters."""
-        self.formatters: Dict[str, DataFormatter] = {
+        self.formatters: dict[str, DataFormatter] = {
             "table": TableFormatter(),
             "json": JsonFormatter(),
             "tsv": TsvFormatter(),
@@ -672,6 +668,12 @@ class OutputFormatter:
         )
         if is_empty:
             # Write "no data" message to stderr based on data type
+            for error in result.errors:
+                sys.stderr.write(f"Error: {error}\n")
+            for warning in result.warnings:
+                sys.stderr.write(f"Warning: {warning}\n")
+            if result.errors or result.warnings:
+                return
             if result.data_type == "session_list":
                 sys.stderr.write("No sessions found\n")
             elif result.data_type == "workspace_list":
@@ -701,7 +703,7 @@ class OutputFormatter:
         for error in result.errors:
             sys.stderr.write(f"Error: {error}\n")
 
-    def get_formatter(self, format_name: str) -> Optional[DataFormatter]:
+    def get_formatter(self, format_name: str) -> DataFormatter | None:
         """Get a specific formatter by name.
 
         Args:

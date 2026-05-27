@@ -32,10 +32,11 @@ See docs/design-v2/scope-resolution-v2.md for the underlying architecture.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Union
 
-from agent_history.handlers.base import CommandResult
+from agent_history.cli.constants import DEFAULT_OUTPUT_DIR
 from agent_history.core.workspaces import build_scope_metadata
+from agent_history.handlers.base import CommandResult
 from agent_history.handlers.export import SessionExportHandler
 from agent_history.handlers.list import (
     HomeListHandler,
@@ -76,7 +77,7 @@ class FluentContext:
         _result: Cached resolution result (lazily computed).
     """
 
-    def __init__(self, resolution_context: Optional[ResolutionContext] = None):
+    def __init__(self, resolution_context: ResolutionContext | None = None):
         """Initialize a new FluentContext.
 
         Args:
@@ -89,8 +90,8 @@ class FluentContext:
             self._context = ContextBuilder().build()
         self._scope_args = ScopeArgs()
         self._output_args = OutputArgs()
-        self._scope: Optional[ConcreteScope] = None
-        self._result: Optional[ResolutionResult] = None
+        self._scope: ConcreteScope | None = None
+        self._result: ResolutionResult | None = None
 
     # =========================================================================
     # Configuration Methods (return self for chaining)
@@ -98,9 +99,9 @@ class FluentContext:
 
     def scope(
         self,
-        pattern: Optional[str] = None,
+        pattern: str | None = None,
         *,
-        project: Optional[str] = None,
+        project: str | None = None,
         all_workspaces: bool = False,
         this_only: bool = False,
     ) -> FluentContext:
@@ -194,9 +195,9 @@ class FluentContext:
 
     def home(
         self,
-        home_name: Optional[str] = None,
+        home_name: str | None = None,
         *,
-        home_type: Optional[str] = None,
+        home_type: str | None = None,
         all_homes: bool = False,
         no_wsl: bool = False,
         no_windows: bool = False,
@@ -257,9 +258,9 @@ class FluentContext:
     def filter(
         self,
         *,
-        since: Optional[str] = None,
-        until: Optional[str] = None,
-        agent: Optional[str] = None,
+        since: str | None = None,
+        until: str | None = None,
+        agent: str | None = None,
     ) -> FluentContext:
         """Apply filters to the session query.
 
@@ -303,11 +304,11 @@ class FluentContext:
     def output(
         self,
         *,
-        format: Optional[str] = None,
-        output_path: Optional[Union[str, Path]] = None,
+        format: str | None = None,
+        output_path: Union[str, Path] | None = None,
         quiet: bool = False,
         human_readable: bool = False,
-        width: Optional[int] = None,
+        width: int | None = None,
     ) -> FluentContext:
         """Configure output formatting options.
 
@@ -380,7 +381,7 @@ class FluentContext:
     def list(
         self,
         *,
-        format: Optional[str] = None,
+        format: str | None = None,
     ) -> CommandResult:
         """List sessions matching the scope.
 
@@ -411,7 +412,7 @@ class FluentContext:
     def list_workspaces(
         self,
         *,
-        format: Optional[str] = None,
+        format: str | None = None,
     ) -> CommandResult:
         """List workspaces matching the scope.
 
@@ -442,7 +443,7 @@ class FluentContext:
     def list_homes(
         self,
         *,
-        format: Optional[str] = None,
+        format: str | None = None,
     ) -> CommandResult:
         """List homes with session counts.
 
@@ -473,11 +474,11 @@ class FluentContext:
 
     def export(
         self,
-        output_dir: Optional[Union[str, Path]] = None,
+        output_dir: Union[str, Path] | None = None,
         *,
         format: str = "markdown",
         minimal: bool = False,
-        split: Optional[int] = None,
+        split: int | None = None,
         flat: bool = False,
         force: bool = False,
         include_source: bool = False,
@@ -488,7 +489,7 @@ class FluentContext:
         to markdown (or other formats) files.
 
         Args:
-            output_dir: Directory for output files. Defaults to "./ai-chats".
+            output_dir: Directory for output files. Defaults to "./.agent-history/exports".
             format: Export format ("markdown" or "json").
             minimal: If True, omit metadata in markdown output.
             split: Split files at this many lines. None to disable.
@@ -510,7 +511,7 @@ class FluentContext:
         scope = self._resolve()
 
         verb_args: dict[str, Any] = {
-            "output_dir": Path(output_dir) if output_dir else Path.cwd() / "ai-chats",
+            "output_dir": Path(output_dir) if output_dir else Path(DEFAULT_OUTPUT_DIR),
             "minimal": minimal,
             "split": split,
             "flat": flat,
@@ -525,9 +526,9 @@ class FluentContext:
     def stats(
         self,
         *,
-        by: Optional[str] = None,
+        by: str | None = None,
         include_time: bool = False,
-        top: Optional[int] = None,
+        top: int | None = None,
     ) -> CommandResult:
         """Get statistics for sessions in scope.
 
@@ -701,7 +702,7 @@ class FluentContext:
 # =============================================================================
 
 
-def context(resolution_context: Optional[ResolutionContext] = None) -> FluentContext:
+def context(resolution_context: ResolutionContext | None = None) -> FluentContext:
     """Create a new FluentContext for building queries.
 
     This is the main entry point for the fluent API. It creates a new

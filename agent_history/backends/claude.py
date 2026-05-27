@@ -19,33 +19,37 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
-from agent_history.utils.paths import encode_workspace_path, is_cached_workspace, normalize_workspace_name
+from agent_history.utils.paths import (
+    encode_workspace_path,
+    is_cached_workspace,
+    normalize_workspace_name,
+)
 
 __all__ = [
-    # Session scanning
-    "get_workspace_sessions",
-    "get_claude_projects_dir",
-    # Message parsing
-    "read_jsonl_messages",
-    "extract_content",
-    "get_first_timestamp",
-    # Message conversion
-    "claude_message_to_unified",
-    "normalize_role",
-    "extract_unified_content",
-    # Workspace helpers
-    "path_to_encoded_workspace",
-    "validate_workspace_name",
-    "is_safe_path",
-    # Session helpers
-    "is_date_in_range",
+    "_count_file_messages",
+    "_detect_wsl_base_path",
     # Internal helpers (exported for testing)
     "_get_session_from_file",
-    "_count_file_messages",
     "_is_valid_workspace_dir",
-    "_workspace_matches_pattern",
-    "_detect_wsl_base_path",
     "_should_skip_workspace",
+    "_workspace_matches_pattern",
+    # Message conversion
+    "claude_message_to_unified",
+    "extract_content",
+    "extract_unified_content",
+    "get_claude_projects_dir",
+    "get_first_timestamp",
+    # Session scanning
+    "get_workspace_sessions",
+    # Session helpers
+    "is_date_in_range",
+    "is_safe_path",
+    "normalize_role",
+    # Workspace helpers
+    "path_to_encoded_workspace",
+    # Message parsing
+    "read_jsonl_messages",
+    "validate_workspace_name",
 ]
 
 
@@ -591,6 +595,17 @@ def _detect_wsl_base_path(projects_dir: Path) -> Optional[Path]:
     return Path(anchor.rstrip("\\/")) if anchor else None
 
 
+def _should_verify_workspace_paths(projects_dir: Path) -> bool:
+    """Return False for injected non-local test fixtures that may touch slow mounts."""
+    if os.environ.get("AGENT_HISTORY_SKIP_PATH_VERIFY", "").lower() in ("1", "true", "yes"):
+        return False
+    if os.environ.get("AGENT_HISTORY_TEST_MODE"):
+        windows_override = os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR")
+        if windows_override and Path(windows_override) == projects_dir:
+            return False
+    return True
+
+
 def _should_skip_workspace(dir_name: str, include_cached: bool) -> bool:
     """Check if a workspace directory should be skipped."""
     if not include_cached:
@@ -823,7 +838,11 @@ def get_workspace_sessions(
         if not _workspace_matches_pattern(dir_name, workspace_pattern, match_all):
             continue
 
-        readable_name = normalize_workspace_name(dir_name, base_path=wsl_base)
+        readable_name = normalize_workspace_name(
+            dir_name,
+            verify_local=_should_verify_workspace_paths(projects_dir),
+            base_path=wsl_base,
+        )
 
         for jsonl_file in workspace_dir.glob("*.jsonl"):
             session = _get_session_from_file(

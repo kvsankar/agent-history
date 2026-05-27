@@ -8,7 +8,11 @@ from typing import Any, Dict, List, Optional
 
 from agent_history.backends.claude import read_jsonl_messages
 from agent_history.core.conversation import analyze_conversation_graph, generate_graph_summary
-from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
+from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
+
+MARKDOWN_DEFAULT_LEVEL = 4
+MARKDOWN_MAX_LEVEL = 4
+MARKDOWN_SNIPPET_CHARS = 500
 
 
 def parse_jsonl_to_markdown(
@@ -18,6 +22,7 @@ def parse_jsonl_to_markdown(
     display_file: Optional[str] = None,
     show_graph: bool = True,
     agent_type: str = AGENT_CLAUDE,
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL,
 ) -> str:
     """Convert a Claude Code JSONL session file to readable Markdown.
 
@@ -34,6 +39,17 @@ def parse_jsonl_to_markdown(
     """
     if messages is None:
         messages = read_jsonl_messages(jsonl_file)
+
+    safe_level = max(1, min(MARKDOWN_MAX_LEVEL, int(markdown_level or MARKDOWN_DEFAULT_LEVEL)))
+    if safe_level < MARKDOWN_DEFAULT_LEVEL:
+        return render_markdown_with_detail_level(
+            jsonl_file=jsonl_file,
+            messages=messages,
+            minimal=minimal,
+            display_file=display_file,
+            agent_type=agent_type,
+            markdown_level=safe_level,
+        )
 
     # Build header
     md_lines = generate_markdown_file_header(jsonl_file, messages, display_file, agent_type)
@@ -56,6 +72,94 @@ def parse_jsonl_to_markdown(
     return "\n".join(md_lines)
 
 
+def _markdown_agent_title(agent_type: str) -> str:
+    if agent_type == AGENT_CODEX:
+        return "Codex"
+    if agent_type == AGENT_GEMINI:
+        return "Gemini"
+    if agent_type == AGENT_PI:
+        return "Pi"
+    return "Claude"
+
+
+def _markdown_label(msg: Dict[str, Any]) -> str:
+    if msg.get("is_tool_call"):
+        return "Tool Call"
+    if msg.get("is_tool_result"):
+        return "Tool Result"
+    role = str(msg.get("role") or "unknown").lower()
+    return "User" if role == "user" else "Assistant" if role == "assistant" else role.title()
+
+
+def _message_body_for_level(msg: Dict[str, Any], markdown_level: int) -> str:
+    content = str(msg.get("content") or "")
+    if markdown_level >= 3 or len(content) <= MARKDOWN_SNIPPET_CHARS:
+        return content
+    return content[:MARKDOWN_SNIPPET_CHARS].rstrip() + "\n\n... [truncated]"
+
+
+def _starts_new_turn(msg: Dict[str, Any]) -> bool:
+    return str(msg.get("role") or "").lower() == "user" and not (
+        msg.get("is_tool_call") or msg.get("is_tool_result")
+    )
+
+
+def _group_messages_into_turns(messages: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    turns: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+    for msg in messages:
+        if _starts_new_turn(msg) and current:
+            turns.append(current)
+            current = []
+        current.append(msg)
+    if current:
+        turns.append(current)
+    return turns
+
+
+def render_markdown_with_detail_level(
+    jsonl_file: Path,
+    messages: List[Dict[str, Any]],
+    minimal: bool,
+    display_file: Optional[str],
+    agent_type: str,
+    markdown_level: int,
+) -> str:
+    """Render compact turn-oriented Markdown for detail levels 1-3."""
+    lines = [f"# {_markdown_agent_title(agent_type)} Conversation", ""]
+    if not minimal:
+        lines.extend(
+            [
+                f"**File:** {display_file or jsonl_file.name}",
+                f"**Messages:** {len(messages)}",
+                f"**Markdown detail level:** {markdown_level}",
+            ]
+        )
+        if messages and messages[0].get("timestamp"):
+            lines.append(f"**Started:** {messages[0]['timestamp']}")
+        if len(messages) > 1 and messages[-1].get("timestamp"):
+            lines.append(f"**Ended:** {messages[-1]['timestamp']}")
+        lines.append("")
+
+    lines.extend(["---", ""])
+
+    for turn_index, turn in enumerate(_group_messages_into_turns(messages), 1):
+        lines.extend([f"## Turn {turn_index}", ""])
+        for msg in turn:
+            is_action = bool(msg.get("is_tool_call") or msg.get("is_tool_result"))
+            if is_action and markdown_level < 2:
+                continue
+            body = _message_body_for_level(msg, markdown_level).strip()
+            if not body:
+                continue
+            lines.extend([f"### {_markdown_label(msg)}", ""])
+            if msg.get("timestamp") and not minimal:
+                lines.extend([f"*{msg['timestamp']}*", ""])
+            lines.extend([body, ""])
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _get_agent_header_title(agent_type: str) -> str:
     """Get the header title for the given agent type.
 
@@ -69,6 +173,8 @@ def _get_agent_header_title(agent_type: str) -> str:
         return "Codex Conversation"
     elif agent_type == AGENT_GEMINI:
         return "Gemini Conversation"
+    elif agent_type == AGENT_PI:
+        return "Pi Conversation"
     else:
         return "Claude Code Session"
 
@@ -92,8 +198,8 @@ def generate_markdown_file_header(
     """
     header_title = _get_agent_header_title(agent_type)
 
-    # For Codex and Gemini, use simpler header format (no filename)
-    if agent_type in (AGENT_CODEX, AGENT_GEMINI):
+    # For non-Claude agents, use simpler header format (no filename)
+    if agent_type in (AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
         lines = [f"# {header_title}", ""]
     else:
         display_name = display_file or jsonl_file.name
@@ -163,9 +269,7 @@ def generate_message_section(
     return lines
 
 
-def generate_metadata_section(
-    msg: Dict[str, Any], uuid_to_index: Dict[str, int]
-) -> List[str]:
+def generate_metadata_section(msg: Dict[str, Any], uuid_to_index: Dict[str, int]) -> List[str]:
     """Generate metadata section for a message.
 
     Args:
@@ -218,6 +322,7 @@ def generate_part_markdown(
     start_idx: int,
     end_idx: int,
     display_file: Optional[str] = None,
+    markdown_level: int = MARKDOWN_DEFAULT_LEVEL,
 ) -> str:
     """Generate markdown for a single part of a split conversation.
 
@@ -235,6 +340,16 @@ def generate_part_markdown(
         Markdown string for this part.
     """
     display_name = display_file or jsonl_file.name
+
+    if markdown_level < MARKDOWN_DEFAULT_LEVEL:
+        return render_markdown_with_detail_level(
+            jsonl_file=jsonl_file,
+            messages=messages,
+            minimal=minimal,
+            display_file=f"{display_name} (Part {part_num}/{total_parts})",
+            agent_type=AGENT_CLAUDE,
+            markdown_level=markdown_level,
+        )
 
     lines = [
         f"# Claude Code Session: {display_name} (Part {part_num}/{total_parts})",

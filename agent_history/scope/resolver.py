@@ -21,11 +21,7 @@ See docs/design-v2/pipeline-architecture.md for the algorithm details.
 
 from __future__ import annotations
 
-from typing import List
-
-from agent_history.backends.claude import get_workspace_sessions
-from agent_history.backends.codex import codex_scan_sessions
-from agent_history.backends.gemini import gemini_load_hash_index, gemini_scan_sessions
+from agent_history.backends.gemini import gemini_load_hash_index
 from agent_history.scope.cache import SessionCache
 from agent_history.scope.context import (
     ResolutionContext,
@@ -50,7 +46,6 @@ from agent_history.scope.types import (
     WorkspaceSpecFactory,
 )
 from agent_history.types import SessionDict, WorkspaceSessionsMap
-from typing import Optional, Tuple
 
 
 class ScopeResolver:
@@ -129,8 +124,8 @@ class ScopeResolver:
         4. Resolve WorkspaceSpecs to concrete paths
         5. Collect sessions for each (home, workspace) pair
         """
-        errors: List[ResolutionError] = []
-        warnings: List[str] = []
+        errors: list[ResolutionError] = []
+        warnings: list[str] = []
 
         # Stage 0: Build initial template from arguments
         template = self._build_template(scope_args)
@@ -195,9 +190,7 @@ class ScopeResolver:
         # not in a workspace, there's no implicit path that could be mismatched
         non_web_homes = [home for home in args.home_names if home != "web"]
         needs_cross_home = (
-            args.home_type in ("wsl", "windows", "remote")
-            or args.all_homes
-            or bool(non_web_homes)
+            args.home_type in ("wsl", "windows", "remote") or args.all_homes or bool(non_web_homes)
         )
         has_explicit_scope = (
             args.all_workspaces
@@ -334,7 +327,7 @@ class ScopeResolver:
             if args.home_type == "local":
                 return HomeSpecFactory.Local
 
-            homes: List[str] = ["local"]
+            homes: list[str] = ["local"]
 
             if not args.no_wsl:
                 for distro in self.context.available_homes.get("wsl", []):
@@ -426,7 +419,7 @@ class ScopeResolver:
     # Workspace Enumeration (used by WorkspaceStage)
     # =========================================================================
 
-    def _enumerate_workspaces(self, home: str) -> List[str]:
+    def _enumerate_workspaces(self, home: str) -> list[str]:
         """
         List all workspaces in a home.
 
@@ -451,7 +444,7 @@ class ScopeResolver:
         Used for fast metadata-only commands (e.g., home list) to avoid
         expensive session scans while still preserving workspace identity.
         """
-        from agent_history.scope.types import ConcreteRecord, ScopeRecord, WorkspaceSpecConcrete
+        from agent_history.scope.types import ConcreteRecord, ScopeRecord
         from agent_history.utils.workspace_ref import build_workspace_ref
 
         concrete: ConcreteScope = []
@@ -477,7 +470,7 @@ class ScopeResolver:
 
         return concrete
 
-    def _enumerate_claude_workspaces(self, home: str) -> List[str]:
+    def _enumerate_claude_workspaces(self, home: str) -> list[str]:
         """
         Enumerate workspaces from Claude's projects directory.
 
@@ -492,7 +485,7 @@ class ScopeResolver:
         """
         from agent_history.utils.paths import normalize_workspace_name
 
-        workspaces: List[str] = []
+        workspaces: list[str] = []
 
         # Use strategy pattern for home-specific directory resolution
         resolver = get_resolver_for_home(home)
@@ -509,7 +502,7 @@ class ScopeResolver:
 
         return workspaces
 
-    def _enumerate_codex_workspaces(self, home: str) -> List[str]:
+    def _enumerate_codex_workspaces(self, home: str) -> list[str]:
         """
         Enumerate workspaces from Codex sessions.
 
@@ -522,7 +515,7 @@ class ScopeResolver:
         Returns:
             List of workspace paths found in Codex sessions.
         """
-        workspaces: List[str] = []
+        workspaces: list[str] = []
 
         # Use strategy pattern for home-specific directory resolution
         resolver = get_resolver_for_home(home)
@@ -542,7 +535,7 @@ class ScopeResolver:
 
         return workspaces
 
-    def _enumerate_gemini_workspaces(self, home: str) -> List[str]:
+    def _enumerate_gemini_workspaces(self, home: str) -> list[str]:
         """
         Enumerate workspaces from Gemini sessions.
 
@@ -557,7 +550,7 @@ class ScopeResolver:
         Returns:
             List of workspace paths found in Gemini sessions.
         """
-        workspaces: List[str] = []
+        workspaces: list[str] = []
 
         # Use strategy pattern for home-specific directory resolution
         resolver = get_resolver_for_home(home)
@@ -596,7 +589,7 @@ class ScopeResolver:
     # Session Loading (used by SessionCache)
     # =========================================================================
 
-    def _load_claude_sessions_for_home(self, home: str) -> List[SessionDict]:
+    def _load_claude_sessions_for_home(self, home: str) -> list[SessionDict]:
         """
         Load all Claude sessions for a home (not filtered by workspace).
 
@@ -611,7 +604,7 @@ class ScopeResolver:
         # Use strategy pattern for home-specific directory resolution
         return self._inventory.list_sessions(home, agent="claude")
 
-    def _load_codex_sessions_for_home(self, home: str) -> List[SessionDict]:
+    def _load_codex_sessions_for_home(self, home: str) -> list[SessionDict]:
         """
         Load all Codex sessions for a home (not filtered by workspace).
 
@@ -626,7 +619,7 @@ class ScopeResolver:
         # Use strategy pattern for home-specific directory resolution
         return self._inventory.list_sessions(home, agent="codex")
 
-    def _load_gemini_sessions_for_home(self, home: str) -> List[SessionDict]:
+    def _load_gemini_sessions_for_home(self, home: str) -> list[SessionDict]:
         """
         Load all Gemini sessions for a home (not filtered by workspace).
 
@@ -646,7 +639,7 @@ class ScopeResolver:
     # These delegate to the appropriate stage modules
     # =========================================================================
 
-    def _match_workspaces(self, home: str, pattern: str, match_type: MatchType) -> List[str]:
+    def _match_workspaces(self, home: str, pattern: str, match_type: MatchType) -> list[str]:
         """
         Match workspaces against a pattern with specified semantics.
 
@@ -690,7 +683,7 @@ class ScopeResolver:
         else:
             return [ws for ws in all_workspaces if ws == pattern]
 
-    def _expand_home_spec(self, spec: HomeSpec) -> Tuple[List[str], Optional[ResolutionError]]:
+    def _expand_home_spec(self, spec: HomeSpec) -> tuple[list[str], ResolutionError | None]:
         """
         Expand a HomeSpec to a list of concrete home strings.
 
@@ -708,7 +701,7 @@ class ScopeResolver:
 
     def _expand_workspace_spec(
         self, spec: WorkspaceSpec, home: str
-    ) -> Tuple[List[str], Optional[ResolutionError]]:
+    ) -> tuple[list[str], ResolutionError | None]:
         """
         Expand a WorkspaceSpec to a list of concrete workspace paths.
 
@@ -727,7 +720,7 @@ class ScopeResolver:
 
     def _collect_sessions(
         self, home: str, workspace: str, session_spec: SessionSpec
-    ) -> List[SessionDict]:
+    ) -> list[SessionDict]:
         """
         Collect sessions for a specific (home, workspace) pair.
 
@@ -742,15 +735,16 @@ class ScopeResolver:
         Returns:
             List of session dictionaries matching the criteria.
         """
+        from agent_history.backends.registry import iter_backends
         from agent_history.scope.types import SessionSpecAll, SessionSpecFiltered
 
-        # Collect sessions from each agent
-        claude_sessions = self._collect_claude_sessions(home, workspace)
-        codex_sessions = self._collect_codex_sessions(home, workspace)
-        gemini_sessions = self._collect_gemini_sessions(home, workspace)
-
-        # Combine all sessions
-        all_sessions = list(claude_sessions) + list(codex_sessions) + list(gemini_sessions)
+        all_sessions: list[SessionDict] = []
+        for backend in iter_backends():
+            collector = getattr(self, f"_collect_{backend.id}_sessions", None)
+            if collector is None:
+                all_sessions.extend(self._collect_backend_sessions(home, workspace, backend.id))
+            else:
+                all_sessions.extend(collector(home, workspace))
 
         # Filter to EXACT workspace match only
         sessions = [
@@ -769,6 +763,7 @@ class ScopeResolver:
         elif isinstance(session_spec, SessionSpecFiltered):
             filters = session_spec.filters
             result = sessions
+
             def _to_date(value: Any) -> Any:
                 return value.date() if hasattr(value, "date") else value
 
@@ -778,15 +773,13 @@ class ScopeResolver:
                 result = [
                     s
                     for s in result
-                    if s.get("modified")
-                    and _to_date(s.get("modified")) >= _to_date(filters.since)
+                    if s.get("modified") and _to_date(s.get("modified")) >= _to_date(filters.since)
                 ]
             if filters.until:
                 result = [
                     s
                     for s in result
-                    if s.get("modified")
-                    and _to_date(s.get("modified")) <= _to_date(filters.until)
+                    if s.get("modified") and _to_date(s.get("modified")) <= _to_date(filters.until)
                 ]
             if filters.min_messages is not None:
                 result = [s for s in result if s.get("message_count", 0) >= filters.min_messages]
@@ -794,7 +787,22 @@ class ScopeResolver:
         else:
             return sessions
 
-    def _collect_claude_sessions(self, home: str, workspace: str) -> List[SessionDict]:
+    def _collect_backend_sessions(
+        self, home: str, workspace: str, agent_id: str
+    ) -> list[SessionDict]:
+        """Collect sessions for a registered backend by exact workspace."""
+        all_sessions = self._inventory.list_sessions(home, agent=agent_id)
+        return [
+            s
+            for s in all_sessions
+            if (
+                s.get("workspace_key", "") == workspace
+                or s.get("workspace_readable", "") == workspace
+                or s.get("workspace", "") == workspace
+            )
+        ]
+
+    def _collect_claude_sessions(self, home: str, workspace: str) -> list[SessionDict]:
         """
         Collect Claude sessions for a specific (home, workspace) pair.
 
@@ -817,7 +825,7 @@ class ScopeResolver:
             )
         ]
 
-    def _collect_codex_sessions(self, home: str, workspace: str) -> List[SessionDict]:
+    def _collect_codex_sessions(self, home: str, workspace: str) -> list[SessionDict]:
         """
         Collect Codex sessions for a specific (home, workspace) pair.
 
@@ -840,7 +848,7 @@ class ScopeResolver:
             )
         ]
 
-    def _collect_gemini_sessions(self, home: str, workspace: str) -> List[SessionDict]:
+    def _collect_gemini_sessions(self, home: str, workspace: str) -> list[SessionDict]:
         """
         Collect Gemini sessions for a specific (home, workspace) pair.
 
@@ -864,9 +872,13 @@ class ScopeResolver:
             )
         ]
 
+    def _collect_pi_sessions(self, home: str, workspace: str) -> list[SessionDict]:
+        """Collect Pi sessions for a specific (home, workspace) pair."""
+        return self._collect_backend_sessions(home, workspace, "pi")
+
     def _resolve_projects(
         self, scope: TemplateScope
-    ) -> Tuple[TemplateScope, List[ResolutionError]]:
+    ) -> tuple[TemplateScope, list[ResolutionError]]:
         """
         Expand ProjectRecords to ScopeRecords using project configuration (Stage 1).
 
@@ -874,9 +886,7 @@ class ScopeResolver:
         """
         return self._project_stage.resolve(scope)
 
-    def _resolve_homes(
-        self, scope: TemplateScope
-    ) -> Tuple[TemplateScope, List[ResolutionError]]:
+    def _resolve_homes(self, scope: TemplateScope) -> tuple[TemplateScope, list[ResolutionError]]:
         """
         Resolve HomeSpecs to concrete home strings (Stage 2).
 
@@ -886,17 +896,17 @@ class ScopeResolver:
 
     def _resolve_workspaces(
         self, scope: TemplateScope
-    ) -> Tuple[TemplateScope, List[ResolutionError]]:
+    ) -> tuple[TemplateScope, list[ResolutionError]]:
         """
         Resolve WorkspaceSpecs to concrete workspace paths (Stage 3).
 
         This implementation uses the resolver's own _enumerate_workspaces
         (patchable by tests) rather than delegating to the stage module.
         """
+        from agent_history.backends.gemini import gemini_get_path_for_hash
         from agent_history.scope.types import (
             HomeSpecConcrete,
             WorkspaceSpecAll,
-            WorkspaceSpecConcrete,
             WorkspaceSpecCurrent,
             WorkspaceSpecEncoded,
             WorkspaceSpecHash,
@@ -905,10 +915,9 @@ class ScopeResolver:
             WorkspaceSpecProject,
         )
         from agent_history.utils.paths import normalize_workspace_name
-        from agent_history.backends.gemini import gemini_get_path_for_hash
 
         result: TemplateScope = []
-        errors: List[ResolutionError] = []
+        errors: list[ResolutionError] = []
 
         for record in scope:
             if isinstance(record, ProjectRecord):
@@ -935,8 +944,8 @@ class ScopeResolver:
 
             home = record.home.home
             spec = record.workspace
-            workspaces: List[str] = []
-            ws_error: Optional[ResolutionError] = None
+            workspaces: list[str] = []
+            ws_error: ResolutionError | None = None
 
             if isinstance(spec, WorkspaceSpecAll):
                 try:
@@ -1020,18 +1029,17 @@ class ScopeResolver:
 
     def _resolve_sessions(
         self, scope: TemplateScope
-    ) -> Tuple["ConcreteScope", List[ResolutionError]]:
+    ) -> tuple[ConcreteScope, list[ResolutionError]]:
         """
         Collect sessions for each (home, workspace) pair (Stage 4).
 
         Delegates to SessionStage.resolve. This is the external-facing method.
         """
-        from agent_history.scope.types import ConcreteScope
         return self._session_stage.resolve(scope)
 
     def _resolve_sessions_internal(
         self, scope: TemplateScope
-    ) -> Tuple["ConcreteScope", List[ResolutionError]]:
+    ) -> tuple[ConcreteScope, list[ResolutionError]]:
         """
         Internal session collection that uses resolver's own methods.
 
@@ -1042,11 +1050,10 @@ class ScopeResolver:
             ConcreteRecord,
             ConcreteScope,
             HomeSpecConcrete,
-            WorkspaceSpecConcrete,
         )
 
         result: ConcreteScope = []
-        errors: List[ResolutionError] = []
+        errors: list[ResolutionError] = []
 
         for record in scope:
             if isinstance(record, ProjectRecord):

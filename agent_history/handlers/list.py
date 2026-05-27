@@ -12,18 +12,17 @@ See docs/design-v2/code-reuse-mapping.md for code reuse details.
 """
 
 from collections import OrderedDict
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from agent_history.handlers.base import CommandResult, VerbHandler
-from agent_history.types import HomeDict, SessionDict, WorkspaceDict
+from agent_history.backends.registry import get_backend, get_default_backend_id
 from agent_history.core.workspaces import aggregate_workspaces, build_scope_metadata
+from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
-from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI
+from agent_history.types import HomeDict, SessionDict, WorkspaceDict
 from agent_history.utils.dates import modified_key
-from agent_history.utils.workspace_ref import attach_workspace_context, WorkspaceContext
+from agent_history.utils.workspace_ref import WorkspaceContext, attach_workspace_context
 
 
 class SessionListHandler(VerbHandler):
@@ -134,24 +133,12 @@ class SessionListHandler(VerbHandler):
             if not file_path.exists():
                 continue
 
-            # Count messages based on agent type
-            agent = session.get("agent", AGENT_CLAUDE)
+            agent = session.get("agent", get_default_backend_id())
+            backend = get_backend(agent)
+            if backend is None:
+                continue
             try:
-                if agent == AGENT_GEMINI:
-                    from agent_history.backends.gemini import gemini_count_messages
-
-                    session["message_count"] = gemini_count_messages(file_path)
-                elif agent == AGENT_CODEX:
-                    from agent_history.backends.codex import codex_count_messages
-
-                    session["message_count"] = codex_count_messages(file_path)
-                else:
-                    # Claude - use the internal count function
-                    from agent_history.backends.claude import _count_file_messages
-
-                    session["message_count"] = _count_file_messages(
-                        file_path, skip_count=False, use_cached_counts=True
-                    )
+                session["message_count"] = backend.count_messages(file_path)
                 session["message_count_skipped"] = False
             except Exception:
                 # Keep the 0 count if there's an error
@@ -256,8 +243,7 @@ class WorkspaceListHandler(VerbHandler):
 
         readable = clean_path
         if readable == context.workspace and (
-            is_encoded_workspace_name(context.workspace)
-            or is_cached_workspace(context.workspace)
+            is_encoded_workspace_name(context.workspace) or is_cached_workspace(context.workspace)
         ):
             readable = None
 
@@ -268,8 +254,10 @@ class WorkspaceListHandler(VerbHandler):
         check_value = ref.display or clean_path
         if not check_value:
             return "unknown"
-        if "/" not in check_value and "\\" not in check_value and not (
-            len(check_value) > 1 and check_value[1] == ":"
+        if (
+            "/" not in check_value
+            and "\\" not in check_value
+            and not (len(check_value) > 1 and check_value[1] == ":")
         ):
             return "unknown"
 
@@ -389,26 +377,30 @@ class HomeListHandler(VerbHandler):
         # In test mode, when all session roots are overridden, avoid probing
         # non-local homes to keep isolated runs fast.
         test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
-        if test_mode and all(
-            os.environ.get(key)
-            for key in (
-                "CLAUDE_PROJECTS_DIR",
-                "CODEX_SESSIONS_DIR",
-                "GEMINI_SESSIONS_DIR",
-                "AGENT_HISTORY_CONFIG_DIR",
+        if (
+            test_mode
+            and all(
+                os.environ.get(key)
+                for key in (
+                    "CLAUDE_PROJECTS_DIR",
+                    "CODEX_SESSIONS_DIR",
+                    "GEMINI_SESSIONS_DIR",
+                    "AGENT_HISTORY_CONFIG_DIR",
+                )
             )
-        ) and not any(
-            os.environ.get(key)
-            for key in (
-                "AGENT_HISTORY_HOME_WSL",
-                "AGENT_HISTORY_HOME_WINDOWS",
-                "CLAUDE_WSL_TEST_DISTRO",
-                "CLAUDE_WSL_PROJECTS_DIR",
-                "CLAUDE_WINDOWS_PROJECTS_DIR",
-                "CODEX_WSL_SESSIONS_DIR",
-                "GEMINI_WSL_SESSIONS_DIR",
-                "CODEX_WINDOWS_SESSIONS_DIR",
-                "GEMINI_WINDOWS_SESSIONS_DIR",
+            and not any(
+                os.environ.get(key)
+                for key in (
+                    "AGENT_HISTORY_HOME_WSL",
+                    "AGENT_HISTORY_HOME_WINDOWS",
+                    "CLAUDE_WSL_TEST_DISTRO",
+                    "CLAUDE_WSL_PROJECTS_DIR",
+                    "CLAUDE_WINDOWS_PROJECTS_DIR",
+                    "CODEX_WSL_SESSIONS_DIR",
+                    "GEMINI_WSL_SESSIONS_DIR",
+                    "CODEX_WINDOWS_SESSIONS_DIR",
+                    "GEMINI_WINDOWS_SESSIONS_DIR",
+                )
             )
         ):
             return homes
@@ -601,10 +593,10 @@ class GeminiIndexHandler(VerbHandler):
             CommandResult with index status.
         """
         from agent_history.backends.gemini import (
+            HASH_DISPLAY_LEN,
             gemini_add_paths_to_index,
             gemini_load_hash_index,
             gemini_rebuild_hash_index,
-            HASH_DISPLAY_LEN,
         )
 
         add_paths = verb_args.get("add_paths")
@@ -636,9 +628,7 @@ class GeminiIndexHandler(VerbHandler):
                     "mappings": result["mappings"],
                 },
                 data_type="gemini_index",
-                metadata={
-                    "message": f"Added {result['added']} path(s) to index"
-                },
+                metadata={"message": f"Added {result['added']} path(s) to index"},
             )
         else:
             # Default: list/show index status
@@ -648,10 +638,12 @@ class GeminiIndexHandler(VerbHandler):
             formatted_mappings = []
             for project_hash, path in sorted(mappings.items(), key=lambda x: x[1]):
                 display_hash = project_hash if full_hash else project_hash[:HASH_DISPLAY_LEN]
-                formatted_mappings.append({
-                    "hash": display_hash,
-                    "path": path,
-                })
+                formatted_mappings.append(
+                    {
+                        "hash": display_hash,
+                        "path": path,
+                    }
+                )
 
             return CommandResult(
                 success=True,
@@ -663,6 +655,7 @@ class GeminiIndexHandler(VerbHandler):
                 data_type="gemini_index",
                 metadata={
                     "message": f"Found {len(mappings)} indexed path(s)"
-                    if mappings else "Hash index is empty. Use 'gemini-index --add <path>' to add mappings."
+                    if mappings
+                    else "Hash index is empty. Use 'gemini-index --add <path>' to add mappings."
                 },
             )

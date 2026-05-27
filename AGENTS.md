@@ -1,19 +1,19 @@
 # Supported Coding Agents
 
-This document compares the three AI coding agents supported by `agent-history` and explains how they work with this tool.
+This document compares the AI coding agents supported by `agent-history` and explains how they work with this tool.
 
 ## Quick Comparison
 
-| Feature | Claude Code | Codex CLI | Gemini CLI |
-|---------|-------------|-----------|------------|
-| **Developer** | Anthropic | OpenAI | Google |
-| **Session Format** | JSONL | JSONL | JSON |
-| **Storage Location** | `~/.claude/projects/` | `~/.codex/sessions/` | `~/.gemini/tmp/` |
-| **Organization** | By workspace path | By date (YYYY/MM/DD) | By project hash |
-| **Workspace ID** | Encoded path | Extracted from session | SHA-256 of path |
-| **Built-in Export** | None | None | `/chat share` |
-| **Token Tracking** | Per-message | Per-turn | Per-message |
-| **Reasoning/Thoughts** | Not stored | Not stored | Stored |
+| Feature | Claude Code | Codex CLI | Gemini CLI | Pi |
+|---------|-------------|-----------|------------|----|
+| **Developer** | Anthropic | OpenAI | Google | Pi |
+| **Session Format** | JSONL | JSONL | JSON | JSONL |
+| **Storage Location** | `~/.claude/projects/` | `~/.codex/sessions/` | `~/.gemini/tmp/` | `~/.pi/agent/sessions/` |
+| **Organization** | By workspace path | By date (YYYY/MM/DD) | By project hash | By workspace path |
+| **Workspace ID** | Encoded path | Extracted from session | SHA-256 of path | Session `cwd` or encoded path |
+| **Built-in Export** | None | None | `/chat share` | `pi agent session export` |
+| **Token Tracking** | Per-message | Per-turn | Per-message | Per-message when present |
+| **Reasoning/Thoughts** | Not stored | Not stored | Stored | Stored when present |
 
 ## Storage Locations
 
@@ -55,6 +55,18 @@ This document compares the three AI coding agents supported by `agent-history` a
 - **Session files**: JSON files (not JSONL) containing full session
 - **Hash index**: `agent-history` maintains a hash→path index for readable display
 
+### Pi
+
+```
+~/.pi/agent/sessions/
+└── --home-user-myproject--/        # Encoded workspace path
+    └── <session-id>.jsonl          # Session file
+```
+
+- **Workspace naming**: Read from the session `cwd` header when available; otherwise decoded from the workspace folder
+- **Session files**: JSONL files with a `session` header and `message` entries
+- **Tool calls**: Assistant tool calls and tool execution results are preserved
+
 ## How agent-history Works with Each Agent
 
 ### Listing Sessions (`lss`)
@@ -67,13 +79,14 @@ agent-history lss myproject
 agent-history --agent claude lss myproject
 agent-history --agent codex lss myproject
 agent-history --agent gemini lss myproject
+agent-history --agent pi lss myproject
 ```
 
-| Behavior | Claude | Codex | Gemini |
-|----------|--------|-------|--------|
-| Pattern matching | On encoded path | On workspace path | On path or hash |
-| Date filtering | File mtime | File mtime | File mtime |
-| Message count | From JSONL | From JSONL | From JSON |
+| Behavior | Claude | Codex | Gemini | Pi |
+|----------|--------|-------|--------|----|
+| Pattern matching | On encoded path | On workspace path | On path or hash | On session `cwd` or encoded path |
+| Date filtering | File mtime | File mtime | File mtime | File mtime |
+| Message count | From JSONL | From JSONL | From JSON | From JSONL |
 
 ### Exporting Sessions (`export`)
 
@@ -83,14 +96,15 @@ agent-history export myproject -o ./output
 
 # Agent-specific export
 agent-history --agent gemini export myproject
+agent-history --agent pi export myproject
 ```
 
-| Feature | Claude | Codex | Gemini |
-|---------|--------|-------|--------|
-| Output format | Markdown | Markdown | Markdown |
-| Metadata | Full (UUIDs, tokens, etc.) | Basic (workspace, timestamps) | Full (tokens, thoughts) |
-| Tool calls | Preserved | Preserved | Preserved |
-| Reasoning steps | N/A | N/A | Included |
+| Feature | Claude | Codex | Gemini | Pi |
+|---------|--------|-------|--------|----|
+| Output format | Markdown | Markdown | Markdown | Markdown |
+| Metadata | Full (UUIDs, tokens, etc.) | Basic (workspace, timestamps) | Full (tokens, thoughts) | Session header, timestamps, model/tokens when present |
+| Tool calls | Preserved | Preserved | Preserved | Preserved |
+| Reasoning steps | N/A | N/A | Included | Included when present |
 
 ### Statistics (`stats`)
 
@@ -101,12 +115,12 @@ agent-history stats --by tool
 agent-history stats --by model
 ```
 
-| Metric | Claude | Codex | Gemini |
-|--------|--------|-------|--------|
-| Token counts | Input/output/cache | Input/output | Input/output/thoughts |
-| Tool usage | Full tracking | Full tracking | Full tracking |
-| Model info | Yes | Yes | Yes |
-| Work time | Calculated | Calculated | Calculated |
+| Metric | Claude | Codex | Gemini | Pi |
+|--------|--------|-------|--------|----|
+| Token counts | Input/output/cache | Input/output | Input/output/thoughts | Input/output/cache when present |
+| Tool usage | Full tracking | Full tracking | Full tracking | Parsed from messages |
+| Model info | Yes | Yes | Yes | Yes when present |
+| Work time | Calculated | Calculated | Calculated | Calculated |
 
 ## Agent-Specific Features
 
@@ -168,30 +182,31 @@ Override default storage locations for testing or custom setups:
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects/` | Claude Code sessions |
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions/` | Codex CLI sessions |
 | `GEMINI_SESSIONS_DIR` | `~/.gemini/tmp/` | Gemini CLI sessions |
+| `PI_SESSIONS_DIR` / `PI_CODING_AGENT_SESSION_DIR` | `~/.pi/agent/sessions/` | Pi sessions |
 
 ## Data Captured by Each Agent
 
 ### Message Content
 
-| Data | Claude | Codex | Gemini |
-|------|--------|-------|--------|
-| User messages | ✅ | ✅ | ✅ |
-| Assistant responses | ✅ | ✅ | ✅ |
-| Tool calls (name, args) | ✅ | ✅ | ✅ |
-| Tool results | ✅ | ✅ | ✅ |
-| Reasoning/thoughts | ❌ | ❌ | ✅ |
+| Data | Claude | Codex | Gemini | Pi |
+|------|--------|-------|--------|----|
+| User messages | ✅ | ✅ | ✅ | ✅ |
+| Assistant responses | ✅ | ✅ | ✅ | ✅ |
+| Tool calls (name, args) | ✅ | ✅ | ✅ | ✅ |
+| Tool results | ✅ | ✅ | ✅ | ✅ |
+| Reasoning/thoughts | ❌ | ❌ | ✅ | ✅ when present |
 
 ### Metadata
 
-| Data | Claude | Codex | Gemini |
-|------|--------|-------|--------|
-| Session ID | ✅ | ✅ | ✅ |
-| Timestamps | ✅ | ✅ | ✅ |
-| Working directory | ✅ | ✅ | ✅ (as hash) |
-| Model name | ✅ | ✅ | ✅ |
-| Token usage | ✅ | ✅ | ✅ |
-| Git branch | ✅ | ❌ | ❌ |
-| Agent/CLI version | ✅ | ✅ | ❌ |
+| Data | Claude | Codex | Gemini | Pi |
+|------|--------|-------|--------|----|
+| Session ID | ✅ | ✅ | ✅ | ✅ |
+| Timestamps | ✅ | ✅ | ✅ | ✅ |
+| Working directory | ✅ | ✅ | ✅ (as hash) | ✅ |
+| Model name | ✅ | ✅ | ✅ | ✅ when present |
+| Token usage | ✅ | ✅ | ✅ | ✅ when present |
+| Git branch | ✅ | ❌ | ❌ | ❌ |
+| Agent/CLI version | ✅ | ✅ | ❌ | ✅ when present |
 
 ## Limitations and Considerations
 

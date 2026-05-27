@@ -26,8 +26,9 @@ See docs/design-v2/scope-resolution-v2.md for the underlying architecture.
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from agent_history.handlers.base import CommandResult
+from agent_history.cli.constants import DEFAULT_OUTPUT_DIR
 from agent_history.core.workspaces import build_scope_metadata
+from agent_history.handlers.base import CommandResult
 from agent_history.handlers.export import SessionExportHandler
 from agent_history.handlers.list import (
     HomeListHandler,
@@ -544,7 +545,7 @@ def export(  # noqa: PLR0913
 
     Args:
         pattern: Workspace pattern to match.
-        output_dir: Output directory (default: ./ai-chats).
+        output_dir: Output directory (default: ./.agent-history/exports).
         patterns: Multiple workspace patterns.
         projects: Project names from configuration.
         project: Project name from configuration.
@@ -587,7 +588,7 @@ def export(  # noqa: PLR0913
     output_args = _build_output_args(quiet=quiet)
 
     verb_args = {
-        "output_dir": Path(output_dir) if output_dir else Path.cwd() / "ai-chats",
+        "output_dir": Path(output_dir) if output_dir else Path(DEFAULT_OUTPUT_DIR),
         "minimal": minimal,
         "split": split,
         "flat": flat,
