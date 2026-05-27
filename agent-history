@@ -8024,7 +8024,38 @@ def _get_workspaces_for_source(source_key: str, args=None) -> list:
     return _get_workspaces_from_dir(get_claude_projects_dir())
 
 
-def resolve_workspace_input(workspace_input: str, source_key: str = "local", args=None) -> list:
+def _literal_workspace_path(workspace_input: str) -> str:
+    """Return a readable workspace path with insignificant trailing separators removed."""
+    return workspace_input.rstrip("/\\") or workspace_input
+
+
+def _resolve_non_claude_workspace_input(
+    workspace_input: str, source_key: str = "local", args=None, agent: str = "auto"
+) -> list:
+    """Resolve Codex/Gemini/Pi alias input without Claude path encoding."""
+    if workspace_input.startswith("/") or _looks_like_windows_drive(workspace_input):
+        return [_literal_workspace_path(workspace_input)]
+
+    sessions = _collect_non_claude_alias_sessions(
+        [workspace_input],
+        None,
+        None,
+        agent,
+        source_keys=[source_key],
+    )
+    workspaces = []
+    seen = set()
+    for session in sessions:
+        workspace = session.get("workspace_readable") or session.get("workspace")
+        if workspace and workspace not in seen:
+            seen.add(workspace)
+            workspaces.append(workspace)
+    return workspaces
+
+
+def resolve_workspace_input(
+    workspace_input: str, source_key: str = "local", args=None, agent: str = "auto"
+) -> list:
     """Resolve a workspace input (pattern, path, or encoded name) to actual encoded workspace names.
 
     Args:
@@ -8034,10 +8065,14 @@ def resolve_workspace_input(workspace_input: str, source_key: str = "local", arg
             - Pattern: 'project' or 'my-project'
         source_key: Source to search in ('local', 'remote:host', 'wsl:distro', 'windows')
         args: Arguments object for remote access
+        agent: Agent backend. Non-Claude agents preserve readable workspace paths.
 
     Returns:
         List of matching encoded workspace names
     """
+    if _is_non_claude_agent(agent):
+        return _resolve_non_claude_workspace_input(workspace_input, source_key, args, agent)
+
     # Case 1: Already an encoded workspace name (starts with -)
     if workspace_input.startswith("-"):
         return [workspace_input]
@@ -11035,17 +11070,11 @@ def save_aliases(data: dict) -> bool:
 
 
 def _sanitize_alias_workspace_entry(workspace: str) -> str:
-    """Normalize alias workspace entries, handling legacy absolute paths."""
+    """Normalize alias workspace entries while preserving readable paths."""
     if not workspace:
         return workspace
 
     lowered = workspace.lower()
-
-    if lowered.startswith("/mnt/"):
-        return path_to_encoded_workspace(workspace)
-
-    if workspace.startswith("/"):
-        return path_to_encoded_workspace(workspace)
 
     if lowered.startswith("-mnt-") and len(workspace) > MNT_ENCODED_PREFIX_LEN:
         drive_letter = workspace[5]
@@ -11074,6 +11103,11 @@ def _normalize_aliases(data: dict) -> dict:
     if changed:
         save_aliases(data)
     return data
+
+
+def _is_non_claude_agent(agent: str) -> bool:
+    """Return True for agents whose workspaces are readable paths/hashes, not Claude encodings."""
+    return agent in (AGENT_CODEX, AGENT_GEMINI, AGENT_PI)
 
 
 def _try_encode_workspace(candidate: str) -> str | None:
@@ -11115,7 +11149,10 @@ def _normalize_alias_workspace_input(workspace_input: str) -> tuple[str | None, 
         candidate = candidate.split(":", 1)[1].strip()
 
     encoded = _try_encode_workspace(candidate)
-    readable = _get_readable_from_encoded(encoded, candidate)
+    if candidate.startswith("/") or _looks_like_windows_drive(candidate):
+        readable = _literal_workspace_path(candidate)
+    else:
+        readable = _get_readable_from_encoded(encoded, candidate)
 
     return encoded, readable
 
@@ -11131,7 +11168,7 @@ def _match_alias_workspace(workspaces: list, workspace_input: str) -> str | None
         if entry in candidates:
             return entry
         try:
-            entry_readable = normalize_workspace_name(entry, verify_local=False)
+            entry_readable = _alias_workspace_readable(entry)
         except Exception:
             entry_readable = None
         if readable_input and entry_readable == readable_input:
@@ -11291,9 +11328,10 @@ def get_sessions_for_source(
 ) -> list:
     """Get sessions from a workspace on a specific source."""
     try:
+        claude_workspace = _try_encode_workspace(workspace) or workspace
         if source_key == "local":
             return get_workspace_sessions(
-                workspace, quiet=True, since_date=since_date, until_date=until_date
+                claude_workspace, quiet=True, since_date=since_date, until_date=until_date
             )
 
         if source_key == "windows" or source_key.startswith("windows:"):
@@ -11302,7 +11340,7 @@ def get_sessions_for_source(
             if not projects_dir:
                 return []
             return get_workspace_sessions(
-                workspace,
+                claude_workspace,
                 quiet=True,
                 since_date=since_date,
                 until_date=until_date,
@@ -11315,7 +11353,7 @@ def get_sessions_for_source(
             if wsl_projects_dir is None:
                 return []
             return get_workspace_sessions(
-                workspace,
+                claude_workspace,
                 quiet=True,
                 since_date=since_date,
                 until_date=until_date,
@@ -11325,7 +11363,7 @@ def get_sessions_for_source(
         if source_key.startswith("remote:"):
             remote_spec = source_key.split(":", 1)[1]
             return _get_remote_sessions(
-                remote_spec, workspace, since_date, until_date, fetch_remote
+                remote_spec, claude_workspace, since_date, until_date, fetch_remote
             )
 
         return []
@@ -11341,8 +11379,59 @@ def get_sessions_for_source(
 
 def _print_workspace_with_count(source_key: str, workspace: str) -> int:
     """Print workspace with session count. Returns count."""
-    ws_readable = normalize_workspace_name(workspace)
-    sessions = get_sessions_for_source(source_key, workspace)
+    return _print_workspace_with_count_for_agent(source_key, workspace, "auto")
+
+
+def _alias_workspace_readable(workspace: str) -> str:
+    """Return an alias workspace for display without corrupting readable paths."""
+    if workspace.startswith("/") or _looks_like_windows_drive(workspace):
+        return workspace
+    if workspace.startswith("--"):
+        return pi_get_workspace_readable(workspace)
+    if workspace.startswith("-") or _is_windows_encoded_path(workspace):
+        return normalize_workspace_name(workspace)
+    return workspace
+
+
+def _alias_workspace_pattern(workspace: str) -> str:
+    """Return the pattern used to scan non-Claude sessions for an alias entry."""
+    return _alias_workspace_readable(workspace)
+
+
+def _get_alias_workspace_sessions(
+    source_key: str,
+    workspace: str,
+    agent: str = "auto",
+    since_date=None,
+    until_date=None,
+) -> list:
+    """Return sessions for one alias workspace, honoring non-Claude readable paths."""
+    sessions = []
+    if agent in ("auto", AGENT_CLAUDE):
+        sessions.extend(
+            get_sessions_for_source(
+                source_key, workspace, since_date=since_date, until_date=until_date
+            )
+        )
+    if agent in ("auto", AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
+        sessions.extend(
+            _collect_non_claude_alias_sessions(
+                [_alias_workspace_pattern(workspace)],
+                since_date,
+                until_date,
+                agent,
+                source_keys=[source_key],
+            )
+        )
+    return sessions
+
+
+def _print_workspace_with_count_for_agent(
+    source_key: str, workspace: str, agent: str = "auto"
+) -> int:
+    """Print workspace with source/agent-aware session count. Returns count."""
+    ws_readable = _alias_workspace_readable(workspace)
+    sessions = _get_alias_workspace_sessions(source_key, workspace, agent)
     count = len(sessions)
     if count > 0 or source_key == "local":
         print(f"    {ws_readable}\t{count} sessions")
@@ -11353,6 +11442,11 @@ def _print_workspace_with_count(source_key: str, workspace: str) -> int:
 
 def _print_alias_sources(sources: dict, show_counts: bool) -> int:
     """Print alias sources and return total session count."""
+    return _print_alias_sources_for_agent(sources, show_counts, "auto")
+
+
+def _print_alias_sources_for_agent(sources: dict, show_counts: bool, agent: str = "auto") -> int:
+    """Print alias sources and return total session count for an agent filter."""
     total_sessions = 0
     for source_key, workspaces in sorted(sources.items()):
         if not workspaces:
@@ -11360,9 +11454,11 @@ def _print_alias_sources(sources: dict, show_counts: bool) -> int:
         print(f"  {source_key}:")
         for workspace in workspaces:
             if show_counts:
-                total_sessions += _print_workspace_with_count(source_key, workspace)
+                total_sessions += _print_workspace_with_count_for_agent(
+                    source_key, workspace, agent
+                )
             else:
-                print(f"    {normalize_workspace_name(workspace)}")
+                print(f"    {_alias_workspace_readable(workspace)}")
     return total_sessions
 
 
@@ -11371,6 +11467,7 @@ def cmd_alias_list(args):
     aliases_data = load_aliases()
     aliases = aliases_data.get("aliases", {})
     show_counts = getattr(args, "counts", False)
+    agent = getattr(args, "agent", None) or "auto"
 
     if not aliases:
         print("No aliases defined.")
@@ -11392,7 +11489,7 @@ def cmd_alias_list(args):
 
     for alias_name, sources in sorted(aliases.items()):
         print(f"\n{alias_name}:")
-        total_sessions = _print_alias_sources(sources, show_counts)
+        total_sessions = _print_alias_sources_for_agent(sources, show_counts, agent)
         if show_counts:
             print(f"  Total: {total_sessions} sessions")
 
@@ -11403,6 +11500,7 @@ def cmd_alias_show(args):
     aliases = aliases_data.get("aliases", {})
 
     alias_name = args.name
+    agent = getattr(args, "agent", None) or "auto"
     if alias_name not in aliases:
         sys.stderr.write(f"Error: Alias '{alias_name}' not found\n")
         sys.exit(1)
@@ -11416,11 +11514,10 @@ def cmd_alias_show(args):
         if workspaces:
             print(f"  {source_key}:")
             for workspace in workspaces:
-                # Use source-aware function to get sessions
-                sessions = get_sessions_for_source(source_key, workspace)
+                sessions = _get_alias_workspace_sessions(source_key, workspace, agent)
                 count = len(sessions)
                 total_sessions += count
-                ws_readable = normalize_workspace_name(workspace)
+                ws_readable = _alias_workspace_readable(workspace)
                 if count > 0 or source_key == "local":
                     print(f"    {ws_readable}\t{count} sessions")
                 else:
@@ -11508,9 +11605,10 @@ def _resolve_workspaces_for_source(
     workspaces_to_add = []
     remote_value = source_param if source_key.startswith("remote:") else None
     lookup_args = ListCommandArgs(remote=remote_value)
+    agent = getattr(args, "agent", None) or "auto"
 
     for ws_input in raw_workspaces:
-        resolved = resolve_workspace_input(ws_input, source_key, lookup_args)
+        resolved = resolve_workspace_input(ws_input, source_key, lookup_args, agent=agent)
         if resolved:
             workspaces_to_add.extend(resolved)
     return workspaces_to_add
@@ -11576,8 +11674,9 @@ def _alias_add_single_source(
             return
     else:
         workspaces_to_add = []
+        agent = getattr(args, "agent", None) or "auto"
         for ws_input in raw_workspaces:
-            resolved = resolve_workspace_input(ws_input, source_key, args)
+            resolved = resolve_workspace_input(ws_input, source_key, args, agent=agent)
             if resolved:
                 workspaces_to_add.extend(resolved)
             else:
@@ -11754,10 +11853,7 @@ def _get_alias_workspace_patterns(alias_config: dict) -> list:
     patterns = set()
     for source_key, workspaces in alias_config.items():
         for workspace in workspaces:
-            # Convert encoded workspace back to pattern
-            readable = normalize_workspace_name(workspace)
-            # Use the last path component as pattern
-            pattern = readable.split("/")[-1] if "/" in readable else readable
+            pattern = _alias_workspace_pattern(workspace)
             if pattern:
                 patterns.add(pattern)
     return list(patterns)
@@ -12013,7 +12109,7 @@ def _get_ws_output_path(output_path: Path, workspace: str, flat: bool) -> Path:
     """Get output path for workspace, creating directory if needed."""
     if flat:
         return output_path
-    ws_name = normalize_workspace_name(workspace).replace("/", "-").replace("\\", "-")
+    ws_name = _alias_workspace_readable(workspace).replace("/", "-").replace("\\", "-")
     if ws_name.startswith("-"):
         ws_name = ws_name[1:]
     ws_path = output_path / ws_name
@@ -12130,7 +12226,7 @@ def _alias_html_output_path(
     output_path: Path, workspace_name: str, source_tag: str, flat: bool
 ) -> Path:
     """Return output path for an alias workspace-level HTML bundle."""
-    normalized = normalize_workspace_name(workspace_name).replace("/", "-").replace("\\", "-")
+    normalized = _alias_workspace_readable(workspace_name).replace("/", "-").replace("\\", "-")
     if normalized.startswith("-"):
         normalized = normalized[1:]
     if flat:
@@ -18111,7 +18207,7 @@ def _add_alias_parser(subparsers):
         help="Alias name (default: auto-detect from current directory)",
     )
     parser_add.add_argument(
-        "workspaces", nargs="*", help="Workspace names to add (encoded directory names)"
+        "workspaces", nargs="*", help="Workspace paths, names, or patterns to add"
     )
     parser_add.add_argument("--pick", action="store_true", help="Interactive workspace picker")
     parser_add.add_argument(
@@ -18137,7 +18233,7 @@ def _add_alias_parser(subparsers):
     )
     parser_remove.add_argument("name", help="Alias name")
     parser_remove.add_argument(
-        "workspace", help="Workspace name to remove (encoded directory name)"
+        "workspace", help="Workspace path, name, or encoded directory name to remove"
     )
     parser_remove.add_argument(
         "-r", "--remote", metavar="HOST", help="Remove workspace from remote source"

@@ -3409,11 +3409,11 @@ class TestAliasWorkspaceSanitize:
         normalized = ch._sanitize_alias_workspace_entry(original)
         assert normalized == "C--Users-alice-projects-myapp"
 
-    def test_absolute_path_normalization(self):
-        """Absolute Unix paths should be converted to encoded names."""
+    def test_absolute_path_preservation(self):
+        """Absolute paths should be preserved for readable non-Claude aliases."""
         original = "/home/user/myproject"
         normalized = ch._sanitize_alias_workspace_entry(original)
-        assert normalized == "-home-user-myproject"
+        assert normalized == original
 
 
 class TestAliasWorkspaceMatching:
@@ -7786,6 +7786,52 @@ class TestSection9Remaining:
         parser = ch._create_argument_parser()
         args = parser.parse_args(["alias", "add", "test", "--pick"])
         assert args.pick is True
+
+    def test_alias_add_pi_absolute_path_preserves_hyphenated_workspace(
+        self, alias_test_env, monkeypatch, capsys
+    ):
+        """Pi aliases should store readable paths literally, not Claude-encode hyphens."""
+        workspace = "/home/user/projects/examples-sandbox/pi-examples"
+        with patch.object(ch, "get_aliases_dir", return_value=alias_test_env["config_dir"]):
+            with patch.object(ch, "get_aliases_file", return_value=alias_test_env["aliases_file"]):
+                args = SimpleNamespace(
+                    name="pi-test",
+                    workspaces=[workspace],
+                    pick=False,
+                    remote=None,
+                    wsl=False,
+                    windows=False,
+                    all_homes=False,
+                    agent=ch.AGENT_PI,
+                )
+                ch.cmd_alias_add(args)
+
+                aliases = ch.load_aliases()
+                assert aliases["aliases"]["pi-test"]["local"] == [workspace]
+
+                def fake_collect(patterns, since_date, until_date, agent, source_keys=None):
+                    assert patterns == [workspace]
+                    assert agent == ch.AGENT_PI
+                    assert source_keys == ["local"]
+                    return [
+                        {
+                            "agent": ch.AGENT_PI,
+                            "source": "local",
+                            "workspace_readable": workspace,
+                            "filename": "pi-session.jsonl",
+                            "message_count": 3,
+                            "modified": datetime(2026, 5, 25),
+                        }
+                    ]
+
+                monkeypatch.setattr(ch, "_collect_non_claude_alias_sessions", fake_collect)
+                capsys.readouterr()
+                ch.cmd_alias_show(SimpleNamespace(name="pi-test", agent=ch.AGENT_PI))
+
+                captured = capsys.readouterr()
+                assert workspace in captured.out
+                assert "/pi/examples" not in captured.out
+                assert "1 sessions" in captured.out
 
     def test_alias_source_show_counts(self, alias_test_env):
         """9.2.7: alias show shows workspaces by source with session counts."""
