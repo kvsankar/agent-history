@@ -34,6 +34,7 @@ BASELINE = {
     ("parser.py", "CLIParser._build_scope_args"): 28,
     ("parser.py", "CLIParser._preprocess_argv"): 25,
     ("parser.py", "CLIParser._build_verb_args"): 25,
+    ("metrics.py", "_parse_claude_jsonl"): 23,
     ("resolver.py", "ScopeResolver._build_template"): 30,
     ("resolver.py", "ScopeResolver._collect_sessions"): 23,
     # Temporary allowance while UNC normalization is refactored

@@ -56,6 +56,30 @@ def test_registered_backend_is_visible_to_parser_and_inventory(tmp_path: Path) -
             "role": msg.get("role", "user"),
             "content": msg.get("content", ""),
         },
+        extract_stats=lambda path: (
+            {
+                "session_id": "fake-session",
+                "message_count": 1,
+                "user_messages": 1,
+                "assistant_messages": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
+                "first_timestamp": "2026-01-01T00:00:00Z",
+                "last_timestamp": "2026-01-01T00:00:00Z",
+            },
+            [
+                {
+                    "session_id": "fake-session",
+                    "type": "user",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                }
+            ],
+            [],
+        ),
+        resolve_stats_workspace=lambda path, session_info, workspace: workspace
+        or "/tmp/fake-workspace",
     )
 
     register_backend(backend)

@@ -16,18 +16,21 @@ import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agent_history.storage.config import get_config_dir
 
+if TYPE_CHECKING:
+    from agent_history.scope.types import ConcreteScope
+
 __all__ = [
     "get_metrics_db_path",
+    "get_session_stats_from_db",
+    "get_time_stats_from_db",
+    "get_tool_usage_stats_from_db",
     "init_metrics_db",
     "sync_file_to_db",
     "sync_sessions_to_db",
-    "get_session_stats_from_db",
-    "get_tool_usage_stats_from_db",
-    "get_time_stats_from_db",
 ]
 
 # Schema version for migrations
@@ -324,8 +327,8 @@ def _parse_claude_jsonl(
 
     try:
         with open(jsonl_file, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+            for raw_line in f:
+                line = raw_line.strip()
                 if not line:
                     continue
                 try:
@@ -463,8 +466,8 @@ def _parse_codex_jsonl(
 
     try:
         with open(jsonl_file, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+            for raw_line in f:
+                line = raw_line.strip()
                 if not line:
                     continue
                 try:
@@ -781,7 +784,7 @@ def sync_file_to_db(
         source_key: Source identifier (e.g., "local", "wsl:Ubuntu")
         force: If True, re-sync even if file hasn't changed
         workspace: Workspace name (defaults to parent directory name)
-        agent: Agent type (claude, codex, gemini)
+        agent: Agent type (claude, codex, gemini, pi, or a registered backend)
 
     Returns:
         True if file was synced, False if skipped
@@ -803,34 +806,14 @@ def sync_file_to_db(
         if row and row["file_mtime"] and row["file_mtime"] >= current_mtime:
             return False
 
-    # Parse the file based on agent type
-    if agent == "codex":
-        session_info, messages, tool_uses = _parse_codex_jsonl(jsonl_file)
-    elif agent == "gemini":
-        session_info, messages, tool_uses = _parse_gemini_json(jsonl_file)
-    else:
-        # Default to Claude format
-        session_info, messages, tool_uses = _parse_claude_jsonl(jsonl_file)
+    from agent_history.backends.registry import require_backend
 
-    # Determine workspace - prefer metadata over passed value
-    if agent == "codex" and session_info.get("cwd"):
-        # Codex: use session_meta.cwd
-        workspace = session_info["cwd"]
-    elif agent == "gemini":
-        # Gemini: try hash index lookup
-        hash_dir = jsonl_file.parent.parent  # .../hash/chats/file.json -> .../hash
-        project_hash = hash_dir.name if hash_dir.name else None
-        if project_hash:
-            resolved = _lookup_gemini_hash(project_hash)
-            if resolved:
-                workspace = resolved
-            elif workspace is None:
-                workspace = jsonl_file.parent.name
-    elif workspace is None:
-        workspace = jsonl_file.parent.name
+    backend = require_backend(agent)
+    session_info, messages, tool_uses = backend.extract_stats(jsonl_file)
+    workspace = backend.resolve_stats_workspace(jsonl_file, session_info, workspace)
 
     # Calculate work periods from message timestamps
-    timestamps = [m["timestamp"] for m in messages if m["timestamp"]]
+    timestamps = [m.get("timestamp", "") for m in messages if m.get("timestamp")]
     work_seconds, num_periods = _calculate_work_periods(timestamps)
 
     # Delete existing data for this file
@@ -855,28 +838,28 @@ def sync_file_to_db(
         """,
         (
             file_path_str,
-            session_info["session_id"],
+            session_info.get("session_id"),
             workspace,
             source_key,
             source_key,
             agent,
             current_mtime,
-            1 if session_info["is_agent"] else 0,
-            session_info["parent_session_id"],
-            session_info["first_timestamp"],
-            session_info["last_timestamp"],
-            session_info["message_count"],
-            session_info["user_messages"],
-            session_info["assistant_messages"],
-            session_info["input_tokens"],
-            session_info["output_tokens"],
-            session_info["cache_creation_tokens"],
-            session_info["cache_read_tokens"],
-            session_info["first_timestamp"],
-            session_info["last_timestamp"],
-            session_info["git_branch"],
-            session_info["claude_version"],
-            session_info["cwd"],
+            1 if session_info.get("is_agent") else 0,
+            session_info.get("parent_session_id"),
+            session_info.get("first_timestamp"),
+            session_info.get("last_timestamp"),
+            session_info.get("message_count", 0),
+            session_info.get("user_messages", 0),
+            session_info.get("assistant_messages", 0),
+            session_info.get("input_tokens", 0),
+            session_info.get("output_tokens", 0),
+            session_info.get("cache_creation_tokens", 0),
+            session_info.get("cache_read_tokens", 0),
+            session_info.get("first_timestamp"),
+            session_info.get("last_timestamp"),
+            session_info.get("git_branch"),
+            session_info.get("claude_version"),
+            session_info.get("cwd"),
             work_seconds,
             num_periods,
         ),
@@ -893,18 +876,18 @@ def sync_file_to_db(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                msg["uuid"],
+                msg.get("uuid"),
                 file_path_str,
-                msg["session_id"],
-                msg["parent_uuid"],
-                msg["type"],
-                msg["timestamp"],
-                msg["model"],
-                msg["stop_reason"],
-                msg["input_tokens"],
-                msg["output_tokens"],
-                msg["cache_creation_tokens"],
-                msg["cache_read_tokens"],
+                msg.get("session_id"),
+                msg.get("parent_uuid"),
+                msg.get("type", "unknown"),
+                msg.get("timestamp", ""),
+                msg.get("model"),
+                msg.get("stop_reason"),
+                msg.get("input_tokens", 0),
+                msg.get("output_tokens", 0),
+                msg.get("cache_creation_tokens", 0),
+                msg.get("cache_read_tokens", 0),
             ),
         )
 
@@ -918,13 +901,13 @@ def sync_file_to_db(
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                tu["tool_use_id"],
-                tu["message_uuid"],
+                tu.get("tool_use_id"),
+                tu.get("message_uuid"),
                 file_path_str,
-                tu["session_id"],
-                tu["tool_name"],
-                tu["is_error"],
-                tu["timestamp"],
+                tu.get("session_id"),
+                tu.get("tool_name", "unknown"),
+                tu.get("is_error", 0),
+                tu.get("timestamp"),
             ),
         )
 
@@ -954,7 +937,7 @@ def sync_sessions_to_db(
         conn: Database connection
         sessions_dir: Path to sessions directory (e.g., ~/.claude/projects)
         source_key: Source identifier
-        agent: Agent type
+        agent: Registered agent backend id
         force: Force re-sync all files
         patterns: Optional list of workspace patterns to match
 
@@ -975,92 +958,53 @@ def sync_sessions_to_db(
                 return True
         return False
 
-    # For Claude: iterate over workspace directories
-    if agent == "claude":
-        for workspace_dir in sessions_dir.iterdir():
-            if not workspace_dir.is_dir():
-                continue
-            if not matches_pattern(workspace_dir.name):
-                continue
-            # Skip cached workspaces
-            dir_name = workspace_dir.name
-            if dir_name.startswith("remote_") or dir_name.startswith("wsl_"):
-                continue
+    from agent_history.backends.registry import get_backend
 
-            for jsonl_file in workspace_dir.glob("*.jsonl"):
-                try:
-                    if sync_file_to_db(
-                        conn,
-                        jsonl_file,
-                        source_key,
-                        force,
-                        workspace=workspace_dir.name,
-                        agent=agent,
-                    ):
-                        stats["synced"] += 1
-                    else:
-                        stats["skipped"] += 1
-                except Exception:
-                    stats["errors"] += 1
+    backend = get_backend(agent)
+    if backend is None:
+        stats["errors"] += 1
+        return stats
 
-    # For Codex: iterate over date directories
-    elif agent == "codex":
-        for year_dir in sessions_dir.iterdir():
-            if not year_dir.is_dir():
-                continue
-            for month_dir in year_dir.iterdir():
-                if not month_dir.is_dir():
-                    continue
-                for day_dir in month_dir.iterdir():
-                    if not day_dir.is_dir():
-                        continue
-                    for jsonl_file in day_dir.glob("*.jsonl"):
-                        # Extract workspace from filename
-                        workspace = jsonl_file.stem.rsplit("-", 1)[0]
-                        if not matches_pattern(workspace):
-                            continue
-                        try:
-                            if sync_file_to_db(
-                                conn,
-                                jsonl_file,
-                                source_key,
-                                force,
-                                workspace=workspace,
-                                agent=agent,
-                            ):
-                                stats["synced"] += 1
-                            else:
-                                stats["skipped"] += 1
-                        except Exception:
-                            stats["errors"] += 1
+    try:
+        sessions = backend.scan_sessions(sessions_dir)
+    except Exception:
+        stats["errors"] += 1
+        return stats
 
-    # For Gemini: iterate over hash directories
-    elif agent == "gemini":
-        for hash_dir in sessions_dir.iterdir():
-            if not hash_dir.is_dir():
-                continue
-            chats_dir = hash_dir / "chats"
-            if not chats_dir.exists():
-                continue
-            for json_file in chats_dir.glob("*.json"):
-                # Extract workspace from filename
-                workspace = json_file.stem
-                if not matches_pattern(workspace):
-                    continue
-                try:
-                    if sync_file_to_db(
-                        conn,
-                        json_file,
-                        source_key,
-                        force,
-                        workspace=workspace,
-                        agent=agent,
-                    ):
-                        stats["synced"] += 1
-                    else:
-                        stats["skipped"] += 1
-                except Exception:
-                    stats["errors"] += 1
+    for session in sessions:
+        file_value = session.get("file")
+        if not file_value:
+            stats["errors"] += 1
+            continue
+
+        workspace = (
+            session.get("workspace_key")
+            or session.get("workspace")
+            or session.get("workspace_readable")
+            or ""
+        )
+        workspace_display = session.get("workspace_readable") or workspace
+        if not (
+            matches_pattern(str(workspace))
+            or matches_pattern(str(workspace_display))
+            or matches_pattern(str(session.get("filename", "")))
+        ):
+            continue
+
+        try:
+            if sync_file_to_db(
+                conn,
+                Path(str(file_value)),
+                source_key,
+                force,
+                workspace=str(workspace) if workspace else None,
+                agent=agent,
+            ):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except Exception:
+            stats["errors"] += 1
 
     conn.commit()
     return stats
@@ -1092,15 +1036,20 @@ def sync_scope_to_db(
                     remote_host = home[7:]
                     try:
                         client = SSHRemoteClient()
-                        local_copy = client.ensure_local_copy(remote_host, record.workspace, session)
+                        local_copy = client.ensure_local_copy(
+                            remote_host, record.workspace, session
+                        )
                         if local_copy:
                             file_path = local_copy
                     except Exception:
                         stats["errors"] += 1
                         continue
                 elif home == "web":
-                    from agent_history.backends.web import WebSessionsError, ensure_web_session_cache
-                    from agent_history.backends.web import resolve_web_credentials
+                    from agent_history.backends.web import (
+                        WebSessionsError,
+                        ensure_web_session_cache,
+                        resolve_web_credentials,
+                    )
 
                     session_id = (
                         session.get("session_id") or session.get("id") or session.get("filename")
@@ -1245,11 +1194,7 @@ def get_time_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
             GROUP BY day
             """
         )
-        by_day = {
-            row["day"]: row["total_seconds"]
-            for row in day_cursor.fetchall()
-            if row["day"]
-        }
+        by_day = {row["day"]: row["total_seconds"] for row in day_cursor.fetchall() if row["day"]}
 
         return {
             "total_duration_seconds": total_seconds,

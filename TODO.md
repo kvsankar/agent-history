@@ -146,7 +146,10 @@ environment isolation first.
   - Register Pi so `--agent pi`, inventory discovery, list/count, and export paths work without handler-specific Pi branches.
   - Add focused unit and CLI integration tests for Pi registry discovery, listing, and export.
 - [ ] Finish backend-registry cleanup for remaining hardcoded agent dispatch.
-  - Move stats database sync parsing and workspace extraction behind backend capabilities.
+  - [x] Move stats database sync parsing and workspace extraction behind backend capabilities.
+    - `AgentBackend` now owns normalized stats extraction and workspace resolution hooks.
+    - `sync_file_to_db()` and `sync_sessions_to_db()` use registered backend capabilities instead of storage-layer agent dispatch.
+    - Added regression coverage for fake registered stats backends and Pi stats sync.
   - Move SSH/remote command construction and remote path conventions behind backend capabilities.
   - Move low-level WSL path candidate selection behind backend path capabilities.
   - Move generic Markdown presentation labels/titles behind backend metadata where practical.
