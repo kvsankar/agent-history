@@ -150,7 +150,10 @@ environment isolation first.
     - `AgentBackend` now owns normalized stats extraction and workspace resolution hooks.
     - `sync_file_to_db()` and `sync_sessions_to_db()` use registered backend capabilities instead of storage-layer agent dispatch.
     - Added regression coverage for fake registered stats backends and Pi stats sync.
-  - Move SSH/remote command construction and remote path conventions behind backend capabilities.
+  - [x] Move SSH/remote command construction and remote path conventions behind backend capabilities.
+    - Backend descriptors now provide optional remote workspace/session listing commands, workspace parsing, readable workspace labels, and remote file path fallbacks.
+    - SSH transport executes backend-provided commands and parses the shared remote session line format without Claude/Codex/Gemini/Pi dispatch.
+    - Added fake-backend regression coverage proving remote listing can be added through registration.
   - Move low-level WSL path candidate selection behind backend path capabilities.
   - Move generic Markdown presentation labels/titles behind backend metadata where practical.
   - Keep exact-match scope filters as ordinary data filters; only backend-specific behavior belongs in backend capabilities.
