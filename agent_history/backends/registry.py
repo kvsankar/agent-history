@@ -7,6 +7,7 @@ of branching on agent ids throughout the package.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ DEFAULT_BACKEND_ID = AGENT_CLAUDE
 
 MessageList = List[Dict[str, Any]]
 SessionList = List[Dict[str, Any]]
+StatsPayload = tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,8 @@ class AgentBackend:
     count_messages: Callable[[Path], int]
     render_markdown: Callable[[Path, bool, MessageList | None, int], str]
     message_to_unified: Callable[[dict[str, Any]], dict[str, Any]]
+    extract_stats: Callable[[Path], StatsPayload]
+    resolve_stats_workspace: Callable[[Path, dict[str, Any], str | None], str]
     file_markers: tuple[str, ...] = ()
     file_suffixes: tuple[str, ...] = ()
     supports_conversation_graph: bool = False
@@ -176,6 +180,19 @@ def _claude_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
     return claude_message_to_unified(message)
 
 
+def _claude_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.storage.metrics import _parse_claude_jsonl
+
+    return _parse_claude_jsonl(session_file)
+
+
+def _claude_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    del session_info
+    return workspace or session_file.parent.name
+
+
 def _codex_session_dir(resolver: Any, context: Any) -> Path | None:
     return resolver.get_codex_dir(context)
 
@@ -230,6 +247,19 @@ def _codex_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
     from agent_history.backends.codex import codex_message_to_unified
 
     return codex_message_to_unified(message)
+
+
+def _codex_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.storage.metrics import _parse_codex_jsonl
+
+    return _parse_codex_jsonl(session_file)
+
+
+def _codex_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    del session_file
+    return session_info.get("cwd") or workspace or "unknown"
 
 
 def _gemini_session_dir(resolver: Any, context: Any) -> Path | None:
@@ -288,6 +318,39 @@ def _gemini_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
     return _gemini_message_to_unified(message)
 
 
+def _gemini_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.storage.metrics import _parse_gemini_json
+
+    return _parse_gemini_json(session_file)
+
+
+def _gemini_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    from agent_history.backends.gemini import (
+        gemini_get_hash_index_file,
+        gemini_get_legacy_hash_index_file,
+        gemini_get_path_for_hash,
+    )
+
+    del session_info
+    hash_dir = session_file.parent.parent
+    project_hash = hash_dir.name if hash_dir.name else None
+    if project_hash:
+        resolved = gemini_get_path_for_hash(project_hash)
+        if resolved:
+            return resolved
+        for index_file in (gemini_get_hash_index_file(), gemini_get_legacy_hash_index_file()):
+            try:
+                data = json.loads(index_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            resolved = data.get("hashes", {}).get(project_hash)
+            if resolved:
+                return resolved
+    return workspace or session_file.parent.name
+
+
 def _pi_session_dir(resolver: Any, context: Any) -> Path | None:
     return resolver.get_pi_dir(context)
 
@@ -333,6 +396,119 @@ def _pi_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
     return pi_message_to_unified(message)
 
 
+def _empty_session_info() -> dict[str, Any]:
+    return {
+        "session_id": None,
+        "message_count": 0,
+        "user_messages": 0,
+        "assistant_messages": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "first_timestamp": None,
+        "last_timestamp": None,
+        "cwd": None,
+        "git_branch": None,
+        "claude_version": None,
+        "is_agent": False,
+        "parent_session_id": None,
+    }
+
+
+def _pi_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.backends.pi import pi_read_jsonl_messages
+
+    messages, session_meta = pi_read_jsonl_messages(session_file)
+    session_info = _empty_session_info()
+    session_info["session_id"] = (session_meta or {}).get("id")
+    session_info["cwd"] = (session_meta or {}).get("cwd") or (session_meta or {}).get("workspace")
+
+    db_messages: list[dict[str, Any]] = []
+    tool_uses: list[dict[str, Any]] = []
+    timestamps: list[str] = []
+
+    for msg in messages:
+        role = msg.get("role")
+        timestamp = msg.get("timestamp", "")
+        if timestamp:
+            timestamps.append(timestamp)
+
+        for tool_call in msg.get("tool_calls", []):
+            tool_uses.append(
+                {
+                    "tool_use_id": tool_call.get("id"),
+                    "message_uuid": msg.get("id"),
+                    "session_id": session_info["session_id"],
+                    "tool_name": tool_call.get("name", "unknown"),
+                    "is_error": 0,
+                    "timestamp": timestamp,
+                }
+            )
+
+        if msg.get("is_tool_result"):
+            tool_uses.append(
+                {
+                    "tool_use_id": msg.get("tool_call_id"),
+                    "message_uuid": msg.get("id"),
+                    "session_id": session_info["session_id"],
+                    "tool_name": msg.get("tool_name", "unknown"),
+                    "is_error": 1 if msg.get("is_error") else 0,
+                    "timestamp": timestamp,
+                }
+            )
+            continue
+
+        if role not in ("user", "assistant"):
+            continue
+
+        tokens = msg.get("tokens") or {}
+        input_tokens = tokens.get("input", 0) or 0
+        output_tokens = tokens.get("output", 0) or 0
+        cache_creation = tokens.get("cacheWrite", 0) or 0
+        cache_read = tokens.get("cacheRead", 0) or 0
+
+        session_info["message_count"] += 1
+        if role == "user":
+            session_info["user_messages"] += 1
+        else:
+            session_info["assistant_messages"] += 1
+        session_info["input_tokens"] += input_tokens
+        session_info["output_tokens"] += output_tokens
+        session_info["cache_creation_tokens"] += cache_creation
+        session_info["cache_read_tokens"] += cache_read
+
+        db_messages.append(
+            {
+                "uuid": msg.get("id"),
+                "session_id": session_info["session_id"],
+                "parent_uuid": msg.get("parent_id"),
+                "type": role,
+                "timestamp": timestamp,
+                "model": msg.get("model"),
+                "stop_reason": None,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_creation_tokens": cache_creation,
+                "cache_read_tokens": cache_read,
+            }
+        )
+
+    if timestamps:
+        session_info["first_timestamp"] = min(timestamps)
+        session_info["last_timestamp"] = max(timestamps)
+
+    return session_info, db_messages, tool_uses
+
+
+def _pi_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    from agent_history.backends.pi import pi_get_workspace_from_session
+
+    return session_info.get("cwd") or workspace or pi_get_workspace_from_session(session_file)
+
+
 register_backend(
     AgentBackend(
         id=AGENT_CLAUDE,
@@ -344,6 +520,8 @@ register_backend(
         count_messages=_claude_count_messages,
         render_markdown=_claude_render_markdown,
         message_to_unified=_claude_message_to_unified,
+        extract_stats=_claude_extract_stats,
+        resolve_stats_workspace=_claude_resolve_stats_workspace,
         file_markers=(".claude",),
         file_suffixes=(".jsonl",),
         supports_conversation_graph=True,
@@ -360,6 +538,8 @@ register_backend(
         count_messages=_codex_count_messages,
         render_markdown=_codex_render_markdown,
         message_to_unified=_codex_message_to_unified,
+        extract_stats=_codex_extract_stats,
+        resolve_stats_workspace=_codex_resolve_stats_workspace,
         file_markers=(".codex",),
         file_suffixes=(".jsonl",),
     )
@@ -375,6 +555,8 @@ register_backend(
         count_messages=_gemini_count_messages,
         render_markdown=_gemini_render_markdown,
         message_to_unified=_gemini_message_to_unified,
+        extract_stats=_gemini_extract_stats,
+        resolve_stats_workspace=_gemini_resolve_stats_workspace,
         file_markers=(".gemini",),
         file_suffixes=(".json",),
     )
@@ -390,6 +572,8 @@ register_backend(
         count_messages=_pi_count_messages,
         render_markdown=_pi_render_markdown,
         message_to_unified=_pi_message_to_unified,
+        extract_stats=_pi_extract_stats,
+        resolve_stats_workspace=_pi_resolve_stats_workspace,
         file_markers=(".pi",),
         file_suffixes=(".jsonl",),
     )

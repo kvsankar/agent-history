@@ -131,6 +131,44 @@ def test_pi_markdown_export_includes_metadata_and_tool_calls(tmp_path: Path) -> 
     assert "**[Tool: read_file]**" in markdown
 
 
+def test_pi_stats_sync_uses_backend_capabilities(tmp_path: Path) -> None:
+    from agent_history.storage.metrics import init_metrics_db, sync_sessions_to_db
+
+    sessions_dir = tmp_path / ".pi" / "agent" / "sessions"
+    session_file = sessions_dir / "--home-sankar-pi-project--" / "session.jsonl"
+    _write_pi_session(session_file)
+
+    conn = init_metrics_db(db_path=tmp_path / "metrics.db")
+    try:
+        stats = sync_sessions_to_db(conn, sessions_dir, agent="pi", force=True)
+        row = conn.execute(
+            """
+            SELECT workspace, agent, message_count, input_tokens, output_tokens,
+                   cache_creation_tokens, cache_read_tokens
+            FROM sessions
+            WHERE file_path = ?
+            """,
+            (str(session_file),),
+        ).fetchone()
+        tool_count = conn.execute(
+            "SELECT COUNT(*) FROM tool_uses WHERE file_path = ?",
+            (str(session_file),),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert stats == {"synced": 1, "skipped": 0, "errors": 0}
+    assert row is not None
+    assert row["workspace"] == "/home/sankar/pi-project"
+    assert row["agent"] == "pi"
+    assert row["message_count"] == 2
+    assert row["input_tokens"] == 10
+    assert row["output_tokens"] == 5
+    assert row["cache_creation_tokens"] == 2
+    assert row["cache_read_tokens"] == 3
+    assert tool_count == 2
+
+
 def test_pi_home_dir_uses_project_settings_session_dir(tmp_path: Path, monkeypatch) -> None:
     project_dir = tmp_path / "project"
     settings_dir = project_dir / ".pi"
