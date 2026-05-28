@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List
@@ -39,6 +40,11 @@ class AgentBackend:
     message_to_unified: Callable[[dict[str, Any]], dict[str, Any]]
     extract_stats: Callable[[Path], StatsPayload]
     resolve_stats_workspace: Callable[[Path, dict[str, Any], str | None], str]
+    remote_list_workspaces_command: Callable[[], str] | None = None
+    remote_parse_workspaces: Callable[[str], list[str]] | None = None
+    remote_list_sessions_command: Callable[[str], str] | None = None
+    remote_workspace_readable: Callable[[str], str] | None = None
+    remote_file_path: Callable[[str, str, dict[str, Any]], str | None] | None = None
     file_markers: tuple[str, ...] = ()
     file_suffixes: tuple[str, ...] = ()
     supports_conversation_graph: bool = False
@@ -193,6 +199,38 @@ def _claude_resolve_stats_workspace(
     return workspace or session_file.parent.name
 
 
+def _claude_remote_list_workspaces_command() -> str:
+    return "ls -1 ~/.claude/projects/ 2>/dev/null || true"
+
+
+def _claude_remote_parse_workspaces(output: str) -> list[str]:
+    items = [line.strip() for line in output.splitlines() if line.strip()]
+    return [
+        item for item in items if item.startswith("-") and not item.startswith(("remote_", "wsl_"))
+    ]
+
+
+def _claude_remote_list_sessions_command(workspace: str) -> str:
+    safe_workspace = shlex.quote(workspace)
+    return f"""cd ~/.claude/projects/{safe_workspace} 2>/dev/null && \
+for f in *.jsonl; do
+    [ -f "$f" ] || continue
+    size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+    lines=$(wc -l < "$f")
+    echo "$PWD/$f|$size|$mtime|$lines"
+done"""
+
+
+def _claude_remote_workspace_readable(workspace: str) -> str:
+    return normalize_workspace_name(workspace, verify_local=False)
+
+
+def _claude_remote_file_path(workspace: str, filename: str, session: dict[str, Any]) -> str:
+    del session
+    return f"$HOME/.claude/projects/{workspace}/{filename}"
+
+
 def _codex_session_dir(resolver: Any, context: Any) -> Path | None:
     return resolver.get_codex_dir(context)
 
@@ -260,6 +298,30 @@ def _codex_resolve_stats_workspace(
 ) -> str:
     del session_file
     return session_info.get("cwd") or workspace or "unknown"
+
+
+def _codex_remote_list_workspaces_command() -> str:
+    return """for f in ~/.codex/sessions/*/*/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"cwd"' "$f" | head -1)
+    echo "$line" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/'
+done | sort -u"""
+
+
+def _codex_remote_list_sessions_command(workspace: str) -> str:
+    safe_workspace = shlex.quote(workspace)
+    return f"""ws={safe_workspace}
+for f in ~/.codex/sessions/*/*/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"cwd"' "$f" | head -1)
+    cwd=$(echo "$line" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/')
+    if [ -n "$cwd" ] && [ "$cwd" = "$ws" ]; then
+        size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+        mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+        lines=$(wc -l < "$f")
+        echo "$f|$size|$mtime|$lines|$cwd"
+    fi
+done"""
 
 
 def _gemini_session_dir(resolver: Any, context: Any) -> Path | None:
@@ -349,6 +411,21 @@ def _gemini_resolve_stats_workspace(
             if resolved:
                 return resolved
     return workspace or session_file.parent.name
+
+
+def _gemini_remote_list_workspaces_command() -> str:
+    return "ls -1 ~/.gemini/tmp 2>/dev/null || true"
+
+
+def _gemini_remote_list_sessions_command(workspace: str) -> str:
+    safe_workspace = shlex.quote(workspace)
+    return f"""for f in ~/.gemini/tmp/{safe_workspace}/chats/*.json; do
+    [ -f "$f" ] || continue
+    size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+    lines=$(wc -l < "$f")
+    echo "$f|$size|$mtime|$lines"
+done"""
 
 
 def _pi_session_dir(resolver: Any, context: Any) -> Path | None:
@@ -509,6 +586,38 @@ def _pi_resolve_stats_workspace(
     return session_info.get("cwd") or workspace or pi_get_workspace_from_session(session_file)
 
 
+def _pi_remote_list_workspaces_command() -> str:
+    return """for f in ~/.pi/agent/sessions/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"type".*"session"' "$f" | head -1)
+    cwd=$(echo "$line" | sed 's/.*"cwd"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/')
+    if [ -n "$cwd" ] && [ "$cwd" != "$line" ]; then
+        echo "$cwd"
+    else
+        basename "$(dirname "$f")"
+    fi
+done | sort -u"""
+
+
+def _pi_remote_list_sessions_command(workspace: str) -> str:
+    safe_workspace = shlex.quote(workspace)
+    return f"""ws={safe_workspace}
+for f in ~/.pi/agent/sessions/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"type".*"session"' "$f" | head -1)
+    cwd=$(echo "$line" | sed 's/.*"cwd"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/')
+    parent=$(basename "$(dirname "$f")")
+    if [ "$cwd" = "$ws" ] || [ "$parent" = "$ws" ]; then
+        size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+        mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+        lines=$(wc -l < "$f")
+        workspace_value="$cwd"
+        [ -n "$workspace_value" ] && [ "$workspace_value" != "$line" ] || workspace_value="$parent"
+        echo "$f|$size|$mtime|$lines|$workspace_value"
+    fi
+done"""
+
+
 register_backend(
     AgentBackend(
         id=AGENT_CLAUDE,
@@ -522,6 +631,11 @@ register_backend(
         message_to_unified=_claude_message_to_unified,
         extract_stats=_claude_extract_stats,
         resolve_stats_workspace=_claude_resolve_stats_workspace,
+        remote_list_workspaces_command=_claude_remote_list_workspaces_command,
+        remote_parse_workspaces=_claude_remote_parse_workspaces,
+        remote_list_sessions_command=_claude_remote_list_sessions_command,
+        remote_workspace_readable=_claude_remote_workspace_readable,
+        remote_file_path=_claude_remote_file_path,
         file_markers=(".claude",),
         file_suffixes=(".jsonl",),
         supports_conversation_graph=True,
@@ -540,6 +654,8 @@ register_backend(
         message_to_unified=_codex_message_to_unified,
         extract_stats=_codex_extract_stats,
         resolve_stats_workspace=_codex_resolve_stats_workspace,
+        remote_list_workspaces_command=_codex_remote_list_workspaces_command,
+        remote_list_sessions_command=_codex_remote_list_sessions_command,
         file_markers=(".codex",),
         file_suffixes=(".jsonl",),
     )
@@ -557,6 +673,8 @@ register_backend(
         message_to_unified=_gemini_message_to_unified,
         extract_stats=_gemini_extract_stats,
         resolve_stats_workspace=_gemini_resolve_stats_workspace,
+        remote_list_workspaces_command=_gemini_remote_list_workspaces_command,
+        remote_list_sessions_command=_gemini_remote_list_sessions_command,
         file_markers=(".gemini",),
         file_suffixes=(".json",),
     )
@@ -574,6 +692,8 @@ register_backend(
         message_to_unified=_pi_message_to_unified,
         extract_stats=_pi_extract_stats,
         resolve_stats_workspace=_pi_resolve_stats_workspace,
+        remote_list_workspaces_command=_pi_remote_list_workspaces_command,
+        remote_list_sessions_command=_pi_remote_list_sessions_command,
         file_markers=(".pi",),
         file_suffixes=(".jsonl",),
     )

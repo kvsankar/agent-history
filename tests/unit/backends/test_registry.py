@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from agent_history.adapters.inventory import InventoryProvider
+from agent_history.backends import ssh as ssh_backend
 from agent_history.backends.registry import (
     AgentBackend,
     get_agent_choices,
@@ -97,3 +99,71 @@ def test_registered_backend_is_visible_to_parser_and_inventory(tmp_path: Path) -
         assert sessions[0]["workspace_display"] == "/tmp/fake-workspace"
     finally:
         unregister_backend("fake")
+
+
+def test_registered_backend_can_drive_remote_listing(monkeypatch, tmp_path: Path) -> None:
+    """Remote SSH listing should consume backend commands, not central agent branches."""
+    session_file = tmp_path / "fake-remote.jsonl"
+    session_file.write_text('{"role":"user","content":"remote"}\n', encoding="utf-8")
+
+    backend = AgentBackend(
+        id="fake-remote",
+        label="Fake Remote Agent",
+        get_session_dir=lambda resolver, context: tmp_path,
+        scan_sessions=lambda sessions_dir: [],
+        list_workspaces=lambda sessions_dir, home: [],
+        read_messages=lambda path: [{"role": "user", "content": "remote"}],
+        count_messages=lambda path: 1,
+        render_markdown=lambda path, minimal, messages, level: "# Fake Remote\n",
+        message_to_unified=lambda msg: {
+            "timestamp": msg.get("timestamp", ""),
+            "role": msg.get("role", "user"),
+            "content": msg.get("content", ""),
+        },
+        extract_stats=lambda path: (
+            {"session_id": "fake-remote", "message_count": 1},
+            [{"session_id": "fake-remote", "type": "user", "timestamp": ""}],
+            [],
+        ),
+        resolve_stats_workspace=lambda path, session_info, workspace: workspace or "fake-ws",
+        remote_list_workspaces_command=lambda: "fake-list-workspaces",
+        remote_parse_workspaces=lambda output: [f"parsed:{output.strip()}"],
+        remote_list_sessions_command=lambda workspace: f"fake-list-sessions {workspace}",
+        remote_workspace_readable=lambda workspace: f"readable:{workspace}",
+        remote_file_path=lambda workspace, filename, session: f"/remote/{workspace}/{filename}",
+    )
+
+    commands: list[str] = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd[-1])
+        if cmd[-1] == "fake-list-workspaces":
+            return SimpleNamespace(returncode=0, stdout="fake-ws\n", stderr="")
+        if cmd[-1] == "fake-list-sessions parsed:fake-ws":
+            return SimpleNamespace(
+                returncode=0,
+                stdout="/remote/fake-ws/fake-remote.jsonl|12|1700000000|1|parsed:fake-ws\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="unexpected command")
+
+    monkeypatch.setattr(ssh_backend, "check_ssh_connection", lambda remote: (True, ""))
+    monkeypatch.setattr(ssh_backend.subprocess, "run", fake_run)
+
+    register_backend(backend)
+    try:
+        workspaces, workspace_error = ssh_backend.list_remote_workspaces(
+            "user@example", agent="fake-remote"
+        )
+        sessions, session_error = ssh_backend.list_remote_sessions(
+            "user@example", workspaces[0], agent="fake-remote"
+        )
+    finally:
+        unregister_backend("fake-remote")
+
+    assert workspace_error is None
+    assert session_error is None
+    assert workspaces == ["parsed:fake-ws"]
+    assert sessions[0]["agent"] == "fake-remote"
+    assert sessions[0]["remote_path"] == "/remote/fake-ws/fake-remote.jsonl"
+    assert commands == ["fake-list-workspaces", "fake-list-sessions parsed:fake-ws"]

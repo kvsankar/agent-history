@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import shlex
+from typing import Any
 
 from agent_history.backends import ssh as ssh_backend
+from agent_history.backends.registry import get_backend
 from agent_history.storage.config import get_config_dir
-from agent_history.utils.paths import normalize_workspace_name
 
 
 class RemoteClientError(RuntimeError):
@@ -30,7 +30,7 @@ class RemoteFetchResult:
 class SSHRemoteClient:
     """Remote client backed by SSH commands."""
 
-    def list_workspaces(self, remote_host: str, agent: str = "claude") -> List[str]:
+    def list_workspaces(self, remote_host: str, agent: str = "claude") -> list[str]:
         workspaces, error = ssh_backend.list_remote_workspaces(remote_host, agent=agent)
         if error:
             raise RemoteClientError(error)
@@ -38,16 +38,17 @@ class SSHRemoteClient:
 
     def list_sessions(
         self, remote_host: str, workspace: str, agent: str = "claude"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         sessions, error = ssh_backend.list_remote_sessions(remote_host, workspace, agent=agent)
         if error:
             raise RemoteClientError(error)
 
-        if agent == "claude":
-            readable_ws = normalize_workspace_name(workspace, verify_local=False)
+        backend = get_backend(agent)
+        if backend and backend.remote_workspace_readable:
+            readable_ws = backend.remote_workspace_readable(workspace)
         else:
             readable_ws = workspace
-        normalized: List[Dict[str, Any]] = []
+        normalized: list[dict[str, Any]] = []
         remote_filenames: set[str] = set()
         cache_dir = _remote_cache_dir(remote_host, agent, workspace)
 
@@ -69,10 +70,10 @@ class SSHRemoteClient:
                 entry["file"] = file_path
             else:
                 entry["file"] = file_path
-                if agent == "claude":
-                    entry["remote_path"] = f"$HOME/.claude/projects/{workspace}/{filename}"
-                else:
-                    entry["remote_path"] = str(file_path)
+                remote_path = None
+                if backend and backend.remote_file_path:
+                    remote_path = backend.remote_file_path(workspace, filename, entry)
+                entry["remote_path"] = remote_path or str(file_path)
 
             mtime = session.get("mtime")
             if isinstance(mtime, (int, float)):
@@ -93,8 +94,8 @@ class SSHRemoteClient:
         return normalized
 
     def ensure_local_copy(
-        self, remote_host: str, workspace: str, session: Dict[str, Any]
-    ) -> Optional[Path]:
+        self, remote_host: str, workspace: str, session: dict[str, Any]
+    ) -> Path | None:
         """Ensure a remote session file is cached locally.
 
         Returns the local cached path if available, otherwise None.
@@ -131,8 +132,9 @@ class SSHRemoteClient:
 
         remote_path = session.get("remote_path")
         if not remote_path:
-            if agent == "claude":
-                remote_path = f"$HOME/.claude/projects/{workspace_value}/{filename}"
+            backend = get_backend(agent)
+            if backend and backend.remote_file_path:
+                remote_path = backend.remote_file_path(workspace_value, filename, session)
             else:
                 remote_path = str(file_value)
         if ".." in remote_path:
@@ -158,9 +160,7 @@ class SSHRemoteClient:
                 pass
         return dest
 
-    def fetch_all(
-        self, remote_host: str, workspaces: List[str]
-    ) -> RemoteFetchResult:
+    def fetch_all(self, remote_host: str, workspaces: list[str]) -> RemoteFetchResult:
         fetched = 0
         skipped = 0
         errors = 0
