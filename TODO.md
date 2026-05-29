@@ -145,7 +145,7 @@ environment isolation first.
   - Implement Pi JSONL parsing, workspace extraction, session scanning, message counting, Markdown export, and NDJSON normalization as backend capabilities.
   - Register Pi so `--agent pi`, inventory discovery, list/count, and export paths work without handler-specific Pi branches.
   - Add focused unit and CLI integration tests for Pi registry discovery, listing, and export.
-- [ ] Finish backend-registry cleanup for remaining hardcoded agent dispatch.
+- [x] Finish backend-registry cleanup for remaining hardcoded agent dispatch.
   - [x] Move stats database sync parsing and workspace extraction behind backend capabilities.
     - `AgentBackend` now owns normalized stats extraction and workspace resolution hooks.
     - `sync_file_to_db()` and `sync_sessions_to_db()` use registered backend capabilities instead of storage-layer agent dispatch.
@@ -154,11 +154,17 @@ environment isolation first.
     - Backend descriptors now provide optional remote workspace/session listing commands, workspace parsing, readable workspace labels, and remote file path fallbacks.
     - SSH transport executes backend-provided commands and parses the shared remote session line format without Claude/Codex/Gemini/Pi dispatch.
     - Added fake-backend regression coverage proving remote listing can be added through registration.
-  - Move low-level WSL path candidate selection behind backend path capabilities.
-  - Move generic Markdown presentation labels/titles behind backend metadata where practical.
+  - [x] Move low-level WSL path candidate selection behind backend path capabilities.
+    - Backend descriptors now provide optional WSL candidate path factories.
+    - Platform probing selects paths from the registered backend rather than agent-specific path branches.
+    - Added fake-backend regression coverage proving WSL path selection can be added through registration.
+  - [x] Move generic Markdown presentation labels/titles behind backend metadata where practical.
+    - Backend descriptors now provide Markdown title/header metadata for generic rendering.
+    - Generic Markdown rendering uses backend metadata and existing graph-support capability instead of agent-id title dispatch.
+    - Added fake-backend regression coverage for Markdown header metadata.
   - Keep exact-match scope filters as ordinary data filters; only backend-specific behavior belongs in backend capabilities.
   - Add focused tests before each migration so future agents do not require handler/inventory/stats edits.
-- [ ] Review changes recently pushed to `main` and determine how to merge the intent into `feature/2.0-exploration`.
+- [x] Review changes recently pushed to `main` and determine how to merge the intent into `feature/2.0-exploration`.
   - Preserve the newer package architecture, scope pipeline, shared workspace/session model, and cleaner handler structure.
   - Rewrite or adapt main-branch code where direct merges would regress design quality or reintroduce older coupling.
   - Suggested start:
@@ -166,6 +172,11 @@ environment isolation first.
     - Inspect `git log feature/2.0-exploration..origin/<branch>` and `git diff feature/2.0-exploration...origin/<branch>`.
     - Classify main-branch changes as: directly portable, needs architectural rewrite, already superseded, or should be dropped.
     - Port behavior in small commits with tests, routing agent-specific behavior through the backend registry first.
+  - Classification after fetching `origin/master` on 2026-05-29:
+    - Already ported/adapted: Pi backend support, default `./ai-chats` export directory, Markdown stdout/detail levels, inaccessible WSL command lookup handling, stats sync registry cleanup, remote SSH registry cleanup, WSL path candidate registry cleanup, and generic Markdown title metadata.
+    - Still needs package-architecture rewrite: turn-centered HTML export, improved HTML conversation export, semantic origin annotations, HTML tool diff rendering, and raw view toggles.
+    - Needs verification/possible focused port: non-Claude project/alias workspace path preservation from `56c766a`.
+    - Docs/release-only changes should wait until the package rewrite lands: alpha release notes, HTML/Pi docs, `docs/pi-format.md`, process image assets.
 - [ ] Add focused tests for every feature or behavior brought over from `main`.
   - Cover both the migrated behavior and the architectural integration points it touches.
   - Prefer tests that exercise supported command permutations rather than only narrow unit seams.

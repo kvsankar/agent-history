@@ -499,31 +499,20 @@ def _wsl_unc_available(distro_name: str) -> bool:
 
 def _locate_wsl_projects_dir(distro_name: str, username: str):
     """Find the first accessible UNC path for a WSL distro."""
-    if not _wsl_unc_available(distro_name):
-        return None
-    for candidate in _get_wsl_candidate_paths(distro_name, username):
-        try:
-            if _path_exists_with_timeout(candidate, timeout=_get_unc_timeout()):
-                return candidate
-        except OSError:
-            continue
-    return None
+    return _locate_wsl_agent_dir(distro_name, username, AGENT_CLAUDE)
 
 
 def _locate_wsl_agent_dir(distro_name: str, username: str, agent: str) -> Optional[Path]:
     """Find the first accessible UNC path for an agent in a WSL distro."""
     if not _wsl_unc_available(distro_name):
         return None
-    if agent == AGENT_CLAUDE:
-        candidates = _get_wsl_candidate_paths(distro_name, username)
-    elif agent == AGENT_GEMINI:
-        candidates = _get_wsl_gemini_candidate_paths(distro_name, username)
-    elif agent == AGENT_CODEX:
-        candidates = _get_wsl_codex_candidate_paths(distro_name, username)
-    elif agent == AGENT_PI:
-        candidates = _get_wsl_pi_candidate_paths(distro_name, username)
-    else:
+
+    from agent_history.backends.registry import get_backend
+
+    backend = get_backend(agent)
+    if backend is None or backend.wsl_candidate_paths is None:
         return None
+    candidates = backend.wsl_candidate_paths(distro_name, username)
 
     for candidate in candidates:
         try:

@@ -45,6 +45,10 @@ class AgentBackend:
     remote_list_sessions_command: Callable[[str], str] | None = None
     remote_workspace_readable: Callable[[str], str] | None = None
     remote_file_path: Callable[[str, str, dict[str, Any]], str | None] | None = None
+    wsl_candidate_paths: Callable[[str, str], list[Path]] | None = None
+    markdown_title: str = ""
+    markdown_header_title: str = ""
+    markdown_header_includes_filename: bool = True
     file_markers: tuple[str, ...] = ()
     file_suffixes: tuple[str, ...] = ()
     supports_conversation_graph: bool = False
@@ -231,6 +235,17 @@ def _claude_remote_file_path(workspace: str, filename: str, session: dict[str, A
     return f"$HOME/.claude/projects/{workspace}/{filename}"
 
 
+def _wsl_user_paths(distro_name: str, username: str, relative_dir: str) -> list[Path]:
+    return [
+        Path(f"//wsl.localhost/{distro_name}/home/{username}/{relative_dir}"),
+        Path(f"//wsl$/{distro_name}/home/{username}/{relative_dir}"),
+    ]
+
+
+def _claude_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".claude/projects")
+
+
 def _codex_session_dir(resolver: Any, context: Any) -> Path | None:
     return resolver.get_codex_dir(context)
 
@@ -322,6 +337,10 @@ for f in ~/.codex/sessions/*/*/*/*.jsonl; do
         echo "$f|$size|$mtime|$lines|$cwd"
     fi
 done"""
+
+
+def _codex_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".codex/sessions")
 
 
 def _gemini_session_dir(resolver: Any, context: Any) -> Path | None:
@@ -426,6 +445,10 @@ def _gemini_remote_list_sessions_command(workspace: str) -> str:
     lines=$(wc -l < "$f")
     echo "$f|$size|$mtime|$lines"
 done"""
+
+
+def _gemini_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".gemini/tmp")
 
 
 def _pi_session_dir(resolver: Any, context: Any) -> Path | None:
@@ -618,6 +641,10 @@ for f in ~/.pi/agent/sessions/*/*.jsonl; do
 done"""
 
 
+def _pi_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".pi/agent/sessions")
+
+
 register_backend(
     AgentBackend(
         id=AGENT_CLAUDE,
@@ -636,6 +663,10 @@ register_backend(
         remote_list_sessions_command=_claude_remote_list_sessions_command,
         remote_workspace_readable=_claude_remote_workspace_readable,
         remote_file_path=_claude_remote_file_path,
+        wsl_candidate_paths=_claude_wsl_candidate_paths,
+        markdown_title="Claude",
+        markdown_header_title="Claude Code Session",
+        markdown_header_includes_filename=True,
         file_markers=(".claude",),
         file_suffixes=(".jsonl",),
         supports_conversation_graph=True,
@@ -656,6 +687,10 @@ register_backend(
         resolve_stats_workspace=_codex_resolve_stats_workspace,
         remote_list_workspaces_command=_codex_remote_list_workspaces_command,
         remote_list_sessions_command=_codex_remote_list_sessions_command,
+        wsl_candidate_paths=_codex_wsl_candidate_paths,
+        markdown_title="Codex",
+        markdown_header_title="Codex Conversation",
+        markdown_header_includes_filename=False,
         file_markers=(".codex",),
         file_suffixes=(".jsonl",),
     )
@@ -675,6 +710,10 @@ register_backend(
         resolve_stats_workspace=_gemini_resolve_stats_workspace,
         remote_list_workspaces_command=_gemini_remote_list_workspaces_command,
         remote_list_sessions_command=_gemini_remote_list_sessions_command,
+        wsl_candidate_paths=_gemini_wsl_candidate_paths,
+        markdown_title="Gemini",
+        markdown_header_title="Gemini Conversation",
+        markdown_header_includes_filename=False,
         file_markers=(".gemini",),
         file_suffixes=(".json",),
     )
@@ -694,6 +733,10 @@ register_backend(
         resolve_stats_workspace=_pi_resolve_stats_workspace,
         remote_list_workspaces_command=_pi_remote_list_workspaces_command,
         remote_list_sessions_command=_pi_remote_list_sessions_command,
+        wsl_candidate_paths=_pi_wsl_candidate_paths,
+        markdown_title="Pi",
+        markdown_header_title="Pi Conversation",
+        markdown_header_includes_filename=False,
         file_markers=(".pi",),
         file_suffixes=(".jsonl",),
     )
