@@ -167,3 +167,76 @@ def test_registered_backend_can_drive_remote_listing(monkeypatch, tmp_path: Path
     assert sessions[0]["agent"] == "fake-remote"
     assert sessions[0]["remote_path"] == "/remote/fake-ws/fake-remote.jsonl"
     assert commands == ["fake-list-workspaces", "fake-list-sessions parsed:fake-ws"]
+
+
+def test_registered_backend_can_drive_wsl_path_selection(monkeypatch, tmp_path: Path) -> None:
+    """WSL probing should ask backend metadata for candidate session paths."""
+    expected = tmp_path / "fake" / "sessions"
+    fallback = tmp_path / "fallback" / "sessions"
+
+    backend = AgentBackend(
+        id="fake-wsl",
+        label="Fake WSL Agent",
+        get_session_dir=lambda resolver, context: tmp_path,
+        scan_sessions=lambda sessions_dir: [],
+        list_workspaces=lambda sessions_dir, home: [],
+        read_messages=lambda path: [],
+        count_messages=lambda path: 0,
+        render_markdown=lambda path, minimal, messages, level: "# Fake WSL\n",
+        message_to_unified=lambda msg: msg,
+        extract_stats=lambda path: ({}, [], []),
+        resolve_stats_workspace=lambda path, session_info, workspace: workspace or "",
+        wsl_candidate_paths=lambda distro, username: [fallback, expected],
+    )
+
+    def fake_exists(path: Path, timeout: float) -> bool:
+        del timeout
+        return path == expected
+
+    monkeypatch.setattr("agent_history.utils.platform._wsl_unc_available", lambda distro: True)
+    monkeypatch.setattr("agent_history.utils.platform._path_exists_with_timeout", fake_exists)
+
+    register_backend(backend)
+    try:
+        from agent_history.utils.platform import _locate_wsl_agent_dir
+
+        result = _locate_wsl_agent_dir("Ubuntu", "alice", "fake-wsl")
+    finally:
+        unregister_backend("fake-wsl")
+
+    assert result == expected
+
+
+def test_registered_backend_can_drive_markdown_titles(tmp_path: Path) -> None:
+    """Generic Markdown headers should use backend presentation metadata."""
+    from agent_history.export.markdown import generate_markdown_file_header
+
+    backend = AgentBackend(
+        id="fake-markdown",
+        label="Fake Markdown Agent",
+        get_session_dir=lambda resolver, context: tmp_path,
+        scan_sessions=lambda sessions_dir: [],
+        list_workspaces=lambda sessions_dir, home: [],
+        read_messages=lambda path: [],
+        count_messages=lambda path: 0,
+        render_markdown=lambda path, minimal, messages, level: "# Fake Markdown\n",
+        message_to_unified=lambda msg: msg,
+        extract_stats=lambda path: ({}, [], []),
+        resolve_stats_workspace=lambda path, session_info, workspace: workspace or "",
+        markdown_title="Fake",
+        markdown_header_title="Fake Conversation",
+        markdown_header_includes_filename=False,
+    )
+
+    register_backend(backend)
+    try:
+        header = generate_markdown_file_header(
+            tmp_path / "session.jsonl",
+            [{"timestamp": "2026-01-01T00:00:00Z"}],
+            agent_type="fake-markdown",
+        )
+    finally:
+        unregister_backend("fake-markdown")
+
+    assert header[0] == "# Fake Conversation"
+    assert "session.jsonl" not in header[0]

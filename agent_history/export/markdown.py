@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_history.backends.claude import read_jsonl_messages
+from agent_history.backends.registry import get_backend
 from agent_history.core.conversation import analyze_conversation_graph, generate_graph_summary
-from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
+from agent_history.utils.platform import AGENT_CLAUDE
 
 MARKDOWN_DEFAULT_LEVEL = 4
 MARKDOWN_MAX_LEVEL = 4
@@ -54,8 +55,10 @@ def parse_jsonl_to_markdown(
     # Build header
     md_lines = generate_markdown_file_header(jsonl_file, messages, display_file, agent_type)
 
-    # Add conversation graph summary when forks are detected (Claude only)
-    if show_graph and not minimal and messages and agent_type == AGENT_CLAUDE:
+    backend = get_backend(agent_type)
+
+    # Add conversation graph summary when supported by the backend.
+    if show_graph and not minimal and messages and backend and backend.supports_conversation_graph:
         graph = analyze_conversation_graph(messages)
         if not graph.is_linear:
             md_lines.extend(generate_graph_summary(graph))
@@ -73,12 +76,9 @@ def parse_jsonl_to_markdown(
 
 
 def _markdown_agent_title(agent_type: str) -> str:
-    if agent_type == AGENT_CODEX:
-        return "Codex"
-    if agent_type == AGENT_GEMINI:
-        return "Gemini"
-    if agent_type == AGENT_PI:
-        return "Pi"
+    backend = get_backend(agent_type)
+    if backend and backend.markdown_title:
+        return backend.markdown_title
     return "Claude"
 
 
@@ -169,14 +169,10 @@ def _get_agent_header_title(agent_type: str) -> str:
     Returns:
         Header title string.
     """
-    if agent_type == AGENT_CODEX:
-        return "Codex Conversation"
-    elif agent_type == AGENT_GEMINI:
-        return "Gemini Conversation"
-    elif agent_type == AGENT_PI:
-        return "Pi Conversation"
-    else:
-        return "Claude Code Session"
+    backend = get_backend(agent_type)
+    if backend and backend.markdown_header_title:
+        return backend.markdown_header_title
+    return "Claude Code Session"
 
 
 def generate_markdown_file_header(
@@ -198,8 +194,9 @@ def generate_markdown_file_header(
     """
     header_title = _get_agent_header_title(agent_type)
 
-    # For non-Claude agents, use simpler header format (no filename)
-    if agent_type in (AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
+    backend = get_backend(agent_type)
+
+    if backend and not backend.markdown_header_includes_filename:
         lines = [f"# {header_title}", ""]
     else:
         display_name = display_file or jsonl_file.name
