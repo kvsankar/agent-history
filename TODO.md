@@ -184,6 +184,7 @@ environment isolation first.
   - Pay special attention to permutations involving `--ah`, `--aw`, `--this`, `--wsl`, `--windows`, `-r`, projects, patterns, dates, and `--agent`.
   - Include a hardcoded-agent-dispatch audit so backend-specific conditionals are either moved into registered backend capabilities or explicitly justified.
   - Consolidate findings into concrete bugs, missing tests, and design-compatible fixes.
+  - Initial export/stats audit fixed `project export <name> --agent ...` and `project stats <name> --agent ...` so project commands route agent filters through the same scope pipeline as session commands.
   - Suggested sub-agent split:
     - Agent 1: CLI scope/permutation audit.
     - Agent 2: export/stats behavior audit.

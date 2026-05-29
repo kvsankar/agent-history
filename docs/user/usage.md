@@ -270,12 +270,6 @@ List all defined projects.
 ### `project show <name>`
 Show workspaces in a project.
 
-### `project create <name>`
-Create a new empty project.
-
-### `project delete <name>`
-Delete a project.
-
 ### `project add <name> <pattern>`
 Add workspaces matching pattern to a project.
 
@@ -294,11 +288,11 @@ Accepted formats:
 - WSL mounts (`/mnt/c/Users/me/project`)
 - Remote-style prefixes (`user@host:/home/user/project`)
 
-### `project export <file>`
-Export projects to JSON file.
+### `project export <name>`
+Export all sessions in a project. Supports the same export options as `session export`, including `--format html`, `--json`, `--split`, `--source`, and `--agent`.
 
-### `project import <file>`
-Import projects from JSON file.
+### `project stats <name>`
+Show stats for a project. Supports the same stats options as `session stats`, including `--sync`, `--by`, `--time`, and `--agent`.
 
 **Examples:**
 ```bash
@@ -315,9 +309,9 @@ agent-history project add myproject --ah -r user@vm myproject
 agent-history session @myproject
 agent-history export @myproject -o ./backup
 
-# Sync projects across machines
-agent-history project export projects.json
-agent-history project import projects.json
+# Export or inspect project sessions
+agent-history project export myproject --agent codex -o ./backup
+agent-history project stats myproject --agent codex --sync
 ```
 
 **Automatic Project Scoping:**

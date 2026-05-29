@@ -449,6 +449,7 @@ class CLIParser:
         )
         self._add_export_options(proj_export)
         self._add_home_scope_flags(proj_export)
+        self._add_agent_filter(proj_export)
 
         # project stats
         proj_stats = proj_sub.add_parser("stats", help="Stats for project")
@@ -456,6 +457,7 @@ class CLIParser:
         proj_stats.add_argument("name", help="Project name")
         self._add_stats_options(proj_stats)
         self._add_home_scope_flags(proj_stats)
+        self._add_agent_filter(proj_stats)
 
     # =========================================================================
     # Home subparser
