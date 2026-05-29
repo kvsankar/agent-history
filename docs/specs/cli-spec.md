@@ -225,6 +225,7 @@ session list --ah                   # OK: project ties homes together
 | `--agent claude` | Claude Code sessions only |
 | `--agent codex` | Codex CLI sessions only |
 | `--agent gemini` | Gemini CLI sessions only |
+| `--agent pi` | Pi sessions only |
 
 Applies to all commands: `ws`, `session`, `project`, `home` (for stats/export).
 
@@ -302,7 +303,7 @@ Scope Options:
   --no-wsl, --no-windows, --no-remote, --no-web  # Exclude homes when using --ah
 
 Filter Options:
-  --agent <agent>                 # Filter by agent: auto, claude, codex, gemini
+  --agent <agent>                 # Filter by agent: auto, claude, codex, gemini, pi
   --since <date>                  # Filter by start date (YYYY-MM-DD)
   --until <date>                  # Filter by end date (YYYY-MM-DD)
 
@@ -344,8 +345,8 @@ project add <name> <workspace>    # Add workspace to project
 project add <name> -n <pattern>   # Add by pattern
 project add <name> --ah ...       # Add from all homes (local + wsl + windows + remotes + web)
 project remove <name> [workspace] # Remove workspace (or entire project)
-project export <name> [options]   # Export all sessions in project
-project stats <name> [options]    # Stats for project
+project export <name> [options]   # Export all sessions in project; accepts --agent
+project stats <name> [options]    # Stats for project; accepts --agent
 ```
 
 Projects are referenced with `--project` flag:
