@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tests.helpers.cli import run_cli_subprocess
 from tests.helpers.gap_helpers import load_json_output
-from tests.helpers.session_builders import ClaudeSessionBuilder
+from tests.helpers.session_builders import ClaudeSessionBuilder, CodexSessionBuilder
 
 
 def _find_single_output_file(output_dir: Path, suffix: str) -> Path:
@@ -49,7 +49,7 @@ def _write_pi_session(root: Path) -> Path:
     return session_file
 
 
-def test_session_export_default_output_dir_is_hidden_agent_history_exports(isolated_home):
+def test_session_export_default_output_dir_is_ai_chats(isolated_home):
     _write_claude_session(isolated_home["claude_dir"])
 
     result = run_cli_subprocess(
@@ -59,7 +59,7 @@ def test_session_export_default_output_dir_is_hidden_agent_history_exports(isola
     )
 
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    output_dir = isolated_home["path"] / ".agent-history" / "exports"
+    output_dir = isolated_home["path"] / "ai-chats"
     assert list(output_dir.rglob("*.md")), "Expected markdown under default export directory"
 
 
@@ -105,17 +105,94 @@ def test_session_export_markdown_level_1_writes_compact_turns(isolated_home):
     assert "### Tool Call" not in content
 
 
-def test_export_rejects_html_until_package_renderer_exists(isolated_home):
-    _write_claude_session(isolated_home["claude_dir"])
+def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
+    builder = ClaudeSessionBuilder(workspace="-home-user-export-target", session_id="html-session")
+    tool = builder.make_tool_use("Bash", {"command": "printf '<b>unsafe</b>'"})
+    builder.add_user_message("Show <script>alert(1)</script>")
+    builder.add_assistant_message("Running it", tools=[tool])
+    builder.add_tool_result(
+        tool["id"], "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n-old\n+new"
+    )
+    builder.write_to(isolated_home["claude_dir"])
+    output_dir = isolated_home["path"] / "html-export"
 
     result = run_cli_subprocess(
-        ["session", "export", "export-target", "--format", "html"],
+        [
+            "session",
+            "export",
+            "export-target",
+            "--format",
+            "html",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )
 
-    assert result.returncode != 0
-    assert "HTML export has not been ported" in result.stderr
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    output = _find_single_output_file(output_dir, ".html")
+    html = output.read_text(encoding="utf-8")
+    assert html.startswith("<!doctype html>")
+    assert "Turn 1" in html
+    assert "Show &lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "Tool call: Bash" in html
+    assert 'data-origin="tool_call"' in html
+    assert 'data-origin="tool_result"' in html
+    assert 'data-view-toggle="raw" aria-pressed="false"' in html
+    assert '<span class="diff-line diff-line-add">' in html
+    assert "Raw message" in html
+
+
+def test_session_export_html_to_stdout_uses_file_target(isolated_home):
+    session_file = _write_claude_session(isolated_home["claude_dir"])
+
+    result = run_cli_subprocess(
+        ["session", "export", str(session_file), "--format", "html", "-o", "-"],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert result.stdout.startswith("<!doctype html>")
+    assert "Claude Conversation" in result.stdout
+    assert "Turn 1" in result.stdout
+    assert not (isolated_home["path"] / "-").exists()
+
+
+def test_project_export_preserves_non_claude_absolute_workspace_path(isolated_home):
+    workspace = "/home/user/projects/examples-sandbox/codex-examples"
+    builder = CodexSessionBuilder(session_id="codex-project-session", cwd=workspace)
+    builder.add_user_message("Hello Codex project")
+    builder.add_assistant_message("Codex project response")
+    builder.write_to(isolated_home["codex_dir"])
+    config_file = isolated_home["history_dir"] / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "homes": [],
+                "sources": [],
+                "projects": {"codexproj": {"local": [workspace]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_dir = isolated_home["path"] / "project-export"
+
+    result = run_cli_subprocess(
+        ["project", "export", "codexproj", "--force", "-o", str(output_dir)],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    output_file = _find_single_output_file(output_dir, ".md")
+    assert "examples-sandbox/codex-examples" in str(output_file)
+    content = output_file.read_text(encoding="utf-8")
+    assert "# Codex Conversation" in content
+    assert "Codex project response" in content
 
 
 def test_pi_agent_sessions_list_and_export_via_registry(isolated_home):

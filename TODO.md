@@ -12,7 +12,6 @@ next work.
 - Active branch: `feature/2.0-exploration`.
 - As of the last check, the branch was aligned with `origin/feature/2.0-exploration`.
 - Current known local changes:
-  - `TODO.md` has handoff/planning edits.
   - `docs/agent-history-process-image.md` is untracked and contains a detailed prompt/brief for an architecture process diagram.
 - Last known full test baseline after the January fixes:
   - `UV_CACHE_DIR=.uv-cache uv run pytest -q`
@@ -174,9 +173,9 @@ environment isolation first.
     - Port behavior in small commits with tests, routing agent-specific behavior through the backend registry first.
   - Classification after fetching `origin/master` on 2026-05-29:
     - Already ported/adapted: Pi backend support, default `./ai-chats` export directory, Markdown stdout/detail levels, inaccessible WSL command lookup handling, stats sync registry cleanup, remote SSH registry cleanup, WSL path candidate registry cleanup, and generic Markdown title metadata.
-    - Still needs package-architecture rewrite: turn-centered HTML export, improved HTML conversation export, semantic origin annotations, HTML tool diff rendering, and raw view toggles.
-    - Needs verification/possible focused port: non-Claude project/alias workspace path preservation from `56c766a`.
+    - Ported with package-architecture rewrites: turn-centered HTML session export, semantic role/origin annotations, HTML tool/diff panels, raw view toggles, and non-Claude project/alias workspace path preservation from `56c766a`.
     - Docs/release-only changes should wait until the package rewrite lands: alpha release notes, HTML/Pi docs, `docs/pi-format.md`, process image assets.
+  - Added focused regression coverage for HTML file/stdout export, escaped HTML content, action origin metadata, rendered diff-shaped tool output, absolute workspace path preservation in project config, and Codex project export through a readable hyphenated workspace path.
 - [ ] Add focused tests for every feature or behavior brought over from `main`.
   - Cover both the migrated behavior and the architectural integration points it touches.
   - Prefer tests that exercise supported command permutations rather than only narrow unit seams.

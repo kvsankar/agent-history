@@ -293,6 +293,22 @@ class TestAliases:
         assert "myproject" in loaded["projects"]
         assert loaded["projects"]["myproject"]["local"] == ["-home-user-myproject"]
 
+    def test_save_aliases_preserves_absolute_workspace_paths(self, tmp_path, monkeypatch):
+        """Absolute project paths should stay readable for non-Claude agents."""
+        _set_config_dir(tmp_path, monkeypatch)
+
+        workspace = "/home/user/projects/examples-sandbox/pi-examples"
+        assert save_aliases(
+            {
+                "version": 2,
+                "projects": {"multiagent": {"local": [workspace]}},
+            }
+        )
+
+        loaded = load_aliases()
+
+        assert loaded["projects"]["multiagent"]["local"] == [workspace]
+
 
 # =============================================================================
 # Test Homes/Sources Functions
