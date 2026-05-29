@@ -58,7 +58,7 @@ StatsDict = Dict[str, Any]
 # =============================================================================
 
 
-def _build_scope_args(  # noqa: PLR0913, C901
+def _build_scope_args(
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
@@ -150,7 +150,7 @@ def _build_output_args(
 # =============================================================================
 
 
-def sessions(  # noqa: PLR0913
+def sessions(
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
@@ -350,7 +350,7 @@ def homes(
 # =============================================================================
 
 
-def list_sessions(  # noqa: PLR0913
+def list_sessions(
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
@@ -418,7 +418,7 @@ def list_sessions(  # noqa: PLR0913
     return handler.execute(scope, {}, output_args)
 
 
-def list_workspaces(  # noqa: PLR0913
+def list_workspaces(
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,
@@ -519,7 +519,7 @@ def list_homes(
 # =============================================================================
 
 
-def export(  # noqa: PLR0913
+def export(
     pattern: Optional[str] = None,
     output_dir: Optional[Union[str, Path]] = None,
     *,
@@ -545,7 +545,7 @@ def export(  # noqa: PLR0913
 
     Args:
         pattern: Workspace pattern to match.
-        output_dir: Output directory (default: ./.agent-history/exports).
+        output_dir: Output directory (default: ./ai-chats).
         patterns: Multiple workspace patterns.
         projects: Project names from configuration.
         project: Project name from configuration.
@@ -606,7 +606,7 @@ def export(  # noqa: PLR0913
 # =============================================================================
 
 
-def stats(  # noqa: PLR0913
+def stats(
     pattern: Optional[str] = None,
     *,
     patterns: Optional[List[str]] = None,

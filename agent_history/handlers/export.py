@@ -34,6 +34,7 @@ from agent_history.export import (
     copy_source_file,
     generate_index_manifest,
     generate_markdown_parts,
+    render_html_export,
     write_ndjson_export,
 )
 from agent_history.handlers.base import CommandResult, VerbHandler
@@ -44,6 +45,7 @@ from agent_history.utils.paths import decode_workspace_path
 from agent_history.utils.workspace_ref import WorkspaceContext
 
 _INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
+_ExportTask = Tuple[SessionDict, str, str, str]
 
 # =============================================================================
 # Export Result Type
@@ -80,7 +82,7 @@ class SessionExportHandler(VerbHandler):
         Args:
             scope: Resolved scope with sessions to export.
             verb_args: Export options:
-                - output_dir: Path for output (default: ./.agent-history/exports)
+                - output_dir: Path for output (default: ./ai-chats)
                 - minimal: bool - omit metadata in output
                 - split: int - split at N lines (None to disable)
                 - flat: bool - no workspace subdirs (default: False)
@@ -122,19 +124,12 @@ class SessionExportHandler(VerbHandler):
                 errors=["Use either --json or --format html, not both"],
             )
 
-        if export_format == EXPORT_FORMAT_HTML:
-            return CommandResult(
-                success=False,
-                data=None,
-                data_type="export_result",
-                errors=["HTML export has not been ported to the package CLI yet"],
-            )
-
         if output_to_stdout:
             return self._export_single_session_to_stdout(
                 targets=targets,
                 minimal=minimal,
                 markdown_level=markdown_level,
+                export_format=export_format,
                 export_json=export_json,
                 split_lines=split_lines,
                 include_source=include_source,
@@ -151,88 +146,31 @@ class SessionExportHandler(VerbHandler):
         # Track sources for index manifest generation
         sources_info: Dict[str, int] = {}  # home -> session count
 
-        # Collect all tasks to process
-        tasks = []
-        for record in scope:
-            context = WorkspaceContext.from_record(record)
-            for session in record.sessions:
-                tasks.append((session, context.home, context.workspace, context.workspace_display))
+        tasks = self._build_export_tasks(scope)
 
         # Filter by explicit session IDs/filenames if provided
         missing_ids: List[str] = []
         if session_ids:
             tasks, missing_ids = self._filter_tasks_by_session_ids(tasks, session_ids)
 
-        # Use ThreadPoolExecutor when jobs > 1
-        if jobs is not None and jobs > 1:
-            with ThreadPoolExecutor(max_workers=jobs) as executor:
-                futures = []
-                for session, home, workspace, workspace_display in tasks:
-                    future = executor.submit(
-                        self._export_session_safe,
-                        session=session,
-                        home=home,
-                        workspace=workspace,
-                        workspace_display=workspace_display,
-                        output_dir=output_dir,
-                        minimal=minimal,
-                        split_lines=split_lines,
-                        flat=flat,
-                        force=force,
-                        include_source=include_source,
-                        export_json=export_json,
-                        markdown_level=markdown_level,
-                        quiet=quiet,
-                    )
-                    futures.append((future, session, home))
-
-                # Collect results
-                for future, session, home in futures:
-                    result, error = future.result()
-                    if error:
-                        failed.append((session, error))
-                        if not quiet:
-                            filename = session.get("filename", session.get("file", "unknown"))
-                            sys.stderr.write(f"Error exporting {filename}: {error}\n")
-
-                    elif result == EXPORT_EXPORTED:
-                        exported.append(session)
-                        sources_info[home] = sources_info.get(home, 0) + 1
-                    elif result == EXPORT_SKIPPED:
-                        skipped.append(session)
-                        sources_info[home] = sources_info.get(home, 0) + 1
-        else:
-            # Sequential: Process each record in scope
-            for session, home, workspace, workspace_display in tasks:
-                try:
-                    result = self._export_session(
-                        session=session,
-                        home=home,
-                        workspace=workspace,
-                        workspace_display=workspace_display,
-                        output_dir=output_dir,
-                        minimal=minimal,
-                        split_lines=split_lines,
-                        flat=flat,
-                        force=force,
-                        include_source=include_source,
-                        export_json=export_json,
-                        markdown_level=markdown_level,
-                        quiet=quiet,
-                    )
-                    if result == EXPORT_EXPORTED:
-                        exported.append(session)
-                        # Track by home for index manifest
-                        sources_info[home] = sources_info.get(home, 0) + 1
-                    elif result == EXPORT_SKIPPED:
-                        skipped.append(session)
-                        # Also track skipped for index (they still exist in output)
-                        sources_info[home] = sources_info.get(home, 0) + 1
-                except Exception as e:
-                    failed.append((session, str(e)))
-                    if not quiet:
-                        filename = session.get("filename", session.get("file", "unknown"))
-                        sys.stderr.write(f"Error exporting {filename}: {e}\n")
+        self._process_export_tasks(
+            tasks=tasks,
+            output_dir=output_dir,
+            minimal=minimal,
+            split_lines=split_lines,
+            flat=flat,
+            force=force,
+            include_source=include_source,
+            export_json=export_json,
+            export_format=export_format,
+            markdown_level=markdown_level,
+            quiet=quiet,
+            jobs=jobs,
+            exported=exported,
+            skipped=skipped,
+            failed=failed,
+            sources_info=sources_info,
+        )
 
         # Add missing session IDs as failures
         for missing_id in missing_ids:
@@ -275,18 +213,170 @@ class SessionExportHandler(VerbHandler):
             errors=[f"{s.get('filename', s.get('file', 'unknown'))}: {e}" for s, e in failed],
         )
 
+    def _build_export_tasks(self, scope: ConcreteScope) -> List[_ExportTask]:
+        tasks: List[_ExportTask] = []
+        for record in scope:
+            context = WorkspaceContext.from_record(record)
+            for session in record.sessions:
+                tasks.append((session, context.home, context.workspace, context.workspace_display))
+        return tasks
+
+    def _process_export_tasks(
+        self,
+        tasks: List[_ExportTask],
+        output_dir: Path,
+        minimal: bool,
+        split_lines: Optional[int],
+        flat: bool,
+        force: bool,
+        include_source: bool,
+        export_json: bool,
+        export_format: str,
+        markdown_level: int,
+        quiet: bool,
+        jobs: Optional[int],
+        exported: List[SessionDict],
+        skipped: List[SessionDict],
+        failed: List[Tuple[SessionDict, str]],
+        sources_info: Dict[str, int],
+    ) -> None:
+        if jobs is not None and jobs > 1:
+            self._process_export_tasks_parallel(
+                tasks,
+                output_dir,
+                minimal,
+                split_lines,
+                flat,
+                force,
+                include_source,
+                export_json,
+                export_format,
+                markdown_level,
+                quiet,
+                jobs,
+                exported,
+                skipped,
+                failed,
+                sources_info,
+            )
+            return
+
+        for session, home, workspace, workspace_display in tasks:
+            try:
+                result = self._export_session(
+                    session=session,
+                    home=home,
+                    workspace=workspace,
+                    workspace_display=workspace_display,
+                    output_dir=output_dir,
+                    minimal=minimal,
+                    split_lines=split_lines,
+                    flat=flat,
+                    force=force,
+                    include_source=include_source,
+                    export_json=export_json,
+                    export_format=export_format,
+                    markdown_level=markdown_level,
+                    quiet=quiet,
+                )
+                self._record_export_result(result, session, home, exported, skipped, sources_info)
+            except Exception as e:
+                self._record_export_error(session, str(e), failed, quiet)
+
+    def _process_export_tasks_parallel(
+        self,
+        tasks: List[_ExportTask],
+        output_dir: Path,
+        minimal: bool,
+        split_lines: Optional[int],
+        flat: bool,
+        force: bool,
+        include_source: bool,
+        export_json: bool,
+        export_format: str,
+        markdown_level: int,
+        quiet: bool,
+        jobs: int,
+        exported: List[SessionDict],
+        skipped: List[SessionDict],
+        failed: List[Tuple[SessionDict, str]],
+        sources_info: Dict[str, int],
+    ) -> None:
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = [
+                (
+                    executor.submit(
+                        self._export_session_safe,
+                        session=session,
+                        home=home,
+                        workspace=workspace,
+                        workspace_display=workspace_display,
+                        output_dir=output_dir,
+                        minimal=minimal,
+                        split_lines=split_lines,
+                        flat=flat,
+                        force=force,
+                        include_source=include_source,
+                        export_json=export_json,
+                        export_format=export_format,
+                        markdown_level=markdown_level,
+                        quiet=quiet,
+                    ),
+                    session,
+                    home,
+                )
+                for session, home, workspace, workspace_display in tasks
+            ]
+
+            for future, session, home in futures:
+                result, error = future.result()
+                if error:
+                    self._record_export_error(session, error, failed, quiet)
+                elif result:
+                    self._record_export_result(
+                        result, session, home, exported, skipped, sources_info
+                    )
+
+    def _record_export_result(
+        self,
+        result: str,
+        session: SessionDict,
+        home: str,
+        exported: List[SessionDict],
+        skipped: List[SessionDict],
+        sources_info: Dict[str, int],
+    ) -> None:
+        if result == EXPORT_EXPORTED:
+            exported.append(session)
+            sources_info[home] = sources_info.get(home, 0) + 1
+        elif result == EXPORT_SKIPPED:
+            skipped.append(session)
+            sources_info[home] = sources_info.get(home, 0) + 1
+
+    def _record_export_error(
+        self,
+        session: SessionDict,
+        error: str,
+        failed: List[Tuple[SessionDict, str]],
+        quiet: bool,
+    ) -> None:
+        failed.append((session, error))
+        if not quiet:
+            filename = session.get("filename", session.get("file", "unknown"))
+            sys.stderr.write(f"Error exporting {filename}: {error}\n")
+
     def _filter_tasks_by_session_ids(
         self,
-        tasks: List[Tuple[SessionDict, str, str, str]],
+        tasks: List[_ExportTask],
         session_ids: List[str],
-    ) -> Tuple[List[Tuple[SessionDict, str, str, str]], List[str]]:
+    ) -> Tuple[List[_ExportTask], List[str]]:
         """Filter export tasks to specific session IDs or filenames."""
         targets = [str(value).strip() for value in session_ids if str(value).strip()]
         if not targets:
             return tasks, []
 
         matched: set[str] = set()
-        filtered: List[Tuple[SessionDict, str, str, str]] = []
+        filtered: List[_ExportTask] = []
         seen_keys: set[str] = set()
 
         for session, home, workspace, workspace_display in tasks:
@@ -336,31 +426,32 @@ class SessionExportHandler(VerbHandler):
         targets: List[str],
         minimal: bool,
         markdown_level: int,
+        export_format: str,
         export_json: bool,
         split_lines: Optional[int],
         include_source: bool,
     ) -> CommandResult:
-        """Render one explicit session file as Markdown to stdout."""
+        """Render one explicit session file to stdout."""
         if export_json:
             return CommandResult(
                 success=False,
                 data=None,
                 data_type="export_result",
-                errors=["Markdown stdout export does not support --json"],
+                errors=["Stdout export does not support --json"],
             )
         if split_lines:
             return CommandResult(
                 success=False,
                 data=None,
                 data_type="export_result",
-                errors=["Markdown stdout export does not support --split"],
+                errors=["Stdout export does not support --split"],
             )
         if include_source:
             return CommandResult(
                 success=False,
                 data=None,
                 data_type="export_result",
-                errors=["Markdown stdout export does not support --source"],
+                errors=["Stdout export does not support --source"],
             )
         if len(targets) != 1:
             return CommandResult(
@@ -368,7 +459,7 @@ class SessionExportHandler(VerbHandler):
                 data=None,
                 data_type="export_result",
                 errors=[
-                    "Markdown stdout export requires exactly one session file target",
+                    "Stdout export requires exactly one session file target",
                     "Pass the full path to the session file when using -o -",
                 ],
             )
@@ -392,15 +483,22 @@ class SessionExportHandler(VerbHandler):
                 errors=[f"Could not read messages from {session_file}"],
             )
 
-        sys.stdout.write(
-            self._render_markdown(
+        if export_format == EXPORT_FORMAT_HTML:
+            rendered = self._render_html(
+                jsonl_file=session_file,
+                agent_type=agent_type,
+                messages=messages,
+                minimal=minimal,
+            )
+        else:
+            rendered = self._render_markdown(
                 jsonl_file=session_file,
                 agent_type=agent_type,
                 messages=messages,
                 minimal=minimal,
                 markdown_level=markdown_level,
             )
-        )
+        sys.stdout.write(rendered)
         return CommandResult(success=True, data=None, data_type="export_result")
 
     def _export_session_safe(
@@ -416,6 +514,7 @@ class SessionExportHandler(VerbHandler):
         force: bool,
         include_source: bool,
         export_json: bool,
+        export_format: str,
         markdown_level: int,
         quiet: bool,
     ) -> Tuple[Optional[str], Optional[str]]:
@@ -438,6 +537,7 @@ class SessionExportHandler(VerbHandler):
                 force=force,
                 include_source=include_source,
                 export_json=export_json,
+                export_format=export_format,
                 markdown_level=markdown_level,
                 quiet=quiet,
             )
@@ -458,6 +558,7 @@ class SessionExportHandler(VerbHandler):
         force: bool,
         include_source: bool,
         export_json: bool,
+        export_format: str,
         markdown_level: int,
         quiet: bool,
     ) -> str:
@@ -479,42 +580,7 @@ class SessionExportHandler(VerbHandler):
         Returns:
             Export result: EXPORT_EXPORTED, EXPORT_SKIPPED, or EXPORT_FAILED.
         """
-        # Get session file path
-        jsonl_file = session.get("file")
-        if jsonl_file is None:
-            raise ValueError("Session has no 'file' field")
-        if isinstance(jsonl_file, str):
-            jsonl_file = Path(jsonl_file)
-
-        # Ensure remote sessions are fetched locally before reading
-        if not jsonl_file.exists() and home.startswith("remote:"):
-            from agent_history.adapters.remote import SSHRemoteClient
-
-            remote_host = home[7:]
-            client = SSHRemoteClient()
-            local_copy = client.ensure_local_copy(remote_host, workspace, session)
-            if local_copy:
-                jsonl_file = local_copy
-
-        # Ensure web sessions are cached locally before reading
-        if not jsonl_file.exists() and home == "web":
-            from agent_history.backends.web import (
-                WebSessionsError,
-                ensure_web_session_cache,
-                resolve_web_credentials,
-            )
-
-            session_id = session.get("session_id") or session.get("id") or session.get("filename")
-            if not session_id:
-                raise ValueError("Web session missing identifier")
-            try:
-                token, org_uuid = resolve_web_credentials()
-                jsonl_file = ensure_web_session_cache(str(session_id), token, org_uuid, force=force)
-            except WebSessionsError as exc:
-                raise ValueError(str(exc)) from exc
-
-        if not jsonl_file.exists():
-            raise ValueError(f"Session file does not exist: {jsonl_file}")
+        jsonl_file = self._resolve_export_session_file(session, home, workspace, force)
 
         # Determine agent type
         agent_type = session.get("agent", get_default_backend_id())
@@ -530,39 +596,48 @@ class SessionExportHandler(VerbHandler):
         # Build output path
         ws_output_path = self._get_workspace_output_path(output_dir, workspace_display, flat)
 
-        # Handle NDJSON export
         if export_json:
-            output_name = build_output_filename_ndjson(jsonl_file, source_tag, messages)
-            output_file = ws_output_path / output_name
-
-            # Check if export is up-to-date
-            if not force and self._is_export_up_to_date(output_file, jsonl_file):
-                return EXPORT_SKIPPED
-
-            # Write NDJSON export
-            write_ndjson_export(
-                output_file=output_file,
-                agent_type=agent_type,
+            return self._write_ndjson_session_export(
+                jsonl_file=jsonl_file,
+                source_tag=source_tag,
                 messages=messages,
                 session=session,
+                agent_type=agent_type,
+                ws_output_path=ws_output_path,
+                force=force,
+                include_source=include_source,
                 quiet=quiet,
             )
-            if include_source:
-                source_copy = output_file.with_suffix(jsonl_file.suffix)
-                source_copy.write_bytes(jsonl_file.read_bytes())
-                if not quiet:
-                    print(source_copy)
-            return EXPORT_EXPORTED
 
-        # Handle markdown export
-        output_name = self._build_output_filename(jsonl_file, source_tag, messages)
+        # Handle markdown or HTML export
+        output_name = self._build_output_filename(
+            jsonl_file,
+            source_tag,
+            messages,
+            extension=".html" if export_format == EXPORT_FORMAT_HTML else ".md",
+        )
         output_file = ws_output_path / output_name
 
         # Check if export is up-to-date
         if not force and self._is_export_up_to_date(output_file, jsonl_file):
             return EXPORT_SKIPPED
 
-        # Export the session
+        if export_format == EXPORT_FORMAT_HTML:
+            if split_lines:
+                raise ValueError("HTML export does not support --split")
+            self._write_html_export(
+                jsonl_file=jsonl_file,
+                output_file=output_file,
+                output_name=output_name,
+                agent_type=agent_type,
+                messages=messages,
+                minimal=minimal,
+                include_source=include_source,
+                quiet=quiet,
+                ws_output_path=ws_output_path,
+            )
+            return EXPORT_EXPORTED
+
         self._write_export(
             jsonl_file=jsonl_file,
             output_file=output_file,
@@ -577,6 +652,86 @@ class SessionExportHandler(VerbHandler):
             markdown_level=markdown_level,
         )
 
+        return EXPORT_EXPORTED
+
+    def _resolve_export_session_file(
+        self,
+        session: SessionDict,
+        home: str,
+        workspace: str,
+        force: bool,
+    ) -> Path:
+        jsonl_file = session.get("file")
+        if jsonl_file is None:
+            raise ValueError("Session has no 'file' field")
+        if isinstance(jsonl_file, str):
+            jsonl_file = Path(jsonl_file)
+
+        if not jsonl_file.exists() and home.startswith("remote:"):
+            jsonl_file = self._resolve_remote_session_file(session, home, workspace) or jsonl_file
+
+        if not jsonl_file.exists() and home == "web":
+            jsonl_file = self._resolve_web_session_file(session, force)
+
+        if not jsonl_file.exists():
+            raise ValueError(f"Session file does not exist: {jsonl_file}")
+        return jsonl_file
+
+    def _resolve_remote_session_file(
+        self, session: SessionDict, home: str, workspace: str
+    ) -> Optional[Path]:
+        from agent_history.adapters.remote import SSHRemoteClient
+
+        remote_host = home[7:]
+        client = SSHRemoteClient()
+        return client.ensure_local_copy(remote_host, workspace, session)
+
+    def _resolve_web_session_file(self, session: SessionDict, force: bool) -> Path:
+        from agent_history.backends.web import (
+            WebSessionsError,
+            ensure_web_session_cache,
+            resolve_web_credentials,
+        )
+
+        session_id = session.get("session_id") or session.get("id") or session.get("filename")
+        if not session_id:
+            raise ValueError("Web session missing identifier")
+        try:
+            token, org_uuid = resolve_web_credentials()
+            return ensure_web_session_cache(str(session_id), token, org_uuid, force=force)
+        except WebSessionsError as exc:
+            raise ValueError(str(exc)) from exc
+
+    def _write_ndjson_session_export(
+        self,
+        jsonl_file: Path,
+        source_tag: str,
+        messages: List[MessageDict],
+        session: SessionDict,
+        agent_type: str,
+        ws_output_path: Path,
+        force: bool,
+        include_source: bool,
+        quiet: bool,
+    ) -> str:
+        output_name = build_output_filename_ndjson(jsonl_file, source_tag, messages)
+        output_file = ws_output_path / output_name
+
+        if not force and self._is_export_up_to_date(output_file, jsonl_file):
+            return EXPORT_SKIPPED
+
+        write_ndjson_export(
+            output_file=output_file,
+            agent_type=agent_type,
+            messages=messages,
+            session=session,
+            quiet=quiet,
+        )
+        if include_source:
+            source_copy = output_file.with_suffix(jsonl_file.suffix)
+            source_copy.write_bytes(jsonl_file.read_bytes())
+            if not quiet:
+                print(source_copy)
         return EXPORT_EXPORTED
 
     def _read_session_messages(
@@ -679,7 +834,11 @@ class SessionExportHandler(VerbHandler):
         return ws_path
 
     def _build_output_filename(
-        self, jsonl_file: Path, source_tag: str, messages: List[MessageDict]
+        self,
+        jsonl_file: Path,
+        source_tag: str,
+        messages: List[MessageDict],
+        extension: str = ".md",
     ) -> str:
         """Build output filename with optional timestamp prefix.
 
@@ -701,8 +860,8 @@ class SessionExportHandler(VerbHandler):
                 pass
 
         if ts_prefix:
-            return f"{source_tag}{ts_prefix}_{jsonl_file.stem}.md"
-        return f"{source_tag}{jsonl_file.stem}.md"
+            return f"{source_tag}{ts_prefix}_{jsonl_file.stem}{extension}"
+        return f"{source_tag}{jsonl_file.stem}{extension}"
 
     def _is_export_up_to_date(self, output_file: Path, jsonl_file: Path) -> bool:
         """Check if export output is already up-to-date.
@@ -791,6 +950,50 @@ class SessionExportHandler(VerbHandler):
         if backend is None:
             raise ValueError(f"Unsupported agent backend: {agent_type}")
         return backend.render_markdown(jsonl_file, minimal, messages, markdown_level)
+
+    def _write_html_export(
+        self,
+        jsonl_file: Path,
+        output_file: Path,
+        output_name: str,
+        agent_type: str,
+        messages: List[MessageDict],
+        minimal: bool,
+        include_source: bool,
+        quiet: bool,
+        ws_output_path: Path,
+    ) -> None:
+        """Write exported session to a single HTML file."""
+        html = self._render_html(
+            jsonl_file=jsonl_file,
+            agent_type=agent_type,
+            messages=messages,
+            minimal=minimal,
+            display_file=output_name,
+        )
+        output_file.write_text(html, encoding="utf-8")
+        if not quiet:
+            print(output_file)
+
+        if include_source:
+            copy_source_file(jsonl_file, ws_output_path, quiet)
+
+    def _render_html(
+        self,
+        jsonl_file: Path,
+        agent_type: str,
+        messages: List[MessageDict],
+        minimal: bool,
+        display_file: Optional[str] = None,
+    ) -> str:
+        """Render HTML for a parsed session."""
+        return render_html_export(
+            jsonl_file=jsonl_file,
+            agent_type=agent_type,
+            messages=messages,
+            minimal=minimal,
+            display_file=display_file,
+        )
 
     def _write_split_parts(
         self,

@@ -89,7 +89,7 @@ MARKDOWN_MAX_LEVEL = 4
 # Default values
 # =============================================================================
 
-DEFAULT_OUTPUT_DIR = "./.agent-history/exports"
+DEFAULT_OUTPUT_DIR = "./ai-chats"
 MIN_SPLIT_LINES = 10
 
 # =============================================================================

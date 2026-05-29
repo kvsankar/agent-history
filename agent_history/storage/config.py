@@ -19,35 +19,28 @@ from pathlib import Path
 from typing import Optional
 
 from agent_history.utils.paths import (
-    encode_workspace_path,
     is_cached_workspace,
     is_encoded_workspace_name,
 )
 
 __all__ = [
-    # Constants
     "CONFIG_DIR_NAME",
     "LEGACY_CONFIG_DIR_NAME",
-    # Config directory functions
-    "get_config_dir",
+    "get_alias_for_workspace",
+    "get_alias_session_count",
     "get_aliases_dir",
     "get_aliases_file",
-    "get_projects_file",
+    "get_config_dir",
     "get_config_file",
-    # Config load/save functions
-    "load_config",
-    "save_config",
-    # Home/source functions
-    "get_saved_sources",
+    "get_projects_file",
     "get_saved_homes",
-    # Alias/project functions
-    "load_aliases",
-    "save_aliases",
-    "get_alias_for_workspace",
+    "get_saved_sources",
     "get_source_key",
-    # Helper functions
-    "get_alias_session_count",
+    "load_aliases",
+    "load_config",
     "resolve_alias_workspaces",
+    "save_aliases",
+    "save_config",
 ]
 
 # =============================================================================
@@ -257,9 +250,11 @@ def get_saved_homes() -> list:
 
 
 def _sanitize_alias_workspace_entry(workspace: str) -> str:
-    """Normalize alias workspace entries, handling legacy absolute paths.
+    """Normalize legacy alias workspace entries while preserving readable paths.
 
-    Note: This function normalizes only absolute path inputs.
+    Non-Claude agents store workspace identity as readable paths or hashes, so
+    path-like values must remain literal. Only legacy encoded Windows-mount
+    entries are rewritten.
     """
     if not workspace:
         return workspace
@@ -275,13 +270,6 @@ def _sanitize_alias_workspace_entry(workspace: str) -> str:
         remainder = workspace[MNT_ENCODED_PREFIX_LEN:]
         if drive_letter.isalpha():
             return f"{drive_letter.upper()}--{remainder}"
-
-    if (
-        "/" in workspace
-        or "\\" in workspace
-        or (len(workspace) > 1 and workspace[1] == ":")
-    ):
-        return encode_workspace_path(workspace)
 
     return workspace
 
