@@ -19,6 +19,8 @@ from agent_history.utils.platform import (
     AGENT_CLAUDE,
     AGENT_CODEX,
     AGENT_GEMINI,
+    AGENT_PI,
+    _build_wsl_distro_info,
     _CommandPathCache,
     _WindowsHomeCache,
     get_command_path,
@@ -340,6 +342,29 @@ class TestGetWslDistributions:
             assert result[0]["username"] == "test"
             assert result[0]["has_claude"] is True
             assert result[0]["path"] == str(projects_dir)
+
+    def test_distro_info_reports_pi_agent_paths(self, tmp_path: Path) -> None:
+        """WSL distro metadata should include Pi when Pi sessions are present."""
+        paths = {
+            AGENT_CLAUDE: None,
+            AGENT_CODEX: None,
+            AGENT_GEMINI: None,
+            AGENT_PI: tmp_path / ".pi" / "agent" / "sessions",
+        }
+
+        with patch(
+            "agent_history.utils.platform._locate_wsl_agent_dir",
+            side_effect=lambda _distro, _username, agent: paths.get(agent),
+        ):
+            result = _build_wsl_distro_info("Ubuntu", ["alice"])
+
+        assert result is not None
+        assert result["name"] == "Ubuntu"
+        assert result["username"] == "alice"
+        assert result["has_pi"] is True
+        assert result["pi_path"] == str(paths[AGENT_PI])
+        assert result["has_claude"] is False
+        assert result["path"] is None
 
 
 class TestGetWslProjectsDir:

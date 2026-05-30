@@ -541,38 +541,53 @@ def _get_wsl_usernames_from_unc(distro_name: str) -> list:
 def _build_wsl_distro_info(distro_name: str, usernames: list) -> Optional[dict]:
     """Build WSL distro info from one or more candidate usernames."""
     for username in usernames:
-        claude_path = _locate_wsl_projects_dir(distro_name, username)
-        codex_path = _locate_wsl_agent_dir(distro_name, username, AGENT_CODEX)
-        gemini_path = _locate_wsl_agent_dir(distro_name, username, AGENT_GEMINI)
-        has_claude = claude_path is not None
-        has_codex = codex_path is not None
-        has_gemini = gemini_path is not None
-        if has_claude or has_codex or has_gemini:
-            return {
-                "name": distro_name,
-                "username": username,
-                "has_claude": has_claude,
-                "has_codex": has_codex,
-                "has_gemini": has_gemini,
-                "path": str(claude_path) if claude_path else None,
-                "codex_path": str(codex_path) if codex_path else None,
-                "gemini_path": str(gemini_path) if gemini_path else None,
-            }
+        info = _empty_wsl_distro_info(distro_name, username)
+        for agent in _wsl_discoverable_agent_ids():
+            agent_path = _locate_wsl_agent_dir(distro_name, username, agent)
+            _set_wsl_agent_info(info, agent, agent_path)
+        if any(info.get(f"has_{agent}") for agent in _wsl_discoverable_agent_ids()):
+            return info
 
     if not usernames:
         return None
 
-    username = usernames[0]
-    return {
+    return _empty_wsl_distro_info(distro_name, usernames[0])
+
+
+def _wsl_discoverable_agent_ids() -> list[str]:
+    """Return registered agents that provide WSL path candidates."""
+    from agent_history.backends.registry import iter_backends
+
+    return [backend.id for backend in iter_backends() if backend.wsl_candidate_paths is not None]
+
+
+def _empty_wsl_distro_info(distro_name: str, username: str) -> dict:
+    """Build a WSL distro metadata record with all registered agent fields."""
+    info = {
         "name": distro_name,
         "username": username,
-        "has_claude": False,
-        "has_codex": False,
-        "has_gemini": False,
-        "path": None,
-        "codex_path": None,
-        "gemini_path": None,
     }
+    for agent in _wsl_discoverable_agent_ids():
+        info.update(_empty_wsl_agent_fields(agent))
+    return info
+
+
+def _empty_wsl_agent_fields(agent: str) -> dict[str, object]:
+    fields: dict[str, object] = {f"has_{agent}": False}
+    if agent == AGENT_CLAUDE:
+        fields["path"] = None
+    else:
+        fields[f"{agent}_path"] = None
+    return fields
+
+
+def _set_wsl_agent_info(info: dict, agent: str, path: Optional[Path]) -> None:
+    info[f"has_{agent}"] = path is not None
+    path_value = str(path) if path else None
+    if agent == AGENT_CLAUDE:
+        info["path"] = path_value
+    else:
+        info[f"{agent}_path"] = path_value
 
 
 def _get_wsl_distro_names() -> list:
