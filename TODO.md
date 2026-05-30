@@ -174,7 +174,7 @@ environment isolation first.
   - Classification after fetching `origin/master` on 2026-05-29:
     - Already ported/adapted: Pi backend support, default `./ai-chats` export directory, Markdown stdout/detail levels, inaccessible WSL command lookup handling, stats sync registry cleanup, remote SSH registry cleanup, WSL path candidate registry cleanup, and generic Markdown title metadata.
     - Ported with package-architecture rewrites: turn-centered HTML session export, semantic role/origin annotations, HTML tool/diff panels, raw view toggles, and non-Claude project/alias workspace path preservation from `56c766a`.
-    - Ported docs/release-only intent into package docs: changelog notes, README/usage HTML/Pi coverage, Pi format spec, and process image assets.
+    - Ported docs/release-only intent into package docs: changelog notes, README/usage HTML/Pi coverage, Pi format spec, and the process image brief. The large PNG from `master` is intentionally omitted because repository hooks reject added files over 500 KB.
   - Added focused regression coverage for HTML file/stdout export, escaped HTML content, action origin metadata, rendered diff-shaped tool output, absolute workspace path preservation in project config, and Codex project export through a readable hyphenated workspace path.
 - [x] Add focused tests for every feature or behavior brought over from `main`.
   - Cover both the migrated behavior and the architectural integration points it touches.
