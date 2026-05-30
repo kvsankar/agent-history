@@ -309,104 +309,137 @@ class ContextBuilder:
             Tuple of (home, workspace) where home is "local" and workspace
             is the decoded workspace path, or (None, None) if not in a workspace.
         """
-        import os
-        import urllib.parse
-
-        from agent_history.utils.paths import encode_workspace_path, normalize_workspace_name
-
         cwd = Path.cwd()
         cwd_str = str(cwd)
         cwd_str_normalized = cwd_str.replace("\\", "/")
+        claude_projects = self._get_claude_projects_dir()
 
-        # Get Claude projects directory
-        claude_projects = Path.home() / ".claude" / "projects"
+        for detector in (
+            self._workspace_from_agent_home,
+            self._workspace_from_claude_projects_dir,
+            self._workspace_from_existing_claude_dir,
+        ):
+            result = detector(cwd, claude_projects)
+            if result != (None, None):
+                return result
+
+        project_result = self._workspace_from_project_config(cwd_str_normalized)
+        if project_result != (None, None):
+            return project_result
+
+        return (None, None)
+
+    def _get_claude_projects_dir(self) -> Path:
+        """Return the configured Claude projects directory."""
+        import os
+
         env_override = os.environ.get("CLAUDE_PROJECTS_DIR")
         if env_override:
-            claude_projects = Path(env_override)
+            return Path(env_override)
+        return Path.home() / ".claude" / "projects"
 
-        # Handle AGENT_HISTORY_HOME: if CWD is inside the test home, compute
-        # the workspace path relative to it (e.g., /tmp/xxx/home/user/myproject -> /home/user/myproject)
+    def _workspace_from_agent_home(
+        self,
+        cwd: Path,
+        claude_projects: Path,
+    ) -> tuple[str | None, str | None]:
+        """Detect synthetic test workspaces rooted under AGENT_HISTORY_HOME."""
+        import os
+        import urllib.parse
+
+        from agent_history.utils.paths import encode_workspace_path
+
         agent_home = os.environ.get("AGENT_HISTORY_HOME")
-        if agent_home:
-            try:
-                rel = cwd.relative_to(Path(agent_home))
-                rel_str = str(rel).replace("\\", "/")
-                # Normalize to absolute workspace path
-                normalized_cwd = "/" + rel_str.lstrip("/")
-                # Encode as workspace pattern: /home/user/myproject -> -home-user-myproject
-                encoded_pattern = encode_workspace_path(normalized_cwd)
-                # Check if this workspace exists in Claude projects
-                if claude_projects.exists():
-                    for workspace_dir in claude_projects.iterdir():
-                        if not workspace_dir.is_dir():
-                            continue
-                        dir_name = urllib.parse.unquote(workspace_dir.name)
-                        if encoded_pattern == dir_name or encoded_pattern in dir_name:
-                            return ("local", normalized_cwd)
-            except ValueError:
-                # CWD is not under AGENT_HISTORY_HOME
-                pass
+        if not agent_home:
+            return (None, None)
 
-        # Check if CWD is under Claude projects
+        try:
+            rel = cwd.relative_to(Path(agent_home))
+        except ValueError:
+            return (None, None)
+
+        normalized_cwd = "/" + str(rel).replace("\\", "/").lstrip("/")
+        encoded_pattern = encode_workspace_path(normalized_cwd)
+        if not claude_projects.exists():
+            return (None, None)
+
+        for workspace_dir in claude_projects.iterdir():
+            if not workspace_dir.is_dir():
+                continue
+            dir_name = urllib.parse.unquote(workspace_dir.name)
+            if encoded_pattern == dir_name or encoded_pattern in dir_name:
+                return ("local", normalized_cwd)
+        return (None, None)
+
+    def _workspace_from_claude_projects_dir(
+        self,
+        cwd: Path,
+        claude_projects: Path,
+    ) -> tuple[str | None, str | None]:
+        """Detect when CWD is inside Claude's encoded projects directory."""
+        import urllib.parse
+
+        from agent_history.utils.paths import normalize_workspace_name
+
         try:
             relative = cwd.relative_to(claude_projects)
-            # First part of relative path is the encoded workspace name
-            if relative.parts:
-                encoded_workspace = urllib.parse.unquote(relative.parts[0])
-                workspace = normalize_workspace_name(encoded_workspace, verify_local=True)
-                return ("local", workspace)
         except ValueError:
-            # CWD is not under Claude projects
-            pass
+            return (None, None)
 
-        # Check if CWD (as an absolute path) has a corresponding workspace directory
-        # in Claude projects. This handles the case where the user is in the actual
-        # project directory and sessions exist for it.
-        # Example: CWD=/tmp/pytest-xxx/test-workspace, Claude has sessions at
-        # .claude/projects/-tmp-pytest-xxx-test-workspace/
-        if claude_projects.exists():
-            # Encode CWD as workspace pattern
-            cwd_encoded = encode_workspace_path(cwd_str_normalized)
-            for workspace_dir in claude_projects.iterdir():
-                if not workspace_dir.is_dir():
-                    continue
-                # Check for exact match of encoded CWD
-                if workspace_dir.name == cwd_encoded:
-                    return ("local", cwd_str)
+        if not relative.parts:
+            return (None, None)
+        encoded_workspace = urllib.parse.unquote(relative.parts[0])
+        workspace = normalize_workspace_name(encoded_workspace, verify_local=True)
+        return ("local", workspace)
 
-        # Also check if CWD matches a project workspace path
-        # This handles the case where the user is in the actual project directory
+    def _workspace_from_existing_claude_dir(
+        self,
+        cwd: Path,
+        claude_projects: Path,
+    ) -> tuple[str | None, str | None]:
+        """Detect actual project directories that have Claude sessions."""
+        from agent_history.utils.paths import encode_workspace_path
+
+        if not claude_projects.exists():
+            return (None, None)
+
+        cwd_str = str(cwd)
+        cwd_encoded = encode_workspace_path(cwd_str.replace("\\", "/"))
+        for workspace_dir in claude_projects.iterdir():
+            if workspace_dir.is_dir() and workspace_dir.name == cwd_encoded:
+                return ("local", cwd_str)
+        return (None, None)
+
+    def _workspace_from_project_config(
+        self,
+        cwd_str_normalized: str,
+    ) -> tuple[str | None, str | None]:
+        """Detect CWD by matching readable paths in project config."""
         from agent_history.storage.config import load_config
 
         config = load_config()
-        projects = config.get("projects", {})
-
-        for project_name, project_def in projects.items():
+        for project_def in config.get("projects", {}).values():
+            if not isinstance(project_def, dict):
+                continue
             for home, workspaces in project_def.items():
-                if isinstance(workspaces, list):
-                    for ws_path in workspaces:
-                        # Decode encoded workspace path if needed
-                        # Encoded format: -home-user-projects-auth -> /home/user/projects/auth
-                        decoded_ws = ws_path
-                        if ws_path:
-                            if "/" in ws_path or "\\" in ws_path:
-                                decoded_ws = ws_path.replace("\\", "/")
-                            else:
-                                decoded_ws = normalize_workspace_name(
-                                    ws_path,
-                                    verify_local=False,
-                                )
-
-                        # Check if CWD ends with the workspace path (decoded)
-                        # This allows for test directories like /tmp/xxx/home/user/projects/auth
-                        # to match /home/user/projects/auth
-                        if (
-                            cwd_str_normalized.endswith(decoded_ws)
-                            or cwd_str_normalized == decoded_ws
-                        ):
-                            return (home, decoded_ws)
+                if not isinstance(workspaces, list):
+                    continue
+                for ws_path in workspaces:
+                    if not ws_path:
+                        continue
+                    decoded_ws = self._decode_config_workspace_path(ws_path)
+                    if cwd_str_normalized.endswith(decoded_ws) or cwd_str_normalized == decoded_ws:
+                        return (home, decoded_ws)
 
         return (None, None)
+
+    def _decode_config_workspace_path(self, ws_path: str) -> str:
+        """Return a readable workspace path from config storage."""
+        from agent_history.utils.paths import normalize_workspace_name
+
+        if "/" in ws_path or "\\" in ws_path:
+            return ws_path.replace("\\", "/")
+        return normalize_workspace_name(ws_path, verify_local=False)
 
     def _detect_cwd_project(self, workspace: str | None, home: str | None) -> str | None:
         """Check if workspace belongs to a project.
@@ -424,7 +457,15 @@ class ContextBuilder:
         if not workspace or not home:
             return None
 
-        from agent_history.storage.config import get_alias_for_workspace
+        from agent_history.storage.config import get_alias_for_workspace, load_config
+
+        config = load_config()
+        for project_name, project_def in config.get("projects", {}).items():
+            if not isinstance(project_def, dict):
+                continue
+            workspaces = project_def.get(home, [])
+            if isinstance(workspaces, list) and workspace in workspaces:
+                return str(project_name)
 
         # get_alias_for_workspace expects an encoded workspace name
         from agent_history.utils.paths import encode_workspace_path
@@ -444,96 +485,112 @@ class ContextBuilder:
             Dictionary mapping categories to lists of available items.
             Example: {"wsl": ["Ubuntu", "Debian"], "windows": ["alice"], "remote": ["vm01"]}
         """
-        import os
-
-        from agent_history.storage.config import get_saved_homes
-        from agent_history.utils.platform import (
-            get_windows_users_with_claude,
-            get_wsl_distributions,
-            is_running_in_wsl,
-        )
-
         homes: dict[str, list[str]] = {
             "wsl": [],
             "windows": [],
             "remote": [],
         }
 
-        # Skip host probing in test mode when using injected homes or overrides.
-        # This keeps unit/property tests fast and avoids touching real host filesystems.
-        has_wsl_override = os.environ.get("CLAUDE_WSL_TEST_DISTRO") or os.environ.get(
-            "AGENT_HISTORY_HOME_WSL"
+        if not self._should_skip_platform_scan():
+            self._add_detected_platform_homes(homes)
+        self._add_saved_remote_homes(homes)
+
+        return homes
+
+    def _platform_scan_overrides(self) -> tuple[bool, bool, bool]:
+        """Return test-mode and host override state for platform probing."""
+        import os
+
+        has_wsl_override = bool(
+            os.environ.get("CLAUDE_WSL_TEST_DISTRO") or os.environ.get("AGENT_HISTORY_HOME_WSL")
         )
-        has_windows_override = os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR") or os.environ.get(
-            "AGENT_HISTORY_HOME_WINDOWS"
+        has_windows_override = bool(
+            os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR")
+            or os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
         )
-        test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
-        skip_platform_scan = (
+        return (
+            bool(os.environ.get("AGENT_HISTORY_TEST_MODE")),
+            has_wsl_override,
+            has_windows_override,
+        )
+
+    def _should_skip_platform_scan(self) -> bool:
+        """Return True when injected test homes make host probing unnecessary."""
+        import os
+
+        test_mode, has_wsl_override, has_windows_override = self._platform_scan_overrides()
+        injected_home_envs = (
+            "AGENT_HISTORY_HOME",
+            "AGENT_HISTORY_HOME_WSL",
+            "AGENT_HISTORY_HOME_WINDOWS",
+            "AGENT_HISTORY_CONFIG_DIR",
+            "CLAUDE_PROJECTS_DIR",
+            "CODEX_SESSIONS_DIR",
+            "GEMINI_SESSIONS_DIR",
+            "PI_CODING_AGENT_SESSION_DIR",
+            "PI_SESSIONS_DIR",
+        )
+        return (
             test_mode
-            and any(
-                os.environ.get(name)
-                for name in (
-                    "AGENT_HISTORY_HOME",
-                    "AGENT_HISTORY_HOME_WSL",
-                    "AGENT_HISTORY_HOME_WINDOWS",
-                    "AGENT_HISTORY_CONFIG_DIR",
-                    "CLAUDE_PROJECTS_DIR",
-                    "CODEX_SESSIONS_DIR",
-                    "GEMINI_SESSIONS_DIR",
-                )
-            )
+            and any(os.environ.get(name) for name in injected_home_envs)
             and not has_wsl_override
             and not has_windows_override
         )
 
-        if not skip_platform_scan:
-            scan_wsl = not (test_mode and has_windows_override and not has_wsl_override)
-            scan_windows = not (test_mode and has_wsl_override and not has_windows_override)
+    def _add_detected_platform_homes(self, homes: dict[str, list[str]]) -> None:
+        """Populate WSL and Windows homes from host platform probes."""
+        from agent_history.utils.platform import (
+            get_windows_users_with_claude,
+            get_wsl_distributions,
+            is_running_in_wsl,
+        )
 
-            # WSL distributions (available from Windows)
-            if scan_wsl:
-                try:
-                    wsl_distros = get_wsl_distributions()
-                    homes["wsl"] = [d["name"] for d in wsl_distros if d.get("name")]
-                except Exception:
-                    # Ignore errors during WSL detection
-                    pass
+        test_mode, has_wsl_override, has_windows_override = self._platform_scan_overrides()
+        scan_wsl = not (test_mode and has_windows_override and not has_wsl_override)
+        scan_windows = not (test_mode and has_wsl_override and not has_windows_override)
 
-            # Windows users (available from WSL)
-            if scan_windows and is_running_in_wsl():
-                try:
-                    windows_users = get_windows_users_with_claude()
-                    homes["windows"] = [u["username"] for u in windows_users if u.get("username")]
-                except Exception:
-                    # Ignore errors during Windows user detection
-                    pass
+        if scan_wsl:
+            try:
+                homes["wsl"] = [
+                    distro["name"] for distro in get_wsl_distributions() if distro.get("name")
+                ]
+            except Exception:
+                pass
 
-        # Configured remote hosts
+        if scan_windows and is_running_in_wsl():
+            try:
+                homes["windows"] = [
+                    user["username"]
+                    for user in get_windows_users_with_claude()
+                    if user.get("username")
+                ]
+            except Exception:
+                pass
+
+    def _add_saved_remote_homes(self, homes: dict[str, list[str]]) -> None:
+        """Append configured SSH remote homes."""
+        from agent_history.storage.config import get_saved_homes
+
         try:
             saved_homes = get_saved_homes()
-            # Filter to only remote hosts (not wsl: or windows: prefixed)
             for home_spec in saved_homes:
-                if isinstance(home_spec, str):
-                    if home_spec == "web":
-                        continue
-                    if home_spec.startswith("remote:"):
-                        homes["remote"].append(home_spec[7:])  # Strip "remote:" prefix
-                    elif not home_spec.startswith(("wsl:", "windows:")):
-                        # Assume bare names are remote hosts
-                        homes["remote"].append(home_spec)
-                elif isinstance(home_spec, dict) and home_spec.get("name"):
-                    name = home_spec["name"]
-                    if name == "web":
-                        continue
-                    if name.startswith("remote:"):
-                        homes["remote"].append(name[7:])
-                    elif not name.startswith(("wsl:", "windows:")):
-                        homes["remote"].append(name)
+                remote = self._remote_name_from_home_spec(home_spec)
+                if remote:
+                    homes["remote"].append(remote)
         except Exception:
-            # Ignore errors during remote home detection
             pass
 
-        return homes
+    def _remote_name_from_home_spec(self, home_spec: Any) -> str | None:
+        """Normalize a configured home entry to a remote host name."""
+        if isinstance(home_spec, dict):
+            home_spec = home_spec.get("name")
+        if not isinstance(home_spec, str) or home_spec == "web":
+            return None
+        if home_spec.startswith("remote:"):
+            return home_spec[7:]
+        if home_spec.startswith(("wsl:", "windows:")):
+            return None
+        return home_spec
 
     def _get_agent_paths(
         self,

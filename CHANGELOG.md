@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pi coding-agent backend support across listing, export, stats sync, WSL discovery, and remote dispatch.
+- Offline HTML session export via `session export --format html`.
+- Backend registry integration for agent-specific parsing, paths, stats, remote commands, WSL candidate paths, and Markdown presentation metadata.
+
+### Changed
+
+- Default session export directory is now `./ai-chats`.
+- Project export/stats commands accept `--agent` and route through the shared scope pipeline.
+
 ## [2.0.0-alpha.1] - 2025-12-25
 
 ### Added

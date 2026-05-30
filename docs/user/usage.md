@@ -9,9 +9,9 @@ Detailed documentation for all `agent-history` commands and options.
 | `home` | List homes and manage sources (WSL, Windows, SSH) |
 | `ws` | List workspaces |
 | `session` | List sessions |
-| `export` | Export sessions to markdown |
+| `session export` | Export sessions to Markdown or HTML |
 | `project` | Manage workspace projects |
-| `stats` | Show usage statistics and metrics |
+| `session stats` | Show usage statistics and metrics |
 | `reset` | Reset stored data (metrics/config/cache) |
 | `install` | Report install settings (no-op in v2) |
 | `fetch` | Fetch remote sessions into local cache |
@@ -54,15 +54,15 @@ agent-history home add --windows          # add Windows
 agent-history home add alice@server       # add SSH remote
 
 # Now --ah includes configured sources
-agent-history ws --ah                     # includes configured homes
-agent-history export --ah                 # exports from all homes
-agent-history stats --time --ah           # syncs from all homes
+agent-history ws list --ah                # includes configured homes
+agent-history session export --ah         # exports from all homes
+agent-history session stats --time --ah   # syncs from all homes
 ```
 
 **Examples:**
 ```bash
 # Show configured homes
-$ agent-history home
+$ agent-history home list
 HOME		PATH		SESSIONS
 local		/home/alice/.claude	10
 remote:alice@server	alice@server.example.com	5
@@ -78,12 +78,12 @@ Removed source: alice@server.example.com
 
 ---
 
-## `ws` - List Workspaces
+## `ws list` - List Workspaces
 
 List all workspaces matching a pattern.
 
 ```bash
-agent-history ws [PATTERN...] [OPTIONS]
+agent-history ws list [PATTERN...] [OPTIONS]
 ```
 
 **Arguments:**
@@ -98,26 +98,26 @@ agent-history ws [PATTERN...] [OPTIONS]
 **Examples:**
 ```bash
 # List all local workspaces
-agent-history ws
+agent-history ws list
 
 # Filter by pattern
-agent-history ws myproject
+agent-history ws list myproject
 
 # Multiple patterns
-agent-history ws proj1 proj2
+agent-history ws list proj1 proj2
 
 # List from all homes
-agent-history ws --ah -r user@vm01
+agent-history ws list --ah -r user@vm01
 ```
 
 ---
 
-## `session` - List Sessions
+## `session list` - List Sessions
 
 Show all sessions for a workspace.
 
 ```bash
-agent-history session [PATTERN] [OPTIONS]
+agent-history session list [PATTERN] [OPTIONS]
 ```
 
 **Arguments:**
@@ -145,23 +145,23 @@ agent-history session [PATTERN] [OPTIONS]
 **Examples:**
 ```bash
 # List sessions from current workspace (or project if in a project)
-agent-history session
+agent-history session list
 
 # Force current workspace only (not project)
-agent-history session --this
+agent-history session list --this
 
 # List sessions from WSL
-agent-history session myproject --wsl
+agent-history session list myproject --wsl
 
 # List sessions from Windows
-agent-history session myproject --windows
+agent-history session list myproject --windows
 
 # List sessions from SSH remote
-agent-history session myproject -r user@hostname
+agent-history session list myproject -r user@hostname
 
 # Date filtering
-agent-history session myproject --since 2025-11-01
-agent-history session myproject --since 2025-11-01 --until 2025-11-30
+agent-history session list myproject --since 2025-11-01
+agent-history session list myproject --since 2025-11-01 --until 2025-11-30
 ```
 
 **Output:**
@@ -172,24 +172,25 @@ agent-history session myproject --since 2025-11-01 --until 2025-11-30
 
 ---
 
-## `export` - Export Sessions
+## `session export` - Export Sessions
 
-Export sessions from workspace(s) to markdown with flexible scope control.
+Export sessions from workspace(s) to Markdown or offline HTML with flexible scope control.
 
 ```bash
-agent-history export [WORKSPACE...] [OPTIONS]
+agent-history session export [WORKSPACE...] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
 - `--ah`, `--all-homes`: Export from ALL sources (local + WSL + Windows + remotes)
 - `--aw`, `--all-workspaces` (also `-a`, `--all`): Export ALL workspaces
-- `--this`: Use current workspace only, not its alias (if aliased)
+- `--this`: Use current workspace only, not its project membership
 
 **Arguments:**
 - `WORKSPACE`: One or more workspace patterns (default: current workspace or its project)
 
 **Options:**
 - `-o`, `--output DIR`: Output directory (default: `./ai-chats`)
+- `--format markdown|html`: Export Markdown or offline HTML (default: `markdown`)
 - `--wsl`: Export from WSL (auto-detects distribution)
 - `--windows`: Export from Windows (auto-detects user)
 - `-r`, `--remote HOST`: Add SSH remote source (repeatable)
@@ -209,46 +210,49 @@ agent-history export [WORKSPACE...] [OPTIONS]
 
 | Command | Workspace Scope | Source Scope |
 |---------|----------------|--------------|
-| `export` | Current | Local only |
-| `export --ah` | Current | All homes |
-| `export --aw` | All | Local only |
-| `export --ah --aw` | All | All homes |
+| `session export` | Current | Local only |
+| `session export --ah` | Current | All homes |
+| `session export --aw` | All | Local only |
+| `session export --ah --aw` | All | All homes |
 
 **Examples:**
 ```bash
 # Current workspace, local home (default)
-agent-history export
+agent-history session export
 
 # Current workspace, all homes
-agent-history export --ah
+agent-history session export --ah
 
 # All workspaces, local home
-agent-history export --aw
+agent-history session export --aw
 
 # All workspaces, all homes
-agent-history export --ah --aw
+agent-history session export --ah --aw
 
 # Specific workspace, all homes, custom output
-agent-history export myproject --ah -o /tmp/backup
+agent-history session export myproject --ah -o /tmp/backup
+
+# Offline HTML export
+agent-history session export myproject --format html
 
 # Multiple workspaces (deduplicated)
-agent-history export proj1 proj2 -o ./exports
+agent-history session export proj1 proj2 -o ./exports
 
 # Export from WSL
-agent-history export myproject --wsl
+agent-history session export myproject --wsl
 
 # Export from Windows
-agent-history export myproject --windows
+agent-history session export myproject --windows
 
 # With splitting and minimal mode
-agent-history export myproject --minimal --split 500
+agent-history session export myproject --minimal --split 500
 
 # Faster export with less output
-agent-history export myproject --jobs 4 --quiet
+agent-history session export myproject --jobs 4 --quiet
 ```
 
 **Output:**
-- Markdown files named `{timestamp}_{session-id}.md`
+- Markdown files named `{timestamp}_{session-id}.md` or HTML files named `{timestamp}_{session-id}.html`
 - Source-tagged filenames: `wsl_ubuntu_`, `windows_`, `remote_hostname_`
 - Organized by workspace subdirectories (unless `--flat`)
 
@@ -296,8 +300,7 @@ Show stats for a project. Supports the same stats options as `session stats`, in
 
 **Examples:**
 ```bash
-# Create and populate a project
-agent-history project create myproject
+# Populate a project
 agent-history project add myproject myproject
 agent-history project add myproject --windows myproject
 agent-history project add myproject -r user@vm01 myproject
@@ -306,8 +309,8 @@ agent-history project add myproject -r user@vm01 myproject
 agent-history project add myproject --ah -r user@vm myproject
 
 # Use projects with @ prefix
-agent-history session @myproject
-agent-history export @myproject -o ./backup
+agent-history session list @myproject
+agent-history session export @myproject -o ./backup
 
 # Export or inspect project sessions
 agent-history project export myproject --agent codex -o ./backup
@@ -318,28 +321,28 @@ agent-history project stats myproject --agent codex --sync
 
 When running commands without arguments from a project workspace:
 ```bash
-agent-history session    # Uses project automatically
-agent-history export     # Uses project automatically
-agent-history stats      # Uses project automatically
+agent-history session list      # Uses project automatically
+agent-history session export    # Uses project automatically
+agent-history session stats     # Uses project automatically
 
 # Force current workspace only
-agent-history session --this
+agent-history session list --this
 ```
 
 ---
 
-## `stats` - Usage Statistics
+## `session stats` - Usage Statistics
 
-Display usage statistics and metrics from synced Claude Code sessions.
+Display usage statistics and metrics from synced coding-agent sessions.
 
 ```bash
-agent-history stats [WORKSPACE] [OPTIONS]
+agent-history session stats [WORKSPACE] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
 - `--ah`, `--all-homes`: Sync from all homes first
 - `--aw`, `--all-workspaces`: Query all workspaces (default: current)
-- `--this`: Use current workspace only, not its alias
+- `--this`: Use current workspace only, not its project membership
 
 **Sync Options:**
 - `--sync`: Sync JSONL files to metrics database
@@ -363,28 +366,28 @@ Note: `--source` defaults to all workspaces for that source unless `--this` is s
 **Examples:**
 ```bash
 # Summary dashboard (current workspace)
-agent-history stats
+agent-history session stats
 
 # All workspaces (Homes & Workspaces section plus summary with time)
-agent-history stats --aw
+agent-history session stats --aw
 
 # Time tracking with auto-sync from all homes
-agent-history stats --time --ah
+agent-history session stats --time --ah
 
 # Tool usage statistics
-agent-history stats --by tool
+agent-history session stats --by tool
 
 # Daily trends
-agent-history stats --by day
+agent-history session stats --by day
 
 # Multi-dimension grouping
-agent-history stats --by home,agent
+agent-history session stats --by home,agent
 
 # Filter by date range
-agent-history stats --since 2025-11-01 --until 2025-11-30
+agent-history session stats --since 2025-11-01 --until 2025-11-30
 
 # Faster sync with selective sources
-agent-history stats --sync --ah --jobs 4 --no-remote
+agent-history session stats --sync --ah --jobs 4 --no-remote
 ```
 
 **Metrics Available:**
@@ -402,17 +405,17 @@ agent-history stats --sync --ah --jobs 4 --no-remote
 
 ## Date Filtering
 
-Both `session list` and `export` support date filtering:
+Both `session list` and `session export` support date filtering:
 
 ```bash
 # Sessions modified on or after a date
 agent-history session list myproject --since 2025-11-01
 
 # Sessions within a date range
-agent-history export myproject --since 2025-11-01 --until 2025-11-30
+agent-history session export myproject --since 2025-11-01 --until 2025-11-30
 
 # Export recent sessions only
-agent-history export myproject --since 2025-11-01 -o ./recent
+agent-history session export myproject --since 2025-11-01 -o ./recent
 ```
 
 **Notes:**
@@ -450,7 +453,7 @@ Omits:
 Split long conversations into multiple parts:
 
 ```bash
-agent-history export myproject --split 500
+agent-history session export myproject --split 500
 ```
 
 - Smart break points (before User messages, after tool results, time gaps)
@@ -465,13 +468,13 @@ agent-history export myproject --split 500
 
 ```bash
 # List remote workspaces
-agent-history ws -r user@server
+agent-history ws list -r user@server
 
 # List sessions from remote
-agent-history session myproject -r user@server
+agent-history session list myproject -r user@server
 
 # Export from remote
-agent-history export myproject -r user@server
+agent-history session export myproject -r user@server
 ```
 
 **Requirements:**
@@ -481,19 +484,19 @@ agent-history export myproject -r user@server
 ### WSL Access (from Windows)
 
 ```bash
-python agent-history ws --wsl
-python agent-history session myproject --wsl
-python agent-history export myproject --wsl
-python agent-history session --wsl --agent codex
-python agent-history session --wsl --agent gemini
+python agent-history ws list --wsl
+python agent-history session list myproject --wsl
+python agent-history session export myproject --wsl
+python agent-history session list --wsl --agent codex
+python agent-history session list --wsl --agent gemini
 ```
 
 ### Windows Access (from WSL)
 
 ```bash
-agent-history ws --windows
-agent-history session myproject --windows
-agent-history export myproject --windows
+agent-history ws list --windows
+agent-history session list myproject --windows
+agent-history session export myproject --windows
 ```
 
 ---

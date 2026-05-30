@@ -9,6 +9,7 @@ Quick links to the reference material under `docs/`.
 | **Claude Code** | ✅ Full support | JSONL | All features implemented and tested |
 | **Codex CLI** | ✅ Full support | JSONL | All features implemented and tested |
 | **Gemini CLI** | ✅ Full support | JSON | All features implemented and tested |
+| **Pi** | ✅ Full support | JSONL | All features implemented and tested |
 
 See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works with this tool.
 
@@ -19,8 +20,9 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | Document | Purpose |
 |----------|---------|
 | [usage.md](user/usage.md) | Command-by-command reference with flags, arguments, and examples. |
-| [cookbook.md](user/cookbook.md) | Practical recipes for aliases, backups, exports, multi-environment workflows, and reporting. |
+| [cookbook.md](user/cookbook.md) | Practical recipes for projects, backups, exports, multi-environment workflows, and reporting. |
 | [troubleshooting.md](user/troubleshooting.md) | Common issues, error messages, and environment fixes. |
+| [agent-history-process-image.md](agent-history-process-image.md) | Process diagram brief for how sessions are collected, normalized, and exported. |
 
 ---
 
@@ -61,6 +63,7 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | [claude-code-format.md](specs/agents/formats/claude-code-format.md) | Claude Code JSONL session file structure. |
 | [codex-cli-format.md](specs/agents/formats/codex-cli-format.md) | Codex CLI JSONL session file structure. |
 | [gemini-cli-format.md](specs/agents/formats/gemini-cli-format.md) | Gemini CLI JSON session format. |
+| [pi-format.md](specs/agents/formats/pi-format.md) | Pi JSONL session file structure. |
 | [chatgpt-web-format.md](specs/agents/formats/chatgpt-web-format.md) | ChatGPT web session format. |
 | [gemini-web-format.md](specs/agents/formats/gemini-web-format.md) | Gemini web session format. |
 
