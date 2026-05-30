@@ -448,38 +448,6 @@ def _path_exists_with_timeout(path: Path, timeout: float = 5.0) -> bool:
         return False
 
 
-def _get_wsl_candidate_paths(distro_name: str, username: str) -> list:
-    """Return candidate UNC paths for a WSL distro."""
-    return [
-        Path(f"//wsl.localhost/{distro_name}/home/{username}/.claude/projects"),
-        Path(f"//wsl$/{distro_name}/home/{username}/.claude/projects"),
-    ]
-
-
-def _get_wsl_gemini_candidate_paths(distro_name: str, username: str) -> list:
-    """Return candidate UNC paths for Gemini sessions in a WSL distro."""
-    return [
-        Path(f"//wsl.localhost/{distro_name}/home/{username}/.gemini/tmp"),
-        Path(f"//wsl$/{distro_name}/home/{username}/.gemini/tmp"),
-    ]
-
-
-def _get_wsl_codex_candidate_paths(distro_name: str, username: str) -> list:
-    """Return candidate UNC paths for Codex sessions in a WSL distro."""
-    return [
-        Path(f"//wsl.localhost/{distro_name}/home/{username}/.codex/sessions"),
-        Path(f"//wsl$/{distro_name}/home/{username}/.codex/sessions"),
-    ]
-
-
-def _get_wsl_pi_candidate_paths(distro_name: str, username: str) -> list:
-    """Return candidate UNC paths for Pi sessions in a WSL distro."""
-    return [
-        Path(f"//wsl.localhost/{distro_name}/home/{username}/.pi/agent/sessions"),
-        Path(f"//wsl$/{distro_name}/home/{username}/.pi/agent/sessions"),
-    ]
-
-
 @lru_cache(maxsize=32)
 def _wsl_unc_available(distro_name: str) -> bool:
     """Check whether the WSL UNC base path is reachable."""

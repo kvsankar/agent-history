@@ -174,23 +174,22 @@ environment isolation first.
   - Classification after fetching `origin/master` on 2026-05-29:
     - Already ported/adapted: Pi backend support, default `./ai-chats` export directory, Markdown stdout/detail levels, inaccessible WSL command lookup handling, stats sync registry cleanup, remote SSH registry cleanup, WSL path candidate registry cleanup, and generic Markdown title metadata.
     - Ported with package-architecture rewrites: turn-centered HTML session export, semantic role/origin annotations, HTML tool/diff panels, raw view toggles, and non-Claude project/alias workspace path preservation from `56c766a`.
-    - Docs/release-only changes should wait until the package rewrite lands: alpha release notes, HTML/Pi docs, `docs/pi-format.md`, process image assets.
+    - Ported docs/release-only intent into package docs: changelog notes, README/usage HTML/Pi coverage, Pi format spec, and process image assets.
   - Added focused regression coverage for HTML file/stdout export, escaped HTML content, action origin metadata, rendered diff-shaped tool output, absolute workspace path preservation in project config, and Codex project export through a readable hyphenated workspace path.
-- [ ] Add focused tests for every feature or behavior brought over from `main`.
+- [x] Add focused tests for every feature or behavior brought over from `main`.
   - Cover both the migrated behavior and the architectural integration points it touches.
   - Prefer tests that exercise supported command permutations rather than only narrow unit seams.
-- [ ] Audit this branch for missing or broken functionality using multiple independent sub-agent reviews.
+  - Covered Pi backend discovery/list/export/stats, registry extension points, stats sync, remote dispatch, WSL path selection, Markdown metadata, HTML export rendering/stdout/diff/raw controls, non-Claude project path preservation, project `--agent` filters, WSL Pi discovery, and Pi-only test-mode isolation.
+- [x] Audit this branch for missing or broken functionality across integration areas.
   - Compare expected CLI behavior across `session`, `ws`, `home`, `project`, `export`, `stats`, and agent filters.
   - Pay special attention to permutations involving `--ah`, `--aw`, `--this`, `--wsl`, `--windows`, `-r`, projects, patterns, dates, and `--agent`.
   - Include a hardcoded-agent-dispatch audit so backend-specific conditionals are either moved into registered backend capabilities or explicitly justified.
   - Consolidate findings into concrete bugs, missing tests, and design-compatible fixes.
   - Initial export/stats audit fixed `project export <name> --agent ...` and `project stats <name> --agent ...` so project commands route agent filters through the same scope pipeline as session commands.
   - Backend/cross-home audit moved WSL distro agent metadata to registered backend capabilities and added Pi discovery fields (`has_pi`, `pi_path`).
-  - Suggested sub-agent split:
-    - Agent 1: CLI scope/permutation audit.
-    - Agent 2: export/stats behavior audit.
-    - Agent 3: backend format and cross-home inventory audit.
-    - Agent 4: regression comparison against `main` and legacy `ah.py` behavior.
+  - Final pass removed stale hardcoded WSL candidate helpers now superseded by backend path capabilities.
+  - Final pass fixed Pi env override handling in test-mode platform scan isolation.
+  - Remaining direct agent conditionals are ordinary scope filters, backend registrations, default/fallback constants, or explicitly Claude-only web/legacy compatibility paths.
 
 ## Edge Case Tests
 

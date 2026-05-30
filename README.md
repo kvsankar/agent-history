@@ -4,6 +4,8 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 > **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
+See [agent-history-process-image.md](docs/agent-history-process-image.md) for the process diagram brief.
+
 ## Supported Agents
 
 | Agent | Status | Format | Documentation |
@@ -11,7 +13,7 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 | [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-code-format.md](docs/specs/agents/formats/claude-code-format.md) |
 | [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-cli-format.md](docs/specs/agents/formats/codex-cli-format.md) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-cli-format.md](docs/specs/agents/formats/gemini-cli-format.md) |
-| Pi | ✅ Full support | JSONL | AGENTS.md |
+| Pi | ✅ Full support | JSONL | [pi-format.md](docs/specs/agents/formats/pi-format.md) |
 
 Use `--agent claude`, `--agent codex`, `--agent gemini`, `--agent pi`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
 
@@ -23,20 +25,20 @@ Claude Code, Codex CLI, Gemini CLI, and Pi leave conversation data fragmented ac
 - Finding past work by project, not by opaque session IDs.
 - Getting readable exports for sharing, backup, or audits.
 - Seeing where and how you code across homes (local/WSL/Windows/SSH) with session/token/tool/time metrics.
-- Surviving moves/renames with aliasing and “closest match” `[missing]` hints.
-- Staying lightweight: one stdlib-only CLI plus a small SQLite db for metrics—no extra installs.
+- Surviving moves/renames with projects and “closest match” `[missing]` hints.
+- Staying lightweight: a Python CLI plus a small SQLite database for metrics.
 
 ## Features
 
-- **Markdown export (flexible)** – Export whole workspaces or single sessions; minimal/flat/split modes; size and path control.
+- **Markdown and offline HTML export** – Export whole workspaces or single sessions; Markdown minimal/flat/split modes; HTML renders turn-centered conversations with progressive detail controls.
 - **Workspace-aware filtering** – Target workspaces by name or path (slashes ok); matches encoded names automatically.
 - **Multi-environment reach** – Local, WSL (UNC or Linux paths), Windows from WSL, and SSH remotes; `[missing]` marker shows closest match for renamed workspaces.
-- **Projects** – Group related workspaces across homes/sources; apply projects to `sessions`, `workspaces`, `export`, and `stats`.
+- **Projects** – Group related workspaces across homes/sources; apply projects to `session`, `ws`, and `project` commands.
 - **Usage metrics** – Summaries, homes/workspaces breakdown, token/tool stats, time tracking (with daily breakdown via `--time`), top workspaces limit via `--top-ws`.
 - **Cross-home sync** – Sync metrics from all homes (`--ah`), all workspaces (`--aw`), or current workspace only (`--this`).
-- **WSL/Windows helpers** – Auto-detect WSL distros/Windows users; UNC path inference for `lss` without `--wsl`; converts path separators safely.
+- **WSL/Windows helpers** – Auto-detect WSL distros/Windows users; UNC path inference for session listing without `--wsl`; converts path separators safely.
 - **Claude Code skill** – Enables Claude to search your history ([SKILL.md](SKILL.md)).
-- **Stdlib only** – Single Python file; no pip installs needed.
+- **Backend registry** – Agent-specific parsing and paths live in registered backends, keeping handlers and scope resolution agent-agnostic where practical.
 
 ## Quick Start
 
@@ -51,7 +53,10 @@ cd /path/to/project
 /path/to/agent-history session list
 
 # Export to markdown
-/path/to/agent-history export
+/path/to/agent-history session export
+
+# Export offline HTML
+/path/to/agent-history session export --format html
 
 # Output goes to ./ai-chats/
 ```
@@ -60,7 +65,7 @@ cd /path/to/project
 ```powershell
 cd \path\to\project
 python \path\to\agent-history session list
-python \path\to\agent-history export
+python \path\to\agent-history session export
 ```
 
 ## Installation
@@ -82,7 +87,7 @@ By default the installer:
 
 Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settings` for custom setups.
 
-**Requirements:** Python 3.6+ (stdlib only, no pip install needed)
+**Requirements:** Python 3.11+ and project dependencies from `pyproject.toml`.
 
 > **Note:** Examples below assume `agent-history` is in your PATH.
 
@@ -230,9 +235,9 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 | `home` | List homes and manage sources (WSL, Windows, SSH) |
 | `ws` | List workspaces |
 | `session` | List sessions |
-| `export` | Export to markdown |
+| `session export` | Export sessions to Markdown or HTML |
 | `project` | Manage workspace projects |
-| `stats` | Usage statistics |
+| `session stats` | Usage statistics |
 | `reset` | Reset stored data |
 | `install` | Install CLI + Claude skill and update retention settings |
 
@@ -243,30 +248,30 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 agent-history ws list
 
 # Export specific project
-agent-history export myproject
+agent-history session export myproject
 
 # Export from all homes (local + WSL + Windows + remotes)
-agent-history export myproject --ah
+agent-history session export myproject --ah
 
 # Date filtering
 agent-history session list --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
-agent-history export myproject --minimal
+agent-history session export myproject --minimal
 
 # Faster sync/export
-agent-history stats --sync --ah --jobs 4
-agent-history export myproject --jobs 4 --quiet
+agent-history session stats --sync --ah --jobs 4
+agent-history session export myproject --jobs 4 --quiet
 
 # Time tracking
-agent-history stats --time
+agent-history session stats --time
 ```
 
 ## Multi-Environment Access
 
 ```bash
 # Discover all Claude installations
-agent-history home
+agent-history home list
 
 # Add homes (explicit model - must add for --ah to include)
 agent-history home add --wsl              # add WSL
@@ -284,7 +289,7 @@ agent-history session list --windows
 agent-history session list -r user@server
 
 # All homes at once (includes configured sources)
-agent-history export --ah
+agent-history session export --ah
 ```
 
 ## Projects
@@ -292,9 +297,6 @@ agent-history export --ah
 Group related workspaces across environments:
 
 ```bash
-# Create project
-agent-history project create myproject
-
 # Add workspaces
 agent-history project add myproject myproject
 agent-history project add myproject --windows myproject
@@ -303,8 +305,8 @@ agent-history project add myproject -r user@vm myproject
 # Use with @ prefix or --project flag
 agent-history session list @myproject
 agent-history session list --project myproject
-agent-history export @myproject
-agent-history export --project myproject
+agent-history session export @myproject
+agent-history session export --project myproject
 
 # Remove entries using paths from any home
 agent-history project remove myproject -r user@vm /home/user/myproject
@@ -326,7 +328,7 @@ By default, Claude Code deletes conversation history after 30 days. Add this to 
 Set `CLAUDE_PROJECTS_DIR` to point the CLI at a different `.claude/projects` root. This is handy when running inside containers, CI pipelines, or when your Claude data lives on another drive:
 
 ```bash
-CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects agent-history lsw
+CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects agent-history ws list
 ```
 
 The directory must mirror Claude's standard layout (`<root>/<encoded-workspace>/*.jsonl`).

@@ -425,6 +425,7 @@ class TestAgentConstants:
         assert AGENT_CLAUDE == "claude"
         assert AGENT_CODEX == "codex"
         assert AGENT_GEMINI == "gemini"
+        assert AGENT_PI == "pi"
 
 
 # Platform-specific tests that may need to be skipped

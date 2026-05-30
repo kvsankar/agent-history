@@ -472,6 +472,7 @@ def isolated_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
     env["CODEX_SESSIONS_DIR"] = str(codex_dir)
     env["GEMINI_SESSIONS_DIR"] = str(gemini_dir)
     env["HOME"] = str(tmp_path)
+    env["AGENT_HISTORY_HOME"] = str(tmp_path)
     # Ensure config/metrics live alongside this isolated home, regardless of external overrides.
     env["AGENT_HISTORY_CONFIG_DIR"] = str(history_dir)
     if sys.platform == "win32":
