@@ -184,6 +184,8 @@ def _parse_remote_sessions(output: str, remote_host: str, workspace: str, agent:
         }
         if len(parts) >= 5 and parts[4]:
             entry["workspace"] = parts[4]
+        if len(parts) >= 6 and parts[5]:
+            entry["workspace_readable"] = parts[5]
         sessions.append(entry)
     return sessions
 

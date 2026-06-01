@@ -472,11 +472,37 @@ class CLIParser:
         )
         home_parser.set_defaults(command=RESOURCE_HOME, home_verb=DEFAULT_VERB_LIST)
         # Add flags to home top-level so home --local, home --wsl work
-        home_parser.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
-        home_parser.add_argument("--windows", action="store_true", help="Show Windows users only")
-        home_parser.add_argument("--web", action="store_true", help="Show Claude.ai status only")
-        home_parser.add_argument("--local", action="store_true", help="Show local home only")
-        home_parser.add_argument("--remotes", action="store_true", help="Show SSH remotes only")
+        home_parser.add_argument(
+            "--wsl",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Show WSL distributions only",
+        )
+        home_parser.add_argument(
+            "--windows",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Show Windows users only",
+        )
+        home_parser.add_argument(
+            "--web",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Show Claude.ai status only",
+        )
+        home_parser.add_argument(
+            "--local",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Show local home only",
+        )
+        home_parser.add_argument(
+            "--remotes",
+            action="store_true",
+            dest="show_remotes",
+            default=argparse.SUPPRESS,
+            help="Show SSH remotes only",
+        )
         self._add_output_format(home_parser)
 
         home_sub = home_parser.add_subparsers(dest="home_verb")
@@ -486,11 +512,37 @@ class CLIParser:
         # home list
         home_list = home_sub.add_parser(DEFAULT_VERB_LIST, help="List homes")
         home_list.set_defaults(command=RESOURCE_HOME, home_verb=DEFAULT_VERB_LIST)
-        home_list.add_argument("--wsl", action="store_true", help="Show WSL distributions only")
-        home_list.add_argument("--windows", action="store_true", help="Show Windows users only")
-        home_list.add_argument("--web", action="store_true", help="Show Claude.ai status only")
-        home_list.add_argument("--local", action="store_true", help="Show local home only")
-        home_list.add_argument("--remotes", action="store_true", help="Show SSH remotes only")
+        home_list.add_argument(
+            "--wsl",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Show WSL distributions only",
+        )
+        home_list.add_argument(
+            "--windows",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Show Windows users only",
+        )
+        home_list.add_argument(
+            "--web",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Show Claude.ai status only",
+        )
+        home_list.add_argument(
+            "--local",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Show local home only",
+        )
+        home_list.add_argument(
+            "--remotes",
+            action="store_true",
+            dest="show_remotes",
+            default=argparse.SUPPRESS,
+            help="Show SSH remotes only",
+        )
         home_list.add_argument(
             "--counts",
             action="store_true",
@@ -650,6 +702,7 @@ class CLIParser:
             action="append",
             dest="homes",
             metavar="NAME",
+            default=argparse.SUPPRESS,
             help="Specific saved home (repeatable)",
         )
         parser.add_argument(
@@ -657,32 +710,58 @@ class CLIParser:
             "--all-homes",
             dest="all_homes",
             action="store_true",
+            default=argparse.SUPPRESS,
             help="Include all configured homes",
         )
-        parser.add_argument("--wsl", action="store_true", help="Use WSL home")
-        parser.add_argument("--windows", action="store_true", help="Use Windows home")
-        parser.add_argument("--web", action="store_true", help="Include Claude.ai web sessions")
+        parser.add_argument(
+            "--wsl", action="store_true", default=argparse.SUPPRESS, help="Use WSL home"
+        )
+        parser.add_argument(
+            "--windows", action="store_true", default=argparse.SUPPRESS, help="Use Windows home"
+        )
+        parser.add_argument(
+            "--web",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Include Claude.ai web sessions",
+        )
         parser.add_argument(
             "-r",
             "--remote",
             action="append",
             dest="remotes",
             metavar="HOST",
+            default=argparse.SUPPRESS,
             help="SSH remote (user@host) - repeatable",
         )
-        parser.add_argument("--no-wsl", action="store_true", help="Exclude WSL sources (with --ah)")
         parser.add_argument(
-            "--no-windows", action="store_true", help="Exclude Windows sources (with --ah)"
+            "--no-wsl",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Exclude WSL sources (with --ah)",
         )
         parser.add_argument(
-            "--no-remote", action="store_true", help="Exclude SSH remotes (with --ah)"
+            "--no-windows",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Exclude Windows sources (with --ah)",
         )
         parser.add_argument(
-            "--no-web", action="store_true", help="Exclude web sessions (with --ah)"
+            "--no-remote",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Exclude SSH remotes (with --ah)",
+        )
+        parser.add_argument(
+            "--no-web",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Exclude web sessions (with --ah)",
         )
         parser.add_argument(
             "--local",
             action="store_true",
+            default=argparse.SUPPRESS,
             help="Local home only (use with -r/--home to combine)",
         )
 
@@ -709,6 +788,7 @@ class CLIParser:
             "--name",
             dest="name_patterns",
             action="append",
+            default=argparse.SUPPRESS,
             help="Substring match workspace names/paths (repeatable)",
         )
         parser.add_argument(
@@ -716,12 +796,14 @@ class CLIParser:
             "--all-workspaces",
             dest="all_workspaces",
             action="store_true",
+            default=argparse.SUPPRESS,
             help="Use all workspaces in scope",
         )
         parser.add_argument(
             "--this",
             dest="this_only",
             action="store_true",
+            default=argparse.SUPPRESS,
             help="Current workspace only (skip project auto-detection)",
         )
         if include_project:
@@ -730,6 +812,7 @@ class CLIParser:
                 action="append",
                 dest="projects",
                 metavar="NAME",
+                default=argparse.SUPPRESS,
                 help="Project name (repeatable)",
             )
 
@@ -738,11 +821,13 @@ class CLIParser:
         parser.add_argument(
             "--since",
             metavar="DATE",
+            default=argparse.SUPPRESS,
             help="Only include sessions on/after this date (YYYY-MM-DD)",
         )
         parser.add_argument(
             "--until",
             metavar="DATE",
+            default=argparse.SUPPRESS,
             help="Only include sessions on/before this date (YYYY-MM-DD)",
         )
 
@@ -751,7 +836,7 @@ class CLIParser:
         parser.add_argument(
             "--agent",
             choices=get_agent_choices(),
-            default=DEFAULT_AGENT,
+            default=argparse.SUPPRESS,
             help="Agent backend to use (default: auto-detect)",
         )
 
@@ -760,14 +845,14 @@ class CLIParser:
         parser.add_argument(
             "--format",
             choices=OUTPUT_FORMAT_CHOICES,
-            default=None,
+            default=argparse.SUPPRESS,
             help="Output format (default: table for TTY, tsv for pipes)",
         )
         parser.add_argument(
             "-w",
             "--width",
             type=int,
-            default=None,
+            default=argparse.SUPPRESS,
             metavar="COLS",
             help="Table width in columns (default: 120, 0=no limit)",
         )
@@ -1108,51 +1193,16 @@ class CLIParser:
         self, args: argparse.Namespace, resource: str, verb: str
     ) -> dict[str, Any]:
         """Build verb-specific arguments."""
-        verb_args: dict[str, Any] = {}
-
-        # Export-specific args
         if verb == "export":
-            # Prefer -o/--output flag over positional output_dir
-            verb_args["output_dir"] = (
-                getattr(args, "output_override", None)
-                or getattr(args, "output_dir", None)
-                or DEFAULT_OUTPUT_DIR
-            )
-            verb_args["export_format"] = getattr(args, "export_format", EXPORT_FORMAT_MARKDOWN)
-            verb_args["force"] = getattr(args, "force", False)
-            verb_args["export_json"] = getattr(args, "export_json", False)
-            verb_args["minimal"] = getattr(args, "minimal", False)
-            verb_args["markdown_level"] = getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL)
-            verb_args["split"] = getattr(args, "split", None)
-            verb_args["jobs"] = getattr(args, "jobs", None)
-            verb_args["flat"] = getattr(args, "flat", False)
-            verb_args["include_source"] = getattr(args, "include_source", False)
-            if resource == RESOURCE_SESSION:
-                raw_ids = list(getattr(args, "session_ids", None) or [])
-                verb_args["session_ids"] = self._split_csv_list(raw_ids)
-                verb_args["targets"] = list(getattr(args, "target", None) or [])
-
-        # Stats-specific args
+            verb_args = self._build_export_verb_args(args, resource)
         elif verb == "stats":
-            verb_args["sync"] = getattr(args, "sync", False)
-            verb_args["no_sync"] = getattr(args, "no_sync", False)
-            verb_args["force"] = getattr(args, "force", False)
-            raw_by = getattr(args, "by", None)
-            verb_args["by"] = self._split_csv_list([raw_by]) if raw_by else None
-            verb_args["time"] = getattr(args, "time", False)
-            verb_args["top_ws"] = getattr(args, "top_ws", None)
-
-        # List-specific args
+            verb_args = self._build_stats_verb_args(args)
         elif verb == "list":
-            verb_args["counts"] = getattr(args, "counts", False)
-
-        # Show-specific args
+            verb_args = self._build_list_verb_args(args, resource)
         elif verb == "show":
-            verb_args["session_id"] = getattr(args, "session_id", None)
-            if resource == RESOURCE_PROJECT:
-                verb_args["name"] = getattr(args, "name", None)
-            elif resource == RESOURCE_HOME:
-                verb_args["name"] = getattr(args, "name", None)
+            verb_args = self._build_show_verb_args(args, resource)
+        else:
+            verb_args = {}
 
         # Project management args
         if resource == RESOURCE_PROJECT:
@@ -1193,4 +1243,56 @@ class CLIParser:
         if resource == RESOURCE_FETCH:
             verb_args["fetch"] = True
 
+        return verb_args
+
+    def _build_export_verb_args(self, args: argparse.Namespace, resource: str) -> dict[str, Any]:
+        """Build export-specific arguments."""
+        verb_args = {
+            "output_dir": (
+                getattr(args, "output_override", None)
+                or getattr(args, "output_dir", None)
+                or DEFAULT_OUTPUT_DIR
+            ),
+            "export_format": getattr(args, "export_format", EXPORT_FORMAT_MARKDOWN),
+            "force": getattr(args, "force", False),
+            "export_json": getattr(args, "export_json", False),
+            "minimal": getattr(args, "minimal", False),
+            "markdown_level": getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
+            "split": getattr(args, "split", None),
+            "jobs": getattr(args, "jobs", None),
+            "flat": getattr(args, "flat", False),
+            "include_source": getattr(args, "include_source", False),
+        }
+        if resource == RESOURCE_SESSION:
+            raw_ids = list(getattr(args, "session_ids", None) or [])
+            verb_args["session_ids"] = self._split_csv_list(raw_ids)
+            verb_args["targets"] = list(getattr(args, "target", None) or [])
+        return verb_args
+
+    def _build_stats_verb_args(self, args: argparse.Namespace) -> dict[str, Any]:
+        """Build stats-specific arguments."""
+        raw_by = getattr(args, "by", None)
+        return {
+            "sync": getattr(args, "sync", False),
+            "no_sync": getattr(args, "no_sync", False),
+            "force": getattr(args, "force", False),
+            "by": self._split_csv_list([raw_by]) if raw_by else None,
+            "time": getattr(args, "time", False),
+            "top_ws": getattr(args, "top_ws", None),
+        }
+
+    def _build_list_verb_args(self, args: argparse.Namespace, resource: str) -> dict[str, Any]:
+        """Build list-specific arguments."""
+        verb_args = {"counts": getattr(args, "counts", False)}
+        if resource == RESOURCE_HOME:
+            for flag in ("local", "wsl", "windows", "web"):
+                verb_args[flag] = getattr(args, flag, False)
+            verb_args["remotes"] = getattr(args, "show_remotes", False)
+        return verb_args
+
+    def _build_show_verb_args(self, args: argparse.Namespace, resource: str) -> dict[str, Any]:
+        """Build show-specific arguments."""
+        verb_args = {"session_id": getattr(args, "session_id", None)}
+        if resource in (RESOURCE_PROJECT, RESOURCE_HOME):
+            verb_args["name"] = getattr(args, "name", None)
         return verb_args

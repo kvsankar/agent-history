@@ -6,7 +6,6 @@ import pytest
 
 from agent_history.cli.parser import CLIParser
 
-
 HOME_SCOPES = [
     ("implicit", []),
     ("home_local", ["--home", "local"]),
@@ -47,3 +46,35 @@ def test_session_scope_matrix_parses(verb, home_name, home_args, ws_name, ws_arg
 
     assert request.resource == "session"
     assert request.verb == verb
+
+
+def test_parent_scope_flags_survive_subcommand_defaults() -> None:
+    """Flags before a subcommand should not be overwritten by subparser defaults."""
+    parser = CLIParser()
+
+    request = parser.parse(
+        [
+            "session",
+            "--windows",
+            "--aw",
+            "--agent",
+            "codex",
+            "--format",
+            "json",
+            "list",
+        ]
+    )
+
+    assert request.scope_args.home_type == "windows"
+    assert request.scope_args.all_workspaces is True
+    assert request.scope_args.agent == "codex"
+    assert request.output_args.format == "json"
+
+
+def test_home_parent_filter_flags_survive_subcommand_defaults() -> None:
+    parser = CLIParser()
+
+    request = parser.parse(["home", "--windows", "list", "--format", "json"])
+
+    assert request.verb_args["windows"] is True
+    assert request.output_args.format == "json"

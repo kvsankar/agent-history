@@ -108,6 +108,9 @@ scope resolution:
   if the current directory belongs to a configured project.
 - Some list/count columns are intentionally hidden or opt-in to avoid expensive
   session counting.
+- Branch comparison on 2026-06-01 covered master vs `feature/2.0-exploration`
+  across local, Windows-from-WSL, and `sankar@ubuntuvm01` remote shapes. Details
+  and classifications are in `docs/analysis/branch-comparison-2026-06-01.md`.
 
 ### Testing Notes
 
@@ -190,6 +193,30 @@ environment isolation first.
   - Final pass removed stale hardcoded WSL candidate helpers now superseded by backend path capabilities.
   - Final pass fixed Pi env override handling in test-mode platform scan isolation.
   - Remaining direct agent conditionals are ordinary scope filters, backend registrations, default/fallback constants, or explicitly Claude-only web/legacy compatibility paths.
+- [x] Compare master and feature branch behavior across local, Windows, and remote integration shapes.
+  - Tested home/project/workspace/session list behavior against `origin/master`
+    using `/tmp/agent-history-compare/run_compare.py`.
+  - Fixed non-intentional regressions found during comparison: legacy alias
+    fallback, parent flag parsing, home filters, metadata-only workspace lists,
+    early `--agent` scoping, remote Claude dashed path decoding, Windows
+    workspace display, cached workspace exclusion, and skipped message-count
+    rendering.
+  - Verified final matrix: remote `claude-history` sessions `77/77`,
+    Windows `claude-history` sessions `64/64`, and matching remote/Windows
+    workspace paths.
+  - Deferred/intentional differences are logged in
+    `docs/analysis/branch-comparison-2026-06-01.md`.
+
+## Pending Branch Comparison Follow-Up
+
+- [ ] Decide whether v2 `session list` should preserve master exit code `1`
+  when no sessions match, or document the v2 `0` exit as intentional.
+- [ ] Investigate project-show performance: both master `alias show
+  agent-history` and feature `project show agent-history` timed out in the
+  30-second comparison window.
+- [ ] Decide whether session list should count messages by default for local
+  scans or keep v2's faster blank-when-skipped behavior unless `--counts` is
+  requested.
 
 ## Edge Case Tests
 

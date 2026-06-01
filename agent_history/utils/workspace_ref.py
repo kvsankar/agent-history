@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
-import re
-from typing import Any, Dict, Optional
+from typing import Any
 
+from agent_history.scope.types import ConcreteRecord
 from agent_history.utils.paths import (
     CACHED_REMOTE_PREFIX,
-    CACHED_WSL_PREFIX,
     CACHED_WINDOWS_PREFIX,
+    CACHED_WSL_PREFIX,
     decode_workspace_path,
     is_cached_workspace,
     is_encoded_workspace_name,
 )
-from agent_history.scope.types import ConcreteRecord
 
 
 class WorkspaceKind(str, Enum):
@@ -37,7 +37,7 @@ class WorkspaceRef:
     raw: str
     kind: WorkspaceKind
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "workspace_key": self.key,
             "workspace_display": self.display,
@@ -56,17 +56,15 @@ class WorkspaceContext:
     workspace_display: str
 
     @classmethod
-    def from_record(cls, record: ConcreteRecord) -> "WorkspaceContext":
+    def from_record(cls, record: ConcreteRecord) -> WorkspaceContext:
         return cls(
             home=record.home,
             workspace=record.workspace,
             workspace_key=select_workspace_key(record.workspace, record.workspace_key),
-            workspace_display=select_workspace_display(
-                record.workspace, record.workspace_display
-            ),
+            workspace_display=select_workspace_display(record.workspace, record.workspace_display),
         )
 
-    def apply(self, target: Dict[str, Any]) -> None:
+    def apply(self, target: dict[str, Any]) -> None:
         target["home"] = self.home
         target["workspace"] = self.workspace
         target["workspace_key"] = self.workspace_key
@@ -130,10 +128,10 @@ def _display_from_raw(raw: str, kind: WorkspaceKind) -> str:
     if kind == WorkspaceKind.CACHED:
         raw = _strip_cached_prefix(raw)
         if is_encoded_workspace_name(raw):
-            return decode_workspace_path(raw, verify_local=False)
+            return decode_workspace_path(raw, verify_local=True)
         return raw
     if kind == WorkspaceKind.ENCODED:
-        return decode_workspace_path(raw, verify_local=False)
+        return decode_workspace_path(raw, verify_local=True)
     if kind == WorkspaceKind.PATH:
         return _normalize_path(raw)
     if kind == WorkspaceKind.HASH:
@@ -160,7 +158,7 @@ def is_hash_display(value: str) -> bool:
     return bool(_HASH_DISPLAY_RE.match(value))
 
 
-def build_workspace_ref(raw: Optional[str], readable: Optional[str] = None) -> WorkspaceRef:
+def build_workspace_ref(raw: str | None, readable: str | None = None) -> WorkspaceRef:
     raw_value = raw or ""
     kind = _infer_kind(raw_value)
     display = (readable or "").strip()
@@ -170,23 +168,23 @@ def build_workspace_ref(raw: Optional[str], readable: Optional[str] = None) -> W
     return WorkspaceRef(key=key, display=display or key, raw=raw_value, kind=kind)
 
 
-def select_workspace_key(workspace: str, workspace_key: Optional[str] = None) -> str:
+def select_workspace_key(workspace: str, workspace_key: str | None = None) -> str:
     """Select the stable workspace key."""
     return workspace_key or workspace
 
 
-def select_workspace_display(workspace: str, workspace_display: Optional[str] = None) -> str:
+def select_workspace_display(workspace: str, workspace_display: str | None = None) -> str:
     """Select the workspace display string."""
     return workspace_display or workspace
 
 
 def attach_workspace_context(
-    target: Dict[str, Any],
+    target: dict[str, Any],
     *,
-    workspace: Optional[str] = None,
-    workspace_key: Optional[str] = None,
-    workspace_display: Optional[str] = None,
-    context: Optional[WorkspaceContext] = None,
+    workspace: str | None = None,
+    workspace_key: str | None = None,
+    workspace_display: str | None = None,
+    context: WorkspaceContext | None = None,
 ) -> None:
     """Attach workspace key/display values to an output dictionary."""
     if context is not None:
@@ -207,7 +205,7 @@ def attach_workspace_context(
         target["workspace_readable"] = display
 
 
-def apply_workspace_ref(session: Dict[str, Any]) -> WorkspaceRef:
+def apply_workspace_ref(session: dict[str, Any]) -> WorkspaceRef:
     raw = session.get("workspace") or ""
     readable = session.get("workspace_readable") or session.get("workspace_display")
     ref = build_workspace_ref(raw, readable)

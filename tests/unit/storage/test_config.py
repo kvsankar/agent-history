@@ -293,6 +293,35 @@ class TestAliases:
         assert "myproject" in loaded["projects"]
         assert loaded["projects"]["myproject"]["local"] == ["-home-user-myproject"]
 
+    def test_load_config_uses_aliases_when_legacy_projects_file_is_empty(
+        self, tmp_path, monkeypatch
+    ):
+        """An empty legacy projects.json should not hide populated aliases.json."""
+        config_dir = _set_config_dir(tmp_path, monkeypatch)
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        (config_dir / "config.json").write_text(
+            json.dumps({"version": 2, "homes": [], "projects": {}}),
+            encoding="utf-8",
+        )
+        (config_dir / "projects.json").write_text(
+            json.dumps({"version": 1, "projects": {}}),
+            encoding="utf-8",
+        )
+        (config_dir / "aliases.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "aliases": {"myproject": {"local": ["-home-user-myproject"]}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        loaded = load_config()
+
+        assert "myproject" in loaded["projects"]
+
     def test_save_aliases_preserves_absolute_workspace_paths(self, tmp_path, monkeypatch):
         """Absolute project paths should stay readable for non-Claude agents."""
         _set_config_dir(tmp_path, monkeypatch)

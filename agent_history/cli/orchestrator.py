@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import sys
 import traceback
-from typing import List, Optional
 
 from agent_history.cli.parser import CLIParser
 from agent_history.handlers import (
     CommandResult,
     DispatchError,
+    FetchHandler,
     GeminiIndexHandler,
     HomeAddHandler,
     HomeExportHandler,
@@ -31,12 +31,11 @@ from agent_history.handlers import (
     ProjectRemoveHandler,
     ProjectShowHandler,
     ProjectStatsHandler,
+    ResetHandler,
     SessionExportHandler,
     SessionListHandler,
     SessionShowHandler,
     SessionStatsHandler,
-    FetchHandler,
-    ResetHandler,
     VerbDispatcher,
     WorkspaceExportHandler,
     WorkspaceListHandler,
@@ -283,7 +282,7 @@ class CommandOrchestrator:
         # Check connectivity to each remote
         all_ok = True
         for remote_host in remotes_to_check:
-            success, error = check_ssh_connection(remote_host)
+            success, _error = check_ssh_connection(remote_host)
             if not success:
                 sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
                 sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
@@ -307,7 +306,7 @@ class CommandOrchestrator:
         finally:
             conn.close()
 
-    def run(self, argv: List[str]) -> int:
+    def run(self, argv: list[str]) -> int:
         """Run command pipeline.
 
         Args:
@@ -337,29 +336,14 @@ class CommandOrchestrator:
             if not self._check_remote_connectivity(request, context):
                 return 1
 
-            # Project list with --counts should scope to configured projects only
-            if (
-                request.resource == "project"
-                and request.verb == "list"
-                and request.verb_args.get("counts")
-                and not request.scope_args.projects
-            ):
-                from agent_history.storage.config import load_config
-
-                projects_cfg = load_config().get("projects", {})
-                request.scope_args.projects = list(projects_cfg.keys())
+            self._prepare_scope_for_project_counts(request)
 
             # 3. Resolve scope
             resolver = ScopeResolver(context)
-            load_sessions = True
-            if request.resource == "home" and request.verb == "list":
-                # Home list only needs session data when counts are requested
-                load_sessions = bool(request.verb_args.get("counts"))
-            elif request.resource == "project" and request.verb == "list":
-                # Project list is metadata-only unless counts are requested
-                load_sessions = bool(request.verb_args.get("counts"))
-
-            resolution = resolver.resolve(request.scope_args, load_sessions=load_sessions)
+            resolution = resolver.resolve(
+                request.scope_args,
+                load_sessions=self._should_load_sessions(request),
+            )
 
             if self.debug:
                 sys.stderr.write(
@@ -403,8 +387,30 @@ class CommandOrchestrator:
         except Exception as e:
             return self.error_handler.handle_execution_error(e)
 
+    def _prepare_scope_for_project_counts(self, request: CommandRequest) -> None:
+        """Expand project-list counts to all configured projects when needed."""
+        if not (
+            request.resource == "project"
+            and request.verb == "list"
+            and request.verb_args.get("counts")
+            and not request.scope_args.projects
+        ):
+            return
+
+        from agent_history.storage.config import load_config
+
+        projects_cfg = load_config().get("projects", {})
+        request.scope_args.projects = list(projects_cfg.keys())
+
+    def _should_load_sessions(self, request: CommandRequest) -> bool:
+        """Return whether scope resolution needs session data for this request."""
+        metadata_only_lists = {"home", "ws", "project"}
+        if request.verb == "list" and request.resource in metadata_only_lists:
+            return bool(request.verb_args.get("counts"))
+        return True
+
     def run_with_context(
-        self, argv: List[str], context: Optional[ResolutionContext] = None
+        self, argv: list[str], context: ResolutionContext | None = None
     ) -> CommandResult:
         """Run command pipeline with explicit context.
 
@@ -442,7 +448,7 @@ class CommandOrchestrator:
         return self.dispatcher.dispatch(request, resolution.scope)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Entry point for agent-history CLI.
 
     Args:

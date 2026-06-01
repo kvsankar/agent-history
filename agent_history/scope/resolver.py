@@ -422,7 +422,7 @@ class ScopeResolver:
     # Workspace Enumeration (used by WorkspaceStage)
     # =========================================================================
 
-    def _enumerate_workspaces(self, home: str) -> list[str]:
+    def _enumerate_workspaces(self, home: str, agent: str | None = None) -> list[str]:
         """
         List all workspaces in a home.
 
@@ -431,6 +431,7 @@ class ScopeResolver:
 
         Args:
             home: Home identifier (e.g., "local", "wsl:Ubuntu", "remote:user@host").
+            agent: Optional backend id to limit enumeration.
 
         Returns:
             Sorted list of unique workspace paths.
@@ -438,7 +439,20 @@ class ScopeResolver:
         Raises:
             ValueError: If SSH connection fails for remote homes.
         """
-        return self._inventory.list_workspaces(home)
+        return self._inventory.list_workspaces(home, agent=agent)
+
+    def _agent_filter_from_session_spec(self, session_spec: SessionSpec) -> str | None:
+        """Return the concrete agent filter encoded in a session spec, if any."""
+        from agent_history.backends.registry import DEFAULT_AGENT
+        from agent_history.scope.types import SessionSpecFiltered
+
+        if not isinstance(session_spec, SessionSpecFiltered):
+            return None
+
+        agent = session_spec.filters.agent
+        if not agent or agent == DEFAULT_AGENT:
+            return None
+        return agent
 
     def _materialize_scope_without_sessions(self, scope: TemplateScope) -> ConcreteScope:
         """
@@ -642,7 +656,13 @@ class ScopeResolver:
     # These delegate to the appropriate stage modules
     # =========================================================================
 
-    def _match_workspaces(self, home: str, pattern: str, match_type: MatchType) -> list[str]:
+    def _match_workspaces(
+        self,
+        home: str,
+        pattern: str,
+        match_type: MatchType,
+        agent: str | None = None,
+    ) -> list[str]:
         """
         Match workspaces against a pattern with specified semantics.
 
@@ -654,13 +674,14 @@ class ScopeResolver:
             home: Home identifier to search in.
             pattern: Pattern to match against.
             match_type: How to interpret the pattern.
+            agent: Optional backend id to limit enumeration.
 
         Returns:
             List of matching workspace paths.
         """
         import fnmatch
 
-        all_workspaces = self._enumerate_workspaces(home)
+        all_workspaces = self._enumerate_workspaces(home, agent=agent)
         normalized_pattern = pattern
         if match_type in (MatchType.EXACT, MatchType.PREFIX):
             from agent_history.utils.workspace_ref import build_workspace_ref
@@ -741,8 +762,10 @@ class ScopeResolver:
         from agent_history.backends.registry import iter_backends
         from agent_history.scope.types import SessionSpecAll, SessionSpecFiltered
 
+        agent_filter = self._agent_filter_from_session_spec(session_spec)
+
         all_sessions: list[SessionDict] = []
-        for backend in iter_backends():
+        for backend in iter_backends(agent_filter):
             collector = getattr(self, f"_collect_{backend.id}_sessions", None)
             if collector is None:
                 all_sessions.extend(self._collect_backend_sessions(home, workspace, backend.id))
@@ -794,6 +817,23 @@ class ScopeResolver:
         self, home: str, workspace: str, agent_id: str
     ) -> list[SessionDict]:
         """Collect sessions for a registered backend by exact workspace."""
+        if home.startswith("remote:"):
+            try:
+                all_sessions = self._inventory.remote_client.list_sessions(
+                    home[7:], workspace, agent=agent_id
+                )
+            except Exception:
+                return []
+            return [
+                s
+                for s in all_sessions
+                if (
+                    s.get("workspace_key", "") == workspace
+                    or s.get("workspace_readable", "") == workspace
+                    or s.get("workspace", "") == workspace
+                )
+            ]
+
         all_sessions = self._inventory.list_sessions(home, agent=agent_id)
         return [
             s
@@ -818,7 +858,15 @@ class ScopeResolver:
         Returns:
             List of session dictionaries for the workspace.
         """
-        all_sessions = self._load_claude_sessions_for_home(home)
+        if home.startswith("remote:"):
+            try:
+                all_sessions = self._inventory.remote_client.list_sessions(
+                    home[7:], workspace, agent="claude"
+                )
+            except Exception:
+                return []
+        else:
+            all_sessions = self._load_claude_sessions_for_home(home)
         return [
             s
             for s in all_sessions
@@ -952,7 +1000,9 @@ class ScopeResolver:
 
             if isinstance(spec, WorkspaceSpecAll):
                 try:
-                    workspaces = self._enumerate_workspaces(home)
+                    workspaces = self._enumerate_workspaces(
+                        home, agent=self._agent_filter_from_session_spec(record.sessions)
+                    )
                 except ValueError as e:
                     # SSH connection error for remote homes
                     ws_error = ResolutionError(
@@ -985,7 +1035,12 @@ class ScopeResolver:
                 workspaces = [decoded]
             elif isinstance(spec, WorkspaceSpecPattern):
                 try:
-                    workspaces = self._match_workspaces(home, spec.pattern, spec.match_type)
+                    workspaces = self._match_workspaces(
+                        home,
+                        spec.pattern,
+                        spec.match_type,
+                        agent=self._agent_filter_from_session_spec(record.sessions),
+                    )
                 except ValueError as e:
                     # SSH connection error for remote homes
                     ws_error = ResolutionError(

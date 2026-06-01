@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List
 
-from agent_history.utils.paths import normalize_workspace_name
+from agent_history.utils.paths import is_cached_workspace, normalize_workspace_name
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
 
 DEFAULT_AGENT = "auto"
@@ -144,13 +144,17 @@ def _claude_scan_sessions(projects_dir: Path) -> SessionList:
 
 
 def _claude_list_workspaces(projects_dir: Path, home: str) -> list[str]:
-    verify_local = home == "local"
+    verify_local = home == "local" or home.startswith("windows:")
     if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
         verify_local = False
 
     workspaces: list[str] = []
     for entry in projects_dir.iterdir():
-        if entry.is_dir() and not entry.name.startswith("."):
+        if (
+            entry.is_dir()
+            and not entry.name.startswith(".")
+            and not is_cached_workspace(entry.name)
+        ):
             workspaces.append(normalize_workspace_name(entry.name, verify_local=verify_local))
     return workspaces
 
@@ -204,25 +208,113 @@ def _claude_resolve_stats_workspace(
 
 
 def _claude_remote_list_workspaces_command() -> str:
-    return "ls -1 ~/.claude/projects/ 2>/dev/null || true"
+    return r"""python3 - <<'PY'
+from pathlib import Path
+
+root = Path.home() / ".claude" / "projects"
+
+def resolve_parts(parts, base):
+    resolved = []
+    current = base
+    i = 0
+    while i < len(parts):
+        match = None
+        match_end = i + 1
+        for end in range(len(parts), i, -1):
+            candidate = "-".join(parts[i:end])
+            if (current / candidate).exists():
+                match = candidate
+                match_end = end
+                break
+        if match is None:
+            resolved.extend(parts[i:])
+            break
+        resolved.append(match)
+        current = current / match
+        i = match_end
+    return str(base.joinpath(*resolved))
+
+def decode_workspace(name):
+    if name.startswith("-"):
+        return resolve_parts(name[1:].split("-"), Path("/"))
+    return name
+
+if root.exists():
+    for entry in sorted(root.iterdir()):
+        name = entry.name
+        if not entry.is_dir() or not name.startswith("-"):
+            continue
+        if name.startswith(("remote_", "wsl_", "windows_")):
+            continue
+        print(decode_workspace(name))
+PY"""
 
 
 def _claude_remote_parse_workspaces(output: str) -> list[str]:
     items = [line.strip() for line in output.splitlines() if line.strip()]
     return [
-        item for item in items if item.startswith("-") and not item.startswith(("remote_", "wsl_"))
+        item
+        for item in items
+        if (item.startswith("/") or item.startswith("-"))
+        and not item.startswith(("remote_", "wsl_", "windows_"))
     ]
 
 
 def _claude_remote_list_sessions_command(workspace: str) -> str:
     safe_workspace = shlex.quote(workspace)
-    return f"""cd ~/.claude/projects/{safe_workspace} 2>/dev/null && \
+    return f"""ws={safe_workspace}
+case "$ws" in
+    -*) encoded="$ws" ;;
+    *) encoded=$(python3 - "$ws" <<'PY'
+import sys
+value = sys.argv[1].replace('\\\\', '/').rstrip('/')
+if len(value) > 1 and value[1] == ':':
+    print(value[0].upper() + "--" + value[3:].replace('/', '-'))
+else:
+    print("-" + value.lstrip('/').replace('/', '-'))
+PY
+) ;;
+esac
+readable=$(python3 - "$encoded" <<'PY'
+from pathlib import Path
+import sys
+
+name = sys.argv[1]
+
+def resolve_parts(parts, base):
+    resolved = []
+    current = base
+    i = 0
+    while i < len(parts):
+        match = None
+        match_end = i + 1
+        for end in range(len(parts), i, -1):
+            candidate = "-".join(parts[i:end])
+            if (current / candidate).exists():
+                match = candidate
+                match_end = end
+                break
+        if match is None:
+            resolved.extend(parts[i:])
+            break
+        resolved.append(match)
+        current = current / match
+        i = match_end
+    return str(base.joinpath(*resolved))
+
+if name.startswith("-"):
+    print(resolve_parts(name[1:].split("-"), Path("/")))
+else:
+    print(name)
+PY
+)
+cd ~/.claude/projects/"$encoded" 2>/dev/null && \
 for f in *.jsonl; do
     [ -f "$f" ] || continue
     size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
     lines=$(wc -l < "$f")
-    echo "$PWD/$f|$size|$mtime|$lines"
+    echo "$PWD/$f|$size|$mtime|$lines|$encoded|$readable"
 done"""
 
 

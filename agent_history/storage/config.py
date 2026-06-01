@@ -157,7 +157,7 @@ def load_config() -> dict:
                     data = json.load(f)
                 if "aliases" in data and "projects" not in data:
                     data["projects"] = data.pop("aliases")
-                if "projects" in data:
+                if data.get("projects"):
                     return data["projects"]
             except (OSError, json.JSONDecodeError):
                 continue
