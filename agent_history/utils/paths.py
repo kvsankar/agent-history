@@ -19,25 +19,25 @@ from typing import Optional
 
 __all__ = [
     # Constants
-    "MIN_WINDOWS_PATH_LEN",
-    "MIN_ENCODED_PATH_LEN",
-    "REMOTE_PARTS_WITH_PATH",
-    "MAX_SHORT_PART_LEN",
-    "CACHED_REMOTE_PREFIX",
-    "CACHED_WSL_PREFIX",
-    "CACHED_WINDOWS_PREFIX",
     "CACHED_PREFIXES",
+    "CACHED_REMOTE_PREFIX",
+    "CACHED_WINDOWS_PREFIX",
+    "CACHED_WSL_PREFIX",
+    "MAX_SHORT_PART_LEN",
+    "MIN_ENCODED_PATH_LEN",
+    "MIN_WINDOWS_PATH_LEN",
+    "REMOTE_PARTS_WITH_PATH",
     # Public functions
+    "convert_windows_path_to_encoded",
+    "decode_workspace_path",
+    "encode_workspace_path",
+    "get_current_workspace_pattern",
+    "get_folder_short_name",
+    "get_workspace_name_from_path",
     "is_cached_workspace",
+    "is_encoded_workspace_name",
     "is_native_workspace",
     "normalize_workspace_name",
-    "is_encoded_workspace_name",
-    "decode_workspace_path",
-    "get_folder_short_name",
-    "get_current_workspace_pattern",
-    "get_workspace_name_from_path",
-    "convert_windows_path_to_encoded",
-    "encode_workspace_path",
 ]
 
 # ============================================================================
@@ -340,13 +340,15 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
             return f"{drive_letter}:\\" + "\\".join(parts)
 
     # On WSL, prefer /mnt/<drive> if available
+    mnt_base = Path(f"/mnt/{drive_letter.lower()}")
     if verify_local:
-        mnt_base = Path(f"/mnt/{drive_letter.lower()}")
         if mnt_base.exists():
             path_segments = _resolve_path_segments(parts, mnt_base)
             if path_segments:
                 # Return a WSL-usable path: /mnt/<drive>/<segments>
                 return "/mnt/" + drive_letter.lower() + "/" + "/".join(path_segments)
+    elif mnt_base.exists():
+        return "/mnt/" + drive_letter.lower() + "/" + rest.replace("-", "/")
 
     # Fallback: POSIX-style drive path
     return f"/{drive_letter}/" + rest.replace("-", "/")
@@ -512,6 +514,9 @@ def normalize_workspace_name(
     Returns:
         Decoded path (e.g., '/home/user/my-project')
     """
+    if "/" in workspace_dir_name or "\\" in workspace_dir_name:
+        return workspace_dir_name
+
     # Allow skipping verification via environment variable for performance
     if os.environ.get("AGENT_HISTORY_SKIP_PATH_VERIFY", "").lower() in ("1", "true", "yes"):
         verify_local = False

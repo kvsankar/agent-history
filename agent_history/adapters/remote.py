@@ -70,8 +70,8 @@ class SSHRemoteClient:
                 entry["file"] = file_path
             else:
                 entry["file"] = file_path
-                remote_path = None
-                if backend and backend.remote_file_path:
+                remote_path = entry.get("remote_path")
+                if not remote_path and backend and backend.remote_file_path:
                     remote_path = backend.remote_file_path(workspace, filename, entry)
                 entry["remote_path"] = remote_path or str(file_path)
 

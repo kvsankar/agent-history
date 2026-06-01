@@ -105,6 +105,8 @@ class SessionListHandler(VerbHandler):
                     session_with_context,
                     context=ws_context,
                 )
+                if session_with_context.get("message_count_skipped"):
+                    session_with_context["message_count"] = ""
                 sessions.append(session_with_context)
         return sessions
 
@@ -183,6 +185,9 @@ class WorkspaceListHandler(VerbHandler):
             key=lambda w: modified_key(w.get("last_modified")),
             reverse=True,
         )
+        for workspace in workspace_list:
+            if not workspace.get("last_modified"):
+                workspace["last_modified"] = "-"
 
         metadata = build_scope_metadata(scope)
 
@@ -316,6 +321,7 @@ class HomeListHandler(VerbHandler):
                 h.get("home", ""),  # then alphabetically
             ),
         )
+        home_list = self._filter_home_list(home_list, verb_args)
 
         return CommandResult(
             success=True,
@@ -329,6 +335,22 @@ class HomeListHandler(VerbHandler):
                 "show_counts": bool(verb_args.get("counts")),
             },
         )
+
+    def _filter_home_list(
+        self, home_list: list[HomeDict], verb_args: Dict[str, Any]
+    ) -> list[HomeDict]:
+        """Apply home-list display filters."""
+        filters = {
+            "local": lambda home: home.get("home") == "local",
+            "wsl": lambda home: home.get("type") == "wsl",
+            "windows": lambda home: home.get("type") == "windows",
+            "web": lambda home: home.get("home") == "web",
+            "remotes": lambda home: home.get("type") == "remote",
+        }
+        active = [predicate for name, predicate in filters.items() if verb_args.get(name)]
+        if not active:
+            return home_list
+        return [home for home in home_list if any(predicate(home) for predicate in active)]
 
     def _enumerate_known_homes(self) -> Dict[str, HomeDict]:
         """Enumerate all known homes.
@@ -349,144 +371,102 @@ class HomeListHandler(VerbHandler):
         )
 
         homes: Dict[str, HomeDict] = OrderedDict()
+        homes["local"] = self._empty_home("local", "local", status="ok")
+        homes["web"] = self._empty_home("web", "web", status="ok")
 
-        # Always include local home
-        homes["local"] = {
-            "home": "local",
-            "type": "local",
-            "status": "ok",
-            "workspace_count": 0,
-            "session_count": 0,
-            "last_modified": None,
-            "workspaces": {},
-            "agents": set(),
-        }
-
-        # Web home (Claude.ai web sessions)
-        homes["web"] = {
-            "home": "web",
-            "type": "web",
-            "status": "ok",
-            "workspace_count": 0,
-            "session_count": 0,
-            "last_modified": None,
-            "workspaces": {},
-            "agents": set(),
-        }
-
-        # In test mode, when all session roots are overridden, avoid probing
-        # non-local homes to keep isolated runs fast.
-        test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
-        if (
-            test_mode
-            and all(
-                os.environ.get(key)
-                for key in (
-                    "CLAUDE_PROJECTS_DIR",
-                    "CODEX_SESSIONS_DIR",
-                    "GEMINI_SESSIONS_DIR",
-                    "AGENT_HISTORY_CONFIG_DIR",
-                )
-            )
-            and not any(
-                os.environ.get(key)
-                for key in (
-                    "AGENT_HISTORY_HOME_WSL",
-                    "AGENT_HISTORY_HOME_WINDOWS",
-                    "CLAUDE_WSL_TEST_DISTRO",
-                    "CLAUDE_WSL_PROJECTS_DIR",
-                    "CLAUDE_WINDOWS_PROJECTS_DIR",
-                    "CODEX_WSL_SESSIONS_DIR",
-                    "GEMINI_WSL_SESSIONS_DIR",
-                    "CODEX_WINDOWS_SESSIONS_DIR",
-                    "GEMINI_WINDOWS_SESSIONS_DIR",
-                )
-            )
-        ):
+        if self._should_skip_non_local_home_probe(os.environ):
             return homes
 
-        # WSL distributions (available from Windows)
-        try:
-            for name in get_wsl_distribution_names():
-                if not name:
-                    continue
-                home_key = f"wsl:{name}"
-                homes[home_key] = {
-                    "home": home_key,
-                    "type": "wsl",
-                    "status": "ok",
-                    "workspace_count": 0,
-                    "session_count": 0,
-                    "last_modified": None,
-                    "workspaces": {},
-                    "agents": set(),
-                }
-        except Exception:
-            pass
-
-        # Windows users (available from WSL)
+        self._add_wsl_homes(homes, get_wsl_distribution_names)
         if is_running_in_wsl():
-            try:
-                windows_users = get_windows_users_with_claude()
-                for user in windows_users:
-                    username = user.get("username")
-                    if username:
-                        home_key = f"windows:{username}"
-                        homes[home_key] = {
-                            "home": home_key,
-                            "type": "windows",
-                            "status": "ok",
-                            "workspace_count": 0,
-                            "session_count": 0,
-                            "last_modified": None,
-                            "workspaces": {},
-                            "agents": set(),
-                        }
-            except Exception:
-                pass
+            self._add_windows_homes(homes, get_windows_users_with_claude)
+        self._add_remote_homes(homes, get_saved_homes)
+        return homes
 
-        # Configured remote hosts
+    def _empty_home(self, home: str, home_type: str, status: str = "ok") -> HomeDict:
+        """Build an empty home summary."""
+        return {
+            "home": home,
+            "type": home_type,
+            "status": status,
+            "workspace_count": 0,
+            "session_count": 0,
+            "last_modified": None,
+            "workspaces": {},
+            "agents": set(),
+        }
+
+    def _should_skip_non_local_home_probe(self, environ: Any) -> bool:
+        """Return True when isolated tests should avoid host probing."""
+        required = (
+            "CLAUDE_PROJECTS_DIR",
+            "CODEX_SESSIONS_DIR",
+            "GEMINI_SESSIONS_DIR",
+            "AGENT_HISTORY_CONFIG_DIR",
+        )
+        home_overrides = (
+            "AGENT_HISTORY_HOME_WSL",
+            "AGENT_HISTORY_HOME_WINDOWS",
+            "CLAUDE_WSL_TEST_DISTRO",
+            "CLAUDE_WSL_PROJECTS_DIR",
+            "CLAUDE_WINDOWS_PROJECTS_DIR",
+            "CODEX_WSL_SESSIONS_DIR",
+            "GEMINI_WSL_SESSIONS_DIR",
+            "CODEX_WINDOWS_SESSIONS_DIR",
+            "GEMINI_WINDOWS_SESSIONS_DIR",
+        )
+        return (
+            bool(environ.get("AGENT_HISTORY_TEST_MODE"))
+            and all(environ.get(key) for key in required)
+            and not any(environ.get(key) for key in home_overrides)
+        )
+
+    def _add_wsl_homes(self, homes: Dict[str, HomeDict], distro_loader: Any) -> None:
+        """Add detected WSL homes."""
         try:
-            saved_homes = get_saved_homes()
-            for home_spec in saved_homes:
-                if isinstance(home_spec, str):
-                    if home_spec == "web":
-                        continue
-                    if home_spec.startswith("remote:"):
-                        name = home_spec[7:]
-                        home_key = f"remote:{name}"
-                    elif not home_spec.startswith(("wsl:", "windows:", "local")):
-                        home_key = f"remote:{home_spec}"
-                    else:
-                        continue
-                elif isinstance(home_spec, dict) and home_spec.get("name"):
-                    name = home_spec["name"]
-                    if name == "web":
-                        continue
-                    if name.startswith("remote:"):
-                        home_key = name
-                    elif not name.startswith(("wsl:", "windows:", "local")):
-                        home_key = f"remote:{name}"
-                    else:
-                        continue
-                else:
-                    continue
-
-                if home_key not in homes:
-                    homes[home_key] = {
-                        "home": home_key,
-                        "type": "remote",
-                        "status": "configured",
-                        "workspace_count": 0,
-                        "session_count": 0,
-                        "last_modified": None,
-                        "workspaces": {},
-                        "agents": set(),
-                    }
+            for name in distro_loader():
+                if name:
+                    home_key = f"wsl:{name}"
+                    homes[home_key] = self._empty_home(home_key, "wsl")
         except Exception:
             pass
 
-        return homes
+    def _add_windows_homes(self, homes: Dict[str, HomeDict], user_loader: Any) -> None:
+        """Add detected Windows homes."""
+        try:
+            for user in user_loader():
+                username = user.get("username")
+                if username:
+                    home_key = f"windows:{username}"
+                    homes[home_key] = self._empty_home(home_key, "windows")
+        except Exception:
+            pass
+
+    def _add_remote_homes(self, homes: Dict[str, HomeDict], saved_home_loader: Any) -> None:
+        """Add configured SSH remote homes."""
+        try:
+            saved_homes = saved_home_loader()
+        except Exception:
+            return
+
+        for home_spec in saved_homes:
+            home_key = self._remote_home_key(home_spec)
+            if home_key and home_key not in homes:
+                homes[home_key] = self._empty_home(home_key, "remote", status="configured")
+
+    def _remote_home_key(self, home_spec: Any) -> str | None:
+        """Return the remote home key for a saved home spec."""
+        name = None
+        if isinstance(home_spec, str):
+            name = home_spec
+        elif isinstance(home_spec, dict):
+            name = home_spec.get("name")
+
+        if not name or name == "web" or name.startswith(("wsl:", "windows:", "local")):
+            return None
+        if name.startswith("remote:"):
+            return name
+        return f"remote:{name}"
 
     def _aggregate_homes(
         self, scope: ConcreteScope, known_homes: Dict[str, HomeDict]

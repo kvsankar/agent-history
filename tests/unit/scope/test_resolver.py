@@ -19,7 +19,6 @@ See docs/design-v2/scope-resolution-v2.md for the complete specification.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List
 from unittest.mock import patch
 
 import pytest
@@ -32,7 +31,9 @@ from agent_history.scope.types import (
     MatchType,
     ProjectRecord,
     ScopeRecord,
+    SessionFilters,
     SessionSpecAll,
+    SessionSpecFactory,
     WorkspaceSpecAll,
     WorkspaceSpecCurrent,
     WorkspaceSpecFactory,
@@ -208,6 +209,23 @@ class TestBuildTemplate:
         assert len(template) == 1
         assert isinstance(template[0], ProjectRecord)
         assert template[0].project == "testproj"
+
+    def test_explicit_name_pattern_overrides_cwd_project(
+        self, mock_context: ResolutionContext
+    ) -> None:
+        """Explicit workspace patterns should win over implicit project scope."""
+        mock_context.cwd_project = "testproj"
+        mock_context.cwd_workspace = "/home/user/auth"
+        resolver = ScopeResolver(mock_context)
+
+        args = ScopeArgs(name_patterns=["standalone"])
+
+        template = resolver._build_template(args)
+
+        assert len(template) == 1
+        assert isinstance(template[0], ScopeRecord)
+        assert isinstance(template[0].workspace, WorkspaceSpecPattern)
+        assert template[0].workspace.pattern == "standalone"
 
     def test_this_flag_overrides_project_detection(self, mock_context: ResolutionContext) -> None:
         """--this flag should override project auto-detection.
@@ -496,6 +514,22 @@ class TestWorkspaceMatching:
 
         assert result == ["/home/user/auth"]
 
+    def test_agent_filter_is_passed_to_workspace_enumeration(
+        self, mock_context: ResolutionContext
+    ) -> None:
+        """Remote/window scans should enumerate only the requested agent backend."""
+        resolver = ScopeResolver(mock_context)
+
+        with patch.object(resolver, "_enumerate_workspaces", return_value=[]) as enumerate_mock:
+            resolver._match_workspaces(
+                home="remote:vm01",
+                pattern="auth",
+                match_type=MatchType.CONTAINS,
+                agent="claude",
+            )
+
+        enumerate_mock.assert_called_once_with("remote:vm01", agent="claude")
+
 
 # =============================================================================
 # Session Collection Tests - EXACT Filtering
@@ -607,6 +641,34 @@ class TestSessionCollection:
         assert "gemini1" in ids
         assert "claude2" not in ids
         assert "codex2" not in ids
+
+    def test_agent_filter_collects_only_requested_backend(
+        self, mock_context: ResolutionContext
+    ) -> None:
+        resolver = ScopeResolver(mock_context)
+        session_spec = SessionSpecFactory.Filtered(SessionFilters(agent="claude"))
+
+        with patch.object(
+            resolver,
+            "_collect_claude_sessions",
+            return_value=[
+                {"workspace_readable": "/home/user/auth", "id": "claude1", "agent": "claude"}
+            ],
+        ) as claude_mock, patch.object(
+            resolver, "_collect_codex_sessions", return_value=[]
+        ) as codex_mock, patch.object(
+            resolver, "_collect_gemini_sessions", return_value=[]
+        ) as gemini_mock:
+            result = resolver._collect_sessions(
+                home="local",
+                workspace="/home/user/auth",
+                session_spec=session_spec,
+            )
+
+        assert [session["id"] for session in result] == ["claude1"]
+        claude_mock.assert_called_once()
+        codex_mock.assert_not_called()
+        gemini_mock.assert_not_called()
 
 
 # =============================================================================
@@ -864,7 +926,7 @@ class TestFullPipeline:
         args = ScopeArgs(projects=["testproj"])
 
         # Mock session collection to return sessions for project workspaces
-        def mock_claude_sessions(home: str, workspace: str) -> List[Dict]:
+        def mock_claude_sessions(home: str, workspace: str) -> list[dict]:
             if workspace == "/home/user/auth":
                 return [{"workspace_readable": "/home/user/auth", "id": "s1"}]
             return []

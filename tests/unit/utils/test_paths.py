@@ -109,6 +109,8 @@ class TestNormalizeWorkspaceName:
         # On non-Windows, falls back to /C/... format with dashes converted to slashes
         if sys.platform == "win32":
             assert result == "C:\\Users\\alice\\project"
+        elif Path("/mnt/c").exists():
+            assert result == "/mnt/c/Users/alice/project"
         else:
             # On Linux/WSL without verify_local, dashes are converted to slashes
             assert result == "/C/Users/alice/project"
@@ -118,6 +120,8 @@ class TestNormalizeWorkspaceName:
         result = normalize_workspace_name("D--Projects-myapp", verify_local=False)
         if sys.platform == "win32":
             assert result == "D:\\Projects\\myapp"
+        elif Path("/mnt/d").exists():
+            assert result == "/mnt/d/Projects/myapp"
         else:
             # On Linux/WSL without verify_local, dashes are converted to slashes
             assert result == "/D/Projects/myapp"

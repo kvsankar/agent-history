@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from agent_history.handlers.list import WorkspaceListHandler
+from agent_history.handlers.list import SessionListHandler, WorkspaceListHandler
 from agent_history.scope.types import ConcreteRecord
 
 
@@ -24,3 +24,22 @@ def test_workspace_list_uses_display_for_hash() -> None:
     assert ws_data["workspace_key"] == "abc123def456"
     assert ws_data["workspace_display"] == "[hash:abc123de]"
     assert ws_data["status"] == "unknown"
+
+
+def test_session_list_blanks_skipped_message_count() -> None:
+    handler = SessionListHandler()
+    record = ConcreteRecord(
+        home="local",
+        workspace="/home/user/project",
+        sessions=[
+            {
+                "filename": "session.jsonl",
+                "message_count": 0,
+                "message_count_skipped": True,
+            }
+        ],
+    )
+
+    sessions = handler._flatten_sessions([record])
+
+    assert sessions[0]["message_count"] == ""
