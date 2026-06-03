@@ -53,7 +53,8 @@ class SSHRemoteClient:
             file_value = session.get("file") or session.get("filename")
             if not file_value:
                 continue
-            file_path = Path(str(file_value))
+            file_text = str(file_value)
+            file_path = Path(file_text)
             filename = session.get("filename") or file_path.name
 
             entry = dict(session)
@@ -61,7 +62,7 @@ class SSHRemoteClient:
             entry["workspace"] = workspace
             entry["workspace_readable"] = readable_ws
             entry.setdefault("agent", agent)
-            entry["remote_path"] = entry.get("remote_path") or str(file_path)
+            entry["remote_path"] = entry.get("remote_path") or file_text
 
             if file_path.is_absolute() and file_path.exists():
                 entry["file"] = file_path
