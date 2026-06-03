@@ -141,6 +141,8 @@ class InventoryProvider:
                 workspaces = self.remote_client.list_workspaces(remote_host, agent=backend.id)
             except Exception:
                 return []
+            if backend.id == "gemini":
+                return workspaces
             return [normalize_workspace_name(ws, verify_local=False) for ws in workspaces]
 
         resolver = get_resolver_for_home(home)

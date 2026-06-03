@@ -151,6 +151,43 @@ def test_remote_session_listing_keeps_metadata_only_paths(monkeypatch, tmp_path:
     assert sessions[0]["message_count_skipped"] is True
 
 
+def test_remote_gemini_all_workspaces_preserves_hash_workspace_key(tmp_path: Path) -> None:
+    """Remote Gemini --aw must pass the raw hash directory back to SSH listing."""
+    project_hash = "0123456789abcdef0123456789abcdef"
+
+    class FakeRemoteClient:
+        def __init__(self):
+            self.list_sessions_calls: list[tuple[str, str, str]] = []
+
+        def list_workspaces(self, remote_host: str, agent: str = "claude"):
+            assert remote_host == "vm01"
+            assert agent == "gemini"
+            return [project_hash]
+
+        def list_sessions(self, remote_host: str, workspace: str, agent: str = "claude"):
+            self.list_sessions_calls.append((remote_host, workspace, agent))
+            return [
+                {
+                    "workspace": workspace,
+                    "workspace_readable": workspace,
+                    "file": tmp_path / "session-gemini.json",
+                    "filename": "session-gemini.json",
+                    "agent": agent,
+                }
+            ]
+
+    remote_client = FakeRemoteClient()
+    inventory = InventoryProvider(_context(tmp_path), remote_client=remote_client)
+
+    workspaces = inventory.list_workspaces("remote:vm01", agent="gemini")
+    sessions = inventory.list_sessions("remote:vm01", agent="gemini", workspace=workspaces[0])
+
+    assert workspaces == [project_hash]
+    assert remote_client.list_sessions_calls == [("vm01", project_hash, "gemini")]
+    assert sessions[0]["workspace"] == project_hash
+    assert sessions[0]["workspace_key"] == project_hash
+
+
 def test_codex_workspace_summary_ignores_stale_and_out_of_root_index_entries(
     monkeypatch, tmp_path: Path
 ) -> None:
