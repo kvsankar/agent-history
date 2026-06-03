@@ -9,14 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Pi coding-agent backend support across listing, export, stats sync, WSL discovery, and remote dispatch.
-- Offline HTML session export via `session export --format html`.
 - Backend registry integration for agent-specific parsing, paths, stats, remote commands, WSL candidate paths, and Markdown presentation metadata.
+- Markdown export detail levels via `--markdown-level 1..4`.
+- Single-session Markdown export to stdout via `agent-history session export SESSION.jsonl -o -`.
+- Clearer CLI help, docs, and validation errors for stdout exports, including the
+  requirement to pass exactly one full `.jsonl`/`.json` session file path.
 
 ### Changed
 
 - Default session export directory is now `./ai-chats`.
 - Project export/stats commands accept `--agent` and route through the shared scope pipeline.
+
+## [2.0.0-alpha.2] - 2026-05-26
+
+### Added
+
+- **Offline HTML export** with turn-centered conversation rendering, light/dark mode, per-turn controls, raw views, trimmed long-output toggles, markdown rendering, syntax highlighting, and improved tool/file/diff presentation.
+- **Pi coding agent support** across local, WSL, Windows, SSH, aliases, exports, stats, and unified session parsing.
+- **Semantic message origin annotations** to distinguish real human input from agent/system-injected user-role messages.
+
+### Changed
+
+- HTML exports now prioritize conversational readability while still allowing progressive disclosure of action snippets, full tool I/O, trace data, and subagent details.
+- Turn numbering is session-aware and can be renumbered consistently across combined workspace exports.
+- README supported-agent documentation now includes Pi.
+
+### Fixed
+
+- WSL probing now treats inaccessible `wsl` command execution as unavailable instead of failing.
+- Regression tests isolate Codex, Gemini, and Pi homes to avoid scanning real user history during local-only tests.
+- HTML exports preserve raw text access wherever friendly rendering is applied.
 
 ## [2.0.0-alpha.1] - 2025-12-25
 
@@ -72,6 +94,7 @@ First stable release of claude-history (now agent-history).
 - Navigation links between related messages
 - Agent conversation detection and labeling
 
-[Unreleased]: https://github.com/kvsankar/claude-history/compare/v2.0.0-alpha.1...HEAD
-[2.0.0-alpha.1]: https://github.com/kvsankar/claude-history/compare/v1.0...v2.0.0-alpha.1
-[1.0.0]: https://github.com/kvsankar/claude-history/releases/tag/v1.0
+[Unreleased]: https://github.com/kvsankar/agent-history/compare/v2.0.0-alpha.2...HEAD
+[2.0.0-alpha.2]: https://github.com/kvsankar/agent-history/compare/v2.0.0-alpha.1...v2.0.0-alpha.2
+[2.0.0-alpha.1]: https://github.com/kvsankar/agent-history/compare/v1.0...v2.0.0-alpha.1
+[1.0.0]: https://github.com/kvsankar/agent-history/releases/tag/v1.0
