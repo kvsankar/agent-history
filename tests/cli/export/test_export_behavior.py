@@ -189,7 +189,7 @@ def test_project_export_preserves_non_claude_absolute_workspace_path(isolated_ho
 
     assert result.returncode == 0, f"stderr: {result.stderr}"
     output_file = _find_single_output_file(output_dir, ".md")
-    assert "examples-sandbox/codex-examples" in str(output_file)
+    assert "examples-sandbox/codex-examples" in output_file.as_posix()
     content = output_file.read_text(encoding="utf-8")
     assert "# Codex Conversation" in content
     assert "Codex project response" in content
