@@ -178,6 +178,7 @@ def _parse_remote_sessions(output: str, remote_host: str, workspace: str, agent:
             "size": int(parts[1]) if parts[1].isdigit() else 0,
             "mtime": int(parts[2]) if parts[2].isdigit() else 0,
             "message_count": int(parts[3]) if parts[3].isdigit() else 0,
+            "message_count_skipped": parts[3] == "0",
             "agent": agent,
             "workspace": workspace,
             "home": f"remote:{remote_host}",

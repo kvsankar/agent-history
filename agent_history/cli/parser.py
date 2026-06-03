@@ -344,6 +344,11 @@ class CLIParser:
         self._add_workspace_scope_flags(ws_parser, include_positional=False)
         self._add_home_scope_flags(ws_parser)
         self._add_agent_filter(ws_parser)
+        ws_parser.add_argument(
+            "--counts",
+            action="store_true",
+            help="Show session counts (slower)",
+        )
         self._add_output_format(ws_parser)
 
         ws_sub = ws_parser.add_subparsers(dest="ws_verb")
@@ -356,6 +361,11 @@ class CLIParser:
         self._add_workspace_scope_flags(ws_list)
         self._add_home_scope_flags(ws_list)
         self._add_agent_filter(ws_list)
+        ws_list.add_argument(
+            "--counts",
+            action="store_true",
+            help="Show session counts (slower)",
+        )
         self._add_output_format(ws_list)
 
         # ws show
@@ -1218,6 +1228,9 @@ class CLIParser:
         # Home management args
         if resource == RESOURCE_HOME and verb in ("add", "remove"):
             verb_args["source"] = getattr(args, "source", None)
+            verb_args["windows"] = getattr(args, "windows", False)
+            verb_args["wsl"] = getattr(args, "wsl", None)
+            verb_args["web"] = getattr(args, "web", False)
 
         # Gemini-index args
         if resource == RESOURCE_GEMINI_INDEX:

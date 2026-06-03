@@ -49,9 +49,6 @@ class SSHRemoteClient:
         else:
             readable_ws = workspace
         normalized: list[dict[str, Any]] = []
-        remote_filenames: set[str] = set()
-        cache_dir = _remote_cache_dir(remote_host, agent, workspace)
-
         for session in sessions:
             file_value = session.get("file") or session.get("filename")
             if not file_value:
@@ -79,17 +76,7 @@ class SSHRemoteClient:
             if isinstance(mtime, (int, float)):
                 entry["modified"] = datetime.fromtimestamp(mtime)
 
-            remote_filenames.add(filename)
-            try:
-                local_copy = self.ensure_local_copy(remote_host, workspace, entry)
-                if local_copy:
-                    entry["file"] = local_copy
-            except RemoteClientError:
-                pass
-
             normalized.append(entry)
-
-        _purge_missing_cache_files(cache_dir, remote_filenames)
 
         return normalized
 

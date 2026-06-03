@@ -24,7 +24,7 @@ import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, TypedDict
+from typing import Any, Callable, TypedDict
 
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.paths import normalize_workspace_name
@@ -32,33 +32,33 @@ from agent_history.utils.paths import normalize_workspace_name
 __all__ = [
     # Constants
     "AGENT_CODEX",
-    "CODEX_HOME_DIR",
-    "CODEX_TEXT_TYPES",
     "CODEX_DATE_FOLDER_DEPTH",
+    "CODEX_HOME_DIR",
     "CODEX_INDEX_VERSION",
-    # Session scanning
-    "codex_get_home_dir",
-    "codex_scan_sessions",
+    "CODEX_TEXT_TYPES",
+    "codex_count_messages",
     "codex_ensure_index_updated",
-    # Message parsing
-    "codex_read_jsonl_messages",
     "codex_extract_content",
+    # Metrics extraction
+    "codex_extract_metrics_from_jsonl",
     "codex_format_function_call",
     "codex_format_function_result",
-    "codex_parse_jsonl_to_markdown",
     "codex_get_first_timestamp",
-    "codex_count_messages",
+    # Session scanning
+    "codex_get_home_dir",
+    # Index management
+    "codex_get_index_file",
     # Workspace handling
     "codex_get_workspace_from_session",
     "codex_get_workspace_readable",
-    # Index management
-    "codex_get_index_file",
     "codex_load_index",
-    "codex_save_index",
-    # Metrics extraction
-    "codex_extract_metrics_from_jsonl",
     # Unified conversion
     "codex_message_to_unified",
+    "codex_parse_jsonl_to_markdown",
+    # Message parsing
+    "codex_read_jsonl_messages",
+    "codex_save_index",
+    "codex_scan_sessions",
 ]
 
 
@@ -92,12 +92,12 @@ _TOOL_NAME_PATTERN = re.compile(r"\*\*\[Tool:\s*([^\]]+)\]\*\*")
 class SessionMetrics(TypedDict):
     """Session metadata in metrics dict."""
 
-    id: Optional[str]
-    cwd: Optional[str]
-    cli_version: Optional[str]
-    model: Optional[str]
-    startTime: Optional[str]
-    lastUpdated: Optional[str]
+    id: str | None
+    cwd: str | None
+    cli_version: str | None
+    model: str | None
+    startTime: str | None
+    lastUpdated: str | None
 
 
 class TokensSummary(TypedDict, total=False):
@@ -106,7 +106,7 @@ class TokensSummary(TypedDict, total=False):
     input_tokens: int
     output_tokens: int
     cache_read_tokens: int
-    timestamp: Optional[str]
+    timestamp: str | None
 
 
 class MetricsDict(TypedDict, total=False):
@@ -253,7 +253,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
     return messages, session_meta
 
 
-def codex_get_first_timestamp(jsonl_file: Path) -> Optional[str]:
+def codex_get_first_timestamp(jsonl_file: Path) -> str | None:
     """Get timestamp from Codex session's session_meta line.
 
     Args:
@@ -635,7 +635,7 @@ def _iter_date_folders(sessions_dir: Path, since_dt):
         yield from _iter_month_folders(year_dir, year, since_dt)
 
 
-def _codex_date_folders_since(sessions_dir: Path, since_date: Optional[str]) -> list:
+def _codex_date_folders_since(sessions_dir: Path, since_date: str | None) -> list:
     """Get list of date folders on or after since_date.
 
     Args:
@@ -705,7 +705,7 @@ def _scan_folders_for_sessions(
     return existing_sessions
 
 
-def codex_ensure_index_updated(sessions_dir: Optional[Path] = None) -> dict[str, str]:
+def codex_ensure_index_updated(sessions_dir: Path | None = None) -> dict[str, str]:
     """Ensure Codex session index is up-to-date.
 
     Performs incremental indexing: only scans date folders since last update.
@@ -755,7 +755,7 @@ def _get_metrics_db_path() -> Path:
     return get_config_dir() / "metrics.db"
 
 
-def _get_cached_message_count(jsonl_file: Path, current_mtime: float) -> Optional[int]:
+def _get_cached_message_count(jsonl_file: Path, current_mtime: float) -> int | None:
     """Return cached message count from metrics DB if mtime matches."""
     db_path = _get_metrics_db_path()
     if not db_path.exists():
@@ -784,9 +784,9 @@ def _get_cached_message_count(jsonl_file: Path, current_mtime: float) -> Optiona
 
 
 def _is_date_in_range(
-    dt: Optional[datetime],
-    since_date: Optional[datetime],
-    until_date: Optional[datetime],
+    dt: datetime | None,
+    since_date: datetime | None,
+    until_date: datetime | None,
 ) -> bool:
     """Check if datetime is within date range (inclusive).
 
@@ -815,7 +815,7 @@ def _is_date_in_range(
 def _matches_workspace_pattern(
     workspace: str,
     pattern: str,
-    get_readable: Optional[Callable[[str], str]] = None,
+    get_readable: Callable[[str], str] | None = None,
 ) -> bool:
     """Check if workspace matches pattern (case-insensitive substring match).
 
@@ -852,9 +852,9 @@ def _session_matches_filters(
     workspace: str,
     modified: datetime,
     pattern: str,
-    since_date: Optional[datetime],
-    until_date: Optional[datetime],
-    get_readable: Optional[Callable[[str], str]] = None,
+    since_date: datetime | None,
+    until_date: datetime | None,
+    get_readable: Callable[[str], str] | None = None,
 ) -> bool:
     """Check if session matches all filters.
 
@@ -878,8 +878,8 @@ def _codex_session_matches_filters(
     workspace: str,
     modified: datetime,
     pattern: str,
-    since_date: Optional[datetime],
-    until_date: Optional[datetime],
+    since_date: datetime | None,
+    until_date: datetime | None,
 ) -> bool:
     """Check if a Codex session matches the given filters.
 
@@ -931,7 +931,7 @@ def codex_scan_sessions(
     pattern: str = "",
     since_date=None,
     until_date=None,
-    sessions_dir: Optional[Path] = None,
+    sessions_dir: Path | None = None,
     skip_message_count: bool = False,
     use_cached_counts: bool = False,
 ) -> list:
@@ -961,11 +961,19 @@ def codex_scan_sessions(
     sessions_map = codex_ensure_index_updated(sessions_dir)
 
     sessions = []
-    # Walk through YYYY/MM/DD structure using glob
-    try:
-        candidates = list(sessions_dir.glob("*/*/*/rollout-*.jsonl"))
-    except (OSError, PermissionError):
-        return []
+    if pattern and pattern not in ("", "*", "all"):
+        candidates = [
+            Path(file_key)
+            for file_key, workspace in sessions_map.items()
+            if workspace
+            and _matches_workspace_pattern(workspace, pattern, codex_get_workspace_readable)
+        ]
+    else:
+        # Walk through YYYY/MM/DD structure using glob
+        try:
+            candidates = list(sessions_dir.glob("*/*/*/rollout-*.jsonl"))
+        except (OSError, PermissionError):
+            return []
 
     for jsonl_file in candidates:
         file_key = str(jsonl_file)

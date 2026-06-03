@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
 
 import pytest
 
@@ -11,7 +10,6 @@ from agent_history.cli.orchestrator import CommandOrchestrator
 from agent_history.scope.context import ResolutionContext
 from tests.helpers.session_builders import ClaudeSessionBuilder
 from tests.helpers.workspace_paths import encode_workspace_path
-
 
 pytestmark = pytest.mark.scope
 
@@ -33,7 +31,7 @@ def _build_context(tmp_path: Path) -> ResolutionContext:
     )
 
 
-def _setup_remote_fixture(tmp_path: Path) -> Tuple[str, str, Path]:
+def _setup_remote_fixture(tmp_path: Path) -> tuple[str, str, Path]:
     remote_root = tmp_path / "remote-host"
     remote_projects = remote_root / ".claude" / "projects"
     remote_projects.mkdir(parents=True, exist_ok=True)
@@ -50,9 +48,7 @@ def _setup_remote_fixture(tmp_path: Path) -> Tuple[str, str, Path]:
     return remote_host, encoded_ws, session_file
 
 
-def _patch_remote_list(
-    monkeypatch, remote_host: str, encoded_ws: str, session_file: Path
-) -> None:
+def _patch_remote_list(monkeypatch, remote_host: str, encoded_ws: str, session_file: Path) -> None:
     from agent_history.backends import ssh as ssh_backend
 
     def fake_list_remote_workspaces(remote: str, agent: str = "claude"):
@@ -87,7 +83,7 @@ def test_remote_session_list_fetches_sessions(monkeypatch, tmp_path: Path) -> No
 
     orchestrator = CommandOrchestrator()
     result = orchestrator.run_with_context(
-        ["session", "list", "-r", remote_host, "--aw"],
+        ["--agent", "claude", "session", "list", "-r", remote_host, "--aw"],
         context,
     )
 
@@ -102,7 +98,17 @@ def test_remote_session_export_fetches_sessions(monkeypatch, tmp_path: Path) -> 
 
     orchestrator = CommandOrchestrator()
     result = orchestrator.run_with_context(
-        ["session", "export", "-r", remote_host, "--aw", "-o", str(output_dir)],
+        [
+            "--agent",
+            "claude",
+            "session",
+            "export",
+            "-r",
+            remote_host,
+            "--aw",
+            "-o",
+            str(output_dir),
+        ],
         context,
     )
 

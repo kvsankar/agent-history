@@ -9,7 +9,7 @@ The cache is loaded lazily per home to avoid unnecessary I/O operations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent_history.scope.context import ResolutionContext
@@ -23,7 +23,7 @@ class SessionCache:
     Sessions are loaded lazily when first requested for a home.
     """
 
-    def __init__(self, context: ResolutionContext, inventory_provider: Optional[Any] = None):
+    def __init__(self, context: ResolutionContext, inventory_provider: Any | None = None):
         """
         Initialize the session cache with a resolution context.
 
@@ -38,9 +38,9 @@ class SessionCache:
         self.inventory_provider = inventory_provider
         # Session cache: {home: {workspace: [sessions]}}
         # Loaded once per home, grouped by workspace for O(1) lookup
-        self._cache: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        self._cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
-    def get_sessions(self, home: str, workspace: str) -> List[Dict[str, Any]]:
+    def get_sessions(self, home: str, workspace: str) -> list[dict[str, Any]]:
         """
         Get sessions for a specific (home, workspace) pair.
 
@@ -51,33 +51,26 @@ class SessionCache:
         Returns:
             List of session dictionaries for the workspace.
         """
+        if home not in self._cache or workspace not in self._cache[home]:
+            self._load_workspace(home, workspace)
+
         # Ensure cache is populated for this home
         workspace_sessions = self._ensure_cache(home)
 
         # Return sessions for the workspace (or empty list if not found)
         return workspace_sessions.get(workspace, [])
 
-    def _ensure_cache(self, home: str) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Ensure session cache is populated for a home.
+    def ensure_home(self, home: str) -> None:
+        """Load all sessions for a home into the cache."""
+        self._ensure_cache(home)
 
-        Loads all sessions from all agents (Claude, Codex, Gemini) for the
-        given home and groups them by workspace for O(1) lookup.
-
-        Args:
-            home: Home identifier to load sessions for.
-
-        Returns:
-            Dictionary mapping workspace -> list of sessions.
-        """
-        if home in self._cache:
-            return self._cache[home]
-
-        # Group sessions by workspace
-        workspace_sessions: Dict[str, List[Dict[str, Any]]] = {}
-
-        all_sessions = self.inventory_provider.list_sessions(home)
-        for session in all_sessions:
+    def _add_sessions(
+        self,
+        workspace_sessions: dict[str, list[dict[str, Any]]],
+        sessions: list[dict[str, Any]],
+    ) -> None:
+        """Index sessions by canonical and raw workspace identifiers."""
+        for session in sessions:
             ws = (
                 session.get("workspace_key")
                 or session.get("workspace_readable")
@@ -94,10 +87,38 @@ class SessionCache:
                     workspace_sessions[raw_ws] = []
                 workspace_sessions[raw_ws].append(session)
 
+    def _load_workspace(self, home: str, workspace: str) -> None:
+        """Load one workspace without enumerating every workspace when possible."""
+        workspace_sessions = self._cache.setdefault(home, {})
+        sessions = self.inventory_provider.list_sessions(home, workspace=workspace)
+        self._add_sessions(workspace_sessions, sessions)
+
+    def _ensure_cache(self, home: str) -> dict[str, list[dict[str, Any]]]:
+        """
+        Ensure session cache is populated for a home.
+
+        Loads all sessions from all agents (Claude, Codex, Gemini) for the
+        given home and groups them by workspace for O(1) lookup.
+
+        Args:
+            home: Home identifier to load sessions for.
+
+        Returns:
+            Dictionary mapping workspace -> list of sessions.
+        """
+        if home in self._cache:
+            return self._cache[home]
+
+        # Group sessions by workspace
+        workspace_sessions: dict[str, list[dict[str, Any]]] = {}
+
+        all_sessions = self.inventory_provider.list_sessions(home)
+        self._add_sessions(workspace_sessions, all_sessions)
+
         self._cache[home] = workspace_sessions
         return workspace_sessions
 
-    def _load_claude_sessions(self, home: str) -> List[Dict[str, Any]]:
+    def _load_claude_sessions(self, home: str) -> list[dict[str, Any]]:
         """
         Load all Claude sessions for a home (not filtered by workspace).
 
@@ -109,7 +130,7 @@ class SessionCache:
         """
         return self.inventory_provider.list_sessions(home, agent="claude")
 
-    def _load_codex_sessions(self, home: str) -> List[Dict[str, Any]]:
+    def _load_codex_sessions(self, home: str) -> list[dict[str, Any]]:
         """
         Load all Codex sessions for a home (not filtered by workspace).
 
@@ -121,7 +142,7 @@ class SessionCache:
         """
         return self.inventory_provider.list_sessions(home, agent="codex")
 
-    def _load_gemini_sessions(self, home: str) -> List[Dict[str, Any]]:
+    def _load_gemini_sessions(self, home: str) -> list[dict[str, Any]]:
         """
         Load all Gemini sessions for a home (not filtered by workspace).
 

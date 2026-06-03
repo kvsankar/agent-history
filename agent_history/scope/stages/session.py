@@ -8,7 +8,7 @@ the target workspace exactly (==), not via substring matching (in).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any
 
 from agent_history.scope.context import ResolutionError
 from agent_history.scope.types import (
@@ -46,9 +46,7 @@ class SessionStage:
         self.context = context
         self.session_cache = session_cache
 
-    def resolve(
-        self, scope: TemplateScope
-    ) -> Tuple[ConcreteScope, List[ResolutionError]]:
+    def resolve(self, scope: TemplateScope) -> tuple[ConcreteScope, list[ResolutionError]]:
         """
         Collect sessions for each (home, workspace) pair.
 
@@ -61,7 +59,19 @@ class SessionStage:
             - List of errors
         """
         result: ConcreteScope = []
-        errors: List[ResolutionError] = []
+        errors: list[ResolutionError] = []
+        home_record_counts: dict[str, int] = {}
+        for record in scope:
+            if isinstance(record, ProjectRecord):
+                continue
+            if isinstance(record.home, HomeSpecConcrete):
+                home_record_counts[record.home.home] = (
+                    home_record_counts.get(record.home.home, 0) + 1
+                )
+
+        for home, count in home_record_counts.items():
+            if count > 1 and not home.startswith("remote:"):
+                self.session_cache.ensure_home(home)
 
         for record in scope:
             if isinstance(record, ProjectRecord):
@@ -125,7 +135,7 @@ class SessionStage:
 
     def _collect_sessions(
         self, home: str, workspace: str, session_spec: SessionSpec
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Collect sessions for a specific (home, workspace) pair.
 
@@ -167,8 +177,8 @@ class SessionStage:
         return sessions
 
     def _apply_session_filters(
-        self, sessions: List[Dict[str, Any]], session_spec: SessionSpec
-    ) -> List[Dict[str, Any]]:
+        self, sessions: list[dict[str, Any]], session_spec: SessionSpec
+    ) -> list[dict[str, Any]]:
         """
         Apply SessionSpec filters to a list of sessions.
 
@@ -185,9 +195,9 @@ class SessionStage:
         elif isinstance(session_spec, SessionSpecFiltered):
             filters = session_spec.filters
             result = sessions
+
             def _to_date(value: Any) -> Any:
                 return value.date() if hasattr(value, "date") else value
-
 
             # Filter by agent
             if filters.agent:
@@ -198,16 +208,14 @@ class SessionStage:
                 result = [
                     s
                     for s in result
-                    if s.get("modified")
-                    and _to_date(s.get("modified")) >= _to_date(filters.since)
+                    if s.get("modified") and _to_date(s.get("modified")) >= _to_date(filters.since)
                 ]
 
             if filters.until:
                 result = [
                     s
                     for s in result
-                    if s.get("modified")
-                    and _to_date(s.get("modified")) <= _to_date(filters.until)
+                    if s.get("modified") and _to_date(s.get("modified")) <= _to_date(filters.until)
                 ]
 
             # Filter by message count
