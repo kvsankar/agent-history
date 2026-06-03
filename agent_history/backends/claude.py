@@ -599,6 +599,9 @@ def _should_verify_workspace_paths(projects_dir: Path) -> bool:
     """Return False for injected non-local test fixtures that may touch slow mounts."""
     if os.environ.get("AGENT_HISTORY_SKIP_PATH_VERIFY", "").lower() in ("1", "true", "yes"):
         return False
+    path_text = str(projects_dir).replace("\\", "/")
+    if re.match(r"^/mnt/[A-Za-z]/", path_text):
+        return False
     if os.environ.get("AGENT_HISTORY_TEST_MODE"):
         windows_override = os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR")
         if windows_override and Path(windows_override) == projects_dir:
@@ -740,12 +743,24 @@ def _is_valid_workspace_dir(
     if not validate_workspace_name(dir_name):
         return False
 
-    if not is_safe_path(projects_dir, workspace_dir):
+    if _should_check_workspace_safe_path(projects_dir) and not is_safe_path(
+        projects_dir, workspace_dir
+    ):
         return False
 
     if _should_skip_workspace(dir_name, include_cached):
         return False
 
+    return True
+
+
+def _should_check_workspace_safe_path(projects_dir: Path) -> bool:
+    """Return whether per-child resolve checks are worth their cost."""
+    path_text = str(projects_dir).replace("\\", "/")
+    if re.match(r"^/mnt/[A-Za-z]/", path_text):
+        return False
+    if _detect_wsl_base_path(projects_dir):
+        return False
     return True
 
 

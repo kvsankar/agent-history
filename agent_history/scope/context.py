@@ -405,9 +405,9 @@ class ContextBuilder:
 
         cwd_str = str(cwd)
         cwd_encoded = encode_workspace_path(cwd_str.replace("\\", "/"))
-        for workspace_dir in claude_projects.iterdir():
-            if workspace_dir.is_dir() and workspace_dir.name == cwd_encoded:
-                return ("local", cwd_str)
+        workspace_dir = claude_projects / cwd_encoded
+        if workspace_dir.is_dir():
+            return ("local", cwd_str)
         return (None, None)
 
     def _workspace_from_project_config(

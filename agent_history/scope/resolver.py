@@ -191,29 +191,8 @@ class ScopeResolver:
         # This prevents accidentally scanning remote homes with implicit patterns
         # The guard only applies when the user is IN a local workspace - if they're
         # not in a workspace, there's no implicit path that could be mismatched
-        non_web_homes = [home for home in args.home_names if home != "web"]
-        needs_cross_home = (
-            args.home_type in ("wsl", "windows", "remote") or args.all_homes or bool(non_web_homes)
-        )
-        has_explicit_scope = (
-            args.all_workspaces
-            or bool(args.projects)
-            or self.context.cwd_project
-            or bool(args.patterns)
-            or bool(args.name_patterns)
-        )
-        is_in_workspace = bool(self.context.cwd_workspace)
-        if needs_cross_home and not has_explicit_scope and is_in_workspace:
-            # Determine target description for error message
-            if args.home_type == "wsl":
-                target = "WSL"
-            elif args.home_type == "windows":
-                target = "Windows"
-            elif args.all_homes:
-                target = "all homes"
-            else:
-                target = "remote"
-
+        if self._cross_home_guard_applies(args):
+            target = self._cross_home_guard_target(args)
             raise ValueError(
                 f"Cross-home access to {target} requires a workspace pattern.\n\n"
                 "Options:\n"
@@ -244,40 +223,7 @@ class ScopeResolver:
         # Positional patterns: EXACT for paths, CONTAINS for names
         # -n patterns use CONTAINS matching (for discovery by partial name)
         if args.patterns or args.name_patterns:
-            records: TemplateScope = []
-            # Positional patterns: determine match type based on pattern format
-            # - Full paths (starting with / or -) use EXACT matching
-            #   This prevents /home/user/projects/auth from matching auth-infra
-            # - Simple names (like "react") use CONTAINS matching
-            #   This allows "react" to match "/home/user/react-app"
-            for pattern in args.patterns:
-                # Determine match type based on whether pattern looks like a path
-                if pattern.startswith("/") or pattern.startswith("-") or "/" in pattern:
-                    # Path-like pattern - use exact match
-                    match_type = MatchType.EXACT
-                else:
-                    # Name-like pattern - use substring match
-                    match_type = MatchType.CONTAINS
-                workspace_spec = WorkspaceSpecFactory.Pattern(pattern, match_type)
-                records.append(
-                    ScopeRecord(
-                        home=home_spec,
-                        workspace=workspace_spec,
-                        sessions=session_spec,
-                    )
-                )
-            # -n patterns: CONTAINS matching (substring match for discovery)
-            # e.g., "django" matches "/home/user/django-app"
-            for pattern in args.name_patterns:
-                workspace_spec = WorkspaceSpecFactory.Pattern(pattern, MatchType.CONTAINS)
-                records.append(
-                    ScopeRecord(
-                        home=home_spec,
-                        workspace=workspace_spec,
-                        sessions=session_spec,
-                    )
-                )
-            return records
+            return self._build_pattern_records(args, home_spec, session_spec)
 
         # Check for implicit project detection (CWD in project)
         if self.context.cwd_project:
@@ -313,6 +259,61 @@ class ScopeResolver:
                 sessions=session_spec,
             )
         ]
+
+    def _cross_home_guard_applies(self, args: ScopeArgs) -> bool:
+        non_web_homes = [home for home in args.home_names if home != "web"]
+        needs_cross_home = (
+            args.home_type in ("wsl", "windows", "remote") or args.all_homes or bool(non_web_homes)
+        )
+        has_explicit_scope = (
+            args.all_workspaces
+            or bool(args.projects)
+            or self.context.cwd_project
+            or bool(args.patterns)
+            or bool(args.name_patterns)
+        )
+        return needs_cross_home and not has_explicit_scope and bool(self.context.cwd_workspace)
+
+    def _cross_home_guard_target(self, args: ScopeArgs) -> str:
+        if args.home_type == "wsl":
+            return "WSL"
+        if args.home_type == "windows":
+            return "Windows"
+        if args.all_homes:
+            return "all homes"
+        return "remote"
+
+    def _build_pattern_records(
+        self, args: ScopeArgs, home_spec: HomeSpec, session_spec: SessionSpec
+    ) -> TemplateScope:
+        records: TemplateScope = []
+        for pattern in args.patterns:
+            records.append(
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=self._workspace_spec_for_pattern(pattern),
+                    sessions=session_spec,
+                )
+            )
+        for pattern in args.name_patterns:
+            records.append(
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=WorkspaceSpecFactory.Pattern(pattern, MatchType.CONTAINS),
+                    sessions=session_spec,
+                )
+            )
+        return records
+
+    def _workspace_spec_for_pattern(self, pattern: str) -> WorkspaceSpec:
+        if pattern.startswith("-") and "/" not in pattern:
+            return WorkspaceSpecFactory.Encoded(pattern)
+        if pattern.startswith("/") or "/" in pattern:
+            # Path-like positional arguments are explicit workspaces.
+            # Use a direct path spec so exact cross-home lookups do not
+            # enumerate an entire slow home just to confirm the path.
+            return WorkspaceSpecFactory.Path(pattern)
+        return WorkspaceSpecFactory.Pattern(pattern, MatchType.CONTAINS)
 
     def _build_home_spec(self, args: ScopeArgs) -> HomeSpec:
         """
@@ -834,7 +835,7 @@ class ScopeResolver:
                 )
             ]
 
-        all_sessions = self._inventory.list_sessions(home, agent=agent_id)
+        all_sessions = self._inventory.list_sessions(home, agent=agent_id, workspace=workspace)
         return [
             s
             for s in all_sessions
@@ -866,7 +867,7 @@ class ScopeResolver:
             except Exception:
                 return []
         else:
-            all_sessions = self._load_claude_sessions_for_home(home)
+            all_sessions = self._inventory.list_sessions(home, agent="claude", workspace=workspace)
         return [
             s
             for s in all_sessions
@@ -889,7 +890,7 @@ class ScopeResolver:
         Returns:
             List of session dictionaries for the workspace.
         """
-        all_sessions = self._load_codex_sessions_for_home(home)
+        all_sessions = self._inventory.list_sessions(home, agent="codex", workspace=workspace)
         return [
             s
             for s in all_sessions

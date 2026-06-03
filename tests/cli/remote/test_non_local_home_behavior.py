@@ -78,3 +78,47 @@ def test_remote_sessions_use_remote_client(tmp_path: Path):
 
     sessions = cache.get_sessions("remote:vm01", "/home/testuser/remote/project")
     assert sessions, "Expected remote sessions from remote client"
+
+
+def test_remote_exact_workspace_does_not_enumerate_all_workspaces(tmp_path: Path):
+    """Exact remote workspace lookup should query only that workspace."""
+    from agent_history.adapters.inventory import InventoryProvider
+    from agent_history.scope.cache import SessionCache
+    from agent_history.scope.context import ResolutionContext
+
+    class FakeRemoteClient:
+        def __init__(self):
+            self.list_workspaces_calls = 0
+            self.list_sessions_calls = []
+
+        def list_workspaces(self, remote_host: str, agent: str = "claude"):
+            self.list_workspaces_calls += 1
+            return ["/home/testuser/other/project"]
+
+        def list_sessions(self, remote_host: str, workspace: str, agent: str = "claude"):
+            self.list_sessions_calls.append((remote_host, workspace, agent))
+            return [
+                {
+                    "workspace": workspace,
+                    "workspace_readable": workspace,
+                    "file": tmp_path / "remote-session.jsonl",
+                    "filename": "remote-session.jsonl",
+                    "agent": agent,
+                }
+            ]
+
+    remote_client = FakeRemoteClient()
+    context = ResolutionContext()
+    inventory = InventoryProvider(context, remote_client=remote_client)
+    cache = SessionCache(context, inventory_provider=inventory)
+
+    sessions = cache.get_sessions("remote:vm01", "/home/testuser/remote/project")
+
+    assert sessions, "Expected exact remote workspace sessions"
+    assert remote_client.list_workspaces_calls == 0
+    assert remote_client.list_sessions_calls == [
+        ("vm01", "/home/testuser/remote/project", "claude"),
+        ("vm01", "/home/testuser/remote/project", "codex"),
+        ("vm01", "/home/testuser/remote/project", "gemini"),
+        ("vm01", "/home/testuser/remote/project", "pi"),
+    ]

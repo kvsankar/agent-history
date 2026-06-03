@@ -1097,7 +1097,42 @@ def sync_scope_to_db(
     return stats
 
 
-def get_session_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
+def _install_file_scope(conn: sqlite3.Connection, file_paths: Optional[List[str]]) -> str:
+    """Install a temporary file-path scope and return a sessions table suffix.
+
+    When ``file_paths`` is ``None``, callers want the whole database. When it is
+    an empty list, callers want an explicitly empty scope.
+    """
+    if file_paths is None:
+        return ""
+
+    conn.execute("DROP TABLE IF EXISTS temp.metric_file_scope")
+    conn.execute("CREATE TEMP TABLE metric_file_scope (file_path TEXT PRIMARY KEY)")
+    if file_paths:
+        conn.executemany(
+            "INSERT OR IGNORE INTO metric_file_scope (file_path) VALUES (?)",
+            [(path,) for path in file_paths],
+        )
+    return " JOIN metric_file_scope fs ON fs.file_path = sessions.file_path"
+
+
+def _install_tool_file_scope(conn: sqlite3.Connection, file_paths: Optional[List[str]]) -> str:
+    if file_paths is None:
+        return ""
+    _install_file_scope(conn, file_paths)
+    return " JOIN metric_file_scope fs ON fs.file_path = tool_uses.file_path"
+
+
+def _normalize_file_paths(file_paths: Optional[List[str]]) -> Optional[List[str]]:
+    if file_paths is None:
+        return None
+    return [str(path) for path in file_paths if path]
+
+
+def get_session_stats_from_db(
+    db_path: Optional[Path] = None,
+    file_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Get aggregated session statistics from the metrics database.
 
     Returns aggregate totals for all sessions in the database, including
@@ -1117,9 +1152,11 @@ def get_session_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
         - user_messages: Total user message count
         - assistant_messages: Total assistant message count
     """
+    file_paths = _normalize_file_paths(file_paths)
     conn = init_metrics_db(db_path)
     try:
-        cursor = conn.execute("""
+        scope_join = _install_file_scope(conn, file_paths)
+        cursor = conn.execute(f"""
             SELECT
                 COALESCE(SUM(input_tokens), 0) as input_tokens,
                 COALESCE(SUM(output_tokens), 0) as output_tokens,
@@ -1130,8 +1167,49 @@ def get_session_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
                 COALESCE(SUM(user_messages), 0) as user_messages,
                 COALESCE(SUM(assistant_messages), 0) as assistant_messages
             FROM sessions
+            {scope_join}
         """)
         row = cursor.fetchone()
+
+        by_agent_cursor = conn.execute(f"""
+            SELECT agent, COUNT(*) as sessions, COALESCE(SUM(message_count), 0) as messages
+            FROM sessions
+            {scope_join}
+            GROUP BY agent
+            ORDER BY sessions DESC
+        """)
+        by_home_cursor = conn.execute(f"""
+            SELECT home, COUNT(*) as sessions, COALESCE(SUM(message_count), 0) as messages
+            FROM sessions
+            {scope_join}
+            GROUP BY home
+            ORDER BY sessions DESC
+        """)
+        by_workspace_cursor = conn.execute(f"""
+            SELECT workspace, COUNT(*) as sessions, COALESCE(SUM(message_count), 0) as messages
+            FROM sessions
+            {scope_join}
+            GROUP BY workspace
+            ORDER BY sessions DESC
+        """)
+        by_model_cursor = conn.execute(
+            """
+            SELECT model,
+                   COUNT(*) as messages,
+                   COALESCE(SUM(output_tokens), 0) as tokens
+            FROM messages
+            """
+            + (
+                " JOIN metric_file_scope fs ON fs.file_path = messages.file_path"
+                if file_paths is not None
+                else ""
+            )
+            + """
+            WHERE model IS NOT NULL AND model != ''
+            GROUP BY model
+            ORDER BY messages DESC
+            """
+        )
         return {
             "input_tokens": row["input_tokens"],
             "output_tokens": row["output_tokens"],
@@ -1141,21 +1219,47 @@ def get_session_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
             "messages": row["messages"],
             "user_messages": row["user_messages"],
             "assistant_messages": row["assistant_messages"],
+            "by_agent": {
+                row["agent"]: {"sessions": row["sessions"], "messages": row["messages"]}
+                for row in by_agent_cursor.fetchall()
+                if row["agent"]
+            },
+            "by_home": {
+                row["home"]: {"sessions": row["sessions"], "messages": row["messages"]}
+                for row in by_home_cursor.fetchall()
+                if row["home"]
+            },
+            "by_workspace": {
+                row["workspace"]: {"sessions": row["sessions"], "messages": row["messages"]}
+                for row in by_workspace_cursor.fetchall()
+                if row["workspace"]
+            },
+            "by_model": {
+                row["model"]: {"messages": row["messages"], "tokens": row["tokens"]}
+                for row in by_model_cursor.fetchall()
+                if row["model"]
+            },
         }
     finally:
         conn.close()
 
 
-def get_tool_usage_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Dict[str, int]]:
+def get_tool_usage_stats_from_db(
+    db_path: Optional[Path] = None,
+    file_paths: Optional[List[str]] = None,
+) -> Dict[str, Dict[str, int]]:
     """Get aggregated tool usage statistics from the metrics database."""
+    file_paths = _normalize_file_paths(file_paths)
     conn = init_metrics_db(db_path)
     try:
+        scope_join = _install_tool_file_scope(conn, file_paths)
         cursor = conn.execute(
-            """
+            f"""
             SELECT tool_name,
                    COUNT(*) as uses,
                    COALESCE(SUM(is_error), 0) as errors
             FROM tool_uses
+            {scope_join}
             GROUP BY tool_name
             """
         )
@@ -1168,16 +1272,22 @@ def get_tool_usage_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Di
         conn.close()
 
 
-def get_time_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
+def get_time_stats_from_db(
+    db_path: Optional[Path] = None,
+    file_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Get aggregated time statistics from the metrics database."""
+    file_paths = _normalize_file_paths(file_paths)
     conn = init_metrics_db(db_path)
     try:
+        scope_join = _install_file_scope(conn, file_paths)
         cursor = conn.execute(
-            """
+            f"""
             SELECT
                 COALESCE(SUM(work_period_seconds), 0) as total_seconds,
                 SUM(CASE WHEN work_period_seconds > 0 THEN 1 ELSE 0 END) as sessions_with_time
             FROM sessions
+            {scope_join}
             """
         )
         row = cursor.fetchone()
@@ -1186,10 +1296,11 @@ def get_time_stats_from_db(db_path: Optional[Path] = None) -> Dict[str, Any]:
         avg_seconds = total_seconds / sessions_with_time if sessions_with_time else 0
 
         day_cursor = conn.execute(
-            """
+            f"""
             SELECT SUBSTR(first_timestamp, 1, 10) as day,
                    COALESCE(SUM(work_period_seconds), 0) as total_seconds
             FROM sessions
+            {scope_join}
             WHERE first_timestamp IS NOT NULL AND work_period_seconds > 0
             GROUP BY day
             """

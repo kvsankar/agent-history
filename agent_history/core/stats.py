@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from agent_history.scope.types import ConcreteRecord, ConcreteScope
 
 
-def compute_stats(
-    scope: ConcreteScope, group_by: Optional[str], include_time: bool
-) -> Dict[str, Any]:
+def compute_stats(scope: ConcreteScope, group_by: str | None, include_time: bool) -> dict[str, Any]:
     """Compute aggregate statistics from a resolved scope."""
-    stats: Dict[str, Any] = {
+    stats: dict[str, Any] = {
         "sessions": 0,
         "main_sessions": 0,
         "agent_sessions": 0,
@@ -55,19 +53,41 @@ def compute_stats(
     return stats
 
 
-def overlay_metrics(stats: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, Any]:
+def overlay_metrics(stats: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
     """Overlay metrics database values onto computed stats."""
+    for key in ("messages", "user_messages", "assistant_messages"):
+        if key in metrics:
+            stats[key] = metrics[key]
+
     tokens = stats.get("tokens", {})
     tokens["input"] = metrics.get("input_tokens", tokens.get("input", 0))
     tokens["output"] = metrics.get("output_tokens", tokens.get("output", 0))
-    tokens["cache_creation"] = metrics.get(
-        "cache_creation_tokens", tokens.get("cache_creation", 0)
-    )
+    tokens["cache_creation"] = metrics.get("cache_creation_tokens", tokens.get("cache_creation", 0))
     tokens["cache_read"] = metrics.get("cache_read_tokens", tokens.get("cache_read", 0))
     stats["tokens"] = tokens
 
     if "by_tool" in metrics:
         stats["by_tool"] = metrics["by_tool"]
+
+    if "by_model" in metrics:
+        stats["by_model"] = metrics["by_model"]
+
+    for breakdown_key in ("by_agent", "by_home", "by_workspace"):
+        if breakdown_key not in metrics:
+            continue
+        current = stats.get(breakdown_key, {})
+        scoped = metrics[breakdown_key]
+        merged: dict[str, Any] = {}
+        for name, values in current.items():
+            merged[name] = dict(values)
+            if name in scoped:
+                merged[name]["messages"] = scoped[name].get(
+                    "messages", merged[name].get("messages", 0)
+                )
+        for name, values in scoped.items():
+            if name not in merged:
+                merged[name] = dict(values)
+        stats[breakdown_key] = merged
 
     if "time_stats" in metrics:
         stats["time_stats"] = metrics["time_stats"]
@@ -75,7 +95,7 @@ def overlay_metrics(stats: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str,
     return stats
 
 
-def apply_top_limit(stats: Dict[str, Any], top_limit: int) -> Dict[str, Any]:
+def apply_top_limit(stats: dict[str, Any], top_limit: int) -> dict[str, Any]:
     """Apply top limit to breakdown dictionaries."""
     breakdown_keys = ["by_agent", "by_model", "by_tool", "by_home", "by_workspace", "by_day"]
 
@@ -88,7 +108,7 @@ def apply_top_limit(stats: Dict[str, Any], top_limit: int) -> Dict[str, Any]:
 
 
 def _add_session_stats(
-    stats: Dict[str, Any], session: Dict[str, Any], record: ConcreteRecord
+    stats: dict[str, Any], session: dict[str, Any], record: ConcreteRecord
 ) -> None:
     stats["sessions"] += 1
     is_agent_session = session.get("is_agent", False)
@@ -105,17 +125,8 @@ def _add_session_stats(
     stats["user_messages"] += user_messages
     stats["assistant_messages"] += assistant_messages
 
-    tokens = session.get("tokens", {})
-    if isinstance(tokens, dict) and tokens:
-        stats["tokens"]["input"] += tokens.get("input", 0)
-        stats["tokens"]["output"] += tokens.get("output", 0)
-        stats["tokens"]["cache_read"] += tokens.get("cache_read", 0)
-        stats["tokens"]["cache_creation"] += tokens.get("cache_creation", 0)
-    else:
-        stats["tokens"]["input"] += session.get("input_tokens", 0) or 0
-        stats["tokens"]["output"] += session.get("output_tokens", 0) or 0
-        stats["tokens"]["cache_read"] += session.get("cache_read_tokens", 0) or 0
-        stats["tokens"]["cache_creation"] += session.get("cache_creation_tokens", 0) or 0
+    tokens = _session_tokens(session)
+    _add_token_stats(stats, tokens)
 
     agent = session.get("agent", "unknown")
     stats["by_agent"][agent]["sessions"] += 1
@@ -123,15 +134,47 @@ def _add_session_stats(
 
     model = session.get("model") or session.get("primary_model")
     if model:
-        output_tokens = (
-            tokens.get("output", 0)
-            if isinstance(tokens, dict) and tokens
-            else session.get("output_tokens", 0) or 0
-        )
         stats["by_model"][model]["messages"] += message_count
-        stats["by_model"][model]["tokens"] += output_tokens
+        stats["by_model"][model]["tokens"] += tokens["output"]
 
-    tool_uses = session.get("tool_uses", [])
+    _add_tool_stats(stats, session.get("tool_uses", []))
+
+    stats["by_home"][record.home]["sessions"] += 1
+    stats["by_home"][record.home]["messages"] += message_count
+
+    workspace_key = record.workspace_key or record.workspace
+    stats["by_workspace"][workspace_key]["sessions"] += 1
+    stats["by_workspace"][workspace_key]["messages"] += message_count
+
+    if "by_day" in stats:
+        _add_day_stats(stats, session, message_count)
+
+
+def _session_tokens(session: dict[str, Any]) -> dict[str, int]:
+    tokens = session.get("tokens", {})
+    if isinstance(tokens, dict) and tokens:
+        return {
+            "input": tokens.get("input", 0),
+            "output": tokens.get("output", 0),
+            "cache_read": tokens.get("cache_read", 0),
+            "cache_creation": tokens.get("cache_creation", 0),
+        }
+    return {
+        "input": session.get("input_tokens", 0) or 0,
+        "output": session.get("output_tokens", 0) or 0,
+        "cache_read": session.get("cache_read_tokens", 0) or 0,
+        "cache_creation": session.get("cache_creation_tokens", 0) or 0,
+    }
+
+
+def _add_token_stats(stats: dict[str, Any], tokens: dict[str, int]) -> None:
+    stats["tokens"]["input"] += tokens["input"]
+    stats["tokens"]["output"] += tokens["output"]
+    stats["tokens"]["cache_read"] += tokens["cache_read"]
+    stats["tokens"]["cache_creation"] += tokens["cache_creation"]
+
+
+def _add_tool_stats(stats: dict[str, Any], tool_uses: Any) -> None:
     if isinstance(tool_uses, list):
         for tool_use in tool_uses:
             tool_name = tool_use.get("name") or tool_use.get("tool_name", "unknown")
@@ -142,21 +185,15 @@ def _add_session_stats(
         for tool_name, count in tool_uses.items():
             stats["by_tool"][tool_name]["uses"] += count
 
-    stats["by_home"][record.home]["sessions"] += 1
-    stats["by_home"][record.home]["messages"] += message_count
 
-    workspace_key = record.workspace_key or record.workspace
-    stats["by_workspace"][workspace_key]["sessions"] += 1
-    stats["by_workspace"][workspace_key]["messages"] += message_count
-
-    if "by_day" in stats:
-        day_key = _extract_day_key(session)
-        if day_key:
-            stats["by_day"][day_key]["sessions"] += 1
-            stats["by_day"][day_key]["messages"] += message_count
+def _add_day_stats(stats: dict[str, Any], session: dict[str, Any], message_count: int) -> None:
+    day_key = _extract_day_key(session)
+    if day_key:
+        stats["by_day"][day_key]["sessions"] += 1
+        stats["by_day"][day_key]["messages"] += message_count
 
 
-def _extract_day_key(session: Dict[str, Any]) -> Optional[str]:
+def _extract_day_key(session: dict[str, Any]) -> str | None:
     for field in ["modified", "created", "start_time", "timestamp"]:
         value = session.get(field)
         if value:
@@ -170,8 +207,8 @@ def _extract_day_key(session: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _compute_time_stats(scope: ConcreteScope) -> Dict[str, Any]:
-    time_stats: Dict[str, Any] = {
+def _compute_time_stats(scope: ConcreteScope) -> dict[str, Any]:
+    time_stats: dict[str, Any] = {
         "total_duration_seconds": 0,
         "sessions_with_time": 0,
         "by_day": defaultdict(float),
@@ -205,12 +242,12 @@ def _compute_time_stats(scope: ConcreteScope) -> Dict[str, Any]:
 
 
 def _sort_by_count(
-    breakdown: Dict[str, Dict[str, Any]], count_key: str
-) -> Dict[str, Dict[str, Any]]:
+    breakdown: dict[str, dict[str, Any]], count_key: str
+) -> dict[str, dict[str, Any]]:
     sorted_items = sorted(breakdown.items(), key=lambda x: x[1].get(count_key, 0), reverse=True)
     return dict(sorted_items)
 
 
-def _sort_by_date(breakdown: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _sort_by_date(breakdown: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     sorted_items = sorted(breakdown.items(), key=lambda x: x[0])
     return dict(sorted_items)

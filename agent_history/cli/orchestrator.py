@@ -338,6 +338,16 @@ class CommandOrchestrator:
 
             self._prepare_scope_for_project_counts(request)
 
+            # Config-only home management does not operate on workspaces or
+            # sessions. Dispatch it directly so source flags like
+            # `home add --windows` are not interpreted as cross-home scope.
+            direct_result = self._dispatch_config_home_management(request)
+            if direct_result is not None:
+                return direct_result
+
+            if self._is_workspace_count_list(request):
+                return self._run_workspace_count_list(request, context)
+
             # 3. Resolve scope
             resolver = ScopeResolver(context)
             resolution = resolver.resolve(
@@ -387,6 +397,26 @@ class CommandOrchestrator:
         except Exception as e:
             return self.error_handler.handle_execution_error(e)
 
+    def _dispatch_config_home_management(self, request: CommandRequest) -> int | None:
+        if request.resource != "home" or request.verb not in ("add", "remove"):
+            return None
+        try:
+            result = self.dispatcher.dispatch(request, [])
+        except DispatchError as e:
+            return self.error_handler.handle_dispatch_error(e)
+        try:
+            self.formatter.format(result, request.output_args)
+        except FormatterError as e:
+            return self.error_handler.handle_formatter_error(e)
+        return 0 if result.success else 1
+
+    def _is_workspace_count_list(self, request: CommandRequest) -> bool:
+        return (
+            request.resource == "ws"
+            and request.verb == "list"
+            and bool(request.verb_args.get("counts"))
+        )
+
     def _prepare_scope_for_project_counts(self, request: CommandRequest) -> None:
         """Expand project-list counts to all configured projects when needed."""
         if not (
@@ -408,6 +438,102 @@ class CommandOrchestrator:
         if request.verb == "list" and request.resource in metadata_only_lists:
             return bool(request.verb_args.get("counts"))
         return True
+
+    def _run_workspace_count_list(self, request: CommandRequest, context: ResolutionContext) -> int:
+        """Run `ws list --counts` with source-level workspace summaries."""
+        from agent_history.adapters.inventory import InventoryProvider
+
+        allowed = self._workspace_count_allowed_scopes(request, context)
+        if allowed is None:
+            return 1
+
+        inventory = InventoryProvider(context)
+        rows = []
+        for home, workspace_keys in allowed.items():
+            for row in inventory.list_workspace_summaries(home, agent=request.scope_args.agent):
+                key = row.get("workspace_key") or row.get("workspace")
+                if workspace_keys is None or key in workspace_keys:
+                    rows.append(row)
+
+        rows.sort(key=lambda row: str(row.get("last_modified", "")), reverse=True)
+        homes = sorted({row.get("home") for row in rows if row.get("home")})
+        workspaces = sorted({row.get("workspace") for row in rows if row.get("workspace")})
+        display_map = {
+            row.get("workspace_key"): row.get("workspace_display")
+            for row in rows
+            if row.get("workspace_key") and row.get("workspace_display")
+        }
+        result = CommandResult(
+            success=True,
+            data=rows,
+            data_type="workspace_list",
+            metadata={
+                "total_count": len(rows),
+                "homes": homes,
+                "workspaces": workspaces,
+                "total_sessions": sum(row.get("session_count", 0) for row in rows),
+                "workspace_display_map": display_map,
+            },
+        )
+        try:
+            self.formatter.format(result, request.output_args)
+        except FormatterError as e:
+            return self.error_handler.handle_formatter_error(e)
+        return 0
+
+    def _workspace_count_allowed_scopes(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> dict[str, set[str] | None] | None:
+        if self._workspace_counts_include_all_workspaces(request):
+            return dict.fromkeys(self._selected_homes_for_workspace_counts(request, context), None)
+
+        resolver = ScopeResolver(context)
+        resolution = resolver.resolve(request.scope_args, load_sessions=False)
+        if not self.error_handler.handle_resolution_errors(resolution):
+            return None
+
+        allowed: dict[str, set[str] | None] = {}
+        for record in resolution.scope:
+            allowed.setdefault(record.home, set()).add(record.workspace_key or record.workspace)
+        return allowed
+
+    def _workspace_counts_include_all_workspaces(self, request: CommandRequest) -> bool:
+        return (
+            request.scope_args.all_workspaces
+            and not request.scope_args.patterns
+            and not request.scope_args.name_patterns
+            and not request.scope_args.projects
+        )
+
+    def _selected_homes_for_workspace_counts(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> list[str]:
+        args = request.scope_args
+        homes: list[str] = []
+        if args.all_homes:
+            homes.append("local")
+            for category, items in context.available_homes.items():
+                if category == "wsl" and args.no_wsl:
+                    continue
+                if category == "windows" and args.no_windows:
+                    continue
+                if category == "remote" and args.no_remote:
+                    continue
+                for item in items:
+                    homes.append(f"{category}:{item}")
+            if not args.no_web:
+                homes.extend(home for home in args.home_names if home == "web")
+        elif args.home_names:
+            homes.extend(args.home_names)
+        elif args.home_type:
+            if args.home_type == "local":
+                homes.append("local")
+            else:
+                for item in context.available_homes.get(args.home_type, []):
+                    homes.append(f"{args.home_type}:{item}")
+        else:
+            homes.append("local")
+        return list(dict.fromkeys(homes))
 
     def run_with_context(
         self, argv: list[str], context: ResolutionContext | None = None

@@ -313,8 +313,7 @@ for f in *.jsonl; do
     [ -f "$f" ] || continue
     size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
-    lines=$(wc -l < "$f")
-    echo "$PWD/$f|$size|$mtime|$lines|$encoded|$readable"
+    echo "$PWD/$f|$size|$mtime|0|$encoded|$readable"
 done"""
 
 
@@ -425,8 +424,7 @@ for f in ~/.codex/sessions/*/*/*/*.jsonl; do
     if [ -n "$cwd" ] && [ "$cwd" = "$ws" ]; then
         size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
         mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
-        lines=$(wc -l < "$f")
-        echo "$f|$size|$mtime|$lines|$cwd"
+        echo "$f|$size|$mtime|0|$cwd"
     fi
 done"""
 
@@ -534,8 +532,7 @@ def _gemini_remote_list_sessions_command(workspace: str) -> str:
     [ -f "$f" ] || continue
     size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
-    lines=$(wc -l < "$f")
-    echo "$f|$size|$mtime|$lines"
+    echo "$f|$size|$mtime|0"
 done"""
 
 
@@ -725,10 +722,9 @@ for f in ~/.pi/agent/sessions/*/*.jsonl; do
     if [ "$cwd" = "$ws" ] || [ "$parent" = "$ws" ]; then
         size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
         mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
-        lines=$(wc -l < "$f")
         workspace_value="$cwd"
         [ -n "$workspace_value" ] && [ "$workspace_value" != "$line" ] || workspace_value="$parent"
-        echo "$f|$size|$mtime|$lines|$workspace_value"
+        echo "$f|$size|$mtime|0|$workspace_value"
     fi
 done"""
 

@@ -141,14 +141,11 @@ class TestBuildTemplate:
         assert isinstance(template[0], ScopeRecord)
         assert isinstance(template[0].workspace, WorkspaceSpecAll)
 
-    def test_patterns_create_exact_match_specs(self, resolver: ScopeResolver) -> None:
-        """Patterns should create WorkspaceSpec.Pattern with EXACT match type.
+    def test_full_path_patterns_create_direct_path_specs(self, resolver: ScopeResolver) -> None:
+        """Full-path positional patterns should create WorkspaceSpec.Path.
 
-        CRITICAL: This is THE FIX. When users specify workspace patterns like
-        "/home/user/auth", we must use EXACT matching, not substring matching.
-
-        The old bug: "auth" would match both "auth" and "auth-infra"
-        The fix: "auth" matches only "auth" exactly
+        Full paths are already exact workspace identifiers, so they should be
+        used directly without enumerating all workspaces in a home.
         """
         args = ScopeArgs(patterns=["/home/user/auth"])
 
@@ -157,15 +154,13 @@ class TestBuildTemplate:
         assert len(template) == 1
         assert isinstance(template[0], ScopeRecord)
         workspace_spec = template[0].workspace
-        assert isinstance(workspace_spec, WorkspaceSpecPattern)
-        assert workspace_spec.pattern == "/home/user/auth"
-        # CRITICAL: Must be EXACT, not CONTAINS!
-        assert workspace_spec.match_type == MatchType.EXACT
+        assert isinstance(workspace_spec, WorkspaceSpecPath)
+        assert workspace_spec.path == "/home/user/auth"
 
     def test_multiple_patterns_create_multiple_records(self, resolver: ScopeResolver) -> None:
         """Multiple patterns should create separate ScopeRecords.
 
-        Each pattern gets its own record, all with EXACT matching.
+        Each full path gets its own direct path record.
         """
         args = ScopeArgs(patterns=["/home/user/auth", "/home/user/api"])
 
@@ -174,8 +169,7 @@ class TestBuildTemplate:
         assert len(template) == 2
         for record in template:
             assert isinstance(record, ScopeRecord)
-            assert isinstance(record.workspace, WorkspaceSpecPattern)
-            assert record.workspace.match_type == MatchType.EXACT
+            assert isinstance(record.workspace, WorkspaceSpecPath)
 
     def test_this_flag_creates_workspace_current(self, resolver: ScopeResolver) -> None:
         """--this flag should create WorkspaceSpec.Current.
@@ -1000,9 +994,12 @@ class TestEdgeCases:
         with patch.object(resolver, "_enumerate_workspaces", return_value=[]):
             result = resolver.resolve(args)
 
-        # Should succeed with empty scope (no matches)
+        # Direct path scopes do not enumerate workspaces, so the scope is materialized
+        # even if the backing session list is empty.
         assert result.success
-        assert len(result.scope) == 0
+        assert len(result.scope) == 1
+        assert result.scope[0].workspace == "/nonexistent/path"
+        assert result.scope[0].sessions == []
 
     def test_workspace_with_trailing_slash(self, mock_context: ResolutionContext) -> None:
         """Trailing slashes should not affect matching."""

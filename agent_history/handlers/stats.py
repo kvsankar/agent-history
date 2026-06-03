@@ -9,9 +9,9 @@ See docs/design-v2/pipeline-architecture.md for the complete specification.
 
 from typing import Any, Dict
 
+from agent_history.core.workspaces import build_scope_metadata, build_workspace_rows
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
-from agent_history.core.workspaces import build_scope_metadata, build_workspace_rows
 from agent_history.scope.types import ConcreteScope
 
 
@@ -77,9 +77,20 @@ class SessionStatsHandler(VerbHandler):
         include_day = "day" in group_list
         stats = compute_stats(scope, "day" if include_day else None, include_time)
 
-        # If sync was used, overlay token totals from metrics database
-        # This ensures accurate token counts that were parsed during sync
-        if verb_args.get("sync"):
+        # Overlay parsed metrics from the database for the already-resolved scope.
+        # Session discovery intentionally skips expensive parsing, so message,
+        # token, model, and tool totals should come from DB rows for this scope,
+        # not from all rows in the metrics database.
+        should_overlay_db = bool(verb_args.get("sync"))
+        if not should_overlay_db:
+            try:
+                from agent_history.storage.metrics import get_metrics_db_path
+
+                should_overlay_db = get_metrics_db_path().exists()
+            except Exception:
+                should_overlay_db = False
+
+        if should_overlay_db:
             try:
                 from agent_history.storage.metrics import (
                     get_session_stats_from_db,
@@ -87,10 +98,11 @@ class SessionStatsHandler(VerbHandler):
                     get_tool_usage_stats_from_db,
                 )
 
-                db_stats = get_session_stats_from_db()
-                db_stats["by_tool"] = get_tool_usage_stats_from_db()
+                file_paths = self._scope_file_paths(scope)
+                db_stats = get_session_stats_from_db(file_paths=file_paths)
+                db_stats["by_tool"] = get_tool_usage_stats_from_db(file_paths=file_paths)
                 if include_time:
-                    db_stats["time_stats"] = get_time_stats_from_db()
+                    db_stats["time_stats"] = get_time_stats_from_db(file_paths=file_paths)
                 stats = overlay_metrics(stats, db_stats)
             except Exception:
                 pass  # Fall back to scope-based stats if DB query fails
@@ -110,6 +122,14 @@ class SessionStatsHandler(VerbHandler):
         workspace_rows, _workspace_display_map = build_workspace_rows(scope)
         metadata = build_scope_metadata(scope)
         workspace_display_map = metadata["workspace_display_map"]
+        by_workspace_stats = stats.get("by_workspace", {})
+        if isinstance(by_workspace_stats, dict):
+            for row in workspace_rows:
+                workspace_key = row.get("workspace_key") or row.get("workspace")
+                if workspace_key in by_workspace_stats:
+                    row["messages"] = by_workspace_stats[workspace_key].get(
+                        "messages", row.get("messages", 0)
+                    )
         workspace_rows.sort(key=lambda r: r["sessions"], reverse=True)
         if top_ws:
             workspace_rows = workspace_rows[:top_ws]
@@ -132,3 +152,13 @@ class SessionStatsHandler(VerbHandler):
                 "include_time": include_time,
             },
         )
+
+    def _scope_file_paths(self, scope: ConcreteScope) -> list[str]:
+        """Return session file paths from the resolved scope."""
+        file_paths: list[str] = []
+        for record in scope:
+            for session in record.sessions:
+                file_value = session.get("file")
+                if file_value:
+                    file_paths.append(str(file_value))
+        return file_paths
