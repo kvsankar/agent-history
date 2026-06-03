@@ -5,7 +5,7 @@ This document explains the architecture and data flow of `agent-history`.
 ## Goals
 
 - Provide a single CLI to browse, export, and analyze AI coding sessions.
-- Support Claude Code, Codex CLI, and Gemini CLI across local, WSL, Windows, and SSH.
+- Support Claude Code, Codex CLI, Gemini CLI, and Pi across local, WSL, Windows, and SSH.
 - Keep reads safe and non-destructive; never modify raw agent data.
 - Favor predictable scope rules with orthogonal flags (`--ah`, `--aw`, `--this`).
 
