@@ -3,9 +3,7 @@
 Tests basic SSH connectivity, authentication, and timeout handling.
 """
 
-import pytest
-
-from .conftest import run_cli, ssh_run
+from .conftest import run_cli
 
 
 class TestSSHConnectivity:
@@ -49,13 +47,19 @@ class TestRemoteSessionData:
         """Alice's home has Codex session data."""
         result = ssh_to_alpha("alice", "ls ~/.codex/sessions/2025/01/15/")
         assert result.returncode == 0, f"Failed: {result.stderr}"
-        assert "session-codex-001.jsonl" in result.stdout
+        assert "rollout-2025-01-15T10-00-00-session-codex-001.jsonl" in result.stdout
 
     def test_alice_has_gemini_sessions(self, docker_env, ssh_to_alpha):
         """Alice's home has Gemini session data."""
-        result = ssh_to_alpha("alice", "find ~/.gemini -name '*.json' | head -1")
+        result = ssh_to_alpha("alice", "find ~/.gemini -name 'session-*.jsonl' | head -1")
         assert result.returncode == 0, f"Failed: {result.stderr}"
-        assert ".json" in result.stdout
+        assert ".jsonl" in result.stdout
+
+    def test_alice_has_pi_sessions(self, docker_env, ssh_to_alpha):
+        """Alice's home has Pi session data."""
+        result = ssh_to_alpha("alice", "find ~/.pi/agent/sessions -name '*.jsonl' | head -1")
+        assert result.returncode == 0, f"Failed: {result.stderr}"
+        assert "session-pi-001.jsonl" in result.stdout
 
     def test_charlie_has_claude_sessions(self, docker_env, ssh_to_beta):
         """Charlie's home has Claude session data."""

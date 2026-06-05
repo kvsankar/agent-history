@@ -1,15 +1,15 @@
 """Gemini CLI backend for agent-history.
 
 This module handles all Gemini CLI session operations:
-- Session scanning (~/.gemini/tmp/<hash>/chats/)
-- Hash-to-path index management for workspace resolution
-- JSON message parsing and formatting
+- Session scanning (~/.gemini/tmp/<project-id>/chats/)
+- Project identifier-to-path index management for workspace resolution
+- JSONL and legacy JSON message parsing and formatting
 - Metrics extraction for statistics
 
 Gemini CLI stores sessions differently from Claude:
-- Sessions are in ~/.gemini/tmp/<project_hash>/chats/session-*.json
-- Project hash is SHA-256 of the absolute project path
-- Each session is a single JSON file (not JSONL)
+- Current sessions are in ~/.gemini/tmp/<project_id>/chats/session-*.jsonl
+- Legacy sessions can be single JSON files under the same chats directory
+- Project identifiers may be registry slugs rather than SHA-256 hashes
 """
 
 import hashlib
@@ -22,38 +22,30 @@ from ..storage.config import get_config_dir
 from ..utils.platform import AGENT_GEMINI
 
 __all__ = [
-    # Constants
-    "GEMINI_HOME_DIR",
     "GEMINI_HASH_INDEX_VERSION",
+    "GEMINI_HOME_DIR",
     "HASH_DISPLAY_LEN",
-    # Home directory
-    "gemini_get_home_dir",
-    # JSON parsing
-    "gemini_read_json_messages",
-    "gemini_parse_json_to_markdown",
-    "gemini_get_first_timestamp",
-    # Tool/thought formatting
-    "gemini_format_tool_call",
-    "gemini_format_thoughts",
-    # Metrics extraction
-    "gemini_extract_metrics_from_json",
-    # Hash index management
-    "gemini_get_hash_index_file",
-    "gemini_get_legacy_hash_index_file",
-    "gemini_load_hash_index",
-    "gemini_save_hash_index",
-    "gemini_compute_project_hash",
-    "gemini_update_hash_index_from_cwd",
-    "gemini_get_path_for_hash",
-    "gemini_get_workspace_readable",
-    "gemini_add_paths_to_index",
-    "gemini_rebuild_hash_index",
-    # Session scanning
-    "gemini_get_workspace_from_session",
-    "gemini_count_messages",
-    "gemini_scan_sessions",
-    # Unified export
     "_gemini_message_to_unified",
+    "gemini_add_paths_to_index",
+    "gemini_compute_project_hash",
+    "gemini_count_messages",
+    "gemini_extract_metrics_from_json",
+    "gemini_format_thoughts",
+    "gemini_format_tool_call",
+    "gemini_get_first_timestamp",
+    "gemini_get_hash_index_file",
+    "gemini_get_home_dir",
+    "gemini_get_legacy_hash_index_file",
+    "gemini_get_path_for_hash",
+    "gemini_get_workspace_from_session",
+    "gemini_get_workspace_readable",
+    "gemini_load_hash_index",
+    "gemini_parse_json_to_markdown",
+    "gemini_read_json_messages",
+    "gemini_rebuild_hash_index",
+    "gemini_save_hash_index",
+    "gemini_scan_sessions",
+    "gemini_update_hash_index_from_cwd",
 ]
 
 
@@ -134,12 +126,19 @@ import os
 def gemini_get_home_dir() -> Path:
     """Get Gemini sessions directory (~/.gemini/tmp/).
 
-    Supports GEMINI_SESSIONS_DIR environment variable override for testing
-    and custom configurations.
+    Supports upstream GEMINI_CLI_HOME plus GEMINI_SESSIONS_DIR for tests and
+    agent-history compatibility. GEMINI_SESSIONS_DIR wins because it points
+    directly at the tmp/session root.
     """
     env_override = os.environ.get("GEMINI_SESSIONS_DIR")
     if env_override:
         return Path(env_override).expanduser()
+    cli_home = os.environ.get("GEMINI_CLI_HOME")
+    if cli_home:
+        cli_home_path = Path(cli_home).expanduser()
+        if cli_home_path.name == ".gemini":
+            return cli_home_path / "tmp"
+        return cli_home_path / ".gemini" / "tmp"
     return GEMINI_HOME_DIR
 
 
@@ -224,6 +223,16 @@ def _extract_gemini_content_part(part) -> str:
 
     if "text" in part:
         return part["text"]
+    if "functionCall" in part:
+        call = part["functionCall"]
+        name = call.get("name", "unknown")
+        args = call.get("args", {})
+        return f"**[Function Call: {name}]**\n```json\n{json.dumps(args, indent=2)}\n```"
+    if "functionResponse" in part:
+        response = part["functionResponse"]
+        name = response.get("name", "unknown")
+        payload = response.get("response", response)
+        return f"**[Function Response: {name}]**\n```json\n{json.dumps(payload, indent=2)}\n```"
     if "inlineData" in part:
         mime = part["inlineData"].get("mimeType", "unknown")
         return f"[Inline data: {mime}]"
@@ -269,11 +278,82 @@ def _build_gemini_message(msg: dict, content: str) -> Optional[dict]:
     return None
 
 
+def _gemini_read_jsonl_messages(jsonl_file: Path) -> tuple[list[dict], dict | None]:
+    """Read current Gemini append-only JSONL session files."""
+    session_meta: dict[str, Any] = {}
+    messages: list[dict] = []
+
+    try:
+        with open(jsonl_file, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if "$rewindTo" in record:
+                    rewind_id = record.get("$rewindTo")
+                    for index, msg in enumerate(messages):
+                        if msg.get("id") == rewind_id:
+                            messages = messages[: index + 1]
+                            break
+                    continue
+
+                if "$set" in record:
+                    updates = record.get("$set") or {}
+                    if not isinstance(updates, dict):
+                        continue
+                    if isinstance(updates.get("messages"), list):
+                        messages = updates["messages"]
+                    session_meta.update({k: v for k, v in updates.items() if k != "messages"})
+                    continue
+
+                record_type = record.get("type") or record.get("role")
+                if record_type in (
+                    "user",
+                    "gemini",
+                    "assistant",
+                    "model",
+                    "info",
+                    "error",
+                    "warning",
+                ):
+                    messages.append(record)
+                    continue
+
+                # Metadata records usually have no type and appear first.
+                session_meta.update(record)
+    except OSError:
+        return [], None
+
+    normalized_messages = []
+    for msg in messages:
+        content = _extract_gemini_content(msg.get("content", ""))
+        normalized = _build_gemini_message(msg, content)
+        if normalized:
+            normalized_messages.append(normalized)
+
+    meta = {
+        "sessionId": session_meta.get("sessionId") or session_meta.get("id"),
+        "projectHash": session_meta.get("projectHash") or session_meta.get("cwd"),
+        "startTime": session_meta.get("startTime"),
+        "lastUpdated": session_meta.get("lastUpdated"),
+        "summary": session_meta.get("summary"),
+        "memoryScratchpad": session_meta.get("memoryScratchpad"),
+        "directories": session_meta.get("directories"),
+        "kind": session_meta.get("kind"),
+    }
+    return normalized_messages, meta
+
+
 def gemini_read_json_messages(json_file: Path) -> tuple:
     """Read messages from Gemini CLI JSON session file.
 
-    Gemini stores sessions as single JSON files (not JSONL) with structure:
-    {sessionId, projectHash, startTime, lastUpdated, messages: [...]}
+    Gemini legacy sessions are single JSON files with structure:
+    {sessionId, projectHash, startTime, lastUpdated, messages: [...]}.
+    Current Gemini CLI sessions are append-only JSONL files.
 
     Args:
         json_file: Path to the Gemini session .json file
@@ -283,6 +363,9 @@ def gemini_read_json_messages(json_file: Path) -> tuple:
         Messages contain: role, content, timestamp, and optionally
         is_tool_call, thoughts, tokens, model fields
     """
+    if json_file.name.endswith(".jsonl"):
+        return _gemini_read_jsonl_messages(json_file)
+
     try:
         with open(json_file, encoding="utf-8") as f:
             data = json.load(f)
@@ -652,7 +735,9 @@ def gemini_update_hash_index_from_cwd() -> dict:
     gemini_dir = gemini_get_home_dir()
     hash_dir = gemini_dir / cwd_hash / "chats"
 
-    if hash_dir.exists() and any(hash_dir.glob("session-*.json")):
+    if hash_dir.exists() and (
+        any(hash_dir.glob("session-*.json")) or any(hash_dir.glob("session-*.jsonl"))
+    ):
         # Found Gemini sessions for this directory - record the mapping
         current_path = str(cwd.resolve())
         existing_path = index["hashes"].get(cwd_hash)
@@ -724,7 +809,9 @@ def _has_gemini_sessions(project_hash: str, gemini_dir: Path) -> bool:
         True if sessions exist for this hash
     """
     hash_dir = gemini_dir / project_hash / "chats"
-    return hash_dir.exists() and any(hash_dir.glob("session-*.json"))
+    return hash_dir.exists() and (
+        any(hash_dir.glob("session-*.json")) or any(hash_dir.glob("session-*.jsonl"))
+    )
 
 
 def _build_path_mapping(
@@ -860,7 +947,7 @@ def gemini_rebuild_hash_index(sessions_dir: Optional[Path] = None) -> dict:
         chats_dir = hash_dir / "chats"
         if not chats_dir.exists():
             continue
-        if not any(chats_dir.glob("*.json")):
+        if not any(chats_dir.glob("*.json")) and not any(chats_dir.glob("*.jsonl")):
             continue
         scanned += 1
         project_hash = hash_dir.name
@@ -891,11 +978,16 @@ def gemini_get_workspace_from_session(json_file: Path) -> str:
     Returns:
         Encoded path (if hash->path known) or project hash, or 'unknown'
     """
-    # The file is in ~/.gemini/tmp/<project_hash>/chats/<session>.json
-    # So we need to go up two levels to get the project hash
+    # Legacy files are in ~/.gemini/tmp/<project>/chats/<session>.json.
+    # Current subagent files can be nested under chats/<parent>/<agent>.jsonl.
     try:
-        chats_dir = json_file.parent  # chats/
-        project_dir = chats_dir.parent  # <project_hash>/
+        project_dir = None
+        for parent in json_file.parents:
+            if parent.name == "chats":
+                project_dir = parent.parent
+                break
+        if project_dir is None:
+            project_dir = json_file.parent.parent
         project_hash = project_dir.name
 
         # Try to get the real path from hash index
@@ -918,16 +1010,8 @@ def gemini_count_messages(json_file: Path) -> int:
     Returns:
         Number of user and gemini messages
     """
-    count = 0
-    try:
-        with open(json_file, encoding="utf-8") as f:
-            data = json.load(f)
-            for msg in data.get("messages", []):
-                if msg.get("type") in ("user", "gemini"):
-                    count += 1
-    except (OSError, json.JSONDecodeError):
-        pass
-    return count
+    messages, _ = gemini_read_json_messages(json_file)
+    return sum(1 for msg in messages if msg.get("role") in ("user", "assistant"))
 
 
 def _gemini_build_session_dict(
@@ -1061,7 +1145,7 @@ def gemini_scan_sessions(
     use_cached_counts: bool = False,
     get_cached_count_fn=None,
 ) -> list:
-    """Scan ~/.gemini/tmp/*/chats/ for session-*.json files.
+    """Scan ~/.gemini/tmp/*/chats/ for Gemini session files.
 
     Args:
         pattern: Substring pattern to filter workspaces (empty matches all)
@@ -1082,8 +1166,13 @@ def gemini_scan_sessions(
         return []
 
     sessions = []
-    # Gemini stores sessions in ~/.gemini/tmp/<project_hash>/chats/session-*.json
-    for json_file in sessions_dir.glob("*/chats/session-*.json"):
+    # Gemini stores legacy JSON and current JSONL sessions under chats/.
+    session_files = (
+        list(sessions_dir.glob("*/chats/session-*.json"))
+        + list(sessions_dir.glob("*/chats/session-*.jsonl"))
+        + list(sessions_dir.glob("*/chats/*/*.jsonl"))
+    )
+    for json_file in session_files:
         workspace = gemini_get_workspace_from_session(json_file)
         modified = datetime.fromtimestamp(json_file.stat().st_mtime)
 

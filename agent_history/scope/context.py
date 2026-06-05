@@ -526,7 +526,9 @@ class ContextBuilder:
             "AGENT_HISTORY_CONFIG_DIR",
             "CLAUDE_PROJECTS_DIR",
             "CODEX_SESSIONS_DIR",
+            "CODEX_HOME",
             "GEMINI_SESSIONS_DIR",
+            "GEMINI_CLI_HOME",
             "PI_CODING_AGENT_SESSION_DIR",
             "PI_SESSIONS_DIR",
         )
@@ -617,6 +619,8 @@ class ContextBuilder:
         codex_env = os.environ.get("CODEX_SESSIONS_DIR")
         if codex_env:
             codex_dir = Path(codex_env)
+        elif os.environ.get("CODEX_HOME"):
+            codex_dir = Path(os.environ["CODEX_HOME"]) / "sessions"
         else:
             codex_dir = Path.home() / ".codex" / "sessions"
         codex_dir = codex_dir if codex_dir.exists() else None
@@ -624,7 +628,13 @@ class ContextBuilder:
         # Gemini sessions directory
         gemini_env = os.environ.get("GEMINI_SESSIONS_DIR")
         if gemini_env:
-            gemini_dir = Path(gemini_env)
+            gemini_dir = Path(gemini_env).expanduser()
+        elif os.environ.get("GEMINI_CLI_HOME"):
+            gemini_cli_home = Path(os.environ["GEMINI_CLI_HOME"]).expanduser()
+            if gemini_cli_home.name == ".gemini":
+                gemini_dir = gemini_cli_home / "tmp"
+            else:
+                gemini_dir = gemini_cli_home / ".gemini" / "tmp"
         else:
             gemini_dir = Path.home() / ".gemini" / "tmp"
         gemini_dir = gemini_dir if gemini_dir.exists() else None

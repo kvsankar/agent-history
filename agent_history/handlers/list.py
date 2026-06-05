@@ -400,8 +400,12 @@ class HomeListHandler(VerbHandler):
         """Return True when isolated tests should avoid host probing."""
         required = (
             "CLAUDE_PROJECTS_DIR",
+            "CODEX_HOME",
             "CODEX_SESSIONS_DIR",
+            "GEMINI_CLI_HOME",
             "GEMINI_SESSIONS_DIR",
+            "PI_CODING_AGENT_SESSION_DIR",
+            "PI_SESSIONS_DIR",
             "AGENT_HISTORY_CONFIG_DIR",
         )
         home_overrides = (

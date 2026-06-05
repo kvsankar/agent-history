@@ -47,3 +47,27 @@ def test_test_mode_pi_override_skips_host_platform_scan(
 
     assert ctx.pi_sessions_dir == pi_dir
     assert ctx.available_homes == {"wsl": [], "windows": [], "remote": []}
+
+
+def test_gemini_cli_home_points_to_dot_gemini_tmp(monkeypatch, tmp_path: Path) -> None:
+    """GEMINI_CLI_HOME is an upstream home root, not the tmp directory."""
+    gemini_tmp = tmp_path / "gemini-home" / ".gemini" / "tmp"
+    gemini_tmp.mkdir(parents=True)
+
+    monkeypatch.setenv("AGENT_HISTORY_TEST_MODE", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("GEMINI_CLI_HOME", str(tmp_path / "gemini-home"))
+    monkeypatch.delenv("GEMINI_SESSIONS_DIR", raising=False)
+    monkeypatch.delenv("AGENT_HISTORY_HOME", raising=False)
+    monkeypatch.delenv("AGENT_HISTORY_HOME_WSL", raising=False)
+    monkeypatch.delenv("AGENT_HISTORY_HOME_WINDOWS", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECTS_DIR", raising=False)
+    monkeypatch.delenv("CODEX_SESSIONS_DIR", raising=False)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("PI_SESSIONS_DIR", raising=False)
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
+    monkeypatch.setattr("agent_history.storage.config.load_config", lambda: {})
+
+    ctx = ContextBuilder().build()
+
+    assert ctx.gemini_sessions_dir == gemini_tmp

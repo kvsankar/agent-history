@@ -11,20 +11,23 @@ Codex CLI stores sessions as JSONL files with a {timestamp, type, payload}
 envelope structure. Sessions are organized in date folders (YYYY/MM/DD/).
 
 Environment Variables:
-    CODEX_SESSIONS_DIR: Override sessions directory location (for testing)
+    CODEX_HOME: Upstream Codex home directory; sessions live under sessions/
+    CODEX_SESSIONS_DIR: Override sessions directory location (for testing/compat)
     DEBUG: Enable debug output for index operations
 """
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
 import sqlite3
 import sys
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable, Iterator, TextIO, TypedDict
 
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.paths import normalize_workspace_name
@@ -126,18 +129,45 @@ class MetricsDict(TypedDict, total=False):
 def codex_get_home_dir() -> Path:
     """Get Codex sessions directory (~/.codex/sessions/).
 
-    Supports CODEX_SESSIONS_DIR environment variable override for testing
-    and custom configurations.
+    Supports upstream CODEX_HOME plus CODEX_SESSIONS_DIR for tests and
+    agent-history compatibility. CODEX_SESSIONS_DIR wins because it points
+    directly at the sessions root.
     """
     env_override = os.environ.get("CODEX_SESSIONS_DIR")
     if env_override:
         return Path(env_override).expanduser()
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home).expanduser() / "sessions"
     return CODEX_HOME_DIR
 
 
 # =============================================================================
 # JSONL Parsing
 # =============================================================================
+
+
+@contextmanager
+def _codex_open_text(jsonl_file: Path) -> Iterator[TextIO]:
+    """Open plain or zstd-compressed Codex rollout files as text."""
+    if jsonl_file.name.endswith(".jsonl.zst"):
+        try:
+            import zstandard as zstd
+        except ImportError as exc:
+            raise OSError("Reading .jsonl.zst Codex rollouts requires zstandard") from exc
+
+        with open(jsonl_file, "rb") as raw:
+            reader = zstd.ZstdDecompressor().stream_reader(raw)
+            wrapper = io.TextIOWrapper(reader, encoding="utf-8")
+            try:
+                yield wrapper
+            finally:
+                wrapper.detach()
+                reader.close()
+        return
+
+    with open(jsonl_file, encoding="utf-8") as f:
+        yield f
 
 
 def codex_extract_content(payload: dict) -> str:
@@ -209,46 +239,49 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
     messages = []
     session_meta = None
 
-    with open(jsonl_file, encoding="utf-8") as f:
-        for line in f:
-            try:
-                entry = json.loads(line)
-                entry_type = entry.get("type")
-                timestamp = entry.get("timestamp", "")
-                payload = entry.get("payload", {})
+    try:
+        with _codex_open_text(jsonl_file) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    entry_type = entry.get("type")
+                    timestamp = entry.get("timestamp", "")
+                    payload = entry.get("payload", {})
 
-                if entry_type == "session_meta":
-                    session_meta = payload
-                elif entry_type == "response_item":
-                    payload_type = payload.get("type")
-                    if payload_type == "message":
-                        messages.append(
-                            {
-                                "role": payload.get("role"),
-                                "content": codex_extract_content(payload),
-                                "timestamp": timestamp,
-                            }
-                        )
-                    elif payload_type in ("function_call", "custom_tool_call"):
-                        messages.append(
-                            {
-                                "role": "assistant",
-                                "content": codex_format_function_call(payload),
-                                "timestamp": timestamp,
-                                "is_tool_call": True,
-                            }
-                        )
-                    elif payload_type in ("function_call_output", "custom_tool_call_output"):
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "content": codex_format_function_result(payload),
-                                "timestamp": timestamp,
-                                "is_tool_result": True,
-                            }
-                        )
-            except json.JSONDecodeError:
-                continue
+                    if entry_type == "session_meta":
+                        session_meta = payload
+                    elif entry_type == "response_item":
+                        payload_type = payload.get("type")
+                        if payload_type == "message":
+                            messages.append(
+                                {
+                                    "role": payload.get("role"),
+                                    "content": codex_extract_content(payload),
+                                    "timestamp": timestamp,
+                                }
+                            )
+                        elif payload_type in ("function_call", "custom_tool_call"):
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": codex_format_function_call(payload),
+                                    "timestamp": timestamp,
+                                    "is_tool_call": True,
+                                }
+                            )
+                        elif payload_type in ("function_call_output", "custom_tool_call_output"):
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "content": codex_format_function_result(payload),
+                                    "timestamp": timestamp,
+                                    "is_tool_result": True,
+                                }
+                            )
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return [], None
 
     return messages, session_meta
 
@@ -263,7 +296,7 @@ def codex_get_first_timestamp(jsonl_file: Path) -> str | None:
         ISO 8601 timestamp string or None if not found
     """
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with _codex_open_text(jsonl_file) as f:
             first_line = f.readline()
             entry = json.loads(first_line)
             if entry.get("type") == "session_meta":
@@ -371,7 +404,7 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
     last_token_usage = None
     last_token_timestamp = None
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with _codex_open_text(jsonl_file) as f:
             for line in f:
                 try:
                     entry = json.loads(line)
@@ -440,7 +473,7 @@ def codex_get_workspace_from_session(jsonl_file: Path) -> str:
         Workspace path from session_meta.cwd (e.g., '/home/user/project') or 'unknown'
     """
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with _codex_open_text(jsonl_file) as f:
             first_line = f.readline()
             entry = json.loads(first_line)
             if entry.get("type") == "session_meta":
@@ -473,7 +506,7 @@ def codex_count_messages(jsonl_file: Path) -> int:
     """
     count = 0
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with _codex_open_text(jsonl_file) as f:
             for line in f:
                 try:
                     entry = json.loads(line)
@@ -635,6 +668,11 @@ def _iter_date_folders(sessions_dir: Path, since_dt):
         yield from _iter_month_folders(year_dir, year, since_dt)
 
 
+def _codex_rollout_candidates(folder: Path) -> list[Path]:
+    """Return plain and compressed Codex rollout files in a folder."""
+    return list(folder.glob("rollout-*.jsonl")) + list(folder.glob("rollout-*.jsonl.zst"))
+
+
 def _codex_date_folders_since(sessions_dir: Path, since_date: str | None) -> list:
     """Get list of date folders on or after since_date.
 
@@ -691,7 +729,7 @@ def _scan_folders_for_sessions(
     """
     for day_dir in folders:
         try:
-            candidates = list(day_dir.glob("rollout-*.jsonl"))
+            candidates = _codex_rollout_candidates(day_dir)
         except (OSError, PermissionError):
             continue
         for jsonl_file in candidates:
@@ -971,7 +1009,9 @@ def codex_scan_sessions(
     else:
         # Walk through YYYY/MM/DD structure using glob
         try:
-            candidates = list(sessions_dir.glob("*/*/*/rollout-*.jsonl"))
+            candidates = list(sessions_dir.glob("*/*/*/rollout-*.jsonl")) + list(
+                sessions_dir.glob("*/*/*/rollout-*.jsonl.zst")
+            )
         except (OSError, PermissionError):
             return []
 
