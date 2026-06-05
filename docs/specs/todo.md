@@ -116,14 +116,14 @@ storage, export, stats, and scope explanations.
       reference formats, feature analysis, unified schema, and refresh notes.
 - [x] Promote release/schema follow-up tracking into canonical docs and trim
       duplicated checklist prose from dated schema-refresh analysis.
-- [ ] Trim duplicated storage-location explanations from user/troubleshooting
+- [x] Trim duplicated storage-location explanations from user/troubleshooting
       docs once all references point to `agent-history-spec.md` and per-agent
       format specs.
-- [ ] Trim duplicated export schema explanations from user workflow and CLI docs
+- [x] Trim duplicated export schema explanations from user workflow and CLI docs
       once workflow text links to `schema/unified-json-schema.md`.
-- [ ] Trim duplicated stats internals from user workflow docs once command usage,
+- [x] Trim duplicated stats internals from user workflow docs once command usage,
       metrics storage, and token-source fields have clear canonical owners.
-- [ ] Mark or archive resolved review documents after any remaining actionable
+- [x] Mark or archive resolved review documents after any remaining actionable
       findings are promoted into specs, tests, or architecture docs.
 - [ ] Re-run Dryscope docs scan after consolidation to verify the IA diagnostics
       have improved.

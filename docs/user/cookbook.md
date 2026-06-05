@@ -9,7 +9,7 @@ surface: public
 canonicality: primary
 -->
 
-Common workflows and recipes for managing Claude Code conversations across environments.
+Common workflows and recipes for managing coding-agent conversations across environments.
 
 Tip: When targeting Codex or Gemini sessions (including in WSL), pass `--agent codex` or `--agent gemini`.
 

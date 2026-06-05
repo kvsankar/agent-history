@@ -183,7 +183,7 @@ agent-history session list myproject --since 2025-11-01 --until 2025-11-30
 
 ## `session export` - Export Sessions
 
-Export sessions from workspace(s) to Markdown or offline HTML with flexible scope control.
+Export sessions from workspace(s) to Markdown, offline HTML, or NDJSON with flexible scope control.
 
 ```bash
 agent-history session export [WORKSPACE...] [OPTIONS]
@@ -200,6 +200,7 @@ agent-history session export [WORKSPACE...] [OPTIONS]
 **Options:**
 - `-o`, `--output DIR`: Output directory (default: `./ai-chats`)
 - `--format markdown|html`: Export Markdown or offline HTML (default: `markdown`)
+- `--json`: Export NDJSON using the [unified schema](../specs/schema/unified-json-schema.md)
 - `--wsl`: Export from WSL (auto-detects distribution)
 - `--windows`: Export from Windows (auto-detects user)
 - `-r`, `--remote HOST`: Add SSH remote source (repeatable)
@@ -261,7 +262,7 @@ agent-history session export myproject --jobs 4 --quiet
 ```
 
 **Output:**
-- Markdown files named `{timestamp}_{session-id}.md` or HTML files named `{timestamp}_{session-id}.html`
+- Markdown/HTML files named `{timestamp}_{session-id}.md` or `{timestamp}_{session-id}.html`; NDJSON files use `.ndjson`
 - Source-tagged filenames: `wsl_ubuntu_`, `windows_`, `remote_hostname_`
 - Organized by workspace subdirectories (unless `--flat`)
 
@@ -402,16 +403,12 @@ agent-history session stats --sync --ah --jobs 4 --no-remote
 
 **Metrics Available:**
 - **Sessions**: Total, main vs agent, message counts
-- **Tokens**: Input, output, cache creation, cache read, hit ratio
-- **Tools**: Usage counts and error rates per tool
-- **Models**: Usage distribution across Claude models
-- **Homes & Workspaces**: Homes with per-home workspaces (project-aware, per-home limiting via `--top-ws`)
-- **Workspaces**: Top workspaces by activity (project-aware)
-- **Daily trends**: Session and token usage over time
+- **Tokens/tools/models/time**: Aggregated from parsed sessions and cached metrics
+- **Homes, workspaces, and projects**: Grouped by the resolved command scope
+- **Daily trends**: Available with `--by day` or JSON output
 
-**Database Location:** `~/.agent-history/metrics.db` (SQLite). See
-[agent-history-spec.md](../specs/agent-history-spec.md#metrics-database) for
-storage internals.
+For metrics storage internals, see
+[agent-history-spec.md](../specs/agent-history-spec.md#metrics-database).
 
 ---
 
@@ -546,13 +543,8 @@ agent-history reset -y
 agent-history reset db -y
 ```
 
-**Files affected:**
-- `~/.agent-history/metrics.db` - Metrics database (stats, time tracking)
-- `~/.agent-history/config.json` - Config (homes + projects)
-- `~/.agent-history/remote-cache/` - Cached remote sessions
-- `~/.agent-history/gemini_index.json` - Gemini hash index
-- `~/.agent-history/gemini_hash_index.json` - Legacy Gemini hash index (if present)
-- On first run, any legacy `~/.claude-history/` directory is migrated here and cleaned up.
+For the internal files affected by each reset target, see
+[agent-history-spec.md](../specs/agent-history-spec.md#file-locations).
 
 ---
 
@@ -566,7 +558,7 @@ agent-history fetch -r user@host --aw
 
 **Notes:**
 - Uses the same scope flags as `session list` (e.g., `-r`, `--aw`, `--agent`).
-- Remote sessions are cached under `~/.agent-history/remote-cache/`.
+- Remote cache layout is documented in [agent-history-spec.md](../specs/agent-history-spec.md#file-locations).
 
 ---
 
@@ -587,15 +579,11 @@ agent-history gemini-index --list [--full-hash] # list with options
 
 **How it works:**
 
-Gemini CLI stores sessions in directories named by SHA-256 hashes of project paths:
-```
-~/.gemini/tmp/<sha256-hash>/chats/session-*.json
-```
-
-Without the hash index, workspace names appear as `[hash:abc123de]`. The `gemini-index` command:
-1. Computes the SHA-256 hash for each provided path
-2. Checks if that hash has any Gemini sessions in `~/.gemini/tmp/`
-3. If sessions exist, adds the hash→path mapping to the index
+Without the hash/index mapping, unresolved Gemini workspaces can appear as
+`[hash:abc123de]` or another opaque project identifier. The `gemini-index`
+command records a readable project path mapping when a provided path matches
+known Gemini sessions. Gemini storage details live in
+[gemini-cli-format.md](../specs/agents/formats/gemini-cli-format.md).
 
 **Examples:**
 ```bash
