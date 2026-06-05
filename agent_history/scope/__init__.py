@@ -1,5 +1,5 @@
 """
-Scope resolution module for agent-history.
+Scope resolution module for cagelens.
 
 This module provides the 4-stage scope resolution pipeline that converts
 user scope specifications into concrete (home, workspace, sessions) tuples.
@@ -57,40 +57,40 @@ from agent_history.scope.types import (
 )
 
 __all__ = [
-    # Main resolver
-    "ScopeResolver",
+    # Types
+    "ConcreteRecord",
+    "ConcreteScope",
+    "ContextBuilder",
+    # Home resolvers
+    "HomeResolver",
+    "HomeSpec",
+    "HomeSpecFactory",
+    "HomeStage",
+    "LocalHomeResolver",
+    "MatchType",
+    "ProjectRecord",
+    # Stage modules
+    "ProjectStage",
+    "RemoteHomeResolver",
     # Context and results
     "ResolutionContext",
     "ResolutionError",
     "ResolutionResult",
     "ScopeArgs",
-    "ContextBuilder",
-    # Stage modules
-    "ProjectStage",
-    "HomeStage",
-    "WorkspaceStage",
-    "SessionStage",
+    "ScopeRecord",
+    # Main resolver
+    "ScopeResolver",
     # Cache
     "SessionCache",
-    # Home resolvers
-    "HomeResolver",
-    "LocalHomeResolver",
-    "WSLHomeResolver",
-    "WindowsHomeResolver",
-    "RemoteHomeResolver",
-    "get_resolver_for_home",
-    # Types
-    "ConcreteRecord",
-    "ConcreteScope",
-    "HomeSpec",
-    "HomeSpecFactory",
-    "MatchType",
-    "ProjectRecord",
-    "ScopeRecord",
     "SessionFilters",
     "SessionSpec",
     "SessionSpecFactory",
+    "SessionStage",
     "TemplateScope",
+    "WSLHomeResolver",
+    "WindowsHomeResolver",
     "WorkspaceSpec",
     "WorkspaceSpecFactory",
+    "WorkspaceStage",
+    "get_resolver_for_home",
 ]

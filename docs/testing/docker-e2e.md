@@ -9,7 +9,7 @@ surface: internal
 canonicality: primary
 -->
 
-This directory contains Docker configuration for end-to-end testing of `agent-history` with real SSH connections.
+This directory contains Docker configuration for end-to-end testing of `cagelens` with real SSH connections.
 
 ## Architecture
 
@@ -133,7 +133,7 @@ docker/
 
 1. Create test file in `tests/e2e_docker/`
 2. Import fixtures from `conftest.py`
-3. Use `run_cli()` to execute agent-history commands
+3. Use `run_cli()` to execute cagelens commands
 4. Use `ssh_run()` for direct SSH commands
 5. Mark tests with `pytestmark = pytest.mark.e2e_docker`
 

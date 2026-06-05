@@ -1,4 +1,4 @@
-# Agent-History Code Architecture & Analysis
+# Cagelens Code Architecture & Analysis
 
 <!-- doc-meta
 doc_role: architecture
@@ -10,7 +10,7 @@ canonicality: supporting
 -->
 
 ## Overview
-`agent-history` is a comprehensive Python 3 CLI tool (19,545 lines) for managing and exporting AI coding assistant conversation sessions from Claude Code, Codex CLI, and Gemini CLI. It provides workspace organization, session filtering, statistics aggregation, export capabilities, and statistics synchronization across local, WSL, Windows, and remote SSH environments.
+`cagelens` is a comprehensive Python 3 CLI tool (19,545 lines) for managing and exporting AI coding assistant conversation sessions from Claude Code, Codex CLI, and Gemini CLI. It provides workspace organization, session filtering, statistics aggregation, export capabilities, and statistics synchronization across local, WSL, Windows, and remote SSH environments.
 
 **Version:** 1.5.1 | **Unified Schema Version:** 2.0
 

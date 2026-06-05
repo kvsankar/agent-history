@@ -1,4 +1,4 @@
-"""Codex CLI backend for agent-history.
+"""Codex CLI backend for cagelens.
 
 This module provides functions for:
 - Session scanning from ~/.codex/sessions/YYYY/MM/DD/
@@ -130,7 +130,7 @@ def codex_get_home_dir() -> Path:
     """Get Codex sessions directory (~/.codex/sessions/).
 
     Supports upstream CODEX_HOME plus CODEX_SESSIONS_DIR for tests and
-    agent-history compatibility. CODEX_SESSIONS_DIR wins because it points
+    cagelens compatibility. CODEX_SESSIONS_DIR wins because it points
     directly at the sessions root.
     """
     env_override = os.environ.get("CODEX_SESSIONS_DIR")
@@ -527,7 +527,7 @@ def codex_count_messages(jsonl_file: Path) -> int:
 
 
 def codex_get_index_file() -> Path:
-    """Get path to Codex session index file (~/.agent-history/codex_index.json)."""
+    """Get path to Codex session index file (~/.cagelens/codex_index.json)."""
     return get_config_dir() / "codex_index.json"
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 def get_metrics_db_path():
     """Get metrics database path."""
-    return Path.home() / ".agent-history" / "metrics.db"
+    return Path.home() / ".cagelens" / "metrics.db"
 
 
 def check_grouping_sum(conn, dimension, column):
@@ -35,13 +35,13 @@ def check_grouping_sum(conn, dimension, column):
 
 def main():
     """Main validation function."""
-    print("=== Agent-History Stats Grouping Validation ===\n")
+    print("=== Cagelens Stats Grouping Validation ===\n")
 
     db_path = get_metrics_db_path()
 
     if not db_path.exists():
         print(f"Error: Metrics database not found at {db_path}")
-        print("Run 'agent-history session stats --sync --aw' first")
+        print("Run 'cagelens session stats --sync --aw' first")
         return 1
 
     conn = sqlite3.connect(str(db_path))

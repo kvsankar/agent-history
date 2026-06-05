@@ -1,4 +1,4 @@
-"""Output formatters for agent-history command results.
+"""Output formatters for cagelens command results.
 
 This module provides the OutputFormatter class and concrete formatter
 implementations for rendering CommandResult data in various formats

@@ -1,4 +1,4 @@
-"""CLI components for agent-history.
+"""CLI components for cagelens.
 
 This package provides command line interface components:
 - CLIParser: Argument parsing and CommandRequest building

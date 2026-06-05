@@ -14,7 +14,7 @@ This document describes the session storage format used by OpenAI's Codex CLI.
 > **Status**: Refreshed 2026-06-04 from current public `openai/codex`
 > source. The format is not guaranteed stable; see
 > [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
-> `agent-history` supports the older direct `CODEX_SESSIONS_DIR` override and
+> `cagelens` supports the older direct `CODEX_SESSIONS_DIR` override and
 > the upstream `CODEX_HOME` layout.
 
 ## Table of Contents
@@ -56,7 +56,7 @@ The session identifier typically includes a timestamp and unique ID.
 ### Environment Variable Override
 
 Upstream Codex uses `CODEX_HOME`; session files live under
-`$CODEX_HOME/sessions`. `agent-history` also supports `CODEX_SESSIONS_DIR`
+`$CODEX_HOME/sessions`. `cagelens` also supports `CODEX_SESSIONS_DIR`
 as a direct sessions-directory compatibility/test override.
 
 ---

@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 """
-claude-history - Backward compatibility wrapper for agent-history
+claude-history - Backward compatibility wrapper for cagelens
 
 This script provides backward compatibility for users who have scripts or
 muscle memory using 'claude-history'. It simply forwards all arguments to
-'agent-history'.
+'cagelens'.
 """
 
 import subprocess
 import sys
 from pathlib import Path
 
-# Find agent-history in the same directory as this script
+# Find cagelens in the same directory as this script
 script_dir = Path(__file__).resolve().parent
-agent_history = script_dir / "agent-history"
+cagelens = script_dir / "cagelens"
 
-if not agent_history.exists():
-    sys.stderr.write(f"Error: agent-history not found at {agent_history}\n")
+if not cagelens.exists():
+    sys.stderr.write(f"Error: cagelens not found at {cagelens}\n")
     sys.exit(1)
 
-# Execute agent-history with the same arguments
+# Execute cagelens with the same arguments
 # Use subprocess.run instead of os.execv for Windows compatibility (handles paths with spaces)
 result = subprocess.run(
-    [sys.executable, str(agent_history)] + sys.argv[1:],
+    [sys.executable, str(cagelens), *sys.argv[1:]],
     check=False,
 )
 sys.exit(result.returncode)

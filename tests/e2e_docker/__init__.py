@@ -1,4 +1,4 @@
-"""Docker-based E2E tests for agent-history.
+"""Docker-based E2E tests for cagelens.
 
 Run these tests via Docker:
 

@@ -1,4 +1,4 @@
-"""SSH connection tests for agent-history remote functionality.
+"""SSH connection tests for cagelens remote functionality.
 
 Tests basic SSH connectivity, authentication, and timeout handling.
 """

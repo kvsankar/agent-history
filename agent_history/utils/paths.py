@@ -11,11 +11,12 @@ The decoding process can optionally verify against the filesystem to correctly
 handle directory names that contain dashes (e.g., 'my-project').
 """
 
-import os
 import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
+
+from agent_history.utils.env import get_bool_env, get_env
 
 __all__ = [
     # Constants
@@ -413,9 +414,9 @@ def _normalize_unix_path(encoded: str, verify_local: bool, base_path: Optional[P
     if not verify_local:
         return "/" + encoded.replace("-", "/")
 
-    # Use AGENT_HISTORY_HOME as base for filesystem probing if set (for testing)
+    # Use CAGELENS_HOME as base for filesystem probing if set (for testing)
     # This allows verifying paths against a mock filesystem
-    agent_home = os.environ.get("AGENT_HISTORY_HOME")
+    agent_home = get_env("CAGELENS_HOME", "AGENT_HISTORY_HOME")
     if agent_home and not base_path:
         effective_base = Path(agent_home)
     else:
@@ -503,7 +504,7 @@ def normalize_workspace_name(
     Results are cached to avoid repeated filesystem operations when decoding
     the same workspace name multiple times.
 
-    Set AGENT_HISTORY_SKIP_PATH_VERIFY=1 to skip filesystem verification
+    Set CAGELENS_SKIP_PATH_VERIFY=1 to skip filesystem verification
     for faster performance (useful in CI/CD or when paths are not important).
 
     Args:
@@ -518,7 +519,7 @@ def normalize_workspace_name(
         return workspace_dir_name
 
     # Allow skipping verification via environment variable for performance
-    if os.environ.get("AGENT_HISTORY_SKIP_PATH_VERIFY", "").lower() in ("1", "true", "yes"):
+    if get_bool_env("CAGELENS_SKIP_PATH_VERIFY", "AGENT_HISTORY_SKIP_PATH_VERIFY"):
         verify_local = False
 
     # Convert base_path to string for cache key (Path is unhashable)
@@ -564,9 +565,9 @@ def get_current_workspace_pattern():
     """
     cwd = Path.cwd()
 
-    # If AGENT_HISTORY_HOME is set and cwd is inside it, strip the prefix so the pattern
+    # If CAGELENS_HOME is set and cwd is inside it, strip the prefix so the pattern
     # matches encoded workspace names (which don't include the temp root).
-    agent_home = os.environ.get("AGENT_HISTORY_HOME")
+    agent_home = get_env("CAGELENS_HOME", "AGENT_HISTORY_HOME")
     if agent_home:
         try:
             rel = cwd.relative_to(Path(agent_home))

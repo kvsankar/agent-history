@@ -1,4 +1,4 @@
-"""Pi coding-agent backend for agent-history."""
+"""Pi coding-agent backend for cagelens."""
 
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ def _pi_extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _pi_message_role(raw_role: str) -> str:
-    """Map Pi raw roles to normalized agent-history roles."""
+    """Map Pi raw roles to normalized cagelens roles."""
     if raw_role in ("user", "assistant"):
         return raw_role
     if raw_role in ("toolResult", "bashExecution"):

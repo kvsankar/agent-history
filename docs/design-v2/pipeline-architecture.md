@@ -16,7 +16,7 @@ Complete flow from command line to output:
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              USER INPUT                                      │
-│                    $ agent-history session list --wsl                        │
+│                    $ cagelens session list --wsl                        │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -110,7 +110,7 @@ class CLIParser:
 
     def _build_parser(self) -> argparse.ArgumentParser:
         """Build argument parser with all subcommands."""
-        parser = argparse.ArgumentParser(prog='agent-history')
+        parser = argparse.ArgumentParser(prog='cagelens')
         subparsers = parser.add_subparsers(dest='resource')
 
         # session subcommand
@@ -356,7 +356,7 @@ BUILD_CONTEXT():
        - Remote: Read from config file
 
     5. Load configurations:
-       - Project config from ~/.agent-history/projects.yaml
+       - Project config from ~/.cagelens/projects.yaml
        - Agent config (paths, patterns)
 
     6. Return ResolutionContext

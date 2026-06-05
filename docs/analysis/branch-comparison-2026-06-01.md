@@ -1,8 +1,8 @@
 # Branch Behavior Comparison - 2026-06-01
 
-Compared `origin/master` from `/tmp/agent-history-compare/master` against
+Compared `origin/master` from `/tmp/cagelens-compare/master` against
 `feature/2.0-exploration` from this worktree. Outputs are saved under
-`/tmp/agent-history-compare/outputs`.
+`/tmp/cagelens-compare/outputs`.
 
 ## Scope
 
@@ -48,7 +48,7 @@ Compared `origin/master` from `/tmp/agent-history-compare/master` against
 - `home list --remotes` in v2 lists configured SSH remotes only. Master also
   displayed `windows:kvsan` under "SSH Remotes" because it came from the legacy
   sources list.
-- Both branches timed out on `project/alias show agent-history` within the
+- Both branches timed out on `project/alias show cagelens` within the
   30-second comparison timeout. This is not a new feature-branch-only
   regression, but project-show performance still needs separate follow-up.
 - `session list` with no matches exits `0` in v2 and exits `1` on master. This

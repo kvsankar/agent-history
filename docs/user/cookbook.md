@@ -19,18 +19,18 @@ Create a project to manage workspaces that exist on Windows, WSL, and a remote V
 
 ```bash
 # Create the project
-agent-history project create myproject
+cagelens project create myproject
 
 # Add workspaces interactively from all homes
-agent-history project add myproject --ah -r user@vm01 --pick
+cagelens project add myproject --ah -r user@vm01 --pick
 
 # Or add by pattern (non-interactive)
-agent-history project add myproject myproject                    # local
-agent-history project add myproject --windows myproject          # Windows
-agent-history project add myproject -r user@vm01 myproject       # remote
+cagelens project add myproject myproject                    # local
+cagelens project add myproject --windows myproject          # Windows
+cagelens project add myproject -r user@vm01 myproject       # remote
 
 # View the project
-agent-history project show myproject
+cagelens project show myproject
 ```
 
 ---
@@ -41,17 +41,17 @@ Export all sessions from all environments to a backup directory:
 
 ```bash
 # One-time: create a project for everything
-agent-history project create all-projects
-agent-history project add all-projects --ah -r vm01 -r vm02 --pick
+cagelens project create all-projects
+cagelens project add all-projects --ah -r vm01 -r vm02 --pick
 
 # Daily backup (incremental - only exports new/changed files)
-agent-history export @all-projects -o ~/backups/claude-history/
+cagelens export @all-projects -o ~/backups/cagelens/
 
 # Force re-export everything
-agent-history export @all-projects -o ~/backups/claude-history/ --force
+cagelens export @all-projects -o ~/backups/cagelens/ --force
 
 # Faster and quieter backups (parallel workers, less console noise)
-agent-history export @all-projects -o ~/backups/claude-history/ --jobs 4 --quiet
+cagelens export @all-projects -o ~/backups/cagelens/ --jobs 4 --quiet
 ```
 
 ---
@@ -60,14 +60,14 @@ agent-history export @all-projects -o ~/backups/claude-history/ --jobs 4 --quiet
 
 ```bash
 # List sessions from all homes matching "myproject"
-agent-history ss myproject --ah -r user@vm01
-agent-history ss myproject --ah --no-wsl    # exclude WSL if it is slow
+cagelens ss myproject --ah -r user@vm01
+cagelens ss myproject --ah --no-wsl    # exclude WSL if it is slow
 
 # Export from all homes
-agent-history export myproject --ah -r user@vm01 -o ./exports/
+cagelens export myproject --ah -r user@vm01 -o ./exports/
 
 # Skip remote sources if a host is offline
-agent-history export myproject --ah --no-remote -o ./exports/
+cagelens export myproject --ah --no-remote -o ./exports/
 ```
 
 ---
@@ -76,14 +76,14 @@ agent-history export myproject --ah --no-remote -o ./exports/
 
 ```bash
 # List all workspaces from everywhere
-agent-history ws --ah -r user@vm01 -r user@vm02
+cagelens ws --ah -r user@vm01 -r user@vm02
 
 # Find sessions mentioning a specific project
-agent-history ws --ah | grep django
+cagelens ws --ah | grep django
 
 # List sessions from matching workspaces
-agent-history ss django --ah
-agent-history ss django --ah --counts       # force counts on all sources
+cagelens ss django --ah
+cagelens ss django --ah --counts       # force counts on all sources
 ```
 
 ---
@@ -92,10 +92,10 @@ agent-history ss django --ah --counts       # force counts on all sources
 
 ```bash
 # Fetch and cache remote sessions locally
-agent-history export myproject -r user@vm01
+cagelens export myproject -r user@vm01
 
 # Later, work with cached data (no network needed)
-agent-history ss remote_vm01_home-user-myproject
+cagelens ss remote_vm01_home-user-myproject
 ```
 
 ---
@@ -106,10 +106,10 @@ Create clean exports without metadata for blog posts or documentation:
 
 ```bash
 # Export without UUIDs, token counts, and navigation links
-agent-history export myproject --minimal -o ./blog-posts/
+cagelens export myproject --minimal -o ./blog-posts/
 
 # Split long conversations into manageable parts
-agent-history export myproject --minimal --split 500 -o ./blog-posts/
+cagelens export myproject --minimal --split 500 -o ./blog-posts/
 ```
 
 ---
@@ -118,13 +118,13 @@ agent-history export myproject --minimal --split 500 -o ./blog-posts/
 
 ```bash
 # On source machine: export projects
-agent-history project export projects.json
+cagelens project export projects.json
 
 # Copy to target machine
 scp projects.json user@newmachine:~/
 
 # On target machine: import projects
-agent-history project import projects.json
+cagelens project import projects.json
 ```
 
 ---
@@ -133,11 +133,11 @@ agent-history project import projects.json
 
 ```bash
 # Sessions from last week across all homes
-agent-history ss --ah --since 2025-11-24
-agent-history ss --ah --wsl-counts          # count WSL messages on Windows
+cagelens ss --ah --since 2025-11-24
+cagelens ss --ah --wsl-counts          # count WSL messages on Windows
 
 # Export recent sessions only
-agent-history export @myproject --since 2025-11-01 -o ./recent/
+cagelens export @myproject --since 2025-11-01 -o ./recent/
 ```
 
 ---
@@ -148,17 +148,17 @@ Configure homes once so `--ah` uses them automatically:
 
 ```bash
 # Add homes (explicit model - must add for --ah to include)
-agent-history home add --wsl                 # add WSL
-agent-history home add --windows             # add Windows
-agent-history home add user@vm01             # add SSH remote
-agent-history home add user@vm02             # add another remote
+cagelens home add --wsl                 # add WSL
+cagelens home add --windows             # add Windows
+cagelens home add user@vm01             # add SSH remote
+cagelens home add user@vm02             # add another remote
 
 # Verify saved sources
-agent-history home
+cagelens home
 
 # Now --ah includes configured homes automatically
-agent-history ws --ah              # includes configured sources
-agent-history stats --time --ah     # syncs from all homes
+cagelens ws --ah              # includes configured sources
+cagelens stats --time --ah     # syncs from all homes
 ```
 
 ---
@@ -167,22 +167,22 @@ agent-history stats --time --ah     # syncs from all homes
 
 ```bash
 # Initial sync from all homes (uses saved remotes)
-agent-history stats --sync --ah --jobs 4
+cagelens stats --sync --ah --jobs 4
 
 # View overall statistics (current workspace)
-agent-history stats
+cagelens stats
 
 # View all workspaces
-agent-history stats --aw
+cagelens stats --aw
 
 # See tool usage patterns
-agent-history stats --by tool
+cagelens stats --by tool
 
 # Daily breakdown
-agent-history stats --by day
+cagelens stats --by day
 
 # Filter to specific project
-agent-history stats myproject
+cagelens stats myproject
 ```
 
 ---
@@ -191,13 +191,13 @@ agent-history stats myproject
 
 ```bash
 # Sync latest data
-agent-history stats --sync --ah
+cagelens stats --sync --ah
 
 # Get stats for November 2025
-agent-history stats --since 2025-11-01 --until 2025-11-30
+cagelens stats --since 2025-11-01 --until 2025-11-30
 
 # Per-workspace breakdown for the month
-agent-history stats --by workspace --since 2025-11-01 --until 2025-11-30
+cagelens stats --by workspace --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -206,14 +206,14 @@ agent-history stats --by workspace --since 2025-11-01 --until 2025-11-30
 
 ```bash
 # Overall tool usage
-agent-history stats --by tool
+cagelens stats --by tool
 
 # Tool usage for specific project
-agent-history stats --by tool myproject
+cagelens stats --by tool myproject
 
 # Compare by looking at different workspaces
-agent-history stats --by tool frontend-app
-agent-history stats --by tool backend-api
+cagelens stats --by tool frontend-app
+cagelens stats --by tool backend-api
 ```
 
 ---
@@ -224,13 +224,13 @@ Track how much time you've spent with Claude Code:
 
 ```bash
 # Current workspace, sync all homes first
-agent-history stats --time --ah
+cagelens stats --time --ah
 
 # All workspaces, sync all homes first
-agent-history stats --time --ah --aw
+cagelens stats --time --ah --aw
 
 # Filter by date range
-agent-history stats --time --since 2025-11-01 --until 2025-11-30
+cagelens stats --time --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -241,14 +241,14 @@ Projects are automatically aggregated in stats output:
 
 ```bash
 # Create project for workspaces across environments
-agent-history project create myproject
-agent-history project add myproject --ah myproject
+cagelens project create myproject
+cagelens project add myproject --ah myproject
 
 # View aggregated stats (shows @myproject with combined metrics)
-agent-history stats
+cagelens stats
 
 # Detailed workspace view shows projects separately
-agent-history stats --by workspace
+cagelens stats --by workspace
 ```
 
 ---
@@ -259,20 +259,20 @@ Once a workspace is part of a project, commands automatically use the project sc
 
 ```bash
 # Set up: create project and add current workspace
-agent-history project create myproject
-agent-history project add myproject myproject
+cagelens project create myproject
+cagelens project add myproject myproject
 
 # Now running from this workspace automatically uses the project
-agent-history ss         # Using project @myproject
-agent-history ss --counts
-agent-history export     # Using project @myproject
-agent-history stats      # Using project @myproject
+cagelens ss         # Using project @myproject
+cagelens ss --counts
+cagelens export     # Using project @myproject
+cagelens stats      # Using project @myproject
 
 # Force current workspace only when needed
-agent-history ss --this
-agent-history ss --this --no-windows
-agent-history export --this
-agent-history stats --this
+cagelens ss --this
+cagelens ss --this --no-windows
+cagelens export --this
+cagelens stats --this
 ```
 
 ---
@@ -285,10 +285,10 @@ Extract conversation history for writing blog posts:
 
 ```bash
 # Initial export
-agent-history export my-project -o ./blog-material
+cagelens export my-project -o ./blog-material
 
 # Later - only exports new/updated conversations
-agent-history export my-project -o ./blog-material
+cagelens export my-project -o ./blog-material
 ```
 
 ### Project Documentation
@@ -296,7 +296,7 @@ agent-history export my-project -o ./blog-material
 Document development decisions and iterations:
 
 ```bash
-agent-history export backend-api -o ./docs/development-log
+cagelens export backend-api -o ./docs/development-log
 ```
 
 ### Analysis & Learning
@@ -305,10 +305,10 @@ Review problem-solving approaches across sessions:
 
 ```bash
 # Export all sessions for a project
-agent-history export ml-pipeline
+cagelens export ml-pipeline
 
 # Analyze patterns
-grep -r "Error:" ai-chats/
+grep -r "Error:" .cagelens/exports/
 ```
 
 ### Archival
@@ -316,7 +316,7 @@ grep -r "Error:" ai-chats/
 Archive conversation history by date/project:
 
 ```bash
-agent-history export project-2024 -o archives/2024-11/
+cagelens export project-2024 -o archives/2024-11/
 ```
 
 ### Multi-Environment Consolidation
@@ -325,8 +325,8 @@ Consolidate conversations from multiple environments:
 
 ```bash
 # Export all homes: local + WSL + Windows + SSH remotes
-agent-history export myproject --ah -o ./backups -r user@vm01
+cagelens export myproject --ah -o ./backups -r user@vm01
 
 # Or all workspaces from all homes
-agent-history export --ah --aw -o ./backups -r user@vm01
+cagelens export --ah --aw -o ./backups -r user@vm01
 ```

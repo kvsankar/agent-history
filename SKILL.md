@@ -1,22 +1,22 @@
 ---
-name: agent-history
+name: cagelens
 description: Search and analyze AI coding assistant conversation history from Claude Code, Codex CLI, Gemini CLI, and Pi. Use when user asks about past conversations, previous solutions, what was discussed earlier, finding something from history, or analyzing usage patterns. Triggers include "what did we discuss", "find that conversation", "search history", "past sessions", "how much time", "token usage", "which tools".
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
-# Agent History Skill
+# Cagelens Skill
 
 ## Setup
 
 ```bash
 mkdir -p ~/.claude/skills
-cp agent-history SKILL.md ~/.claude/skills/
-chmod +x ~/.claude/skills/agent-history
+cp cagelens SKILL.md ~/.claude/skills/
+chmod +x ~/.claude/skills/cagelens
 ```
 
 Once installed, Claude Code will automatically use this skill when you ask about past conversations, usage patterns, or want to search your history.
 
-Browse, search, and analyze AI coding assistant conversation history using the `agent-history` CLI tool.
+Browse, search, and analyze AI coding assistant conversation history using the `cagelens` CLI tool.
 
 ## When to Activate
 
@@ -31,71 +31,71 @@ Browse, search, and analyze AI coding assistant conversation history using the `
 ### List Sessions
 ```bash
 # Current workspace
-agent-history lss
+cagelens lss
 
 # All sources (local + WSL + Windows + remotes)
-agent-history lss --ah
+cagelens lss --ah
 
 # Filter by workspace pattern
-agent-history lss myproject
+cagelens lss myproject
 
 # Filter by date
-agent-history lss --since 2025-11-01
-agent-history lss --since 2025-11-01 --until 2025-11-30
+cagelens lss --since 2025-11-01
+cagelens lss --since 2025-11-01 --until 2025-11-30
 ```
 
 ### Export
 ```bash
 # Export current workspace sessions
-agent-history export
+cagelens export
 
 # Export specific workspace
-agent-history export myproject
+cagelens export myproject
 
 # Export with date filter
-agent-history export --since 2025-11-24
+cagelens export --since 2025-11-24
 
 # Export minimal (no metadata, cleaner for reading)
-agent-history export --minimal
+cagelens export --minimal
 
 # Export to specific directory
-agent-history export -o /tmp/history-export
+cagelens export -o /tmp/history-export
 
 # Export offline HTML with progressive detail controls
-agent-history export --format html --html-single
+cagelens export --format html --html-single
 
 # Print one small session as concise Markdown to stdout
-agent-history export /path/to/session.jsonl -o - --markdown-level 1
+cagelens export /path/to/session.jsonl -o - --markdown-level 1
 ```
 
 ### Usage Statistics
 ```bash
 # Summary dashboard
-agent-history stats
+cagelens stats
 
 # Time tracking (work hours per day)
-agent-history stats --time
+cagelens stats --time
 
 # Tool usage breakdown
-agent-history stats --by tool
+cagelens stats --by tool
 
 # Model usage
-agent-history stats --by model
+cagelens stats --by model
 
 # Daily trends
-agent-history stats --by day
+cagelens stats --by day
 
 # Per-workspace breakdown
-agent-history stats --by workspace
+cagelens stats --by workspace
 ```
 
 ### List Workspaces
 ```bash
 # All local workspaces
-agent-history lsw
+cagelens lsw
 
 # Filter by pattern
-agent-history lsw myproject
+cagelens lsw myproject
 ```
 
 ## Data Location
@@ -106,7 +106,7 @@ Supported agents store conversations in different locations:
 - Gemini CLI: `~/.gemini/tmp/` as JSON files under project-hash folders
 - Pi: `~/.pi/agent/sessions/` as JSONL files under workspace folders
 
-Workspace directories may be encoded paths, date folders, or hashes depending on the agent. Use `agent-history lsw` and `agent-history lss` instead of assuming a single storage layout.
+Workspace directories may be encoded paths, date folders, or hashes depending on the agent. Use `cagelens lsw` and `cagelens lss` instead of assuming a single storage layout.
 
 ## Search Strategy (No Built-in Search Yet)
 
@@ -115,7 +115,7 @@ Since the tool doesn't have a search command, use this workflow:
 ### Method 1: Export + Grep (Recommended)
 ```bash
 # Export recent sessions from ALL workspaces to temp directory
-agent-history export --aw --since 2025-11-24 -o /tmp/history-search --minimal
+cagelens export --aw --since 2025-11-24 -o /tmp/history-search --minimal
 
 # Search the exported markdown files
 grep -r -i "search term" /tmp/history-search/
@@ -144,7 +144,7 @@ For questions like "what did we discuss about database connections":
 Example for "database connections":
 ```bash
 # Export recent history from all workspaces first
-agent-history export --aw --since 2025-11-24 -o /tmp/search --minimal
+cagelens export --aw --since 2025-11-24 -o /tmp/search --minimal
 
 # Search for related terms
 grep -r -i -l "database" /tmp/search/
@@ -162,7 +162,7 @@ Then read the matching files to find relevant conversations.
 
 1. Export recent sessions from all workspaces:
    ```bash
-   agent-history export --aw --since 2025-11-24 -o /tmp/history --minimal
+   cagelens export --aw --since 2025-11-24 -o /tmp/history --minimal
    ```
 
 2. Search for the topic and variations:
@@ -178,7 +178,7 @@ Then read the matching files to find relevant conversations.
 
 1. Search for error-related terms:
    ```bash
-   agent-history export --aw --since 2025-11-01 -o /tmp/history --minimal
+   cagelens export --aw --since 2025-11-01 -o /tmp/history --minimal
    grep -r -i "error\|exception\|failed" /tmp/history/ | head -50
    ```
 
@@ -190,25 +190,25 @@ Then read the matching files to find relevant conversations.
 ### "How much time have I spent on this project?"
 
 ```bash
-agent-history stats --time
+cagelens stats --time
 ```
 
 ### "Which tools do I use most?"
 
 ```bash
-agent-history stats --by tool
+cagelens stats --by tool
 ```
 
 ### "Show me my activity this month"
 
 ```bash
-agent-history stats --by day --since 2025-11-01
+cagelens stats --by day --since 2025-11-01
 ```
 
 ### "Export everything for backup"
 
 ```bash
-agent-history export --ah --aw -o ~/agent-history-backup/
+cagelens export --ah --aw -o ~/cagelens-backup/
 ```
 
 ## Tips

@@ -7,8 +7,7 @@ identifiers like "local", "wsl:Ubuntu", "remote:dev", etc.
 
 from __future__ import annotations
 
-import os
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from agent_history.scope.context import ResolutionError
 from agent_history.scope.types import (
@@ -25,6 +24,7 @@ from agent_history.scope.types import (
     ScopeRecord,
     TemplateScope,
 )
+from agent_history.utils.env import has_env
 
 if TYPE_CHECKING:
     from agent_history.scope.context import ResolutionContext
@@ -51,7 +51,7 @@ class HomeStage:
         """
         self.context = context
 
-    def resolve(self, scope: TemplateScope) -> Tuple[TemplateScope, List[ResolutionError]]:
+    def resolve(self, scope: TemplateScope) -> tuple[TemplateScope, list[ResolutionError]]:
         """
         Resolve HomeSpecs to concrete home strings.
 
@@ -64,7 +64,7 @@ class HomeStage:
             - List of errors (e.g., no homes in category)
         """
         result: TemplateScope = []
-        errors: List[ResolutionError] = []
+        errors: list[ResolutionError] = []
 
         for record in scope:
             if isinstance(record, ProjectRecord):
@@ -98,7 +98,7 @@ class HomeStage:
 
         return result, errors
 
-    def _expand_home_spec(self, spec: HomeSpec) -> Tuple[List[str], Optional[ResolutionError]]:
+    def _expand_home_spec(self, spec: HomeSpec) -> tuple[list[str], ResolutionError | None]:
         """
         Expand a HomeSpec to a list of concrete home strings.
 
@@ -127,7 +127,7 @@ class HomeStage:
             if not items:
                 # In test environments, return empty instead of error
                 # This allows the command to proceed with available homes only.
-                if os.environ.get("AGENT_HISTORY_TEST_MODE"):
+                if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE"):
                     return [], None
                 return [], ResolutionError(
                     stage="home",
@@ -155,7 +155,7 @@ class HomeStage:
                 suggestions=[],
             )
 
-    def _get_all_homes(self) -> List[str]:
+    def _get_all_homes(self) -> list[str]:
         """
         Get all available homes.
 

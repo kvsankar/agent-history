@@ -17,7 +17,7 @@ def get_claude_projects_dir():
 
 def get_metrics_db_path():
     """Get metrics database path."""
-    return Path.home() / ".agent-history" / "metrics.db"
+    return Path.home() / ".cagelens" / "metrics.db"
 
 
 def count_sessions_from_files(projects_dir):
@@ -143,14 +143,14 @@ def get_db_stats(db_path):
 
 def main():
     """Main validation function."""
-    print("=== Agent-History Stats Validation ===\n")
+    print("=== Cagelens Stats Validation ===\n")
 
     projects_dir = get_claude_projects_dir()
     db_path = get_metrics_db_path()
 
     if not db_path.exists():
         print(f"Error: Metrics database not found at {db_path}")
-        print("Run 'agent-history session stats --sync --aw' first")
+        print("Run 'cagelens session stats --sync --aw' first")
         return 1
 
     print("Counting from JSONL files...")

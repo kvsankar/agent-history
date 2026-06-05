@@ -1,12 +1,10 @@
-"""Multi-home tests for agent-history.
+"""Multi-home tests for cagelens.
 
 Tests --ah (all homes) functionality with local + remote homes,
 and the home add/remove/list commands.
 """
 
-import pytest
 import tempfile
-from pathlib import Path
 
 from .conftest import run_cli
 
@@ -19,6 +17,7 @@ class TestAllHomesFlag:
         # First, add a remote home
         node = docker_env["node_alpha"]
         add_result = run_cli(["home", "add", f"alice@{node}"], cli_path)
+        assert add_result.returncode == 0, f"Failed: {add_result.stderr}"
 
         # Now list with --ah
         result = run_cli(["ws", "--ah"], cli_path)
@@ -115,10 +114,14 @@ class TestLocalPlusRemote:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = run_cli(
                 [
-                    "session", "export",
-                    "--local", "-r", f"alice@{node}",
+                    "session",
+                    "export",
+                    "--local",
+                    "-r",
+                    f"alice@{node}",
                     "--aw",
-                    "-o", tmpdir,
+                    "-o",
+                    tmpdir,
                 ],
                 cli_path,
             )
@@ -130,7 +133,7 @@ class TestHomeShow:
 
     def test_home_show_local(self, docker_env, cli_path):
         """home show local displays local home details."""
-        result = run_cli(["home", "show", "local"], cli_path)
+        run_cli(["home", "show", "local"], cli_path)
         # May fail if "local" isn't the exact name, but shouldn't crash
         # Just check it runs without crashing
 
@@ -170,9 +173,12 @@ class TestMultiUserMultiNode:
 
         result = run_cli(
             [
-                "session", "stats",
-                "-r", f"alice@{alpha}",
-                "-r", f"charlie@{beta}",
+                "session",
+                "stats",
+                "-r",
+                f"alice@{alpha}",
+                "-r",
+                f"charlie@{beta}",
                 "--aw",
             ],
             cli_path,

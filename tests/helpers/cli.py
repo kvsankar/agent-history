@@ -19,19 +19,22 @@ except ImportError:
 
 
 def get_script_path() -> Path:
-    """Find the agent-history CLI script path.
+    """Find the cagelens CLI script path.
 
-    By default, returns the new agent-history wrapper (v2 module).
-    Set AGENT_HISTORY_TEST_SCRIPT=v1 to use the old ah.py script instead.
+    By default, returns the new cagelens entry point (v2 module).
+    Set CAGELENS_TEST_SCRIPT=v1 to use the old ah.py script instead.
 
     This allows running the same test suite against both implementations:
-        # Test against new agent-history module (default)
+        # Test against new cagelens module (default)
         uv run pytest tests/core/
 
         # Test against old ah.py script
-        AGENT_HISTORY_TEST_SCRIPT=v1 uv run pytest tests/core/
+        CAGELENS_TEST_SCRIPT=v1 uv run pytest tests/core/
     """
-    use_old_script = os.environ.get("AGENT_HISTORY_TEST_SCRIPT", "").lower() in (
+    test_script = os.environ.get("CAGELENS_TEST_SCRIPT") or os.environ.get(
+        "AGENT_HISTORY_TEST_SCRIPT", ""
+    )
+    use_old_script = test_script.lower() in (
         "v1",
         "old",
         "ah.py",
@@ -47,12 +50,14 @@ def get_script_path() -> Path:
     else:
         # Use the new v2 wrapper (default)
         candidates = [
+            Path.cwd() / "cagelens",
             Path.cwd() / "agent-history",
             Path.cwd() / "claude-history",
+            Path(__file__).parent.parent.parent / "cagelens",
             Path(__file__).parent.parent.parent / "agent-history",
             Path(__file__).parent.parent.parent / "claude-history",
         ]
-        script_name = "agent-history"
+        script_name = "cagelens"
 
     for candidate in candidates:
         if candidate.exists():
@@ -92,7 +97,7 @@ def run_cli_subprocess(
 
         Returns:
             CompletedProcess with stdout, stderr, returncode
-        """
+    """
     script_path = get_script_path()
     cmd = [sys.executable, str(script_path), *args]
 
@@ -101,12 +106,12 @@ def run_cli_subprocess(
         run_env = os.environ.copy()
         if env is None:
             # Default to an isolated home to avoid probing the real filesystem during tests.
-            temp_dir = tempfile.TemporaryDirectory(prefix="agent-history-test-")
+            temp_dir = tempfile.TemporaryDirectory(prefix="cagelens-test-")
             root = Path(temp_dir.name)
             claude_dir = root / ".claude" / "projects"
             codex_dir = root / ".codex" / "sessions"
             gemini_dir = root / ".gemini" / "tmp"
-            history_dir = root / ".agent-history"
+            history_dir = root / ".cagelens"
             for path in (claude_dir, codex_dir, gemini_dir, history_dir):
                 path.mkdir(parents=True, exist_ok=True)
 
@@ -116,7 +121,7 @@ def run_cli_subprocess(
                     "CLAUDE_PROJECTS_DIR": str(claude_dir),
                     "CODEX_SESSIONS_DIR": str(codex_dir),
                     "GEMINI_SESSIONS_DIR": str(gemini_dir),
-                    "AGENT_HISTORY_CONFIG_DIR": str(history_dir),
+                    "CAGELENS_CONFIG_DIR": str(history_dir),
                 }
             )
             if sys.platform == "win32":
@@ -124,7 +129,7 @@ def run_cli_subprocess(
         else:
             run_env.update(env)
 
-        run_env.setdefault("AGENT_HISTORY_TEST_MODE", "1")
+        run_env.setdefault("CAGELENS_TEST_MODE", "1")
 
         return subprocess.run(
             cmd,
@@ -158,7 +163,7 @@ def run_cli_click(
         Click Result object
     """
     # Import CLI lazily to avoid import issues
-    # The agent-history script defines the CLI entry point
+    # The cagelens script defines the CLI entry point
     import importlib.util
 
     script_path = get_script_path()
@@ -169,7 +174,7 @@ def run_cli_click(
     # Find the CLI entry point (usually named 'cli' or 'main')
     cli = getattr(module, "cli", None) or getattr(module, "main", None)
     if cli is None:
-        raise AttributeError("Could not find CLI entry point in agent-history script")
+        raise AttributeError("Could not find CLI entry point in cagelens script")
 
     return runner.invoke(
         cli,

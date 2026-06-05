@@ -1,4 +1,4 @@
-# agent-history Specification
+# cagelens Specification
 
 <!-- doc-meta
 doc_role: spec
@@ -9,7 +9,7 @@ surface: public
 canonicality: primary
 -->
 
-This document specifies what `agent-history` does. It defines the functional requirements, supported agents, data sources, and operations.
+This document specifies what `cagelens` does. It defines the functional requirements, supported agents, data sources, and operations.
 
 For CLI syntax and output formats, see [cli-spec.md](cli-spec.md).
 For agent-specific session formats, see [agents/formats/](agents/formats/).
@@ -18,7 +18,7 @@ For agent-specific session formats, see [agents/formats/](agents/formats/).
 
 ## Purpose
 
-`agent-history` is a read-only tool that browses, exports, and analyzes conversation history from AI coding assistants.
+`cagelens` is a read-only tool that browses, exports, and analyzes conversation history from AI coding assistants.
 
 **Core capabilities:**
 - List workspaces and sessions across multiple data sources
@@ -78,7 +78,7 @@ Claude.ai web sessions are supported via the Anthropic API.
 - Access token resolved from macOS Keychain or `~/.claude/.credentials.json`
 - Organization UUID read from `~/.claude.json`
 - Session lists are fetched from `/sessions`
-- Session exports fetch full loglines and cache to `~/.agent-history/web-cache`
+- Session exports fetch full loglines and cache to `~/.cagelens/web-cache`
 - `--web` includes web sessions; `--no-web` excludes them
 - `--ah` includes web sessions by default
 
@@ -91,11 +91,11 @@ Homes are discovered as follows:
 
 The `--ah` (all homes) flag automatically includes local + detected WSL/Windows + configured SSH remotes + web. `--no-wsl`, `--no-windows`, `--no-remote`, and `--no-web` are honored by scope resolution.
 
-Projects/aliases share the same configuration file. Legacy `projects.json`/`aliases.json` files are auto-imported into `config.json` at load time (non-destructive). For test isolation or sandboxed runs, set `AGENT_HISTORY_CONFIG_DIR` to point the tool at a temporary config directory so the real `~/.agent-history/config.json` is untouched.
+Projects/aliases share the same configuration file. Legacy `projects.json`/`aliases.json` files are auto-imported into `config.json` at load time (non-destructive). For test isolation or sandboxed runs, set `CAGELENS_CONFIG_DIR` to point the tool at a temporary config directory so the real `~/.cagelens/config.json` is untouched.
 
 ### Home Storage
 
-Configuration stored in `~/.agent-history/config.json` (canonical key: `homes`; legacy `sources` may exist only for backwards compatibility and is no longer used).
+Configuration stored in `~/.cagelens/config.json` (canonical key: `homes`; legacy `sources` may exist only for backwards compatibility and is no longer used).
 
 **Simple format** (array of strings):
 ```json
@@ -486,7 +486,7 @@ Forked Claude sessions include a **Conversation Structure** summary and per-mess
   - With workspace: Remove workspace from project
   - Without workspace: Delete entire project
 
-**Project storage:** `~/.agent-history/config.json`
+**Project storage:** `~/.cagelens/config.json`
 ```json
 {
   "projects": {
@@ -562,7 +562,7 @@ Home and workspace scopes are orthogonal:
 
 ## Metrics Database
 
-Location: `~/.agent-history/metrics.db` (SQLite)
+Location: `~/.cagelens/metrics.db` (SQLite)
 
 ### Purpose
 
@@ -627,7 +627,7 @@ Stats auto-sync by default. Sync happens for the resolved scope unless `--no-syn
 
 ### Gemini Index
 
-Location: `~/.agent-history/gemini_index.json`
+Location: `~/.cagelens/gemini_index.json`
 
 **Purpose:** Gemini CLI uses SHA-256 hashes of project paths as directory names. The index maps hashes back to human-readable paths.
 
@@ -651,7 +651,7 @@ The hash is computed from the absolute path string.
 
 ### Codex Index
 
-Location: `~/.agent-history/codex_index.json`
+Location: `~/.cagelens/codex_index.json`
 
 **Purpose:** Codex CLI stores sessions by date (`~/.codex/sessions/YYYY/MM/DD/`), not by workspace. The index maps session files to their workspace paths for efficient listing.
 
@@ -707,8 +707,8 @@ When using SSH remote sources:
 
 **Caching behavior:**
 - Sessions are fetched to local cache before list/export
-- Cache location: `~/.agent-history/remote-cache/<host>/<agent>/<workspace>/`
-- Example: `~/.agent-history/remote-cache/vm01/claude/-home-user-myproject/`
+- Cache location: `~/.cagelens/remote-cache/<host>/<agent>/<workspace>/`
+- Example: `~/.cagelens/remote-cache/vm01/claude/-home-user-myproject/`
 
 **Incremental sync:**
 - Per-file SSH reads (no rsync)
@@ -775,19 +775,19 @@ When using SSH remote sources:
 
 | File | Purpose |
 |------|---------|
-| `~/.agent-history/config.json` | Unified configuration (homes, projects, settings) |
-| `~/.agent-history/metrics.db` | Metrics cache database |
-| `~/.agent-history/gemini_index.json` | Gemini hash→path mappings |
-| `~/.agent-history/codex_index.json` | Codex session→workspace index |
-| `~/.agent-history/remote-cache/<host>/<agent>/<workspace>/` | Cached remote session files |
-| `~/.agent-history/web-cache/` | Cached Claude web sessions (JSONL) |
+| `~/.cagelens/config.json` | Unified configuration (homes, projects, settings) |
+| `~/.cagelens/metrics.db` | Metrics cache database |
+| `~/.cagelens/gemini_index.json` | Gemini hash→path mappings |
+| `~/.cagelens/codex_index.json` | Codex session→workspace index |
+| `~/.cagelens/remote-cache/<host>/<agent>/<workspace>/` | Cached remote session files |
+| `~/.cagelens/web-cache/` | Cached Claude web sessions (JSONL) |
 
 **Legacy files (auto-migrated on first use):**
-- `~/.agent-history/projects.json` → Merged into `config.json`
-- `~/.agent-history/aliases.json` → Merged into `config.json`
-- `~/.claude-history/` → Migrated to `~/.agent-history/`
+- `~/.cagelens/projects.json` → Merged into `config.json`
+- `~/.cagelens/aliases.json` → Merged into `config.json`
+- Older pre-rename config directories → Migrated to `~/.cagelens/`
 
-Default export directory: `./ai-chats/`
+Default export directory: `./.cagelens/exports/`
 
 ---
 

@@ -4,10 +4,10 @@
 
 [paths]
 # Windows project path (use forward slashes or escaped backslashes)
-windows_project = C:/Users/yourname/projects/claude-history
+windows_project = C:/Users/yourname/projects/cagelens
 
 # WSL project path (Linux-style path inside WSL)
-wsl_project = /home/yourname/projects/claude-history
+wsl_project = /home/yourname/projects/cagelens
 
 # WSL distribution name (run 'wsl -l' to see available distros)
 wsl_distro = Ubuntu

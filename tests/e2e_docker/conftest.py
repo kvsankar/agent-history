@@ -13,7 +13,7 @@ Usage:
     uv run pytest --docker -v
 
     # Option 3: Test against legacy ah.py script
-    AGENT_HISTORY_TEST_SCRIPT=v1 uv run pytest --docker -v
+    CAGELENS_TEST_SCRIPT=v1 uv run pytest --docker -v
 """
 
 import os
@@ -42,10 +42,10 @@ def docker_env() -> Dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def cli_path() -> Path:
-    """Get path to agent-history CLI.
+    """Get path to cagelens CLI.
 
-    Respects AGENT_HISTORY_TEST_SCRIPT environment variable to select
-    between v2 (agent-history) and v1 (ah.py) implementations.
+    Respects CAGELENS_TEST_SCRIPT environment variable to select
+    between v2 (cagelens) and v1 (ah.py) implementations.
     """
     return get_script_path()
 
@@ -56,11 +56,11 @@ def run_cli(
     env: Dict[str, str] = None,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess:
-    """Run agent-history CLI command.
+    """Run cagelens CLI command.
 
     Args:
         args: CLI arguments (without the script name)
-        cli_path: Path to agent-history script
+        cli_path: Path to cagelens script
         env: Additional environment variables
         timeout: Command timeout in seconds
 
@@ -68,9 +68,9 @@ def run_cli(
         CompletedProcess with stdout, stderr, returncode
     """
     if cli_path is None:
-        cli_path = Path("/app/agent-history")
+        cli_path = Path("/app/cagelens")
 
-    cmd = ["python3", str(cli_path)] + args
+    cmd = ["python3", str(cli_path), *args]
 
     run_env = os.environ.copy()
     if env:
@@ -82,6 +82,7 @@ def run_cli(
         text=True,
         timeout=timeout,
         env=run_env,
+        check=False,
     )
 
 
@@ -104,11 +105,16 @@ def ssh_run(
     """
     ssh_cmd = [
         "ssh",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "LogLevel=ERROR",
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=10",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "LogLevel=ERROR",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
         f"{user}@{host}",
         command,
     ]
@@ -118,12 +124,14 @@ def ssh_run(
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
     )
 
 
 @pytest.fixture
 def cli_runner(docker_env, cli_path):
     """Factory fixture for running CLI commands."""
+
     def _run(args: list, env: Dict = None, timeout: int = 30) -> subprocess.CompletedProcess:
         return run_cli(args, cli_path, env, timeout)
 
@@ -134,12 +142,15 @@ def cli_runner(docker_env, cli_path):
 def run_remote_cli(docker_env, cli_path):
     """Factory fixture for running CLI with remote host.
 
-    Returns a function that runs agent-history with -r flag.
+    Returns a function that runs cagelens with -r flag.
     """
-    def _run(args: list, user: str, host: str = None, env: Dict = None) -> subprocess.CompletedProcess:
+
+    def _run(
+        args: list, user: str, host: str = None, env: Dict = None
+    ) -> subprocess.CompletedProcess:
         if host is None:
             host = docker_env["node_alpha"]
-        remote_args = ["-r", f"{user}@{host}"] + args
+        remote_args = ["-r", f"{user}@{host}", *args]
         return run_cli(remote_args, cli_path, env)
 
     return _run
@@ -148,16 +159,20 @@ def run_remote_cli(docker_env, cli_path):
 @pytest.fixture
 def ssh_to_alpha(docker_env):
     """Factory fixture for SSH to node-alpha."""
+
     def _ssh(user: str, command: str) -> subprocess.CompletedProcess:
         return ssh_run(docker_env["node_alpha"], user, command)
+
     return _ssh
 
 
 @pytest.fixture
 def ssh_to_beta(docker_env):
     """Factory fixture for SSH to node-beta."""
+
     def _ssh(user: str, command: str) -> subprocess.CompletedProcess:
         return ssh_run(docker_env["node_beta"], user, command)
+
     return _ssh
 
 

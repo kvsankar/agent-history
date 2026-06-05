@@ -15,13 +15,13 @@ END_MARKER = "<!-- help-snippet:end -->"
 
 
 def render_help_output() -> str:
-    """Return the current `agent-history --help` output as a fenced block."""
+    """Return the current `cagelens --help` output as a fenced block."""
     try:
         env = dict(os.environ)
         env["COLUMNS"] = "120"
         env["LINES"] = "24"
         result = subprocess.run(
-            [sys.executable, "agent-history", "--help"],
+            [sys.executable, "cagelens", "--help"],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -30,7 +30,7 @@ def render_help_output() -> str:
         )
     except subprocess.CalledProcessError as exc:  # pragma: no cover
         raise SystemExit(
-            f"Failed to run `agent-history --help` (exit {exc.returncode}):\n{exc.stderr}"
+            f"Failed to run `cagelens --help` (exit {exc.returncode}):\n{exc.stderr}"
         ) from exc
 
     help_text = result.stdout.strip()

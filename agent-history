@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
-"""agent-history: Browse and export AI coding assistant conversation history.
+"""Backward compatibility wrapper for cagelens.
 
-This is the entry point script for the agent-history CLI.
-It delegates to the agent_history package.
+The project was previously invoked as ``agent-history``. Keep this script so
+existing shell history, docs, and automation can continue to run while the
+primary command moves to ``cagelens``.
 """
 
+import subprocess
 import sys
+from pathlib import Path
 
-from agent_history.cli.orchestrator import main
+script_dir = Path(__file__).resolve().parent
+cagelens = script_dir / "cagelens"
 
-if __name__ == "__main__":
-    sys.exit(main())
+if not cagelens.exists():
+    sys.stderr.write(f"Error: cagelens not found at {cagelens}\n")
+    sys.exit(1)
+
+result = subprocess.run(
+    [sys.executable, str(cagelens), *sys.argv[1:]],
+    check=False,
+)
+sys.exit(result.returncode)

@@ -545,7 +545,7 @@ def export(
 
     Args:
         pattern: Workspace pattern to match.
-        output_dir: Output directory (default: ./ai-chats).
+        output_dir: Output directory (default: ./.cagelens/exports).
         patterns: Multiple workspace patterns.
         projects: Project names from configuration.
         project: Project name from configuration.

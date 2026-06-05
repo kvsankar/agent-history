@@ -40,7 +40,7 @@ def render_html_export(
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         f"<title>{escape(title)} - {escape(display_name)}</title>",
-        f'<meta name="agent-history-renderer" content="{HTML_RENDERER_VERSION}">',
+        f'<meta name="cagelens-renderer" content="{HTML_RENDERER_VERSION}">',
         f"<style>{_CSS}</style>",
         "</head>",
         "<body>",

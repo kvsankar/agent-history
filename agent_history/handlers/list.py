@@ -22,6 +22,7 @@ from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.types import HomeDict, SessionDict, WorkspaceDict
 from agent_history.utils.dates import modified_key
+from agent_history.utils.env import get_env
 from agent_history.utils.workspace_ref import WorkspaceContext, attach_workspace_context
 
 
@@ -226,7 +227,6 @@ class WorkspaceListHandler(VerbHandler):
         Returns:
             'ok' if exists, 'missing' if not, 'unknown' if cannot determine.
         """
-        import os
         from pathlib import Path
 
         from agent_history.utils.paths import is_cached_workspace, is_encoded_workspace_name
@@ -266,10 +266,10 @@ class WorkspaceListHandler(VerbHandler):
         ):
             return "unknown"
 
-        # Use AGENT_HISTORY_HOME if set (for testing)
-        agent_home = os.environ.get("AGENT_HISTORY_HOME")
+        # Use CAGELENS_HOME if set (for testing)
+        agent_home = get_env("CAGELENS_HOME", "AGENT_HISTORY_HOME")
         if agent_home:
-            # In test mode, check under AGENT_HISTORY_HOME
+            # In test mode, check under CAGELENS_HOME
             check_path = Path(agent_home) / check_value.lstrip("/")
         else:
             check_path = Path(check_value)
@@ -398,31 +398,35 @@ class HomeListHandler(VerbHandler):
 
     def _should_skip_non_local_home_probe(self, environ: Any) -> bool:
         """Return True when isolated tests should avoid host probing."""
+
+        def env_value(primary: str, legacy: str | None = None) -> str | None:
+            return environ.get(primary) or (environ.get(legacy) if legacy else None)
+
         required = (
-            "CLAUDE_PROJECTS_DIR",
-            "CODEX_HOME",
-            "CODEX_SESSIONS_DIR",
-            "GEMINI_CLI_HOME",
-            "GEMINI_SESSIONS_DIR",
-            "PI_CODING_AGENT_SESSION_DIR",
-            "PI_SESSIONS_DIR",
-            "AGENT_HISTORY_CONFIG_DIR",
+            ("CLAUDE_PROJECTS_DIR", None),
+            ("CODEX_HOME", None),
+            ("CODEX_SESSIONS_DIR", None),
+            ("GEMINI_CLI_HOME", None),
+            ("GEMINI_SESSIONS_DIR", None),
+            ("PI_CODING_AGENT_SESSION_DIR", None),
+            ("PI_SESSIONS_DIR", None),
+            ("CAGELENS_CONFIG_DIR", "AGENT_HISTORY_CONFIG_DIR"),
         )
         home_overrides = (
-            "AGENT_HISTORY_HOME_WSL",
-            "AGENT_HISTORY_HOME_WINDOWS",
-            "CLAUDE_WSL_TEST_DISTRO",
-            "CLAUDE_WSL_PROJECTS_DIR",
-            "CLAUDE_WINDOWS_PROJECTS_DIR",
-            "CODEX_WSL_SESSIONS_DIR",
-            "GEMINI_WSL_SESSIONS_DIR",
-            "CODEX_WINDOWS_SESSIONS_DIR",
-            "GEMINI_WINDOWS_SESSIONS_DIR",
+            ("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL"),
+            ("CAGELENS_HOME_WINDOWS", "AGENT_HISTORY_HOME_WINDOWS"),
+            ("CLAUDE_WSL_TEST_DISTRO", None),
+            ("CLAUDE_WSL_PROJECTS_DIR", None),
+            ("CLAUDE_WINDOWS_PROJECTS_DIR", None),
+            ("CODEX_WSL_SESSIONS_DIR", None),
+            ("GEMINI_WSL_SESSIONS_DIR", None),
+            ("CODEX_WINDOWS_SESSIONS_DIR", None),
+            ("GEMINI_WINDOWS_SESSIONS_DIR", None),
         )
         return (
-            bool(environ.get("AGENT_HISTORY_TEST_MODE"))
-            and all(environ.get(key) for key in required)
-            and not any(environ.get(key) for key in home_overrides)
+            bool(env_value("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE"))
+            and all(env_value(*key) for key in required)
+            and not any(env_value(*key) for key in home_overrides)
         )
 
     def _add_wsl_homes(self, homes: Dict[str, HomeDict], distro_loader: Any) -> None:

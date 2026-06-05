@@ -1,4 +1,4 @@
-"""Metrics database for agent-history.
+"""Metrics database for cagelens.
 
 This module provides functions for managing the SQLite metrics database
 that caches session statistics for fast queries.
@@ -63,13 +63,13 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     is up to date. Handles migrations from older schema versions.
 
     Args:
-        db_path: Path to database file. Defaults to ~/.agent-history/metrics.db
+        db_path: Path to database file. Defaults to ~/.cagelens/metrics.db
 
     Returns:
         Open sqlite3.Connection with row_factory set to sqlite3.Row
 
     Side Effects:
-        - Creates parent directory (~/.agent-history/) with mode 0o700 if missing
+        - Creates parent directory (~/.cagelens/) with mode 0o700 if missing
         - Creates database file with mode 0o600 if missing
         - Runs schema migrations if database version is outdated
     """
@@ -575,7 +575,9 @@ def _lookup_gemini_hash(project_hash: str) -> Optional[str]:
         The resolved project path, or None if not found
     """
     # Check environment variable for test override
-    config_dir_override = os.environ.get("AGENT_HISTORY_CONFIG_DIR")
+    config_dir_override = os.environ.get("CAGELENS_CONFIG_DIR") or os.environ.get(
+        "AGENT_HISTORY_CONFIG_DIR"
+    )
     if config_dir_override:
         index_path = Path(config_dir_override) / "gemini_index.json"
     else:

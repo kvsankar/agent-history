@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`agent-history` is a single-file Python CLI tool that browses and exports AI coding assistant conversation history (Claude Code, Codex CLI, and Gemini CLI). It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
+`cagelens` is a single-file Python CLI tool that browses and exports AI coding assistant conversation history (Claude Code, Codex CLI, and Gemini CLI). It provides a clean, UNIX-philosophy approach with simple commands for workspaces and sessions.
 
 > **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
 
@@ -21,157 +21,157 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Make script executable (if needed)
-chmod +x agent-history
+chmod +x cagelens
 
 # List homes (all Claude Code installations)
-./agent-history home                       # list configured homes
-./agent-history home add --wsl             # add WSL to homes
-./agent-history home add --windows         # add Windows to homes
-./agent-history home add user@vm01         # add SSH remote to homes
-./agent-history home remove user@vm01      # remove a source
-./agent-history home clear                 # remove all saved sources
+./cagelens home                       # list configured homes
+./cagelens home add --wsl             # add WSL to homes
+./cagelens home add --windows         # add Windows to homes
+./cagelens home add user@vm01         # add SSH remote to homes
+./cagelens home remove user@vm01      # remove a source
+./cagelens home clear                 # remove all saved sources
 
 # List workspaces (aliases: ws, lsw)
-./agent-history workspaces                 # all local workspaces
-./agent-history ws myproject               # filter by pattern (short form)
-./agent-history ws proj1 proj2             # multiple patterns (match any)
-./agent-history ws --wsl                   # WSL workspaces
-./agent-history ws --windows               # Windows workspaces
-./agent-history ws -r user@server          # SSH remote workspaces
-./agent-history ws --ah                    # all homes (only configured sources)
-./agent-history ws --ah -r vm01 -r vm02    # all homes + additional SSH remotes
-./agent-history ws proj1 proj2 --ah        # multiple patterns from all homes
+./cagelens workspaces                 # all local workspaces
+./cagelens ws myproject               # filter by pattern (short form)
+./cagelens ws proj1 proj2             # multiple patterns (match any)
+./cagelens ws --wsl                   # WSL workspaces
+./cagelens ws --windows               # Windows workspaces
+./cagelens ws -r user@server          # SSH remote workspaces
+./cagelens ws --ah                    # all homes (only configured sources)
+./cagelens ws --ah -r vm01 -r vm02    # all homes + additional SSH remotes
+./cagelens ws proj1 proj2 --ah        # multiple patterns from all homes
 
 # List sessions (aliases: ss, lss)
-./agent-history sessions                   # current workspace
-./agent-history ss myproject               # specific workspace (short form)
-./agent-history ss proj1 proj2             # multiple workspaces (deduplicated)
-./agent-history ss --wsl                   # from WSL
-./agent-history ss --windows               # from Windows
-./agent-history ss myproject -r user@server     # SSH remote sessions
-./agent-history ss myproject --ah          # from all homes
-./agent-history ss --ah -r vm01 -r vm02    # all homes + multiple SSH remotes
-./agent-history ss proj1 proj2 --ah        # multiple patterns from all homes
+./cagelens sessions                   # current workspace
+./cagelens ss myproject               # specific workspace (short form)
+./cagelens ss proj1 proj2             # multiple workspaces (deduplicated)
+./cagelens ss --wsl                   # from WSL
+./cagelens ss --windows               # from Windows
+./cagelens ss myproject -r user@server     # SSH remote sessions
+./cagelens ss myproject --ah          # from all homes
+./cagelens ss --ah -r vm01 -r vm02    # all homes + multiple SSH remotes
+./cagelens ss proj1 proj2 --ah        # multiple patterns from all homes
 
 # Export (unified command with orthogonal scope flags)
-./agent-history export                     # current workspace, local source
-./agent-history export --ah                # current workspace, all homes
-./agent-history export --aw                # all workspaces, local source
-./agent-history export --ah --aw           # all workspaces, all homes
+./cagelens export                     # current workspace, local source
+./cagelens export --ah                # current workspace, all homes
+./cagelens export --aw                # all workspaces, local source
+./cagelens export --ah --aw           # all workspaces, all homes
 
-./agent-history export myproject           # specific workspace, local
-./agent-history export proj1 proj2         # multiple workspaces (deduplicated)
-./agent-history export myproject --ah      # specific workspace, all homes
-./agent-history export proj1 proj2 --ah    # multiple workspaces, all homes (lenient)
-./agent-history export file.jsonl         # export single file (defaults to ./ai-chats/)
-./agent-history export file.jsonl -o ./out  # export single file to directory
+./cagelens export myproject           # specific workspace, local
+./cagelens export proj1 proj2         # multiple workspaces (deduplicated)
+./cagelens export myproject --ah      # specific workspace, all homes
+./cagelens export proj1 proj2 --ah    # multiple workspaces, all homes (lenient)
+./cagelens export file.jsonl         # export single file (defaults to ./.cagelens/exports/)
+./cagelens export file.jsonl -o ./out  # export single file to directory
 
-./agent-history export -o /tmp/backup      # current workspace, custom output
-./agent-history export myproject -o ./out  # specific workspace, custom output
+./cagelens export -o /tmp/backup      # current workspace, custom output
+./cagelens export myproject -o ./out  # specific workspace, custom output
 
-./agent-history export --wsl               # current workspace, WSL
-./agent-history export --windows           # current workspace, Windows
-./agent-history export -r user@server      # current workspace, SSH remote
-./agent-history export --ah -r user@vm01   # current workspace, all homes + SSH remote
-./agent-history export --ah proj1 proj2 -r host  # multiple patterns, all homes + remote
+./cagelens export --wsl               # current workspace, WSL
+./cagelens export --windows           # current workspace, Windows
+./cagelens export -r user@server      # current workspace, SSH remote
+./cagelens export --ah -r user@vm01   # current workspace, all homes + SSH remote
+./cagelens export --ah proj1 proj2 -r host  # multiple patterns, all homes + remote
 
 # Show version
-./agent-history --version
+./cagelens --version
 
 # Examples with date filtering
-./agent-history ss myproject --since 2025-11-01
-./agent-history export myproject --since 2025-11-01 --until 2025-11-30
+./cagelens ss myproject --since 2025-11-01
+./cagelens export myproject --since 2025-11-01 --until 2025-11-30
 
 # Export options
-./agent-history export myproject --minimal       # minimal mode
-./agent-history export myproject --split 500     # split long conversations
-./agent-history export myproject --flat          # flat structure (no workspace subdirs)
-./agent-history export myproject --source        # include raw source files
-./agent-history export myproject --jobs 4        # parallel export
-./agent-history export myproject --quiet         # suppress per-file output
-./agent-history export --ah --no-remote          # skip SSH remotes
-./agent-history export --ah --no-wsl             # skip WSL sources
-./agent-history export --ah --no-windows         # skip Windows sources
+./cagelens export myproject --minimal       # minimal mode
+./cagelens export myproject --split 500     # split long conversations
+./cagelens export myproject --flat          # flat structure (no workspace subdirs)
+./cagelens export myproject --source        # include raw source files
+./cagelens export myproject --jobs 4        # parallel export
+./cagelens export myproject --quiet         # suppress per-file output
+./cagelens export --ah --no-remote          # skip SSH remotes
+./cagelens export --ah --no-wsl             # skip WSL sources
+./cagelens export --ah --no-windows         # skip Windows sources
 
 # Projects (group workspaces across environments, aliases: projects, alias)
-./agent-history project list                     # list all projects
-./agent-history project show myproject           # show workspaces in a project
-./agent-history project create myproject         # create new project
-./agent-history project delete myproject         # delete a project
-./agent-history project add myproject myproject  # add by pattern (searches local)
-./agent-history project add myproject --windows myproject  # add by pattern from Windows
-./agent-history project add myproject --ah -r vm myproject  # add from all homes at once
-./agent-history project remove myproject -- -home-user-myproject  # remove workspace from project
-./agent-history project export projects.json     # export projects to file
-./agent-history project import projects.json     # import projects from file
+./cagelens project list                     # list all projects
+./cagelens project show myproject           # show workspaces in a project
+./cagelens project create myproject         # create new project
+./cagelens project delete myproject         # delete a project
+./cagelens project add myproject myproject  # add by pattern (searches local)
+./cagelens project add myproject --windows myproject  # add by pattern from Windows
+./cagelens project add myproject --ah -r vm myproject  # add from all homes at once
+./cagelens project remove myproject -- -home-user-myproject  # remove workspace from project
+./cagelens project export projects.json     # export projects to file
+./cagelens project import projects.json     # import projects from file
 
 # Using projects with sessions and export
-./agent-history ss @myproject                    # list sessions from all project workspaces
-./agent-history ss --project myproject           # same as above
-./agent-history export @myproject                # export from all project workspaces
-./agent-history export --project myproject       # same as above
-./agent-history export @myproject --ah           # export project from all homes
+./cagelens ss @myproject                    # list sessions from all project workspaces
+./cagelens ss --project myproject           # same as above
+./cagelens export @myproject                # export from all project workspaces
+./cagelens export --project myproject       # same as above
+./cagelens export @myproject --ah           # export project from all homes
 
 # WSL and Windows access (explicit homes model)
-./agent-history ws --wsl                   # list WSL workspaces
-./agent-history ss myproject --wsl         # list WSL sessions
-./agent-history export myproject --wsl     # export from WSL
-./agent-history ss --wsl --agent codex     # list Codex WSL sessions
-./agent-history ss --wsl --agent gemini    # list Gemini WSL sessions
+./cagelens ws --wsl                   # list WSL workspaces
+./cagelens ss myproject --wsl         # list WSL sessions
+./cagelens export myproject --wsl     # export from WSL
+./cagelens ss --wsl --agent codex     # list Codex WSL sessions
+./cagelens ss --wsl --agent gemini    # list Gemini WSL sessions
 
-./agent-history ws --windows               # list Windows workspaces
-./agent-history ss myproject --windows     # list Windows sessions
-./agent-history export myproject --windows # export from Windows
+./cagelens ws --windows               # list Windows workspaces
+./cagelens ss myproject --windows     # list Windows sessions
+./cagelens export myproject --windows # export from Windows
 
 # Managing homes (explicit model - must add sources for --ah to include them)
-./agent-history home                       # list configured homes
-./agent-history home add --wsl             # add WSL (for --ah to include it)
-./agent-history home add --windows         # add Windows (for --ah to include it)
-./agent-history home add user@vm01         # add SSH remote
-./agent-history home remove user@vm01      # remove a source
-./agent-history home clear                 # remove all saved sources
+./cagelens home                       # list configured homes
+./cagelens home add --wsl             # add WSL (for --ah to include it)
+./cagelens home add --windows         # add Windows (for --ah to include it)
+./cagelens home add user@vm01         # add SSH remote
+./cagelens home remove user@vm01      # remove a source
+./cagelens home clear                 # remove all saved sources
 
 # Web Sessions (Claude.ai)
-./agent-history web list                   # list web sessions (auto-auth on macOS)
-./agent-history web export                 # export all web sessions
-./agent-history web export <session-id>    # export specific session
-./agent-history web export --source        # include raw source file
-./agent-history web list --token <token> --org-uuid <uuid>  # manual auth
+./cagelens web list                   # list web sessions (auto-auth on macOS)
+./cagelens web export                 # export all web sessions
+./cagelens web export <session-id>    # export specific session
+./cagelens web export --source        # include raw source file
+./cagelens web list --token <token> --org-uuid <uuid>  # manual auth
 
 # Usage Statistics and Metrics (orthogonal --ah/--aw flags)
-./agent-history stats --sync               # sync local sessions to database
-./agent-history stats --sync --ah          # sync from all homes (includes saved remotes)
-./agent-history stats --sync --ah -r vm03  # sync all homes + additional remote
-./agent-history stats --sync --ah --jobs 4 # parallel remote sync
-./agent-history stats --sync --ah --no-remote  # skip SSH remotes
-./agent-history stats --sync --ah --no-wsl     # skip WSL sources
-./agent-history stats                      # summary dashboard (current workspace)
-./agent-history stats --aw                 # summary dashboard (all workspaces)
-./agent-history stats myproject            # filter by workspace pattern
-./agent-history stats --by tool            # tool usage statistics
-./agent-history stats --by model           # model usage breakdown
-./agent-history stats --by workspace       # per-workspace stats
-./agent-history stats --by day             # daily usage trends
-./agent-history stats --by home,agent      # multi-dimension grouping
-./agent-history stats --since 2025-11-01   # filter by date
-./agent-history stats --source local       # filter by source
+./cagelens stats --sync               # sync local sessions to database
+./cagelens stats --sync --ah          # sync from all homes (includes saved remotes)
+./cagelens stats --sync --ah -r vm03  # sync all homes + additional remote
+./cagelens stats --sync --ah --jobs 4 # parallel remote sync
+./cagelens stats --sync --ah --no-remote  # skip SSH remotes
+./cagelens stats --sync --ah --no-wsl     # skip WSL sources
+./cagelens stats                      # summary dashboard (current workspace)
+./cagelens stats --aw                 # summary dashboard (all workspaces)
+./cagelens stats myproject            # filter by workspace pattern
+./cagelens stats --by tool            # tool usage statistics
+./cagelens stats --by model           # model usage breakdown
+./cagelens stats --by workspace       # per-workspace stats
+./cagelens stats --by day             # daily usage trends
+./cagelens stats --by home,agent      # multi-dimension grouping
+./cagelens stats --since 2025-11-01   # filter by date
+./cagelens stats --source local       # filter by source
 
 # Time tracking (orthogonal --ah/--aw flags)
-./agent-history stats --time               # current workspace, local DB
-./agent-history stats --time --ah          # current workspace, sync all homes first
-./agent-history stats --time --aw          # all workspaces, local DB
-./agent-history stats --time --ah --aw     # all workspaces, sync all homes first
+./cagelens stats --time               # current workspace, local DB
+./cagelens stats --time --ah          # current workspace, sync all homes first
+./cagelens stats --time --aw          # all workspaces, local DB
+./cagelens stats --time --ah --aw     # all workspaces, sync all homes first
 
 # Agent selection (Claude Code, Codex CLI, Gemini CLI)
-./agent-history --agent auto ss            # auto-detect (default)
-./agent-history --agent claude ss          # Claude Code only
-./agent-history --agent codex ss           # Codex CLI only
-./agent-history --agent gemini ss          # Gemini CLI only
+./cagelens --agent auto ss            # auto-detect (default)
+./cagelens --agent claude ss          # Claude Code only
+./cagelens --agent codex ss           # Codex CLI only
+./cagelens --agent gemini ss          # Gemini CLI only
 
 # Gemini CLI hash index management
-./agent-history gemini-index               # list all hash→path mappings
-./agent-history gemini-index --add         # add current directory to index
-./agent-history gemini-index --add ~/proj  # add specific directory to index
+./cagelens gemini-index               # list all hash→path mappings
+./cagelens gemini-index --add         # add current directory to index
+./cagelens gemini-index --add ~/proj  # add specific directory to index
 ```
 
 ### Testing Workflow
@@ -207,7 +207,7 @@ After running host + Docker coverage, merge and report:
 
 ```bash
 .venv/Scripts/python -m coverage combine --rcfile=.coveragerc .coverage-data .
-.venv/Scripts/python -m coverage report --rcfile=.coveragerc --include="*agent-history"
+.venv/Scripts/python -m coverage report --rcfile=.coveragerc --include="*cagelens"
 ```
 
 **Docker E2E tests (real SSH connections):**
@@ -239,14 +239,14 @@ See [docker/README.md](docker/README.md) for details.
 
 ```bash
 # Test with your own Claude Code data
-./agent-history ws
-./agent-history ss
-./agent-history export myproject ./test
+./cagelens ws
+./cagelens ss
+./cagelens export myproject ./test
 
 # Test remote access
-./agent-history ws -r user@server
-./agent-history ss myproject -r user@server
-./agent-history export myproject ./test -r user@server
+./cagelens ws -r user@server
+./cagelens ss myproject -r user@server
+./cagelens export myproject ./test -r user@server
 
 # Test edge cases:
 # - Empty workspace patterns
@@ -265,10 +265,10 @@ The tool runs natively on Windows with the following considerations:
 Use `python` or `python3` to execute the script:
 
 ```powershell
-# Instead of ./agent-history (Unix/Linux)
-python agent-history ws
-python agent-history ss myproject
-python agent-history export myproject ./output
+# Instead of ./cagelens (Unix/Linux)
+python cagelens ws
+python cagelens ss myproject
+python cagelens export myproject ./output
 ```
 
 ### Local Operations
@@ -326,7 +326,7 @@ ssh -o BatchMode=yes user@hostname echo ok
 
 ### Single-File Design
 
-**Critical:** The tool is intentionally a single Python file (`agent-history`) for easy distribution. All code must remain in one file with **no external dependencies** (stdlib only).
+**Critical:** The tool is intentionally a single Python file (`cagelens`) for easy distribution. All code must remain in one file with **no external dependencies** (stdlib only).
 
 ### Code Structure
 
@@ -374,8 +374,8 @@ The file is organized into many sections (36+), grouped into these high-level ca
    - `fetch_workspace_files()`: Fetches files from one remote workspace using rsync
 
 8. **Projects**
-   - `get_projects_dir()`: Returns `~/.agent-history/` directory
-   - `get_projects_file()`: Returns `~/.agent-history/projects.json` path
+   - `get_projects_dir()`: Returns `~/.cagelens/` directory
+   - `get_projects_file()`: Returns `~/.cagelens/projects.json` path
    - `load_projects()`: Loads projects from JSON file (returns empty dict if not found)
    - `save_projects()`: Saves projects to JSON file
    - `path_to_encoded_workspace()`: Converts absolute path to Claude's encoded workspace name
@@ -392,7 +392,7 @@ The file is organized into many sections (36+), grouped into these high-level ca
    - `cmd_project_export()`: Exports sessions from all workspaces in a project
 
 9. **Configuration and Saved Sources (Homes)**
-   - `get_config_file()`: Returns `~/.agent-history/config.json` path
+   - `get_config_file()`: Returns `~/.cagelens/config.json` path
    - `load_config()`: Loads configuration from JSON file
    - `save_config()`: Saves configuration to JSON file
    - `get_saved_sources()`: Returns list of saved homes (WSL, Windows, SSH remotes)
@@ -402,7 +402,7 @@ The file is organized into many sections (36+), grouped into these high-level ca
    - `cmd_home_clear()`: Clears all saved homes
 
 10. **Metrics Database (SQLite)**
-   - `get_metrics_db_path()`: Returns `~/.agent-history/metrics.db` path
+   - `get_metrics_db_path()`: Returns `~/.cagelens/metrics.db` path
    - `init_metrics_db()`: Creates/opens database, initializes schema
    - `extract_metrics_from_jsonl()`: Extracts session, message, and tool use metrics from JSONL
    - `sync_file_to_db()`: Syncs a single JSONL file to database (incremental)
@@ -622,7 +622,7 @@ is_agent = any(msg.get('isSidechain') for msg in messages)
 
 **Purpose:** Create cleaner exports suitable for sharing, blog posts, or documentation.
 
-**Usage:** `agent-history export --minimal`
+**Usage:** `cagelens export --minimal`
 
 **Implementation:**
 ```python
@@ -709,8 +709,8 @@ The codebase uses pre-commit hooks for quality enforcement:
 
 ```bash
 # Check complexity manually
-uv run radon cc agent-history -a -s    # Cyclomatic complexity
-uv run radon mi agent-history -s       # Maintainability index
+uv run radon cc cagelens -a -s    # Cyclomatic complexity
+uv run radon mi cagelens -s       # Maintainability index
 ```
 
 **Current metrics (~540 functions):**
@@ -904,8 +904,8 @@ Workspace pattern matching is substring-based:
 Projects group related workspaces across different sources for unified access.
 
 **Storage Location:**
-- Config directory: `~/.agent-history/`
-- Projects file: `~/.agent-history/projects.json`
+- Config directory: `~/.cagelens/`
+- Projects file: `~/.cagelens/projects.json`
 
 **JSON Structure:**
 ```json
@@ -931,16 +931,16 @@ Projects group related workspaces across different sources for unified access.
 **Usage Patterns:**
 ```bash
 # Using @ prefix
-./agent-history ss @myproject
-./agent-history export @myproject
+./cagelens ss @myproject
+./cagelens export @myproject
 
 # Using --project flag
-./agent-history ss --project myproject
-./agent-history export --project myproject
+./cagelens ss --project myproject
+./cagelens export --project myproject
 
 # Combine with other flags
-./agent-history export @myproject --ah     # all homes
-./agent-history export @myproject --minimal
+./cagelens export @myproject --ah     # all homes
+./cagelens export @myproject --minimal
 ```
 
 **Automatic Project Scoping:**
@@ -949,14 +949,14 @@ When running `sessions`, `export`, or `stats` without arguments, if the current 
 
 ```bash
 # If current workspace is part of @myproject:
-./agent-history ss         # Using project @myproject (use --this for current workspace only)
-./agent-history export     # Using project @myproject (use --this for current workspace only)
-./agent-history stats      # Using project @myproject (use --this for current workspace only)
+./cagelens ss         # Using project @myproject (use --this for current workspace only)
+./cagelens export     # Using project @myproject (use --this for current workspace only)
+./cagelens stats      # Using project @myproject (use --this for current workspace only)
 
 # To force current workspace only:
-./agent-history ss --this
-./agent-history export --this
-./agent-history stats --this
+./cagelens ss --this
+./cagelens export --this
+./cagelens stats --this
 ```
 
 This behavior makes it easy to work with related workspaces across environments without explicitly specifying the project each time.
@@ -964,28 +964,28 @@ This behavior makes it easy to work with related workspaces across environments 
 **Syncing Projects Across Machines:**
 ```bash
 # Export projects to file
-./agent-history project export projects.json
+./cagelens project export projects.json
 
 # Copy to another machine
 scp projects.json user@other-machine:~/
 
 # Import on other machine
-./agent-history project import projects.json
+./cagelens project import projects.json
 ```
 
 **Adding Workspaces to Projects:**
 ```bash
 # Add by pattern (searches local workspaces)
-./agent-history project add myproject myproject
+./cagelens project add myproject myproject
 
 # Add from Windows (auto-detects user)
-./agent-history project add myproject --windows myproject
+./cagelens project add myproject --windows myproject
 
 # Add from all homes at once (local + WSL/Windows + remotes)
-./agent-history project add myproject --ah -r vm myproject
+./cagelens project add myproject --ah -r vm myproject
 
 # Workspace names starting with '-' need '--' separator
-./agent-history project remove myproject -- -home-user-myproject
+./cagelens project remove myproject -- -home-user-myproject
 ```
 
 ### Remote Operations
@@ -1000,23 +1000,23 @@ All commands support remote operations via the `-r/--remote` flag:
 **Usage:**
 ```bash
 # List remote workspaces
-./agent-history ws -r user@hostname
+./cagelens ws -r user@hostname
 
 # List remote sessions (direct access, no caching)
-./agent-history ss -r user@hostname
-./agent-history ss myproject -r user@hostname
+./cagelens ss -r user@hostname
+./cagelens ss myproject -r user@hostname
 
 # Export remote sessions (caches locally first, then exports)
-./agent-history export myproject -r user@hostname
-./agent-history export myproject ./output -r user@hostname
+./cagelens export myproject -r user@hostname
+./cagelens export myproject ./output -r user@hostname
 
 # Skip selected sources (useful with --ah)
-./agent-history export --ah --no-remote
-./agent-history export --ah --no-wsl
-./agent-history export --ah --no-windows
+./cagelens export --ah --no-remote
+./cagelens export --ah --no-wsl
+./cagelens export --ah --no-windows
 
 # Convert remote file (downloads temporarily, then converts)
-./agent-history export /path/to/file.jsonl -r user@hostname
+./cagelens export /path/to/file.jsonl -r user@hostname
 ```
 
 **Storage Strategy:**
@@ -1072,7 +1072,7 @@ The `--ah` and `--aw` flags are designed to be orthogonal (independent):
 **Implementation notes:**
 - `--ah` for `stats --time` triggers auto-sync before display
 - **Explicit homes model:** WSL/Windows/SSH must be added via `home add` for `--ah` to include them
-- Saved sources are stored in `~/.agent-history/config.json`
+- Saved sources are stored in `~/.cagelens/config.json`
 - Use `home add --wsl` and `home add --windows` to include these in `--ah`
 
 ### Mutually Exclusive Flags
@@ -1123,7 +1123,7 @@ The codebase uses [ty](https://github.com/astral-sh/ty) (Astral's Python type ch
 
 ```bash
 # Check types directly
-uv run ty check agent-history
+uv run ty check cagelens
 ```
 
 ### Cross-Platform Coverage Orchestrator

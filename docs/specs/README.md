@@ -9,13 +9,13 @@ surface: public
 canonicality: index
 -->
 
-Technical specifications for `agent-history`.
+Technical specifications for `cagelens`.
 
 ## Core Specifications
 
 | Document | Description |
 |----------|-------------|
-| [agent-history-spec.md](agent-history-spec.md) | Main specification: purpose, agents, data model, operations |
+| [cagelens-spec.md](cagelens-spec.md) | Main specification: purpose, agents, data model, operations |
 | [cli-spec.md](cli-spec.md) | CLI commands, flags, and expected output |
 | [todo.md](todo.md) | Release/spec follow-up items that are not yet part of the durable spec |
 

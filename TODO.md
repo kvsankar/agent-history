@@ -12,7 +12,7 @@ next work.
 - Active branch: `feature/2.0-exploration`.
 - As of the last check, the branch was aligned with `origin/feature/2.0-exploration`.
 - Current known local changes:
-  - `docs/agent-history-process-image.md` is untracked and contains a detailed prompt/brief for an architecture process diagram.
+  - `docs/cagelens-process-image.md` is untracked and contains a detailed prompt/brief for an architecture process diagram.
 - Last known full test baseline after the January fixes:
   - `UV_CACHE_DIR=.uv-cache uv run pytest -q`
   - Result: `1289 passed, 6 skipped`.
@@ -32,7 +32,7 @@ next work.
 
 ### Product Shape
 
-`agent-history` is a CLI for reading existing AI coding assistant conversation
+`cagelens` is a CLI for reading existing AI coding assistant conversation
 files and turning them into consistent listings, exports, and metrics. It does
 not record conversations, run an LLM, or write back into the agents' session
 stores.
@@ -99,7 +99,7 @@ scope resolution:
 
 - Host WSL/Windows probing caused tests to hang or touch real user data. Tests
   should use env overrides like `CLAUDE_PROJECTS_DIR`, `CODEX_SESSIONS_DIR`,
-  `GEMINI_SESSIONS_DIR`, `AGENT_HISTORY_CONFIG_DIR`, and `AGENT_HISTORY_HOME`.
+  `GEMINI_SESSIONS_DIR`, `CAGELENS_CONFIG_DIR`, and `CAGELENS_HOME`.
 - `home list` and `project list` now use fast metadata paths unless counts are
   explicitly requested.
 - Remote probing is skipped in isolated test environments to avoid SSH delays.
@@ -175,7 +175,7 @@ environment isolation first.
     - Classify main-branch changes as: directly portable, needs architectural rewrite, already superseded, or should be dropped.
     - Port behavior in small commits with tests, routing agent-specific behavior through the backend registry first.
   - Classification after fetching `origin/master` on 2026-05-29:
-    - Already ported/adapted: Pi backend support, default `./ai-chats` export directory, Markdown stdout/detail levels, inaccessible WSL command lookup handling, stats sync registry cleanup, remote SSH registry cleanup, WSL path candidate registry cleanup, and generic Markdown title metadata.
+    - Already ported/adapted: Pi backend support, default `./.cagelens/exports` export directory, Markdown stdout/detail levels, inaccessible WSL command lookup handling, stats sync registry cleanup, remote SSH registry cleanup, WSL path candidate registry cleanup, and generic Markdown title metadata.
     - Ported with package-architecture rewrites: turn-centered HTML session export, semantic role/origin annotations, HTML tool/diff panels, raw view toggles, and non-Claude project/alias workspace path preservation from `56c766a`.
     - Ported docs/release-only intent into package docs: changelog notes, README/usage HTML/Pi coverage, Pi format spec, and the process image brief. The large PNG from `master` is intentionally omitted because repository hooks reject added files over 500 KB.
   - Added focused regression coverage for HTML file/stdout export, escaped HTML content, action origin metadata, rendered diff-shaped tool output, absolute workspace path preservation in project config, and Codex project export through a readable hyphenated workspace path.
@@ -195,14 +195,14 @@ environment isolation first.
   - Remaining direct agent conditionals are ordinary scope filters, backend registrations, default/fallback constants, or explicitly Claude-only web/legacy compatibility paths.
 - [x] Compare master and feature branch behavior across local, Windows, and remote integration shapes.
   - Tested home/project/workspace/session list behavior against `origin/master`
-    using `/tmp/agent-history-compare/run_compare.py`.
+    using `/tmp/cagelens-compare/run_compare.py`.
   - Fixed non-intentional regressions found during comparison: legacy alias
     fallback, parent flag parsing, home filters, metadata-only workspace lists,
     early `--agent` scoping, remote Claude dashed path decoding, Windows
     workspace display, cached workspace exclusion, and skipped message-count
     rendering.
-  - Verified final matrix: remote `claude-history` sessions `77/77`,
-    Windows `claude-history` sessions `64/64`, and matching remote/Windows
+  - Verified final matrix: remote `cagelens` workspace sessions `77/77`,
+    Windows `cagelens` workspace sessions `64/64`, and matching remote/Windows
     workspace paths.
   - Deferred/intentional differences are logged in
     `docs/analysis/branch-comparison-2026-06-01.md`.
@@ -212,7 +212,7 @@ environment isolation first.
 - [ ] Decide whether v2 `session list` should preserve master exit code `1`
   when no sessions match, or document the v2 `0` exit as intentional.
 - [ ] Investigate project-show performance: both master `alias show
-  agent-history` and feature `project show agent-history` timed out in the
+  cagelens` and feature `project show cagelens` timed out in the
   30-second comparison window.
 - [ ] Decide whether session list should count messages by default for local
   scans or keep v2's faster blank-when-skipped behavior unless `--counts` is

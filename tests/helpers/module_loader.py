@@ -1,4 +1,4 @@
-"""Utility to load the agent-history script as a Python module for unit tests."""
+"""Utility to load the cagelens script as a Python module for unit tests."""
 
 import importlib.machinery
 import importlib.util
@@ -8,7 +8,7 @@ from .cli import get_module_path
 
 
 def load_agent_history() -> ModuleType:
-    """Import the old monolithic agent-history script (ah.py) as a module.
+    """Import the old monolithic cagelens script (ah.py) as a module.
 
     This is used by v1 unit tests that need access to internal functions
     like is_running_in_wsl(), _looks_like_windows_drive(), etc.

@@ -37,7 +37,7 @@ jobs:
           # Isolate tests from user's actual agent data
           HOME: ${{ runner.temp }}/test-home
           USERPROFILE: ${{ runner.temp }}\test-home
-          AGENT_HISTORY_CONFIG_DIR: ${{ runner.temp }}/test-config
+          CAGELENS_CONFIG_DIR: ${{ runner.temp }}/test-config
         run: |
           # Run all tests (legacy tests have been deprecated and removed)
           uv run pytest -v --tb=short -x

@@ -173,11 +173,11 @@ docker ps --quiet
 | Positional args only | `tool myws 2025-01-01` (what's the date?) |
 | Hidden functionality | No `--help` per subcommand |
 
-## 8. Recommendations for agent-history
+## 8. Recommendations for cagelens
 
 ### Current Structure (Good)
 ```
-agent-history <object> <action> [arguments] [flags]
+cagelens <object> <action> [arguments] [flags]
 ```
 
 This follows the Docker/GitHub CLI noun-verb pattern.
@@ -199,8 +199,8 @@ This follows the Docker/GitHub CLI noun-verb pattern.
 ### Key Simplification: Auto-create on Add
 ```bash
 # Like git remote add (no separate create step)
-agent-history project add myproj workspace1   # creates project if needed
-agent-history project add myproj workspace2   # adds to existing
+cagelens project add myproj workspace1   # creates project if needed
+cagelens project add myproj workspace2   # adds to existing
 ```
 
 This matches git's `remote add` pattern and eliminates the confusing two-step create-then-add workflow.

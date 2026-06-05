@@ -29,12 +29,12 @@ if ls .coverage.* 1> /dev/null 2>&1; then
 
     echo ""
     echo "=== Coverage Report ==="
-    coverage report --rcfile=/app/.coveragerc --include="*/agent-history" --show-missing
+    coverage report --rcfile=/app/.coveragerc --include="*/cagelens" --show-missing
 
     echo ""
     echo "=== Coverage Summary ==="
-    TOTAL=$(coverage report --rcfile=/app/.coveragerc --include="*/agent-history" --format=total)
-    echo "agent-history coverage: ${TOTAL}%"
+    TOTAL=$(coverage report --rcfile=/app/.coveragerc --include="*/cagelens" --format=total)
+    echo "cagelens coverage: ${TOTAL}%"
 else
     echo "No coverage data files found in /coverage"
     ls -la /coverage/ || true

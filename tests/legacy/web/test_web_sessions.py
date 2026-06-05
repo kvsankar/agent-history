@@ -1,6 +1,6 @@
 """Web session credential and workspace resolution tests.
 
-Spec Reference: docs/specs/agent-history-spec.md#web-session-access
+Spec Reference: docs/specs/cagelens-spec.md#web-session-access
 """
 
 import json
@@ -18,7 +18,9 @@ def _patch_home(module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(module.Path, "home", lambda: tmp_path)
 
 
-def test_access_token_from_credentials_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_access_token_from_credentials_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """File-based credentials should be read from ~/.claude/.credentials.json."""
     module = load_agent_history()
     _patch_home(module, tmp_path, monkeypatch)
@@ -31,7 +33,9 @@ def test_access_token_from_credentials_file(tmp_path: Path, monkeypatch: pytest.
     assert module.get_access_token_from_credentials_file() == "token-123"
 
 
-def test_get_access_token_falls_back_to_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_access_token_falls_back_to_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """get_access_token should fall back to file when keychain is unavailable."""
     module = load_agent_history()
     _patch_home(module, tmp_path, monkeypatch)

@@ -38,7 +38,7 @@ BASELINE = {
     ("resolver.py", "ScopeResolver._build_template"): 30,
     ("resolver.py", "ScopeResolver._collect_sessions"): 23,
     # Temporary allowance while UNC normalization is refactored
-    ("agent-history", "_resolve_existing_wsl_path"): 36,
+    ("cagelens", "_resolve_existing_wsl_path"): 36,
 }
 
 
@@ -57,7 +57,7 @@ def filter_python_files(files: list[str]) -> list[str]:
     result = []
     for f in files:
         path = Path(f)
-        is_python = path.suffix == ".py" or path.name == "agent-history"
+        is_python = path.suffix == ".py" or path.name == "cagelens"
         is_test = path.name.startswith("test_") or path.name.endswith("_test.py")
         if is_python and not is_test:
             result.append(f)
@@ -176,7 +176,7 @@ def check_maintainability_index(files: list[str]) -> tuple[bool, list[str]]:
 
 def main():
     """Main entry point."""
-    files = sys.argv[1:] if len(sys.argv) > 1 else ["agent-history"]
+    files = sys.argv[1:] if len(sys.argv) > 1 else ["cagelens"]
 
     print("Checking code complexity with radon...")
 

@@ -1,4 +1,4 @@
-"""CLI Constants for agent-history command.
+"""CLI constants for the cagelens command.
 
 This module contains magic strings and configuration constants
 extracted from the parser module for better maintainability.
@@ -89,7 +89,7 @@ MARKDOWN_MAX_LEVEL = 4
 # Default values
 # =============================================================================
 
-DEFAULT_OUTPUT_DIR = "./ai-chats"
+DEFAULT_OUTPUT_DIR = "./.cagelens/exports"
 MIN_SPLIT_LINES = 10
 
 # =============================================================================

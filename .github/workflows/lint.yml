@@ -20,7 +20,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Run ruff check
-        run: uvx ruff check agent-history
+        run: uvx ruff check cagelens agent-history claude-history
 
       - name: Run ruff format check
-        run: uvx ruff format --check agent-history
+        run: uvx ruff format --check cagelens agent-history claude-history

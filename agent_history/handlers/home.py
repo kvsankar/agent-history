@@ -1,11 +1,10 @@
-"""Home management handlers for agent-history.
+"""Home management handlers for cagelens.
 
 This module provides handlers for home add/remove commands.
 These are special handlers that modify the config file rather than
 operating on a scope of sessions.
 """
 
-import sys
 from typing import Any, Dict
 
 from agent_history.handlers.base import CommandResult, VerbHandler
@@ -58,7 +57,9 @@ class HomeAddHandler(VerbHandler):
                 data_type="message",
                 errors=["Specify a source (user@host), --windows, --wsl, or --web"],
             )
-        elif "@" not in source and source not in ("windows", "web") and not source.startswith("wsl:"):
+        elif (
+            "@" not in source and source not in ("windows", "web") and not source.startswith("wsl:")
+        ):
             # Validate SSH remote format
             return CommandResult(
                 success=False,

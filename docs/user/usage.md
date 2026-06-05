@@ -9,7 +9,7 @@ surface: public
 canonicality: primary
 -->
 
-Detailed documentation for all `agent-history` commands and options.
+Detailed documentation for all `cagelens` commands and options.
 
 ## Commands Overview
 
@@ -33,10 +33,10 @@ Detailed documentation for all `agent-history` commands and options.
 List all Claude Code installations and manage sources (WSL, Windows, SSH remotes).
 
 ```bash
-agent-history home [--local|--wsl|--windows|--remotes]
-agent-history home add [--wsl|--windows|<user@hostname>]
-agent-history home remove <source>
-agent-history home clear
+cagelens home [--local|--wsl|--windows|--remotes]
+cagelens home add [--wsl|--windows|<user@hostname>]
+cagelens home remove <source>
+cagelens home clear
 ```
 
 **Subcommands:**
@@ -58,30 +58,30 @@ agent-history home clear
 Sources must be explicitly added for `--ah` to include them:
 ```bash
 # Add homes (explicit model)
-agent-history home add --wsl              # add WSL
-agent-history home add --windows          # add Windows
-agent-history home add alice@server       # add SSH remote
+cagelens home add --wsl              # add WSL
+cagelens home add --windows          # add Windows
+cagelens home add alice@server       # add SSH remote
 
 # Now --ah includes configured sources
-agent-history ws list --ah                # includes configured homes
-agent-history session export --ah         # exports from all homes
-agent-history session stats --time --ah   # syncs from all homes
+cagelens ws list --ah                # includes configured homes
+cagelens session export --ah         # exports from all homes
+cagelens session stats --time --ah   # syncs from all homes
 ```
 
 **Examples:**
 ```bash
 # Show configured homes
-$ agent-history home list
+$ cagelens home list
 HOME		PATH		SESSIONS
 local		/home/alice/.claude	10
 remote:alice@server	alice@server.example.com	5
 
 # Add an SSH remote
-$ agent-history home add alice@server.example.com
+$ cagelens home add alice@server.example.com
 Added source: alice@server.example.com
 
 # Remove a source
-$ agent-history home remove alice@server.example.com
+$ cagelens home remove alice@server.example.com
 Removed source: alice@server.example.com
 ```
 
@@ -92,7 +92,7 @@ Removed source: alice@server.example.com
 List all workspaces matching a pattern.
 
 ```bash
-agent-history ws list [PATTERN...] [OPTIONS]
+cagelens ws list [PATTERN...] [OPTIONS]
 ```
 
 **Arguments:**
@@ -107,16 +107,16 @@ agent-history ws list [PATTERN...] [OPTIONS]
 **Examples:**
 ```bash
 # List all local workspaces
-agent-history ws list
+cagelens ws list
 
 # Filter by pattern
-agent-history ws list myproject
+cagelens ws list myproject
 
 # Multiple patterns
-agent-history ws list proj1 proj2
+cagelens ws list proj1 proj2
 
 # List from all homes
-agent-history ws list --ah -r user@vm01
+cagelens ws list --ah -r user@vm01
 ```
 
 ---
@@ -126,7 +126,7 @@ agent-history ws list --ah -r user@vm01
 Show all sessions for a workspace.
 
 ```bash
-agent-history session list [PATTERN] [OPTIONS]
+cagelens session list [PATTERN] [OPTIONS]
 ```
 
 **Arguments:**
@@ -154,23 +154,23 @@ agent-history session list [PATTERN] [OPTIONS]
 **Examples:**
 ```bash
 # List sessions from current workspace (or project if in a project)
-agent-history session list
+cagelens session list
 
 # Force current workspace only (not project)
-agent-history session list --this
+cagelens session list --this
 
 # List sessions from WSL
-agent-history session list myproject --wsl
+cagelens session list myproject --wsl
 
 # List sessions from Windows
-agent-history session list myproject --windows
+cagelens session list myproject --windows
 
 # List sessions from SSH remote
-agent-history session list myproject -r user@hostname
+cagelens session list myproject -r user@hostname
 
 # Date filtering
-agent-history session list myproject --since 2025-11-01
-agent-history session list myproject --since 2025-11-01 --until 2025-11-30
+cagelens session list myproject --since 2025-11-01
+cagelens session list myproject --since 2025-11-01 --until 2025-11-30
 ```
 
 **Output:**
@@ -186,7 +186,7 @@ agent-history session list myproject --since 2025-11-01 --until 2025-11-30
 Export sessions from workspace(s) to Markdown, offline HTML, or NDJSON with flexible scope control.
 
 ```bash
-agent-history session export [WORKSPACE...] [OPTIONS]
+cagelens session export [WORKSPACE...] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
@@ -198,7 +198,7 @@ agent-history session export [WORKSPACE...] [OPTIONS]
 - `WORKSPACE`: One or more workspace patterns (default: current workspace or its project)
 
 **Options:**
-- `-o`, `--output DIR`: Output directory (default: `./ai-chats`)
+- `-o`, `--output DIR`: Output directory (default: `./.cagelens/exports`)
 - `--format markdown|html`: Export Markdown or offline HTML (default: `markdown`)
 - `--json`: Export NDJSON using the [unified schema](../specs/schema/unified-json-schema.md)
 - `--wsl`: Export from WSL (auto-detects distribution)
@@ -228,37 +228,37 @@ agent-history session export [WORKSPACE...] [OPTIONS]
 **Examples:**
 ```bash
 # Current workspace, local home (default)
-agent-history session export
+cagelens session export
 
 # Current workspace, all homes
-agent-history session export --ah
+cagelens session export --ah
 
 # All workspaces, local home
-agent-history session export --aw
+cagelens session export --aw
 
 # All workspaces, all homes
-agent-history session export --ah --aw
+cagelens session export --ah --aw
 
 # Specific workspace, all homes, custom output
-agent-history session export myproject --ah -o /tmp/backup
+cagelens session export myproject --ah -o /tmp/backup
 
 # Offline HTML export
-agent-history session export myproject --format html
+cagelens session export myproject --format html
 
 # Multiple workspaces (deduplicated)
-agent-history session export proj1 proj2 -o ./exports
+cagelens session export proj1 proj2 -o ./exports
 
 # Export from WSL
-agent-history session export myproject --wsl
+cagelens session export myproject --wsl
 
 # Export from Windows
-agent-history session export myproject --windows
+cagelens session export myproject --windows
 
 # With splitting and minimal mode
-agent-history session export myproject --minimal --split 500
+cagelens session export myproject --minimal --split 500
 
 # Faster export with less output
-agent-history session export myproject --jobs 4 --quiet
+cagelens session export myproject --jobs 4 --quiet
 ```
 
 **Output:**
@@ -273,7 +273,7 @@ agent-history session export myproject --jobs 4 --quiet
 Group related workspaces across environments.
 
 ```bash
-agent-history project <subcommand> [OPTIONS]
+cagelens project <subcommand> [OPTIONS]
 ```
 
 **Subcommands:**
@@ -311,32 +311,32 @@ Show stats for a project. Supports the same stats options as `session stats`, in
 **Examples:**
 ```bash
 # Populate a project
-agent-history project add myproject myproject
-agent-history project add myproject --windows myproject
-agent-history project add myproject -r user@vm01 myproject
+cagelens project add myproject myproject
+cagelens project add myproject --windows myproject
+cagelens project add myproject -r user@vm01 myproject
 
 # Or add from all homes at once
-agent-history project add myproject --ah -r user@vm myproject
+cagelens project add myproject --ah -r user@vm myproject
 
 # Use projects with @ prefix
-agent-history session list @myproject
-agent-history session export @myproject -o ./backup
+cagelens session list @myproject
+cagelens session export @myproject -o ./backup
 
 # Export or inspect project sessions
-agent-history project export myproject --agent codex -o ./backup
-agent-history project stats myproject --agent codex --sync
+cagelens project export myproject --agent codex -o ./backup
+cagelens project stats myproject --agent codex --sync
 ```
 
 **Automatic Project Scoping:**
 
 When running commands without arguments from a project workspace:
 ```bash
-agent-history session list      # Uses project automatically
-agent-history session export    # Uses project automatically
-agent-history session stats     # Uses project automatically
+cagelens session list      # Uses project automatically
+cagelens session export    # Uses project automatically
+cagelens session stats     # Uses project automatically
 
 # Force current workspace only
-agent-history session list --this
+cagelens session list --this
 ```
 
 ---
@@ -346,7 +346,7 @@ agent-history session list --this
 Display usage statistics and metrics from coding-agent sessions.
 
 ```bash
-agent-history session stats [WORKSPACE] [OPTIONS]
+cagelens session stats [WORKSPACE] [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
@@ -377,28 +377,28 @@ Note: `--source` defaults to all workspaces for that source unless `--this` is s
 **Examples:**
 ```bash
 # Summary dashboard (current workspace)
-agent-history session stats
+cagelens session stats
 
 # All workspaces (Homes & Workspaces section plus summary with time)
-agent-history session stats --aw
+cagelens session stats --aw
 
 # Time tracking with auto-sync from all homes
-agent-history session stats --time --ah
+cagelens session stats --time --ah
 
 # Tool usage statistics
-agent-history session stats --by tool
+cagelens session stats --by tool
 
 # Daily trends
-agent-history session stats --by day
+cagelens session stats --by day
 
 # Multi-dimension grouping
-agent-history session stats --by home,agent
+cagelens session stats --by home,agent
 
 # Filter by date range
-agent-history session stats --since 2025-11-01 --until 2025-11-30
+cagelens session stats --since 2025-11-01 --until 2025-11-30
 
 # Faster sync with selective sources
-agent-history session stats --sync --ah --jobs 4 --no-remote
+cagelens session stats --sync --ah --jobs 4 --no-remote
 ```
 
 **Metrics Available:**
@@ -408,7 +408,7 @@ agent-history session stats --sync --ah --jobs 4 --no-remote
 - **Daily trends**: Available with `--by day` or JSON output
 
 For metrics storage internals, see
-[agent-history-spec.md](../specs/agent-history-spec.md#metrics-database).
+[cagelens-spec.md](../specs/cagelens-spec.md#metrics-database).
 
 ---
 
@@ -418,13 +418,13 @@ Both `session list` and `session export` support date filtering:
 
 ```bash
 # Sessions modified on or after a date
-agent-history session list myproject --since 2025-11-01
+cagelens session list myproject --since 2025-11-01
 
 # Sessions within a date range
-agent-history session export myproject --since 2025-11-01 --until 2025-11-30
+cagelens session export myproject --since 2025-11-01 --until 2025-11-30
 
 # Export recent sessions only
-agent-history session export myproject --since 2025-11-01 -o ./recent
+cagelens session export myproject --since 2025-11-01 -o ./recent
 ```
 
 **Notes:**
@@ -462,7 +462,7 @@ Omits:
 Split long conversations into multiple parts:
 
 ```bash
-agent-history session export myproject --split 500
+cagelens session export myproject --split 500
 ```
 
 - Smart break points (before User messages, after tool results, time gaps)
@@ -477,13 +477,13 @@ agent-history session export myproject --split 500
 
 ```bash
 # List remote workspaces
-agent-history ws list -r user@server
+cagelens ws list -r user@server
 
 # List sessions from remote
-agent-history session list myproject -r user@server
+cagelens session list myproject -r user@server
 
 # Export from remote
-agent-history session export myproject -r user@server
+cagelens session export myproject -r user@server
 ```
 
 **Requirements:**
@@ -493,19 +493,19 @@ agent-history session export myproject -r user@server
 ### WSL Access (from Windows)
 
 ```bash
-python agent-history ws list --wsl
-python agent-history session list myproject --wsl
-python agent-history session export myproject --wsl
-python agent-history session list --wsl --agent codex
-python agent-history session list --wsl --agent gemini
+python cagelens ws list --wsl
+python cagelens session list myproject --wsl
+python cagelens session export myproject --wsl
+python cagelens session list --wsl --agent codex
+python cagelens session list --wsl --agent gemini
 ```
 
 ### Windows Access (from WSL)
 
 ```bash
-agent-history ws list --windows
-agent-history session list myproject --windows
-agent-history session export myproject --windows
+cagelens ws list --windows
+cagelens session list myproject --windows
+cagelens session export myproject --windows
 ```
 
 ---
@@ -515,7 +515,7 @@ agent-history session export myproject --windows
 Delete metrics database, config, and/or cache.
 
 ```bash
-agent-history reset [what] [-y]
+cagelens reset [what] [-y]
 ```
 
 **Arguments:**
@@ -532,19 +532,19 @@ agent-history reset [what] [-y]
 **Examples:**
 ```bash
 # Reset everything (prompts for confirmation)
-agent-history reset
+cagelens reset
 
 # Reset only metrics database
-agent-history reset db
-agent-history reset --db
+cagelens reset db
+cagelens reset --db
 
 # Reset without confirmation (for scripts)
-agent-history reset -y
-agent-history reset db -y
+cagelens reset -y
+cagelens reset db -y
 ```
 
 For the internal files affected by each reset target, see
-[agent-history-spec.md](../specs/agent-history-spec.md#file-locations).
+[cagelens-spec.md](../specs/cagelens-spec.md#file-locations).
 
 ---
 
@@ -553,23 +553,23 @@ For the internal files affected by each reset target, see
 Fetch remote sessions into a local cache for export.
 
 ```bash
-agent-history fetch -r user@host --aw
+cagelens fetch -r user@host --aw
 ```
 
 **Notes:**
 - Uses the same scope flags as `session list` (e.g., `-r`, `--aw`, `--agent`).
-- Remote cache layout is documented in [agent-history-spec.md](../specs/agent-history-spec.md#file-locations).
+- Remote cache layout is documented in [cagelens-spec.md](../specs/cagelens-spec.md#file-locations).
 
 ---
 
 ## `gemini-index` - Manage Gemini Hash Index
 
-Add project directory paths to the Gemini hash→path index, or list existing mappings. This allows `agent-history` to display readable workspace paths instead of SHA-256 hashes when listing or exporting Gemini sessions.
+Add project directory paths to the Gemini hash→path index, or list existing mappings. This allows `cagelens` to display readable workspace paths instead of SHA-256 hashes when listing or exporting Gemini sessions.
 
 ```bash
-agent-history gemini-index                      # list all mappings (default)
-agent-history gemini-index --add [path ...]     # add paths to index
-agent-history gemini-index --list [--full-hash] # list with options
+cagelens gemini-index                      # list all mappings (default)
+cagelens gemini-index --add [path ...]     # add paths to index
+cagelens gemini-index --list [--full-hash] # list with options
 ```
 
 **Options:**
@@ -588,13 +588,13 @@ known Gemini sessions. Gemini storage details live in
 **Examples:**
 ```bash
 # Add current directory to index
-agent-history gemini-index --add
+cagelens gemini-index --add
 
 # Add a specific project
-agent-history gemini-index --add ~/projects/myapp
+cagelens gemini-index --add ~/projects/myapp
 
 # Add multiple projects at once
-agent-history gemini-index --add ~/projects/app1 ~/projects/app2 ~/projects/app3
+cagelens gemini-index --add ~/projects/app1 ~/projects/app2 ~/projects/app3
 
 # Output:
 Adding 3 path(s) to Gemini index...
@@ -610,7 +610,7 @@ Summary: 1 added, 1 existing, 1 skipped
 Total mappings in index: 5
 
 # List all mappings (short hashes)
-agent-history gemini-index --list
+cagelens gemini-index --list
 
 # Output:
 Hash Index Mappings (5 entries):
@@ -620,7 +620,7 @@ Hash Index Mappings (5 entries):
   ...
 
 # List with full hashes
-agent-history gemini-index --list --full-hash
+cagelens gemini-index --list --full-hash
 
 # Output:
 Hash Index Mappings (5 entries):
@@ -632,10 +632,10 @@ Hash Index Mappings (5 entries):
 
 **Automatic learning:**
 
-The hash index also learns progressively when you run any `agent-history` command from a Gemini project directory. The explicit `gemini-index` command is useful for adding multiple projects at once.
+The hash index also learns progressively when you run any `cagelens` command from a Gemini project directory. The explicit `gemini-index` command is useful for adding multiple projects at once.
 
 **Index location:**
-- `~/.agent-history/gemini_hash_index.json`
+- `~/.cagelens/gemini_hash_index.json`
 
 ---
 
@@ -644,7 +644,7 @@ The hash index also learns progressively when you run any `agent-history` comman
 Configure install settings (status-only in v2).
 
 ```bash
-agent-history install [--bin-dir DIR] [--skill-dir DIR]
+cagelens install [--bin-dir DIR] [--skill-dir DIR]
                        [--skip-cli] [--skip-skill] [--skip-settings]
 ```
 

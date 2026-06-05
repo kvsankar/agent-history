@@ -91,7 +91,7 @@ A separate file tracks user inputs:
 
 ---
 
-`GEMINI_CLI_HOME` moves the upstream `.gemini` home. `agent-history` also
+`GEMINI_CLI_HOME` moves the upstream `.gemini` home. `cagelens` also
 supports `GEMINI_SESSIONS_DIR` as a direct `tmp` directory override.
 
 ## Session File Format
@@ -421,12 +421,12 @@ gemini --output-format stream-json  # Real-time newline-delimited JSON
 1. **Parse current JSONL and legacy JSON**: Current files are append-only JSONL; older files are single JSON objects.
 2. **Handle Hashed Paths**: Scan all `~/.gemini/tmp/*/chats/` directories
 3. **Map Type Names**: Convert `"gemini"` → `"assistant"` for unified display
-4. **Extract Workspace**: Project identifier may obscure original path (may need `projects.json` or agent-history index mapping)
+4. **Extract Workspace**: Project identifier may obscure original path (may need `projects.json` or cagelens index mapping)
 5. **Handle Thoughts**: Optionally display reasoning steps in export
 
 ### Environment Variable
 
-Upstream Gemini uses `GEMINI_CLI_HOME`; `agent-history` also supports a direct
+Upstream Gemini uses `GEMINI_CLI_HOME`; `cagelens` also supports a direct
 sessions override:
 
 ```python

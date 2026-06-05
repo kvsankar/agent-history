@@ -125,7 +125,7 @@ Verified behavior:
   `compaction`, `branch_summary`, `custom`, `custom_message`, `label`, and
   `session_info`.
 - Official override is `PI_CODING_AGENT_SESSION_DIR`; `PI_SESSIONS_DIR` is an
-  agent-history compatibility/test override.
+  cagelens compatibility/test override.
 
 Implementation action in this round:
 

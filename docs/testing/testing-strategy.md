@@ -1,4 +1,4 @@
-# Testing Strategy for agent-history
+# Testing Strategy for cagelens
 
 <!-- doc-meta
 doc_role: plan
@@ -204,24 +204,24 @@ at the user's default session stores.
 uv run python scripts/real_agent_validation.py --agents all --dry-run
 
 # Run one real agent after setting its credential env var
-AGENT_HISTORY_REAL_AGENT_TESTS=1 \
+CAGELENS_REAL_AGENT_TESTS=1 \
 CODEX_API_KEY=... \
 uv run python scripts/real_agent_validation.py --agents codex
 
 # Run all available agents and write redacted fixture candidates
-AGENT_HISTORY_REAL_AGENT_TESTS=1 \
+CAGELENS_REAL_AGENT_TESTS=1 \
 uv run python scripts/real_agent_validation.py \
   --agents all \
   --copy-auth-from-default \
   --skip-unavailable \
-  --sanitized-output-dir /tmp/agent-history-real-fixtures
+  --sanitized-output-dir /tmp/cagelens-real-fixtures
 ```
 
 The harness validates each captured session through:
 
-- `agent-history --agent <agent> session list <temp-workspace>`
-- `agent-history --agent <agent> session export <temp-workspace> <temp-output> --json`
-- `agent-history --agent <agent> session stats <temp-workspace> --no-sync`
+- `cagelens --agent <agent> session list <temp-workspace>`
+- `cagelens --agent <agent> session export <temp-workspace> <temp-output> --json`
+- `cagelens --agent <agent> session stats <temp-workspace> --no-sync`
 
 Use these runs for release validation and fixture refresh, not for routine CI.
 With `--copy-auth-from-default`, the harness copies only auth files into the
@@ -302,8 +302,8 @@ Tests describe **what the system does** from a user perspective, not implementat
 Feature: Session Export
   Scenario: Export single session to markdown
     Given a Claude Code session with 5 messages
-    When I run `agent-history session export`
-    Then a markdown file is created in ./ai-chats/
+    When I run `cagelens session export`
+    Then a markdown file is created in ./.cagelens/exports/
     And the file contains all 5 messages in order
 ```
 
@@ -314,7 +314,7 @@ Every test should reference the specification it validates:
 | Test | Spec Reference |
 |------|----------------|
 | `test_claude_session_parsing` | `claude-code-format.md#record-types` |
-| `test_workspace_encoding` | `agent-history-spec.md#workspace` |
+| `test_workspace_encoding` | `cagelens-spec.md#workspace` |
 | `test_export_filename_format` | `cli-spec.md#session-export` |
 
 ---
@@ -402,7 +402,7 @@ def test_workspace_encoding():
 
 ```
 test_home/
-├── .agent-history/
+├── .cagelens/
 │   ├── config.json
 │   ├── projects.json
 │   ├── metrics.db
@@ -448,7 +448,7 @@ The application needs configuration hooks to read from test locations:
 | Component | Injection Method |
 |-----------|------------------|
 | Agent session paths | Environment variable or constructor parameter |
-| Config file location | `AGENT_HISTORY_HOME` env var |
+| Config file location | `CAGELENS_HOME` env var |
 | Metrics database | In-memory SQLite for tests |
 | Export output | Temp directory per test |
 
@@ -457,7 +457,7 @@ The application needs configuration hooks to read from test locations:
 ```python
 # Application code needs this pattern
 def get_home_dir() -> Path:
-    if env_home := os.environ.get("AGENT_HISTORY_HOME"):
+    if env_home := os.environ.get("CAGELENS_HOME"):
         return Path(env_home)
     return Path.home()
 
@@ -550,7 +550,7 @@ Context clearing is recorded in telemetry files, not session files. Tests need t
 **Test Fixture Structure:**
 ```
 tests/fixtures/telemetry/
-├── claude_history.jsonl      # Contains /clear commands
+├── claude_code_history.jsonl # Contains /clear commands
 ├── codex_history.jsonl       # Contains /clear commands
 └── gemini_logs.json          # Shows sessionId change after /clear
 ```
@@ -559,7 +559,7 @@ tests/fixtures/telemetry/
 ```python
 def test_detect_claude_clear(telemetry_fixtures):
     """Detect /clear in Claude history.jsonl."""
-    clears = detect_context_clears("claude", telemetry_fixtures["claude_history"])
+    clears = detect_context_clears("claude", telemetry_fixtures["claude_code_history"])
     assert len(clears) == 2
     assert clears[0].session_id == "9d6909e3-aaea-454d-ab21-15c939e865b1"
 
@@ -834,7 +834,7 @@ Feature: Claude Code Session Parsing
 
 Tests for finding workspaces and sessions across storage locations.
 
-**Specs:** `agent-history-spec.md#workspace`, `agent-history-spec.md#session`
+**Specs:** `cagelens-spec.md#workspace`, `cagelens-spec.md#session`
 
 | Test Area | Description |
 |-----------|-------------|
@@ -851,7 +851,7 @@ Feature: Workspace Discovery
 
   Scenario: List workspaces from Claude storage
     Given Claude storage with workspaces "projectA" and "projectB"
-    When I run `agent-history ws list`
+    When I run `cagelens ws list`
     Then I see 2 workspaces listed
 
   Scenario: Decode workspace name
@@ -1075,7 +1075,7 @@ Feature: Session Export
 
 Tests for workspace and home scope handling. This is the most complex test category due to combinatorial scope interactions.
 
-**Specs:** `cli-spec.md#scope-modifiers`, `agent-history-spec.md#scope-resolution`
+**Specs:** `cli-spec.md#scope-modifiers`, `cagelens-spec.md#scope-resolution`
 
 #### Scope Dimensions
 
@@ -1594,7 +1594,7 @@ def test_ws_list_output(cli_runner, test_home):
 # E2E test with subprocess
 def test_cli_entrypoint(test_home):
     result = subprocess.run(
-        ["agent-history", "ws", "list"],
+        ["cagelens", "ws", "list"],
         capture_output=True, text=True
     )
     assert result.returncode == 0
@@ -1648,7 +1648,7 @@ Real SSH testing using Docker containers on Ubuntu VM.
 │  │   container     │ ────────▶ │      container          │   │
 │  │                 │           │                         │   │
 │  │  - pytest       │           │  - sshd                 │   │
-│  │  - agent-history│           │  - .claude/projects/    │   │
+│  │  - cagelens│           │  - .claude/projects/    │   │
 │  │                 │           │  - .codex/sessions/     │   │
 │  └─────────────────┘           │  - .gemini/tmp/         │   │
 │                                └─────────────────────────┘   │
@@ -1861,7 +1861,7 @@ def remote_sim(docker_client):
     """Start remote-sim container for SSH tests."""
     # Start container
     container = docker_client.containers.run(
-        "agent-history-remote-sim",
+        "cagelens-remote-sim",
         detach=True,
         network="test-network",
         name="remote-sim",
@@ -1964,9 +1964,9 @@ Testing `--wsl` and `--windows` flags for cross-filesystem access.
 
 ```python
 # Base home directories (app constructs .claude/, .codex/, .gemini/ under these)
-AGENT_HISTORY_HOME          # Local home override
-AGENT_HISTORY_HOME_WSL      # WSL home override (used by --wsl)
-AGENT_HISTORY_HOME_WINDOWS  # Windows home override (used by --windows)
+CAGELENS_HOME          # Local home override
+CAGELENS_HOME_WSL      # WSL home override (used by --wsl)
+CAGELENS_HOME_WINDOWS  # Windows home override (used by --windows)
 ```
 
 **Application logic:**
@@ -1974,13 +1974,13 @@ AGENT_HISTORY_HOME_WINDOWS  # Windows home override (used by --windows)
 ```python
 def get_home_for_source(source: str) -> Path:
     if source == "local":
-        return Path(os.environ.get("AGENT_HISTORY_HOME", Path.home()))
+        return Path(os.environ.get("CAGELENS_HOME", Path.home()))
     elif source == "wsl":
-        if env := os.environ.get("AGENT_HISTORY_HOME_WSL"):
+        if env := os.environ.get("CAGELENS_HOME_WSL"):
             return Path(env)
         return get_default_wsl_home()  # \\wsl.localhost\... or /home/...
     elif source == "windows":
-        if env := os.environ.get("AGENT_HISTORY_HOME_WINDOWS"):
+        if env := os.environ.get("CAGELENS_HOME_WINDOWS"):
             return Path(env)
         return get_default_windows_home()  # /mnt/c/Users/... or C:\Users\...
 ```
@@ -2002,9 +2002,9 @@ def cross_env_homes(tmp_path):
         (home / ".gemini" / "tmp").mkdir(parents=True)
 
     with patch.dict(os.environ, {
-        "AGENT_HISTORY_HOME": str(local_home),
-        "AGENT_HISTORY_HOME_WSL": str(wsl_home),
-        "AGENT_HISTORY_HOME_WINDOWS": str(windows_home),
+        "CAGELENS_HOME": str(local_home),
+        "CAGELENS_HOME_WSL": str(wsl_home),
+        "CAGELENS_HOME_WINDOWS": str(windows_home),
     }):
         yield {
             "local": local_home,
@@ -2242,8 +2242,8 @@ For testability, the application needs:
 
 1. **Environment variable support:**
    ```python
-   AGENT_HISTORY_HOME_WSL = os.environ.get("AGENT_HISTORY_HOME_WSL")
-   AGENT_HISTORY_HOME_WINDOWS = os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
+   CAGELENS_HOME_WSL = os.environ.get("CAGELENS_HOME_WSL")
+   CAGELENS_HOME_WINDOWS = os.environ.get("CAGELENS_HOME_WINDOWS")
    ```
 
 2. **Platform detection function:**
@@ -2291,7 +2291,7 @@ For testability, the application needs:
 
 | Spec File | Primary Test Categories |
 |-----------|------------------------|
-| `agent-history-spec.md` | Discovery, Scope, Operations |
+| `cagelens-spec.md` | Discovery, Scope, Operations |
 | `cli-spec.md` | CLI Commands, Output Format |
 | `claude-code-format.md` | Claude Parsing |
 | `codex-cli-format.md` | Codex Parsing |

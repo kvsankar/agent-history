@@ -1,4 +1,4 @@
-// Unified NDJSON Schema for Agent History (current implementation)
+// Unified NDJSON Schema for cagelens (current implementation)
 // Render with: dot -Tpng unified-json-schema.dot -o unified-json-schema.png
 
 digraph UnifiedSchema {
@@ -7,7 +7,7 @@ digraph UnifiedSchema {
     edge [fontname="Helvetica", fontsize=9];
 
     labelloc="t";
-    label="Agent History - NDJSON (Per-Session Export)";
+    label="cagelens - NDJSON (Per-Session Export)";
     fontsize=14;
     fontname="Helvetica-Bold";
 

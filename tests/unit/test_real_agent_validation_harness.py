@@ -20,6 +20,7 @@ def _load_harness():
 def test_main_requires_opt_in_unless_dry_run(monkeypatch) -> None:
     harness = _load_harness()
 
+    monkeypatch.delenv("CAGELENS_REAL_AGENT_TESTS", raising=False)
     monkeypatch.delenv("AGENT_HISTORY_REAL_AGENT_TESTS", raising=False)
 
     assert harness.main(["--agents", "codex"]) == 2
@@ -37,6 +38,9 @@ def test_codex_invocation_uses_isolated_home_and_persistent_rollout(tmp_path: Pa
 
     assert invocation.env["HOME"] == str(tmp_path / "codex" / "home")
     assert invocation.env["CODEX_HOME"] == str(tmp_path / "codex" / "codex-home")
+    assert invocation.history_env["CAGELENS_CONFIG_DIR"] == str(
+        tmp_path / "codex" / "cagelens-config"
+    )
     assert invocation.history_env["CODEX_HOME"] == invocation.env["CODEX_HOME"]
     assert "--ephemeral" not in invocation.command
     assert "--ask-for-approval" not in invocation.command
@@ -211,4 +215,14 @@ def test_sanitize_session_content_redacts_gemini_thoughts() -> None:
     assert "hidden reasoning" not in sanitized
     assert "agent-history gemini persistence probe" not in sanitized
     assert "[REDACTED_THOUGHT]" in sanitized
+    assert "[REDACTED_ASSISTANT_TEXT]" in sanitized
+
+
+def test_sanitize_session_content_redacts_cagelens_probe() -> None:
+    harness = _load_harness()
+    content = '{"messages":[{"type":"gemini","content":"cagelens gemini persistence probe."}]}'
+
+    sanitized = harness.sanitize_session_content(content)
+
+    assert "cagelens gemini persistence probe" not in sanitized
     assert "[REDACTED_ASSISTANT_TEXT]" in sanitized

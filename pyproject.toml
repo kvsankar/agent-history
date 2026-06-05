@@ -1,8 +1,21 @@
 [project]
-name = "claude-history"
+name = "cagelens"
 version = "1.0.0"
-description = "CLI tool to browse and export Claude Code conversation history"
+description = "CLI tool to parse coding-agent logs, export sessions, and surface usage insights"
 requires-python = ">=3.8"
+
+[project.scripts]
+cagelens = "agent_history.cli.orchestrator:main"
+agent-history = "agent_history.cli.orchestrator:main"
+claude-history = "agent_history.cli.orchestrator:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agent_history*"]
+exclude = ["tests*", "docs*", "docker*", "scripts*", "poc*", "reviews*"]
 
 [tool.ruff]
 target-version = "py38"
@@ -45,11 +58,12 @@ ignore = [
 # Main script has some complexity that's baselined
 "claude-history" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
 "agent-history" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
+"cagelens" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
 # Scripts use magic values and have some complexity
 "scripts/*.py" = ["PLR2004", "PLW1510", "C901", "PLR0915"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["claude_history"]
+known-first-party = ["agent_history"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

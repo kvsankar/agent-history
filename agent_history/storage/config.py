@@ -1,13 +1,14 @@
-"""Configuration and project/alias management for agent-history.
+"""Configuration and project/alias management for cagelens.
 
 This module provides functions for:
-- Config directory management (~/.agent-history/)
+- Config directory management (~/.cagelens/)
 - Project/alias loading and saving
 - Config file management (config.json)
 - Home/source management for remote SSH hosts
 
 Environment Variables:
-    AGENT_HISTORY_CONFIG_DIR: Override config directory location (for testing)
+    CAGELENS_CONFIG_DIR: Override config directory location (preferred)
+    AGENT_HISTORY_CONFIG_DIR: Legacy override config directory location
 """
 
 import json
@@ -47,8 +48,9 @@ __all__ = [
 # Constants
 # =============================================================================
 
-CONFIG_DIR_NAME = ".agent-history"
-LEGACY_CONFIG_DIR_NAME = ".claude-history"
+CONFIG_DIR_NAME = ".cagelens"
+LEGACY_CONFIG_DIR_NAME = ".agent-history"
+CLAUDE_LEGACY_CONFIG_DIR_NAME = ".claude-history"
 
 # Lengths of various prefixes used in workspace encoding
 WSL_PREFIX_LEN = 6  # Length of "wsl://"
@@ -61,11 +63,15 @@ WINDOWS_PREFIX_LEN = 8  # Length of "windows:"
 # =============================================================================
 
 
-def _get_config_dirs() -> tuple[Path, Path]:
-    """Return (new_config_dir, legacy_config_dir) under HOME."""
+def _get_config_dirs() -> tuple[Path, Path, Path]:
+    """Return (new_config_dir, legacy_agent_dir, legacy_claude_dir) under HOME."""
     home_env = os.environ.get("HOME")
     home = Path(home_env) if home_env else Path.home()
-    return home / CONFIG_DIR_NAME, home / LEGACY_CONFIG_DIR_NAME
+    return (
+        home / CONFIG_DIR_NAME,
+        home / LEGACY_CONFIG_DIR_NAME,
+        home / CLAUDE_LEGACY_CONFIG_DIR_NAME,
+    )
 
 
 def _apply_secure_permissions(path: Path, mode: int) -> None:
@@ -75,10 +81,12 @@ def _apply_secure_permissions(path: Path, mode: int) -> None:
     os.chmod(path, mode)
 
 
-def _migrate_legacy_config_dir(new_dir: Path, legacy_dir: Path) -> Path:
-    """Migrate legacy ~/.claude-history to ~/.agent-history if needed."""
+def _migrate_legacy_config_dir(new_dir: Path, legacy_dirs: tuple[Path, ...]) -> Path:
+    """Migrate legacy config directories to ~/.cagelens if needed."""
     if new_dir.exists():
-        if legacy_dir.exists():
+        for legacy_dir in legacy_dirs:
+            if not legacy_dir.exists():
+                continue
             try:
                 shutil.copytree(legacy_dir, new_dir, dirs_exist_ok=True)
                 shutil.rmtree(legacy_dir, ignore_errors=True)
@@ -87,36 +95,38 @@ def _migrate_legacy_config_dir(new_dir: Path, legacy_dir: Path) -> Path:
                     f"Warning: Could not clean up legacy config dir {legacy_dir}: {e}\n"
                 )
         return new_dir
-    if not legacy_dir.exists():
-        return new_dir
 
-    try:
-        legacy_dir.rename(new_dir)
-        return new_dir
-    except OSError:
+    for legacy_dir in legacy_dirs:
+        if not legacy_dir.exists():
+            continue
         try:
-            shutil.copytree(legacy_dir, new_dir, dirs_exist_ok=True)
-            shutil.rmtree(legacy_dir, ignore_errors=True)
+            legacy_dir.rename(new_dir)
             return new_dir
         except OSError as e:
-            sys.stderr.write(
-                f"Warning: Could not migrate legacy config dir {legacy_dir} -> {new_dir}: {e}\n"
-            )
-            return legacy_dir
+            try:
+                shutil.copytree(legacy_dir, new_dir, dirs_exist_ok=True)
+                shutil.rmtree(legacy_dir, ignore_errors=True)
+                return new_dir
+            except OSError:
+                sys.stderr.write(
+                    f"Warning: Could not migrate legacy config dir {legacy_dir} -> {new_dir}: {e}\n"
+                )
+                return legacy_dir
+    return new_dir
 
 
 def get_config_dir() -> Path:
-    """Get the config storage directory (~/.agent-history/, migrates legacy on first use)."""
+    """Get the config storage directory (~/.cagelens/, migrating legacy dirs on first use)."""
     # Check for test/override env var first
-    override = os.environ.get("AGENT_HISTORY_CONFIG_DIR")
+    override = os.environ.get("CAGELENS_CONFIG_DIR") or os.environ.get("AGENT_HISTORY_CONFIG_DIR")
     if override:
         return Path(override)
-    new_dir, legacy_dir = _get_config_dirs()
-    return _migrate_legacy_config_dir(new_dir, legacy_dir)
+    new_dir, legacy_agent_dir, legacy_claude_dir = _get_config_dirs()
+    return _migrate_legacy_config_dir(new_dir, (legacy_agent_dir, legacy_claude_dir))
 
 
 def get_aliases_dir() -> Path:
-    """Get the aliases storage directory (~/.agent-history/)."""
+    """Get the aliases storage directory (~/.cagelens/)."""
     return get_config_dir()
 
 
@@ -202,8 +212,8 @@ def save_config(data: dict) -> bool:
         True on success, False on failure (error printed to stderr)
 
     Side Effects:
-        - Creates ~/.agent-history/ directory with mode 0o700 if missing
-        - Writes to ~/.agent-history/config.json with mode 0o600
+        - Creates ~/.cagelens/ directory with mode 0o700 if missing
+        - Writes to ~/.cagelens/config.json with mode 0o600
     """
     config_dir = get_config_dir()
     config_file = get_config_file()
@@ -352,8 +362,8 @@ def save_aliases(data: dict) -> bool:
         True on success, False on failure (error printed to stderr)
 
     Side Effects:
-        - Creates ~/.agent-history/ directory with mode 0o700 if missing
-        - Writes to ~/.agent-history/projects.json
+        - Creates ~/.cagelens/ directory with mode 0o700 if missing
+        - Writes to ~/.cagelens/projects.json
         - Uses file locking to prevent race conditions
     """
     config_dir = get_config_dir()

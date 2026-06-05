@@ -1,4 +1,4 @@
-"""Type aliases for commonly used dict types in agent-history.
+"""Type aliases for commonly used dict types in cagelens.
 
 This module provides type aliases to improve code clarity and enable better
 type checking for dictionary types used throughout the codebase.
@@ -58,15 +58,15 @@ WorkspaceSessionsMap = Dict[str, List[SessionDict]]
 HomeWorkspacesMap = Dict[str, List[WorkspaceDict]]
 
 __all__ = [
-    "SessionDict",
-    "WorkspaceDict",
-    "HomeDict",
-    "ProjectDict",
-    "StatsDict",
-    "MessageDict",
     "ContentBlock",
-    "MetricsDict",
     "ExportResultDict",
-    "WorkspaceSessionsMap",
+    "HomeDict",
     "HomeWorkspacesMap",
+    "MessageDict",
+    "MetricsDict",
+    "ProjectDict",
+    "SessionDict",
+    "StatsDict",
+    "WorkspaceDict",
+    "WorkspaceSessionsMap",
 ]

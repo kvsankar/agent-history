@@ -2,7 +2,7 @@
 """Create and validate real coding-agent sessions in isolated temp directories.
 
 This script is intentionally opt-in. It launches installed agent CLIs only when
-AGENT_HISTORY_REAL_AGENT_TESTS=1 is set, then points agent-history at the temp
+CAGELENS_REAL_AGENT_TESTS=1 is set, then points cagelens at the temp
 session roots it created.
 """
 
@@ -23,18 +23,23 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-AGENT_HISTORY_SCRIPT = REPO_ROOT / "agent-history"
-OPT_IN_ENV = "AGENT_HISTORY_REAL_AGENT_TESTS"
+CAGELENS_SCRIPT = REPO_ROOT / "cagelens"
+OPT_IN_ENV = "CAGELENS_REAL_AGENT_TESTS"
+LEGACY_OPT_IN_ENV = "AGENT_HISTORY_REAL_AGENT_TESTS"
 DEFAULT_AGENTS = ("claude", "codex", "gemini", "pi")
 
 PROMPTS = {
-    "claude": "Reply with exactly: agent-history claude persistence probe. Do not use tools.",
+    "claude": "Reply with exactly: cagelens claude persistence probe. Do not use tools.",
     "codex": (
-        "Reply with exactly: agent-history codex persistence probe. "
+        "Reply with exactly: cagelens codex persistence probe. "
         "Do not run commands, read files, edit files, or use web search."
     ),
-    "gemini": "Reply with exactly: agent-history gemini persistence probe. Do not use tools.",
-    "pi": "Reply with exactly: agent-history pi persistence probe. Do not use tools.",
+    "gemini": "Reply with exactly: cagelens gemini persistence probe. Do not use tools.",
+    "pi": "Reply with exactly: cagelens pi persistence probe. Do not use tools.",
+}
+
+LEGACY_PROMPTS = {
+    agent: prompt.replace("cagelens", "agent-history") for agent, prompt in PROMPTS.items()
 }
 
 SECRET_PATTERNS = (
@@ -46,7 +51,7 @@ SECRET_PATTERNS = (
     re.compile(r"\bresp_[A-Za-z0-9_]+\b"),
 )
 PROBE_RESPONSE_PATTERN = re.compile(
-    r"agent-\s*history\s+(claude|codex|gemini|pi)\s+persistence\s+probe\.?",
+    r"(?:cagelens|agent-\s*history)\s+(claude|codex|gemini|pi)\s+persistence\s+probe\.?",
     re.IGNORECASE,
 )
 
@@ -95,6 +100,9 @@ def _base_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
         "GEMINI_SESSIONS_DIR",
         "PI_SESSIONS_DIR",
         "PI_CODING_AGENT_SESSION_DIR",
+        "CAGELENS_HOME",
+        "CAGELENS_HOME_WSL",
+        "CAGELENS_HOME_WINDOWS",
         "AGENT_HISTORY_HOME",
         "AGENT_HISTORY_HOME_WSL",
         "AGENT_HISTORY_HOME_WINDOWS",
@@ -111,7 +119,7 @@ def _mkdirs(*paths: Path) -> None:
 def _write_workspace_fixture(workspace: Path, agent: str) -> None:
     _mkdirs(workspace)
     (workspace / "README.md").write_text(
-        f"agent-history real-session validation fixture for {agent}\n",
+        f"cagelens real-session validation fixture for {agent}\n",
         encoding="utf-8",
     )
 
@@ -192,14 +200,14 @@ def prepare_agent_invocation(
     env = _base_env(base_env)
     home = root / agent / "home"
     workspace = root / agent / "workspace"
-    config_dir = root / agent / "agent-history-config"
+    config_dir = root / agent / "cagelens-config"
     _write_workspace_fixture(workspace, agent)
     _mkdirs(home, config_dir)
 
     history_env = {
         "HOME": str(home),
-        "AGENT_HISTORY_CONFIG_DIR": str(config_dir),
-        "AGENT_HISTORY_TEST_MODE": "1",
+        "CAGELENS_CONFIG_DIR": str(config_dir),
+        "CAGELENS_TEST_MODE": "1",
     }
 
     prompt = PROMPTS[agent]
@@ -323,7 +331,8 @@ def prepare_agent_invocation(
                 "-p",
                 prompt,
                 "--model",
-                env.get("AGENT_HISTORY_GEMINI_MODEL", "gemini-2.5-flash"),
+                env.get("CAGELENS_GEMINI_MODEL")
+                or env.get("AGENT_HISTORY_GEMINI_MODEL", "gemini-2.5-flash"),
                 "--output-format",
                 "json",
                 "--approval-mode",
@@ -352,9 +361,12 @@ def prepare_agent_invocation(
     auth_copied = (
         _copy_default_auth_files(agent, pi_agent_dir, base_env) if copy_auth_from_default else False
     )
-    pi_model = env.get("AGENT_HISTORY_PI_MODEL", "openai/gpt-4o-mini")
+    pi_model = env.get("CAGELENS_PI_MODEL") or env.get(
+        "AGENT_HISTORY_PI_MODEL", "openai/gpt-4o-mini"
+    )
     if (
-        "AGENT_HISTORY_PI_MODEL" not in env
+        "CAGELENS_PI_MODEL" not in env
+        and "AGENT_HISTORY_PI_MODEL" not in env
         and auth_copied
         and _auth_file_has_provider(pi_agent_dir / "auth.json", "openai-codex")
     ):
@@ -383,7 +395,7 @@ def prepare_agent_invocation(
             "--no-themes",
             "--no-context-files",
             "--name",
-            "agent-history pi smoke",
+            "cagelens pi smoke",
             "-p",
             prompt,
         ],
@@ -436,23 +448,23 @@ def run_command(
     )
 
 
-def _agent_history_env(invocation: AgentInvocation) -> dict[str, str]:
+def _cagelens_env(invocation: AgentInvocation) -> dict[str, str]:
     env = _base_env(invocation.env)
     env.update(invocation.history_env)
     return env
 
 
-def validate_with_agent_history(
+def validate_with_cagelens(
     invocation: AgentInvocation,
     export_dir: Path,
     timeout: int,
 ) -> None:
     """Validate list/export/stats against the captured isolated session root."""
-    env = _agent_history_env(invocation)
+    env = _cagelens_env(invocation)
     commands = [
         [
             sys.executable,
-            str(AGENT_HISTORY_SCRIPT),
+            str(CAGELENS_SCRIPT),
             "--agent",
             invocation.agent,
             "session",
@@ -463,7 +475,7 @@ def validate_with_agent_history(
         ],
         [
             sys.executable,
-            str(AGENT_HISTORY_SCRIPT),
+            str(CAGELENS_SCRIPT),
             "--agent",
             invocation.agent,
             "session",
@@ -476,7 +488,7 @@ def validate_with_agent_history(
         ],
         [
             sys.executable,
-            str(AGENT_HISTORY_SCRIPT),
+            str(CAGELENS_SCRIPT),
             "--agent",
             invocation.agent,
             "session",
@@ -491,7 +503,7 @@ def validate_with_agent_history(
         result = run_command(command, env=env, cwd=REPO_ROOT, timeout=timeout)
         if result.returncode != 0:
             raise RuntimeError(
-                "agent-history validation failed: "
+                "cagelens validation failed: "
                 + " ".join(command)
                 + f"\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
             )
@@ -502,7 +514,7 @@ def sanitize_text(text: str, replacements: dict[str, str] | None = None) -> str:
     sanitized = text
     for pattern in SECRET_PATTERNS:
         sanitized = pattern.sub("[REDACTED_SECRET]", sanitized)
-    for prompt in PROMPTS.values():
+    for prompt in (*PROMPTS.values(), *LEGACY_PROMPTS.values()):
         sanitized = sanitized.replace(prompt, "[REDACTED_PROMPT]")
     sanitized = PROBE_RESPONSE_PATTERN.sub("[REDACTED_ASSISTANT_TEXT]", sanitized)
     for raw, redacted in (replacements or {}).items():
@@ -590,8 +602,8 @@ def write_sanitized_sessions(
     agent_dir = output_dir / invocation.agent
     agent_dir.mkdir(parents=True, exist_ok=True)
     replacements = {
-        str(root): "/tmp/agent-history-real-agent",
-        str(invocation.workspace): "/tmp/agent-history-real-agent/workspace",
+        str(root): "/tmp/cagelens-real-agent",
+        str(invocation.workspace): "/tmp/cagelens-real-agent/workspace",
     }
     written = []
     for index, session_file in enumerate(session_files, start=1):
@@ -631,7 +643,7 @@ def run_agent_validation(
         )
 
     try:
-        validate_with_agent_history(invocation, root / invocation.agent / "exports", timeout)
+        validate_with_cagelens(invocation, root / invocation.agent / "exports", timeout)
     except RuntimeError as err:
         return AgentResult(
             agent=invocation.agent,
@@ -700,14 +712,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {err}", file=sys.stderr)
         return 2
 
-    if not args.dry_run and os.environ.get(OPT_IN_ENV) != "1":
+    opted_in = os.environ.get(OPT_IN_ENV) == "1" or os.environ.get(LEGACY_OPT_IN_ENV) == "1"
+    if not args.dry_run and not opted_in:
         print(
             f"error: set {OPT_IN_ENV}=1 to launch real agent CLIs, or use --dry-run",
             file=sys.stderr,
         )
         return 2
 
-    temp_dir = tempfile.TemporaryDirectory(prefix="agent-history-real-agents-")
+    temp_dir = tempfile.TemporaryDirectory(prefix="cagelens-real-agents-")
     root = Path(temp_dir.name)
     results = []
     try:

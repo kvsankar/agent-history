@@ -22,7 +22,7 @@ Pi stores coding-agent sessions as JSONL under:
     └── <timestamp>_<session-id>.jsonl
 ```
 
-`agent-history` reads the session `cwd` from the file when available. If the
+`cagelens` reads the session `cwd` from the file when available. If the
 file does not include a usable workspace path, it falls back to decoding the
 workspace directory name.
 
@@ -52,7 +52,7 @@ The format can include:
 
 ## Normalization
 
-`agent-history` maps Pi records into the same session/message model used for
+`cagelens` maps Pi records into the same session/message model used for
 Claude Code, Codex CLI, and Gemini CLI:
 
 - user and assistant messages become conversation turns;
@@ -64,7 +64,7 @@ Claude Code, Codex CLI, and Gemini CLI:
 ## Workspace Matching
 
 Pi workspaces are matched by readable path when `cwd` is present. Otherwise,
-`agent-history` decodes wrapped workspace folder names such as:
+`cagelens` decodes wrapped workspace folder names such as:
 
 ```text
 --home-user-projects-myapp-- -> /home/user/projects/myapp
@@ -76,10 +76,10 @@ Pi workspaces are matched by readable path when `cwd` is present. Otherwise,
 |----------|---------|
 | `PI_CODING_AGENT_SESSION_DIR` | Override Pi session directory |
 | `PI_CODING_AGENT_DIR` | Override Pi agent config directory |
-| `PI_SESSIONS_DIR` | agent-history compatibility/test override for session directory |
+| `PI_SESSIONS_DIR` | cagelens compatibility/test override for session directory |
 
 ## Limitations
 
-Pi is open source, but its persisted session format may evolve. `agent-history`
+Pi is open source, but its persisted session format may evolve. `cagelens`
 keeps unknown fields in detail data where practical and treats missing optional
 metadata as absent rather than invalid.
