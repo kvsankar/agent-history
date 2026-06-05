@@ -125,7 +125,10 @@ options:
 | `export` | `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), projects, `--aw`, `--this` | Exports the current workspace (or project) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
 | `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/projects, `--aw`, `--this` | Defaults to the current workspace (or project). If not in a workspace, pass a pattern or use `--aw`. Use `--aw` for every workspace in the metrics DB, or pass patterns/projects to filter. `--source` limits results to a specific home and defaults to all workspaces for that source unless `--this` is set. |
 
-When in doubt: `--aw` means "all workspaces"; `--ah` means "all homes." Without those switches the CLI sticks to the current workspace/project, even if you add Windows/WSL/remote flags, so you get predictable, scoped results.
+When in doubt: `--aw` means "all workspaces"; `--ah` means "all homes." `ws list`
+already lists all workspaces in the selected homes. `session list`, `export`,
+and `stats` stick to the current workspace/project unless you pass `--aw` or an
+explicit workspace/project scope.
 
 ## Testing
 

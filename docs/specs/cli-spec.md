@@ -189,7 +189,7 @@ Notes:
 
 Multiple `--project` flags are combined into a single scope.
 
-**Project Auto-Detection:** When running `session`, `ws`, or `export` commands without explicit workspace arguments, if the current directory belongs to a project, the command automatically scopes to that project. Use `--this` to override and target only the current workspace.
+**Project Auto-Detection:** When running `session`, `export`, or `stats` commands without explicit workspace arguments, if the current directory belongs to a project, the command automatically scopes to that project. Use `--this` to override and target only the current workspace. `ws list` is a discovery command and defaults to all workspaces in the selected homes unless a workspace pattern/project/`--this` is provided.
 
 ```
 # In ~/myproject (which is part of project "myproj")

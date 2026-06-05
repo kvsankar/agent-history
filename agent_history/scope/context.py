@@ -94,8 +94,12 @@ class ScopeArgs:
         no_wsl: Exclude WSL homes when using --ah.
         no_windows: Exclude Windows homes when using --ah.
         no_remote: Exclude remote homes when using --ah.
-        no_web: Exclude web sessions when using --ah.
+    no_web: Exclude web sessions when using --ah.
     """
+
+    # Command intent
+    resource: str | None = None
+    verb: str | None = None
 
     # Home selection
     all_homes: bool = False

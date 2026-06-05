@@ -554,6 +554,7 @@ Home and workspace scopes are orthogonal:
 
 | Command | Workspace Scope | Home Scope |
 |---------|-----------------|------------|
+| `ws list` | all | local |
 | `session list` | current | local |
 | `session list --aw` | all | local |
 | `session list --ah` | current | all configured |
