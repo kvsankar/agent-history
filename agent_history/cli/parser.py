@@ -992,7 +992,7 @@ class CLIParser:
         resource, verb = self._get_resource_verb(args)
 
         # Build scope args
-        scope_args = self._build_scope_args(args)
+        scope_args = self._build_scope_args(args, resource, verb)
 
         # Build output args (verb needed to handle -o differently for export)
         output_args = self._build_output_args(args, verb)
@@ -1078,7 +1078,7 @@ class CLIParser:
         else:
             raise ValueError(f"Unknown command: {command}")
 
-    def _build_scope_args(self, args: argparse.Namespace) -> ScopeArgs:
+    def _build_scope_args(self, args: argparse.Namespace, resource: str, verb: str) -> ScopeArgs:
         """Build ScopeArgs from parsed arguments."""
         # Home selection
         all_homes = getattr(args, "all_homes", False)
@@ -1155,6 +1155,8 @@ class CLIParser:
         no_web = getattr(args, "no_web", False)
 
         return ScopeArgs(
+            resource=resource,
+            verb=verb,
             all_homes=all_homes,
             home_type=home_type,
             home_value=home_value,

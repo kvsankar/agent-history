@@ -56,12 +56,21 @@ class TestCurrentWorkspaceScope:
 
         Spec: ws list always shows all workspaces, not scoped to current.
         """
+        cwd = Path(multi_workspace_home["env"]["AGENT_HISTORY_HOME"]) / "home/user/project-alpha"
+        cwd.mkdir(parents=True)
+
         result = run_cli_subprocess(
             ["ws", "list"],
             env=multi_workspace_home["env"],
+            cwd=cwd,
         )
 
         assert_cli_success(result, "ws list should succeed")
+        assert "/home/user/project-alpha" in result.stdout
+        assert "/home/user/project-beta" in result.stdout
+        assert "/home/user/services/api-gateway" in result.stdout
+        data_rows = [line for line in result.stdout.splitlines()[1:] if line.strip()]
+        assert len(data_rows) > 1, "ws list should not be limited to the current workspace"
 
     def test_current_workspace_isolation(self, current_workspace_setup: Dict[str, Any]) -> None:
         """Current workspace scope should not include other workspaces."""

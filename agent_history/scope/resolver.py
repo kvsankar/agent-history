@@ -225,6 +225,17 @@ class ScopeResolver:
         if args.patterns or args.name_patterns:
             return self._build_pattern_records(args, home_spec, session_spec)
 
+        # Workspace listing defaults to discovery across selected homes.
+        # Session/export/stats commands keep current workspace/project defaults.
+        if args.resource == "ws" and args.verb == "list":
+            return [
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=WorkspaceSpecFactory.All,
+                    sessions=session_spec,
+                )
+            ]
+
         # Check for implicit project detection (CWD in project)
         if self.context.cwd_project:
             return [ProjectRecord(project=self.context.cwd_project, sessions=session_spec)]
