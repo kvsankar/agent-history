@@ -80,15 +80,6 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | [testing-strategy.md](testing/testing-strategy.md) | Default, Docker, and opt-in real-agent testing strategy. |
 | [docker-e2e.md](testing/docker-e2e.md) | Docker E2E testing infrastructure for SSH operations. |
 
-## Reviews
-
-Review docs are supporting or historical unless promoted into specs, tests, or
-architecture docs.
-
-| Document | Purpose |
-|----------|---------|
-| [reviews/](reviews/README.md) | Review index with current, superseded, closed, and historical status. |
-
 ## Other
 
 | Document | Purpose |

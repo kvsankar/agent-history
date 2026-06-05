@@ -33,7 +33,7 @@ Post-consolidation rerun:
 - Corpus: 39 documents, 942 sections.
 - Section similarity: 0 similar section pairs above threshold 0.9; 0 section recommendations.
 - IA output: 9 top-level topic groups, 6 facet dimensions, 7 diagnostics, 103 consolidation clusters.
-- Interpretation: copy-like section duplication remains clean. The IA cluster count rose because the consolidation work added explicit review/documentation-governance material (`docs/reviews/README.md`) and made status/index topics visible to Dryscope. The remaining diagnostics are now more about durable navigation hubs than duplicated prose.
+- Interpretation: copy-like section duplication remains clean. The IA cluster count rose because the consolidation work temporarily added explicit review/documentation-governance material and made status/index topics visible to Dryscope. Review documents are no longer tracked; keep durable findings promoted into specs, tests, or architecture docs instead.
 - Doc-pair LLM analysis was skipped again because the estimated pair-analysis cost exceeded the configured cap.
 
 ## Proposed IA
@@ -131,7 +131,7 @@ Consolidation notes:
 
 - Dryscope flagged mixed lifecycle in architecture docs. Mark current, proposed, draft, generated, and review docs explicitly.
 - Keep `DESIGN.md` as the current architecture entry point; make v2 docs clearly proposed/current-by-area.
-- Move code-review findings into reviews/archive once resolved; keep only durable architecture decisions in design docs.
+- Keep review outputs out of version control once actionable findings are promoted; keep only durable architecture decisions in design docs.
 
 ### 5. Validation, Testing, and Release Readiness
 
@@ -215,7 +215,7 @@ Priority docs for facet tagging:
 - `docs/design/DESIGN.md`
 - `docs/design-v2/*.md`
 - `docs/analysis/*.md`
-- `docs/reviews/*.md`
+- local ignored review outputs under `docs/reviews/`
 - `docs/specs/todo.md`
 - `docs/agent-history-code-map.md`
 
@@ -228,10 +228,10 @@ These are not section-level duplicate copies. They are topic-coverage overlaps w
 | Usage statistics | `docs/user/usage.md` for commands; `docs/specs/agent-history-spec.md` or `docs/design/DESIGN.md` for storage | `cookbook.md`, `troubleshooting.md`, `cli-spec.md`, `testing-strategy.md`, `competitive-analysis.md` |
 | Message record schema | agent format specs plus `unified-json-schema.md` | feature docs should link instead of restating field-level schema |
 | Release follow-up items | `docs/specs/todo.md` | dated analysis/review docs should link here after findings are promoted |
-| Conversation export | `docs/user/usage.md` and `docs/user/cookbook.md` for workflows; `unified-json-schema.md` for NDJSON | `agent-history-spec.md`, `cli-spec.md`, `AGENT_HISTORY_SPEC_DRIFT.md` |
+| Conversation export | `docs/user/usage.md` and `docs/user/cookbook.md` for workflows; `unified-json-schema.md` for NDJSON | `agent-history-spec.md`, `cli-spec.md`, local review output after findings are promoted |
 | Unified NDJSON schema | `docs/specs/schema/unified-json-schema.md` | `schema-refresh`, `clearing`, `compaction`, `interruptions`, `rejections` |
 | Agent storage locations | `docs/specs/agent-history-spec.md` and per-agent format specs | `troubleshooting.md`, `agent-history-process-image.md`, dated analysis |
-| Scope resolution | `docs/design-v2/scope-resolution-v2.md` | `agent-history-spec.md`, `DESIGN.md`, reviews/code-reuse docs |
+| Scope resolution | `docs/design-v2/scope-resolution-v2.md` | `agent-history-spec.md`, `DESIGN.md`, `code-reuse-mapping.md` |
 | Tool call records | per-agent format specs and `unified-json-schema.md` | avoid duplicating tool-call mapping in feature docs |
 | Command result formatting | `docs/specs/cli-spec.md` | `pipeline-architecture.md`, `cli-command-patterns.md`, review docs |
 | Real-agent validation | `docs/testing/testing-strategy.md` and `docs/specs/todo.md` | `schema-refresh-2026-06-04.md` should stay dated evidence |
@@ -253,7 +253,7 @@ These are not section-level duplicate copies. They are topic-coverage overlaps w
 
 ### Move Or Mark As Supporting/Archive
 
-- `docs/reviews/` after actionable findings are resolved.
+- `docs/reviews/` should remain ignored local review output after actionable findings are promoted.
 - `docs/other/exploration-log.md` after findings are promoted.
 - `docs/other/context-cli-test-restoration.md` once test restoration context is no longer active.
 - `docs/agent-history-code-map.md` as generated/supporting.
@@ -286,4 +286,4 @@ The 2026-06-05 post-consolidation rerun no longer suggests section-level copy cl
 - High: current/proposed/historical/draft docs still overlap across CLI behavior, pipeline architecture, scope resolution, and schema support. Lifecycle facets are now present, but indexes should keep exposing them.
 - Medium: export still spans workflow, pipeline, schema, and web-import research. Keep reciprocal links between those owners.
 - Medium: source-format lookup and normalized field/schema mapping are related but should remain distinct.
-- Low: documentation governance now appears as its own topic across indexes, IA plans, TODOs, and review status. This is expected after adding the review index, but it may deserve a small explicit governance section if the docs continue to grow.
+- Low: documentation governance appears across indexes, IA plans, and TODOs. It may deserve a small explicit governance section if the docs continue to grow.
