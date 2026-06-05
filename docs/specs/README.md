@@ -20,6 +20,7 @@ Note: Claude web sessions are supported; other web format specs are reference-on
 | [claude-code-format.md](agents/formats/claude-code-format.md) | Claude Code (Anthropic) |
 | [codex-cli-format.md](agents/formats/codex-cli-format.md) | Codex CLI (OpenAI) |
 | [gemini-cli-format.md](agents/formats/gemini-cli-format.md) | Gemini CLI (Google) |
+| [pi-format.md](agents/formats/pi-format.md) | Pi Coding Agent |
 | [chatgpt-web-format.md](agents/formats/chatgpt-web-format.md) | ChatGPT Web |
 | [gemini-web-format.md](agents/formats/gemini-web-format.md) | Gemini Web |
 
@@ -39,3 +40,9 @@ How agents handle specific features.
 | Document | Description |
 |----------|-------------|
 | [unified-json-schema.md](schema/unified-json-schema.md) | Normalized NDJSON export format |
+
+## Refresh Notes
+
+| Document | Description |
+|----------|-------------|
+| [schema-refresh-2026-06-04.md](../analysis/schema-refresh-2026-06-04.md) | Current upstream schema drift review and parser impact |

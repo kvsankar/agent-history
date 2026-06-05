@@ -412,8 +412,13 @@ Environment variables for testing, automation, and overriding default behavior.
 | `AGENT_HISTORY_HOME_WSL` | Override WSL home path (skips real WSL probing) |
 | `AGENT_HISTORY_HOME_WINDOWS` | Override Windows home path (skips real Windows probing) |
 | `CLAUDE_PROJECTS_DIR` | Override Claude Code projects directory |
-| `CODEX_SESSIONS_DIR` | Override Codex CLI sessions directory |
-| `GEMINI_SESSIONS_DIR` | Override Gemini CLI sessions directory |
+| `CODEX_HOME` | Upstream Codex home directory; sessions are read from `CODEX_HOME/sessions` |
+| `CODEX_SESSIONS_DIR` | Direct Codex sessions directory override (agent-history compatibility/testing) |
+| `GEMINI_CLI_HOME` | Upstream Gemini CLI home root; sessions are read from `GEMINI_CLI_HOME/.gemini/tmp` |
+| `GEMINI_SESSIONS_DIR` | Direct Gemini sessions directory override (agent-history compatibility/testing) |
+| `PI_CODING_AGENT_SESSION_DIR` | Upstream Pi session directory override |
+| `PI_CODING_AGENT_DIR` | Upstream Pi agent config directory override |
+| `PI_SESSIONS_DIR` | Direct Pi sessions directory override (agent-history compatibility/testing) |
 
 ### Usage Examples
 

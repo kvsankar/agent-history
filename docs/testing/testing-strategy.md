@@ -25,16 +25,20 @@ Draft strategy for behavior-driven testing based on specifications.
 
 - **Spec-Driven**: Every test traces back to a specification requirement
 - **Environment-Agnostic**: Tests run identically on Windows, WSL, Ubuntu
-- **Synthetic Data**: No dependency on real coding agent sessions
+- **Synthetic Data by default**: Normal tests do not depend on real coding agent sessions
 - **Isolation**: Tests don't affect user's actual `~/.claude`, `~/.codex`, `~/.gemini` directories
 - **Fast**: Avoid I/O-bound operations; use in-memory fixtures where possible
 
-### Non-Goals (Phase 1)
+### Non-Goals (Default Test Suite)
 
 - Running actual coding agents (Claude Code, Codex CLI, Gemini CLI)
 - Generating real session files via agent automation
 - Testing network-dependent features (SSH remotes, web sessions)
 - Performance benchmarking
+
+Real coding-agent validation is available as an explicit release gate. It is not
+part of the default test suite because it requires installed CLIs, network
+access, and authenticated provider credentials.
 
 ---
 
@@ -179,6 +183,47 @@ Before writing tests, these conflicts must be resolved:
 ## Heavy Suite Gating
 
 Heavy tests (Docker, SSH, cross-env) need explicit gating to keep CI fast.
+
+### Real Agent Validation
+
+The opt-in real-agent harness creates fresh temp homes, fresh temp workspaces,
+and fresh agent settings before launching installed CLIs. It never points agents
+at the user's default session stores.
+
+```bash
+# Show the isolated commands without launching agents
+uv run python scripts/real_agent_validation.py --agents all --dry-run
+
+# Run one real agent after setting its credential env var
+AGENT_HISTORY_REAL_AGENT_TESTS=1 \
+CODEX_API_KEY=... \
+uv run python scripts/real_agent_validation.py --agents codex
+
+# Run all available agents and write redacted fixture candidates
+AGENT_HISTORY_REAL_AGENT_TESTS=1 \
+uv run python scripts/real_agent_validation.py \
+  --agents all \
+  --copy-auth-from-default \
+  --skip-unavailable \
+  --sanitized-output-dir /tmp/agent-history-real-fixtures
+```
+
+The harness validates each captured session through:
+
+- `agent-history --agent <agent> session list <temp-workspace>`
+- `agent-history --agent <agent> session export <temp-workspace> <temp-output> --json`
+- `agent-history --agent <agent> session stats <temp-workspace> --no-sync`
+
+Use these runs for release validation and fixture refresh, not for routine CI.
+With `--copy-auth-from-default`, the harness copies only auth files into the
+isolated temp homes. It does not copy default sessions, projects, raw inputs, or
+agent settings.
+
+The 2026-06-05 OAuth-backed fixture refresh passed for Claude Code, Codex CLI,
+Gemini CLI, and Pi. Pi used `openai-codex/gpt-5.5` when copied auth contained an
+`openai-codex` OAuth entry. The sanitized captures are checked in under
+`tests/fixtures/real_sessions/` and parsed by
+`tests/unit/test_real_session_fixtures.py`.
 
 ### Markers and Skip Conditions
 

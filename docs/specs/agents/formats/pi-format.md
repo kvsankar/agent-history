@@ -1,11 +1,16 @@
 # Pi Session Format
 
+> **Status**: Refreshed 2026-06-04 from current public Pi docs/source. Pi
+> sessions are versioned tree JSONL; this page describes the supported current
+> shape plus compatibility behavior. See
+> [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
+
 Pi stores coding-agent sessions as JSONL under:
 
 ```text
 ~/.pi/agent/sessions/
 └── --home-user-myproject--/
-    └── <session-id>.jsonl
+    └── <timestamp>_<session-id>.jsonl
 ```
 
 `agent-history` reads the session `cwd` from the file when available. If the
@@ -18,7 +23,7 @@ Pi session files are newline-delimited JSON. The first relevant record is
 usually a session header, followed by message records.
 
 ```jsonl
-{"type":"session","id":"session-id","cwd":"/home/user/myproject","version":"..."}
+{"type":"session","version":3,"id":"session-id","timestamp":"...","cwd":"/home/user/myproject"}
 {"type":"message","message":{"role":"user","content":"..."}}
 {"type":"message","message":{"role":"assistant","content":[...]}}
 ```
@@ -26,7 +31,11 @@ usually a session header, followed by message records.
 The format can include:
 
 - `session` entries with session ID, workspace, version, and timestamps.
+- tree links via `id` and `parentId`;
 - `message` entries with user, assistant, tool, or execution content.
+- `model_change`, `thinking_level_change`, `compaction`,
+  `branch_summary`, `custom`, `custom_message`, `label`, and
+  `session_info` entries.
 - Assistant tool-call blocks.
 - Tool result and bash execution messages.
 - Thinking/reasoning blocks when Pi records them.
@@ -58,7 +67,7 @@ Pi workspaces are matched by readable path when `cwd` is present. Otherwise,
 |----------|---------|
 | `PI_CODING_AGENT_SESSION_DIR` | Override Pi session directory |
 | `PI_CODING_AGENT_DIR` | Override Pi agent config directory |
-| `PI_SESSIONS_DIR` | Compatibility/test override for session directory |
+| `PI_SESSIONS_DIR` | agent-history compatibility/test override for session directory |
 
 ## Limitations
 

@@ -2,6 +2,11 @@
 
 How Claude Code, Codex CLI, and Gemini CLI record user rejections of edits, tools, and proposed actions.
 
+> **Refresh 2026-06-04**: This document describes source-format detection
+> opportunities. Current unified NDJSON does not emit first-class rejection
+> event records; rejection signals are represented in message content and
+> backend-specific metadata when preserved.
+
 ## Summary
 
 | Agent | How Recorded | Key Field | User Reason Captured? |

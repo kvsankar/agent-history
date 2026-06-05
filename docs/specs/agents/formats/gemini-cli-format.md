@@ -1,8 +1,11 @@
 # Gemini CLI Session Format
 
-This document describes the session storage format used by Google's Gemini CLI, verified from actual session files.
+This document describes the session storage format used by Google's Gemini CLI.
 
-> **Status**: Verified - format confirmed from source code and actual session files (December 2025).
+> **Status**: Refreshed 2026-06-04 from current public
+> `google-gemini/gemini-cli` source and docs. Current persistence is JSONL;
+> older single-JSON sessions can still exist. See
+> [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
 
 ## Table of Contents
 
@@ -36,12 +39,20 @@ Gemini CLI is Google's open-source AI coding assistant for the terminal. It supp
 Sessions are stored in project-specific directories:
 
 ```
-~/.gemini/tmp/<project_hash>/chats/
+~/.gemini/tmp/<project_identifier>/chats/
 ```
 
-Where `<project_hash>` is a SHA-256 hash of the project's root path.
+Older docs and files use a SHA-256 project hash. Current Gemini CLI uses a
+project registry identifier and can migrate old hash directories, so parsers
+must not assume this path component is always a SHA-256 hash.
 
-**File naming pattern:** `session-YYYY-MM-DDTHH-MM-<session_id_prefix>.json`
+**Current file naming pattern:** `session-<timestamp>-<shortSessionId>.jsonl`
+
+**Observed OAuth prompt-mode compatibility pattern:** Gemini CLI 0.38.2 produced
+`session-*.json` during the 2026-06-05 isolated real-agent validation run, so
+parsers must continue to support both append-only JSONL and single-file JSON.
+
+**Legacy file naming pattern:** `session-YYYY-MM-DDTHH-MM-<session_id_prefix>.json`
 
 Example: `session-2025-12-03T06-35-477739d0.json`
 
@@ -71,9 +82,26 @@ A separate file tracks user inputs:
 
 ---
 
+`GEMINI_CLI_HOME` moves the upstream `.gemini` home. `agent-history` also
+supports `GEMINI_SESSIONS_DIR` as a direct `tmp` directory override.
+
 ## Session File Format
 
-Sessions are stored as **single JSON files** (not JSONL).
+### Current JSONL Format
+
+Current Gemini CLI session files are append-only JSONL. The first record is
+session metadata. Later records can be message records, `{"$set": ...}`
+metadata/snapshot updates, or `{"$rewindTo": "<messageId>"}`.
+
+Message records keep the same broad fields documented below: `id`,
+`timestamp`, `type`, `content`, and optional Gemini metadata such as `model`,
+`thoughts`, `tokens`, and `toolCalls`.
+
+Subagent sessions can be nested under `chats/<parentSessionId>/<agentId>.jsonl`.
+
+### Legacy JSON Format
+
+Legacy sessions are stored as single JSON files.
 
 ### Top-Level Structure
 
@@ -353,7 +381,7 @@ gemini --output-format stream-json  # Real-time newline-delimited JSON
 | Aspect | Claude Code | Codex CLI | Gemini CLI |
 |--------|-------------|-----------|------------|
 | **Location** | `~/.claude/projects/<workspace>/` | `~/.codex/sessions/YYYY/MM/DD/` | `~/.gemini/tmp/<hash>/chats/` |
-| **Format** | JSONL | JSONL | JSON (full file) |
+| **Format** | JSONL | JSONL | JSONL or JSON |
 | **Organization** | By workspace path | By date | By project hash |
 | **Message Type Field** | `type: "user"/"assistant"` | `payload.role` | `type: "user"/"gemini"` |
 | **Content Field** | `content` array | `content` array | `content` string |
@@ -365,7 +393,7 @@ gemini --output-format stream-json  # Real-time newline-delimited JSON
 
 ### Key Differences
 
-1. **File Format**: Gemini uses single JSON files; Claude/Codex use JSONL (one JSON per line).
+1. **File Format**: Gemini can use append-only JSONL or single JSON files; Claude/Codex use JSONL (one JSON per line).
 
 2. **Role Names**: Gemini uses `"gemini"` for model responses; Claude/Codex use `"assistant"`.
 
@@ -373,33 +401,40 @@ gemini --output-format stream-json  # Real-time newline-delimited JSON
 
 4. **Reasoning/Thoughts**: Gemini explicitly stores reasoning steps; Claude/Codex do not.
 
-5. **Project Identification**: Gemini uses SHA-256 hashes of project paths; Claude uses encoded paths; Codex uses dates.
+5. **Project Identification**: Gemini uses project identifiers that may be registry slugs or legacy SHA-256 hashes; Claude uses encoded paths; Codex uses dates.
 
 ---
 
 ## Implementation Considerations
 
-### To Add Gemini Support
+### Parser Support
 
-1. **Parse JSON (not JSONL)**: Load entire file as JSON object
+1. **Parse current JSONL and legacy JSON**: Current files are append-only JSONL; older files are single JSON objects.
 2. **Handle Hashed Paths**: Scan all `~/.gemini/tmp/*/chats/` directories
 3. **Map Type Names**: Convert `"gemini"` → `"assistant"` for unified display
-4. **Extract Workspace**: Project hash obscures original path (may need external mapping)
+4. **Extract Workspace**: Project identifier may obscure original path (may need `projects.json` or agent-history index mapping)
 5. **Handle Thoughts**: Optionally display reasoning steps in export
 
 ### Environment Variable
 
-Following the pattern of `CLAUDE_PROJECTS_DIR` and `CODEX_SESSIONS_DIR`:
+Upstream Gemini uses `GEMINI_CLI_HOME`; `agent-history` also supports a direct
+sessions override:
 
 ```python
-GEMINI_SESSIONS_DIR = os.environ.get("GEMINI_SESSIONS_DIR") or Path.home() / ".gemini" / "tmp"
+gemini_tmp = (
+    Path(os.environ["GEMINI_SESSIONS_DIR"])
+    if os.environ.get("GEMINI_SESSIONS_DIR")
+    else Path(os.environ["GEMINI_CLI_HOME"]) / ".gemini" / "tmp"
+    if os.environ.get("GEMINI_CLI_HOME")
+    else Path.home() / ".gemini" / "tmp"
+)
 ```
 
 ### Challenges
 
-1. **Project Hash**: Cannot reverse SHA-256 to get original project path
-2. **JSON vs JSONL**: Different parsing approach needed
-3. **Workspace Display**: Need strategy for displaying hashed project names meaningfully
+1. **Project Identifier**: May be a registry slug or legacy hash; not always reversible.
+2. **JSON vs JSONL**: Both formats need support during migration.
+3. **Workspace Display**: Need strategy for displaying opaque project identifiers meaningfully.
 4. **Format Evolution**: Gemini CLI is actively developed; format may change
 
 ### Potential Solutions for Project Hash

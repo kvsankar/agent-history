@@ -39,7 +39,7 @@ This document describes the NDJSON emitted by `session export --json` in v2. The
 |-------|------|----------|-------------|
 | `type` | string | Yes | Always `"header"` |
 | `schema_version` | string | Yes | Schema version (currently `2.0`) |
-| `agent` | string | Yes | Agent type: `claude`, `codex`, `gemini` |
+| `agent` | string | Yes | Agent type: `claude`, `codex`, `gemini`, `pi` |
 | `session_file` | string | Yes | Source filename or path (from session metadata) |
 | `session_id` | string | No | Session id if present in metadata |
 | `workspace` | string | No | Human-readable workspace when available |
@@ -56,7 +56,9 @@ This document describes the NDJSON emitted by `session export --json` in v2. The
   "content": "Hello",
   "model": "claude-3-5-sonnet",
   "tokens": {"input": 12, "output": 34, "cached": 0},
-  "tool_calls": [{"name": "Read", "id": "toolu_01", "input": {"path": "README.md"}}]
+  "tool_calls": [{"name": "Read", "id": "toolu_01", "input": {"path": "README.md"}}],
+  "raw_role": "toolResult",
+  "tool_result": {"tool_call_id": "call_01", "tool_name": "Read", "is_error": false}
 }
 ```
 
@@ -66,13 +68,17 @@ This document describes the NDJSON emitted by `session export --json` in v2. The
 | `timestamp` | string | No | ISO 8601 timestamp if present |
 | `role` | string | Yes | Normalized role: `user`, `assistant`, `system` |
 | `content` | string | Yes | Text content (tool results are serialized into content) |
-| `model` | string | No | Claude model name if present |
-| `tokens` | object | No | Claude usage totals (`input`, `output`, `cached`) |
-| `tool_calls` | array | No | Claude tool use blocks (name/id/input) |
+| `model` | string | No | Model name if present |
+| `tokens` | object | No | Usage totals. Common keys include `input`, `output`, `cached`; Pi can also emit `cache_read` and `cache_write`. |
+| `tool_calls` | array | No | Structured tool calls when the source parser can preserve them |
+| `raw_role` | string | No | Original agent-specific role when useful (for example Pi `toolResult`) |
+| `tool_result` | object | No | Structured tool-result metadata for agents that emit separate tool-result records |
 
 Notes:
-- Codex and Gemini currently emit only `timestamp`, `role`, and `content`.
-- `tokens.cached` corresponds to Claude cache read tokens when present.
+- Codex tool calls/results may be represented as formatted content because the
+  rollout stream stores them as separate response items.
+- Gemini and Pi can emit `model`, `tokens`, and `tool_calls`.
+- `tokens.cached` corresponds to cache-read/cached-input tokens when present.
 
 ---
 
@@ -91,7 +97,7 @@ Notes:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `type` | string | Yes | Always `"session"` |
-| `agent` | string | Yes | Agent type: `claude`, `codex`, `gemini` |
+| `agent` | string | Yes | Agent type: `claude`, `codex`, `gemini`, `pi` |
 | `session_id` | string | Yes | Session id or empty string if unknown |
 | `message_count` | int | Yes | Number of messages in the file |
 | `workspace` | string | Yes | Workspace name (human-readable when available) |
@@ -104,3 +110,9 @@ Notes:
 - NDJSON output is **per-session**, not a multi-session export file.
 - The unified schema is intentionally minimal and reflects current export behavior.
 - Fork metadata is only emitted for Claude sessions that include parent/uuid fields.
+- Feature-level events such as compaction, clearing, interruptions, and
+  rejections are currently represented in message content/metadata rather than
+  first-class NDJSON event records.
+- A post-release v2.1 schema round is tracked to add first-class `type: "event"`
+  records for non-message concrete agent events while keeping existing
+  message-only consumers compatible.

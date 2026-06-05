@@ -2,7 +2,11 @@
 
 This document describes the session storage format used by OpenAI's Codex CLI.
 
-> **Status**: Verified - format confirmed from source code (December 2025). See [Sources](#sources) for authoritative references.
+> **Status**: Refreshed 2026-06-04 from current public `openai/codex`
+> source. The format is not guaranteed stable; see
+> [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
+> `agent-history` supports the older direct `CODEX_SESSIONS_DIR` override and
+> the upstream `CODEX_HOME` layout.
 
 ## Table of Contents
 
@@ -17,7 +21,8 @@ This document describes the session storage format used by OpenAI's Codex CLI.
 
 ### Storage Location
 
-Codex CLI stores session data in a date-based hierarchy:
+Codex CLI stores session data in a date-based hierarchy under
+`$CODEX_HOME/sessions` (default `~/.codex/sessions`):
 
 ```
 ~/.codex/sessions/
@@ -34,13 +39,16 @@ Codex CLI stores session data in a date-based hierarchy:
 
 ### File Naming
 
-Files follow the pattern: `rollout-<session-identifier>.jsonl`
+Files follow the pattern: `rollout-<timestamp>-<conversation-id>.jsonl`.
+Archived/current upstream rollouts may also be compressed as `.jsonl.zst`.
 
 The session identifier typically includes a timestamp and unique ID.
 
 ### Environment Variable Override
 
-The tool supports `CODEX_SESSIONS_DIR` environment variable to override the default location (useful for testing).
+Upstream Codex uses `CODEX_HOME`; session files live under
+`$CODEX_HOME/sessions`. `agent-history` also supports `CODEX_SESSIONS_DIR`
+as a direct sessions-directory compatibility/test override.
 
 ---
 
