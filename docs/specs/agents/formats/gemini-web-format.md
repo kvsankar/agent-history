@@ -1,5 +1,14 @@
 # Gemini Web Export Format Analysis
 
+<!-- doc-meta
+doc_role: research
+audience: contributor
+lifecycle: proposed
+content_type: api
+surface: integration
+canonicality: supporting
+-->
+
 This document describes conversation access from Gemini web (gemini.google.com).
 
 > **Status**: Research phase - based on third-party tools and community documentation (January 2026).

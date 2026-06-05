@@ -1,5 +1,14 @@
 # Unified NDJSON Schema (Current Implementation)
 
+<!-- doc-meta
+doc_role: spec
+audience: contributor
+lifecycle: current
+content_type: api
+surface: integration
+canonicality: primary
+-->
+
 This document describes the NDJSON emitted by `session export --json` in v2. The export writes **one NDJSON file per session**.
 
 ## File Format

@@ -1,5 +1,14 @@
 # Cookbook
 
+<!-- doc-meta
+doc_role: guide
+audience: user
+lifecycle: current
+content_type: workflow
+surface: public
+canonicality: primary
+-->
+
 Common workflows and recipes for managing Claude Code conversations across environments.
 
 Tip: When targeting Codex or Gemini sessions (including in WSL), pass `--agent codex` or `--agent gemini`.

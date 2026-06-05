@@ -1,5 +1,14 @@
 # Command Reference
 
+<!-- doc-meta
+doc_role: reference
+audience: user
+lifecycle: current
+content_type: workflow
+surface: public
+canonicality: primary
+-->
+
 Detailed documentation for all `agent-history` commands and options.
 
 ## Commands Overview
@@ -9,7 +18,7 @@ Detailed documentation for all `agent-history` commands and options.
 | `home` | List homes and manage sources (WSL, Windows, SSH) |
 | `ws` | List workspaces |
 | `session` | List sessions |
-| `session export` | Export sessions to Markdown or HTML |
+| `session export` | Export sessions to Markdown, HTML, or NDJSON |
 | `project` | Manage workspace projects |
 | `session stats` | Show usage statistics and metrics |
 | `reset` | Reset stored data (metrics/config/cache) |
@@ -333,7 +342,7 @@ agent-history session list --this
 
 ## `session stats` - Usage Statistics
 
-Display usage statistics and metrics from synced coding-agent sessions.
+Display usage statistics and metrics from coding-agent sessions.
 
 ```bash
 agent-history session stats [WORKSPACE] [OPTIONS]
@@ -345,7 +354,8 @@ agent-history session stats [WORKSPACE] [OPTIONS]
 - `--this`: Use current workspace only, not its project membership
 
 **Sync Options:**
-- `--sync`: Sync JSONL files to metrics database
+- `--sync`: Explicitly sync session files to the metrics database before showing stats
+- `--no-sync`: Query cached metrics without refreshing first
 - `--force`: Force re-sync all files
 - `--jobs N`: Parallel remote sync workers (default: 1)
 - `--no-remote`: Skip SSH remotes during sync
@@ -399,7 +409,9 @@ agent-history session stats --sync --ah --jobs 4 --no-remote
 - **Workspaces**: Top workspaces by activity (project-aware)
 - **Daily trends**: Session and token usage over time
 
-**Database Location:** `~/.agent-history/metrics.db` (SQLite)
+**Database Location:** `~/.agent-history/metrics.db` (SQLite). See
+[agent-history-spec.md](../specs/agent-history-spec.md#metrics-database) for
+storage internals.
 
 ---
 

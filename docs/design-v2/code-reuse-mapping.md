@@ -1,5 +1,14 @@
 # Code Reuse Mapping
 
+<!-- doc-meta
+doc_role: plan
+audience: maintainer
+lifecycle: draft
+content_type: architecture
+surface: internal
+canonicality: supporting
+-->
+
 ## Overview
 
 This document maps existing code in `agent-history` to the new pipeline architecture entities, identifying what can be reused as-is, what needs modification, and what needs to be written new.

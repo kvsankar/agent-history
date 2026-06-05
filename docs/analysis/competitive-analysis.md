@@ -1,5 +1,14 @@
 # Claude History Tool: Competitive Analysis & Roadmap
 
+<!-- doc-meta
+doc_role: research
+audience: maintainer
+lifecycle: historical
+content_type: benchmark
+surface: internal
+canonicality: supporting
+-->
+
 *Research Date: December 2025*
 
 ## Executive Summary

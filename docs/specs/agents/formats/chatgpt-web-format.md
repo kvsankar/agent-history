@@ -1,5 +1,14 @@
 # ChatGPT Web Export Format Analysis
 
+<!-- doc-meta
+doc_role: research
+audience: contributor
+lifecycle: proposed
+content_type: api
+surface: integration
+canonicality: supporting
+-->
+
 This document describes the conversation export format from ChatGPT (chat.openai.com).
 
 > **Status**: Research phase - based on community documentation and third-party tools (January 2026).

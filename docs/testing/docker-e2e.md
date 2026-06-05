@@ -1,5 +1,14 @@
 # Docker E2E Testing Infrastructure
 
+<!-- doc-meta
+doc_role: guide
+audience: maintainer
+lifecycle: current
+content_type: workflow
+surface: internal
+canonicality: primary
+-->
+
 This directory contains Docker configuration for end-to-end testing of `agent-history` with real SSH connections.
 
 ## Architecture

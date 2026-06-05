@@ -1,5 +1,14 @@
 # Code Review: agent_history Package
 
+<!-- doc-meta
+doc_role: research
+audience: maintainer
+lifecycle: historical
+content_type: decision
+surface: internal
+canonicality: supporting
+-->
+
 ## Brandon Rhodes Principles Applied
 
 **Date:** 2026-01-10

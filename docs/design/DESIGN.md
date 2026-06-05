@@ -1,5 +1,14 @@
 # Design Overview
 
+<!-- doc-meta
+doc_role: architecture
+audience: maintainer
+lifecycle: current
+content_type: architecture
+surface: internal
+canonicality: primary
+-->
+
 This document explains the architecture and data flow of `agent-history`.
 
 ## Goals

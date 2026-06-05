@@ -1,5 +1,14 @@
 # Specs TODO
 
+<!-- doc-meta
+doc_role: status
+audience: maintainer
+lifecycle: current
+content_type: requirements
+surface: internal
+canonicality: primary
+-->
+
 Items that need investigation or clarification before full specification.
 
 ## Pending Investigation
@@ -84,6 +93,40 @@ workspaces without touching a user's default agent history.
 - `docker/scripts/generate-sessions.sh` now writes current Codex rollouts,
       current Gemini JSONL sessions plus one legacy Gemini JSON session, and Pi
       JSONL sessions. Docker E2E assertions cover Pi list/export paths.
+
+---
+
+### Docs IA Consolidation
+
+**Status:** In progress
+
+**Why:** Dryscope found no high-confidence duplicate sections, but it did find
+topic-level overlap across user workflows, session discovery, agent formats,
+architecture, validation, research, and navigation. The docs need clearer
+canonical owners so future schema/release work does not keep duplicating
+storage, export, stats, and scope explanations.
+
+**Tracking checklist:**
+- [x] Preserve the Dryscope IA summary as a dated analysis document.
+- [x] Keep generated `.dryscope/` report output out of source control.
+- [x] Add lightweight doc metadata facets to primary user, spec, format,
+      architecture, testing, analysis, and supporting docs.
+- [x] Rewrite `docs/README.md` around the seven canonical IA buckets.
+- [x] Update `docs/specs/README.md` to separate local agent formats, web/import
+      reference formats, feature analysis, unified schema, and refresh notes.
+- [x] Promote release/schema follow-up tracking into canonical docs and trim
+      duplicated checklist prose from dated schema-refresh analysis.
+- [ ] Trim duplicated storage-location explanations from user/troubleshooting
+      docs once all references point to `agent-history-spec.md` and per-agent
+      format specs.
+- [ ] Trim duplicated export schema explanations from user workflow and CLI docs
+      once workflow text links to `schema/unified-json-schema.md`.
+- [ ] Trim duplicated stats internals from user workflow docs once command usage,
+      metrics storage, and token-source fields have clear canonical owners.
+- [ ] Mark or archive resolved review documents after any remaining actionable
+      findings are promoted into specs, tests, or architecture docs.
+- [ ] Re-run Dryscope docs scan after consolidation to verify the IA diagnostics
+      have improved.
 
 ---
 

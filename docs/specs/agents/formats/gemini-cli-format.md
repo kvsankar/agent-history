@@ -1,5 +1,14 @@
 # Gemini CLI Session Format
 
+<!-- doc-meta
+doc_role: spec
+audience: contributor
+lifecycle: current
+content_type: api
+surface: integration
+canonicality: primary
+-->
+
 This document describes the session storage format used by Google's Gemini CLI.
 
 > **Status**: Refreshed 2026-06-04 from current public

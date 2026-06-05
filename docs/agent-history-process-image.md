@@ -1,5 +1,14 @@
 # agent-history Process Image Brief
 
+<!-- doc-meta
+doc_role: architecture
+audience: agent
+lifecycle: current
+content_type: requirements
+surface: internal
+canonicality: supporting
+-->
+
 Use this document when creating the agent-history process image with ChatGPT
 Images 2.0 or another image model.
 
