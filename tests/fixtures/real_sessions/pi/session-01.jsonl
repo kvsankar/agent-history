@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"019e963d-6bd6-7ade-8a49-256ac3391bdd","timestamp":"2026-06-05T05:24:28.246Z","cwd":"/tmp/agent-history-real-agent/pi/workspace"}
+{"type":"session_info","id":"13b3bc17","parentId":null,"timestamp":"2026-06-05T05:24:28.246Z","name":"agent-history pi smoke"}
+{"type":"model_change","id":"7265100e","parentId":"13b3bc17","timestamp":"2026-06-05T05:24:28.250Z","provider":"openai-codex","modelId":"gpt-5.5"}
+{"type":"thinking_level_change","id":"4e3d2034","parentId":"7265100e","timestamp":"2026-06-05T05:24:28.250Z","thinkingLevel":"off"}
+{"type":"message","id":"e2e044ff","parentId":"4e3d2034","timestamp":"2026-06-05T05:24:28.254Z","message":{"role":"user","content":[{"type":"text","text":"[REDACTED_PROMPT]"}],"timestamp":1780637068253}}
+{"type":"message","id":"65697c71","parentId":"e2e044ff","timestamp":"2026-06-05T05:24:31.430Z","message":{"role":"assistant","content":[{"type":"text","text":"[REDACTED_ASSISTANT_TEXT]","textSignature":"[REDACTED_TEXTSIGNATURE]"}],"api":"openai-codex-responses","provider":"openai-codex","model":"gpt-5.5","usage":{"input":433,"output":9,"cacheRead":0,"cacheWrite":0,"totalTokens":442,"cost":{"input":0.0021650000000000003,"output":0.00027,"cacheRead":0,"cacheWrite":0,"total":0.002435}},"stopReason":"stop","timestamp":1780637068257,"responseId":"[REDACTED_RESPONSEID]"}}

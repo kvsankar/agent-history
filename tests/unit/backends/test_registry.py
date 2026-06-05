@@ -29,6 +29,20 @@ def test_builtin_agent_choices_come_from_registry() -> None:
     assert get_backend("claude") is not None
 
 
+def test_gemini_backend_metadata_includes_current_jsonl_remote_support() -> None:
+    """Gemini backend metadata should cover current JSONL sessions."""
+    backend = get_backend("gemini")
+
+    assert backend is not None
+    assert ".jsonl" in backend.file_suffixes
+    assert backend.remote_list_sessions_command is not None
+
+    command = backend.remote_list_sessions_command("project-id")
+
+    assert "*.jsonl" in command
+    assert "*.json" in command
+
+
 def test_registered_backend_is_visible_to_parser_and_inventory(tmp_path: Path) -> None:
     """A backend can be added without editing parser or inventory dispatch code."""
     session_file = tmp_path / "fake-session.jsonl"

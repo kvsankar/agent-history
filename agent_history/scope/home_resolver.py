@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agent_history.scope.context import ResolutionContext
@@ -52,7 +52,7 @@ class HomeResolver(ABC):
         ...
 
     @abstractmethod
-    def get_claude_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_claude_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Claude projects directory for this home.
 
@@ -65,7 +65,7 @@ class HomeResolver(ABC):
         ...
 
     @abstractmethod
-    def get_codex_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_codex_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Codex sessions directory for this home.
 
@@ -78,7 +78,7 @@ class HomeResolver(ABC):
         ...
 
     @abstractmethod
-    def get_gemini_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_gemini_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Gemini sessions directory for this home.
 
@@ -91,7 +91,7 @@ class HomeResolver(ABC):
         ...
 
     @abstractmethod
-    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_pi_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Pi sessions directory for this home.
 
@@ -117,7 +117,7 @@ class LocalHomeResolver(HomeResolver):
     def home_type(self) -> str:
         return "local"
 
-    def get_claude_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_claude_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the local Claude projects directory.
 
@@ -126,25 +126,25 @@ class LocalHomeResolver(HomeResolver):
         """
         return context.claude_projects_dir
 
-    def get_codex_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_codex_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the local Codex sessions directory.
 
-        Uses context.codex_sessions_dir which respects CODEX_SESSIONS_DIR
-        environment variable for testing.
+        Uses context.codex_sessions_dir which respects CODEX_HOME and
+        CODEX_SESSIONS_DIR overrides.
         """
         return context.codex_sessions_dir
 
-    def get_gemini_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_gemini_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the local Gemini sessions directory.
 
-        Uses context.gemini_sessions_dir which respects GEMINI_SESSIONS_DIR
-        environment variable for testing.
+        Uses context.gemini_sessions_dir which respects GEMINI_CLI_HOME and
+        GEMINI_SESSIONS_DIR overrides.
         """
         return context.gemini_sessions_dir
 
-    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_pi_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the local Pi sessions directory.
 
@@ -163,7 +163,7 @@ class WSLHomeResolver(HomeResolver):
     identified by the suffix (e.g., "wsl:Ubuntu").
     """
 
-    def __init__(self, distro: Optional[str] = None):
+    def __init__(self, distro: str | None = None):
         """
         Initialize WSL resolver.
 
@@ -178,11 +178,11 @@ class WSLHomeResolver(HomeResolver):
         return "wsl"
 
     @property
-    def distro(self) -> Optional[str]:
+    def distro(self) -> str | None:
         """Return the WSL distribution name."""
         return self._distro
 
-    def get_claude_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_claude_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Claude projects directory for WSL home.
 
@@ -204,7 +204,7 @@ class WSLHomeResolver(HomeResolver):
             return get_wsl_projects_dir(self._distro)
         return None
 
-    def get_codex_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_codex_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Codex sessions directory for WSL home.
 
@@ -225,7 +225,7 @@ class WSLHomeResolver(HomeResolver):
             return get_wsl_codex_sessions_dir(self._distro)
         return None
 
-    def get_gemini_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_gemini_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Gemini sessions directory for WSL home.
 
@@ -246,7 +246,7 @@ class WSLHomeResolver(HomeResolver):
             return get_wsl_gemini_sessions_dir(self._distro)
         return None
 
-    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_pi_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Pi sessions directory for WSL home.
 
@@ -277,7 +277,7 @@ class WindowsHomeResolver(HomeResolver):
     filesystems are accessed remotely or via mount.
     """
 
-    def __init__(self, user: Optional[str] = None):
+    def __init__(self, user: str | None = None):
         """
         Initialize Windows resolver.
 
@@ -291,11 +291,11 @@ class WindowsHomeResolver(HomeResolver):
         return "windows"
 
     @property
-    def user(self) -> Optional[str]:
+    def user(self) -> str | None:
         """Return the Windows username."""
         return self._user
 
-    def get_claude_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_claude_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Claude projects directory for Windows home.
 
@@ -307,7 +307,7 @@ class WindowsHomeResolver(HomeResolver):
 
         return get_windows_projects_dir(self._user)
 
-    def get_codex_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_codex_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Codex sessions directory for Windows home.
 
@@ -317,7 +317,7 @@ class WindowsHomeResolver(HomeResolver):
 
         return get_windows_codex_sessions_dir(self._user)
 
-    def get_gemini_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_gemini_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Gemini sessions directory for Windows home.
 
@@ -327,7 +327,7 @@ class WindowsHomeResolver(HomeResolver):
 
         return get_windows_gemini_sessions_dir(self._user)
 
-    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_pi_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Pi sessions directory for Windows home.
 
@@ -346,7 +346,7 @@ class RemoteHomeResolver(HomeResolver):
     The specific remote machine is identified by the suffix (e.g., "remote:dev").
     """
 
-    def __init__(self, remote_name: Optional[str] = None):
+    def __init__(self, remote_name: str | None = None):
         """
         Initialize remote resolver.
 
@@ -360,11 +360,11 @@ class RemoteHomeResolver(HomeResolver):
         return "remote"
 
     @property
-    def remote_name(self) -> Optional[str]:
+    def remote_name(self) -> str | None:
         """Return the remote machine name."""
         return self._remote_name
 
-    def get_claude_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_claude_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Claude projects directory for remote home.
 
@@ -372,7 +372,7 @@ class RemoteHomeResolver(HomeResolver):
         """
         return None
 
-    def get_codex_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_codex_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Codex sessions directory for remote home.
 
@@ -380,7 +380,7 @@ class RemoteHomeResolver(HomeResolver):
         """
         return None
 
-    def get_gemini_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_gemini_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Gemini sessions directory for remote home.
 
@@ -388,7 +388,7 @@ class RemoteHomeResolver(HomeResolver):
         """
         return None
 
-    def get_pi_dir(self, context: ResolutionContext) -> Optional[Path]:
+    def get_pi_dir(self, context: ResolutionContext) -> Path | None:
         """
         Get the Pi sessions directory for remote home.
 

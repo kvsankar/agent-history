@@ -574,7 +574,7 @@ if root.exists():
             continue
         count = 0
         latest = 0.0
-        for f in chats.glob("*.json"):
+        for f in list(chats.glob("*.json")) + list(chats.glob("*.jsonl")):
             try:
                 st = f.stat()
             except OSError:

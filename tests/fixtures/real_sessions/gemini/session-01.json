@@ -1,0 +1,41 @@
+{
+  "sessionId": "dcbe78d3-ea75-4786-929e-d6cff0fc00ed",
+  "projectHash": "d30f91067027d10192e4aed3e7b03fecf08089dd3370f047f14f38b1845c8042",
+  "startTime": "2026-06-05T04:59:39.932Z",
+  "lastUpdated": "2026-06-05T04:59:44.839Z",
+  "messages": [
+    {
+      "id": "c6130ba5-57dd-441c-ae71-046c4e76f006",
+      "timestamp": "2026-06-05T04:59:42.197Z",
+      "type": "user",
+      "content": [
+        {
+          "text": "[REDACTED_PROMPT]"
+        }
+      ]
+    },
+    {
+      "id": "1ad31721-7c1d-448c-808f-a6facc0b2e72",
+      "timestamp": "2026-06-05T04:59:44.839Z",
+      "type": "gemini",
+      "content": "[REDACTED_ASSISTANT_TEXT]",
+      "thoughts": [
+        {
+          "subject": "Generating Specific Response",
+          "description": "[REDACTED_THOUGHT]",
+          "timestamp": "2026-06-05T04:59:44.830Z"
+        }
+      ],
+      "tokens": {
+        "input": 4383,
+        "output": 8,
+        "cached": 0,
+        "thoughts": 28,
+        "tool": 0,
+        "total": 4419
+      },
+      "model": "gemini-2.5-flash"
+    }
+  ],
+  "kind": "main"
+}

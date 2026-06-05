@@ -528,7 +528,7 @@ def _gemini_remote_list_workspaces_command() -> str:
 
 def _gemini_remote_list_sessions_command(workspace: str) -> str:
     safe_workspace = shlex.quote(workspace)
-    return f"""for f in ~/.gemini/tmp/{safe_workspace}/chats/*.json; do
+    return f"""for f in ~/.gemini/tmp/{safe_workspace}/chats/*.json ~/.gemini/tmp/{safe_workspace}/chats/*.jsonl; do
     [ -f "$f" ] || continue
     size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
@@ -803,7 +803,7 @@ register_backend(
         markdown_header_title="Gemini Conversation",
         markdown_header_includes_filename=False,
         file_markers=(".gemini",),
-        file_suffixes=(".json",),
+        file_suffixes=(".json", ".jsonl"),
     )
 )
 register_backend(

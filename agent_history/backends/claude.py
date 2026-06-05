@@ -365,6 +365,7 @@ def _build_message_dict(
         "usage": message_obj.get("usage"),
         "stop_reason": message_obj.get("stop_reason"),
         "stop_sequence": message_obj.get("stop_sequence"),
+        "message": message_obj,
     }
 
 

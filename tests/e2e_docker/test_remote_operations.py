@@ -147,6 +147,30 @@ class TestRemoteSessionList:
         assert all(s.get("agent") == "gemini" for s in sessions)
         assert any("session-gemini-001" in s.get("filename", "") for s in sessions)
 
+    def test_session_list_remote_pi_agent(self, docker_env, cli_path):
+        """session list -r --agent pi filters to Pi sessions."""
+        node = docker_env["node_alpha"]
+        result = run_cli(
+            [
+                "session",
+                "list",
+                "-r",
+                f"alice@{node}",
+                "--aw",
+                "--agent",
+                "pi",
+                "--format",
+                "json",
+            ],
+            cli_path,
+        )
+
+        assert result.returncode == 0, f"Failed: {result.stderr}"
+        sessions = json.loads(result.stdout)
+        assert sessions, "Expected remote Pi sessions"
+        assert all(s.get("agent") == "pi" for s in sessions)
+        assert any("session-pi-001" in s.get("filename", "") for s in sessions)
+
 
 class TestRemoteExport:
     """Test `session export -r user@host` command."""
@@ -158,10 +182,13 @@ class TestRemoteExport:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = run_cli(
                 [
-                    "session", "export",
-                    "-r", f"alice@{node}",
+                    "session",
+                    "export",
+                    "-r",
+                    f"alice@{node}",
                     "--aw",
-                    "-o", tmpdir,
+                    "-o",
+                    tmpdir,
                 ],
                 cli_path,
             )
@@ -179,6 +206,7 @@ class TestRemoteExport:
             ("claude", "# Claude Conversation"),
             ("codex", "# Codex Conversation"),
             ("gemini", "# Gemini Conversation"),
+            ("pi", "# Pi Conversation"),
         ],
     )
     def test_export_remote_with_agent_filter(self, docker_env, cli_path, agent, header):
@@ -188,11 +216,15 @@ class TestRemoteExport:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = run_cli(
                 [
-                    "session", "export",
-                    "-r", f"alice@{node}",
+                    "session",
+                    "export",
+                    "-r",
+                    f"alice@{node}",
                     "--aw",
-                    "--agent", agent,
-                    "-o", tmpdir,
+                    "--agent",
+                    agent,
+                    "-o",
+                    tmpdir,
                 ],
                 cli_path,
             )
@@ -262,9 +294,12 @@ class TestCrossNodeOperations:
 
         result = run_cli(
             [
-                "session", "list",
-                "-r", f"alice@{alpha}",
-                "-r", f"charlie@{beta}",
+                "session",
+                "list",
+                "-r",
+                f"alice@{alpha}",
+                "-r",
+                f"charlie@{beta}",
                 "--aw",
             ],
             cli_path,
