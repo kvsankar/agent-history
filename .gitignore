@@ -47,6 +47,7 @@ test-*/
 !.claude/agents/
 docs/learning/
 docs/reviews/
+docs/*review*.md
 
 # Local review files
 reviews/
