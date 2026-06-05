@@ -1,10 +1,22 @@
 # Troubleshooting & FAQ
 
+<!-- doc-meta
+doc_role: troubleshooting
+audience: user
+lifecycle: current
+content_type: troubleshooting
+surface: public
+canonicality: primary
+-->
+
 ## Frequently Asked Questions
 
 ### Where are Claude Code conversations stored?
 
 `~/.claude/projects/` - each workspace has its own subdirectory.
+
+For all supported agent storage locations, see
+[agent-history-spec.md](../specs/agent-history-spec.md#supported-agents).
 
 ---
 
@@ -37,7 +49,9 @@ agent-history export --aw                # All workspaces
 
 ### What about privacy/sensitive data?
 
-This tool only reads from your local `~/.claude/` directory. No data is sent anywhere. Review generated markdown files before sharing.
+This tool is read-only against agent session stores and does not modify raw
+agent files. It can read configured local, WSL, Windows, SSH, and web sources
+when you request those scopes. Review generated export files before sharing.
 
 ---
 

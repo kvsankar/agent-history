@@ -1,5 +1,14 @@
 # Pipeline Architecture
 
+<!-- doc-meta
+doc_role: architecture
+audience: maintainer
+lifecycle: proposed
+content_type: architecture
+surface: internal
+canonicality: supporting
+-->
+
 ## Overview
 
 Complete flow from command line to output:

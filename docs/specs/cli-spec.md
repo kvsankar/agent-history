@@ -1,5 +1,14 @@
 # CLI Specification
 
+<!-- doc-meta
+doc_role: spec
+audience: contributor
+lifecycle: current
+content_type: api
+surface: public
+canonicality: primary
+-->
+
 Command-line interface specification for `agent-history`.
 
 ## Design Principles
@@ -91,7 +100,7 @@ agent-history project       # = project list
 | `session show` | Session summary (metadata only) | Session file or resolved scope |
 | `session export` | Full conversation content (Markdown or NDJSON) | Session files (JSONL/JSON) |
 | `ws list` | Aggregated workspace summary (status, counts, last modified) | Resolved scope |
-| `session stats` | Aggregate metrics (counts; tokens/tools/time only after `--sync`) | Scope + metrics DB |
+| `session stats` | Aggregate metrics with token/tool/time overlays from the metrics DB | Scope + metrics DB |
 
 ### Why Stats Uses a Database
 
@@ -101,20 +110,22 @@ Computing aggregate metrics requires parsing every message in every session file
 - Model breakdown
 - Time tracking (gaps between messages)
 
-This is expensive. The metrics database (`~/.agent-history/metrics.db`) caches these computed values; they are populated only when `--sync` is used.
+This is expensive. The metrics database (`~/.agent-history/metrics.db`) caches these computed values.
 
 ### Sync Behavior
 
-Stats do **not** auto-sync. Use `--sync` to populate the metrics database:
+Stats auto-sync the resolved scope by default unless `--no-sync` is passed.
+Use `--sync` when you want to make that refresh explicit, and `--force` when
+unchanged files should be reprocessed.
 
 ```
-session stats --sync             # Syncs local sessions, then shows stats
+session stats                    # Syncs resolved scope, then shows stats
 session stats --sync --agent codex
+session stats --no-sync          # Query cached metrics only
 ```
 
 **Sync characteristics:**
-- **Manual**: Requires explicit `--sync`
-- **Local-only**: Syncs local agent storage, independent of scope/home selection
+- **Scoped**: Syncs the resolved homes, workspaces, and agent filters
 - **Incremental**: Only processes new/modified files (based on mtime)
 - **Additive**: Deleted sessions remain in DB until `reset --db`
 
@@ -548,19 +559,20 @@ agent-history session export --force
 # Summary stats (scope only)
 agent-history session stats
 
-# Stats across scopes (no auto-sync)
+# Stats across scopes
 agent-history session stats --aw             # All workspaces
 agent-history session stats --ah             # All homes
 agent-history session stats --ah --aw        # Everything
 
-# Sync local metrics before stats
+# Make sync explicit or skip it
 agent-history session stats --sync
 agent-history session stats --sync --agent codex
+agent-history session stats --no-sync
 
 # Add by_day key in JSON output
 agent-history session stats --by day --format json
 
-# Time tracking (JSON output, requires --sync)
+# Time tracking (JSON output)
 agent-history session stats --sync --time --format json
 
 # Limit results

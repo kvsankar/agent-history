@@ -1,5 +1,14 @@
 # Rejection Analysis
 
+<!-- doc-meta
+doc_role: research
+audience: contributor
+lifecycle: proposed
+content_type: decision
+surface: integration
+canonicality: supporting
+-->
+
 How Claude Code, Codex CLI, and Gemini CLI record user rejections of edits, tools, and proposed actions.
 
 > **Refresh 2026-06-04**: This document describes source-format detection

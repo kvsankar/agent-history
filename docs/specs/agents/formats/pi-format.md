@@ -1,5 +1,14 @@
 # Pi Session Format
 
+<!-- doc-meta
+doc_role: spec
+audience: contributor
+lifecycle: current
+content_type: api
+surface: integration
+canonicality: primary
+-->
+
 > **Status**: Refreshed 2026-06-04 from current public Pi docs/source. Pi
 > sessions are versioned tree JSONL; this page describes the supported current
 > shape plus compatibility behavior. See

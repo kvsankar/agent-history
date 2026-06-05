@@ -1,5 +1,14 @@
 # Claude Code JSONL Format Analysis
 
+<!-- doc-meta
+doc_role: spec
+audience: contributor
+lifecycle: current
+content_type: api
+surface: integration
+canonicality: primary
+-->
+
 This document captures our understanding of the `.jsonl` files created by Claude Code, based on empirical analysis of actual conversation data.
 
 > **Note**: This is reverse-engineered documentation based on observation. Claude Code's internal format may change without notice.

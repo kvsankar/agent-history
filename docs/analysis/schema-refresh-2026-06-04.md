@@ -1,5 +1,14 @@
 # Coding Agent Schema Refresh - 2026-06-04
 
+<!-- doc-meta
+doc_role: research
+audience: maintainer
+lifecycle: current
+content_type: decision
+surface: internal
+canonicality: supporting
+-->
+
 This refresh checks the persisted session formats used by supported coding
 agents before release. The goal is to separate verified upstream behavior from
 older empirical notes and to patch parser gaps that would cause missing or
@@ -140,94 +149,20 @@ main normalized fields needed by current commands (`model`, `tokens`,
 `tool_calls`, `raw_role`, and `tool_result`), but it does not fully model each
 agent's concrete event stream.
 
-Next schema round:
+The canonical tracker for that next schema round is
+[specs/todo.md](../specs/todo.md#unified-event-envelope--lossless-schema).
+Keep the durable schema contract in
+[unified-json-schema.md](../specs/schema/unified-json-schema.md).
 
-- Add a first-class `type: "event"` envelope for lossless/non-message concrete
-  records, with `event_type`, `agent`, `timestamp`, `session_id`, normalized
-  event fields, and `raw_payload` for forward compatibility.
-- Preserve Codex `event_msg`, `turn_context`, token-count/task lifecycle,
-  `turn_aborted`, `compacted`, and non-message `response_item` variants.
-- Preserve Gemini metadata, `$set`, `$rewindTo`, function-call/response content
-  parts, and nested subagent session metadata.
-- Preserve Pi `session_info`, `model_change`, `thinking_level_change`,
-  `compaction`, `branch_summary`, `custom`, `custom_message`, and `label`
-  entries as typed events.
-- Preserve Claude non-message records such as `queue-operation`, `last-prompt`,
-  `progress`, `system`, `compact_boundary`, summary/title/attachment records
-  where safe.
-- Add synthetic and sanitized real-session fixture tests that prove message-only
-  consumers remain compatible while event-aware consumers can access the
-  additional records.
+## Real-Session Validation Outcome
 
-## Real-Session Validation Plan
+The canonical validation checklist and non-interactive session creation notes
+now live in
+[specs/todo.md](../specs/todo.md#real-agent-session-generation--validation).
+The release validation command sequence lives in
+[testing-strategy.md](../testing/testing-strategy.md#real-agent-validation-harness).
 
-These items are required before treating the refreshed format support as a
-release gate. They are intentionally opt-in because they require installed
-agents and authenticated accounts.
-
-- [x] Research non-interactive real-session creation for Claude Code
-  (`claude -p` or equivalent), including isolated config/home support and safe
-  tool controls.
-- [x] Research non-interactive real-session creation for Codex CLI
-  (`codex exec` or equivalent), including `CODEX_HOME`, persistence behavior,
-  and sandbox/network controls.
-- [x] Research non-interactive real-session creation for Gemini CLI, including
-  `GEMINI_CLI_HOME`, prompt/headless modes, and whether those modes persist
-  JSONL sessions.
-- [x] Research non-interactive real-session creation for Pi, including
-  `PI_CODING_AGENT_SESSION_DIR`, `--session-dir`, prompt/headless modes, and
-  safe tool controls.
-- [x] Add an opt-in harness, for example
-  `AGENT_HISTORY_REAL_AGENT_TESTS=1`, that creates a temp workspace and temp
-  agent homes, runs the installed agents, then validates `session list`,
-  `session export`, and `session stats`.
-- [x] Keep the harness out of default CI unless credentials and agent CLIs are
-  explicitly available.
-- [x] Add a sanitizer for captured real sessions so durable fixtures can be
-  committed without secrets, local paths, or proprietary content.
-- [x] Refresh checked-in fixtures from sanitized real sessions for Claude,
-  Codex, Gemini, and Pi.
-- [x] Update Docker synthetic session generation to cover current Codex,
-  Gemini JSONL, and Pi shapes so remote E2E exercises the refreshed formats.
-- [x] Document how to run the opt-in real-agent validation locally.
-
-Current research notes:
-
-- Claude Code: official headless mode supports `claude --bare -p` with
-  `--output-format json`, `--session-id`, `--max-turns`, and safe tool controls.
-  Isolate by setting both `HOME` and `CLAUDE_CONFIG_DIR`; transcripts are written
-  under `$CLAUDE_CONFIG_DIR/projects/<encoded-workspace>/<session-id>.jsonl`.
-  Use `ANTHROPIC_API_KEY` for non-interactive `--bare` runs. Do not set
-  `CLAUDE_CODE_SKIP_PROMPT_HISTORY` or `--no-session-persistence`, because those
-  suppress transcript writes.
-- Pi: current non-interactive paths include `pi -p`/`pi --print`,
-  `pi --mode json`, and `pi --mode rpc`; print mode is the simplest persisted
-  smoke test. Isolate normal workspace-encoded layout with
-  `PI_CODING_AGENT_DIR=<temp-agent-dir>` and a temp workspace, or test the flat
-  override path with `--session-dir <temp-dir>` /
-  `PI_CODING_AGENT_SESSION_DIR=<temp-dir>`. Use `--no-tools` and the related
-  `--no-extensions`, `--no-skills`, `--no-prompt-templates`, `--no-themes`, and
-  `--no-context-files` flags to avoid user/project customization. Do not pass
-  `--no-session`, because it disables persistence.
-- Gemini CLI: current headless/non-interactive paths include `gemini -p
-  "<prompt>"`, `gemini --prompt "<prompt>"`, and piped stdin. Avoid bare
-  positional prompts and `gemini -i` for this harness. Set `GEMINI_CLI_HOME` to
-  an isolated fake home root, not a `.gemini` directory; current sessions are
-  expected under `$GEMINI_CLI_HOME/.gemini/tmp/*/chats/session-*.jsonl`, while
-  validators should still accept legacy `session-*.json`. Use a temp `HOME`, a
-  temp `.gemini/settings.json` disabling usage stats/tools/MCP/extensions, and
-  env auth such as `GEMINI_API_KEY` or isolated Vertex AI credentials.
-- Codex CLI: current non-interactive validation should use `codex exec` with
-  `CODEX_HOME=<temp-dir>`, `HOME=<temp-dir>`, `--cd <temp-workspace>`,
-  `--sandbox read-only`, `--ignore-user-config`, `--ignore-rules`, and optional
-  `--json` for stdout events. Do not pass
-  `--ephemeral`, because that intentionally suppresses rollout persistence.
-  `CODEX_HOME` must already exist, and fresh persisted rollouts are expected
-  under `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`; validators should also
-  accept `.jsonl.zst`. Use a tiny temp git repo or pass `--skip-git-repo-check`.
-  For API-key auth, set `CODEX_API_KEY` on the single invocation.
-
-Implementation notes:
+Validation findings from this refresh:
 
 - `scripts/real_agent_validation.py` implements the opt-in harness and dry-run
   mode. It creates per-agent temp homes/workspaces, launches only when

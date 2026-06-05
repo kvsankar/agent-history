@@ -1,5 +1,14 @@
 # Scope Resolution Architecture v2
 
+<!-- doc-meta
+doc_role: architecture
+audience: maintainer
+lifecycle: current
+content_type: architecture
+surface: internal
+canonicality: primary
+-->
+
 ## Critical Review of v1 Design
 
 ### Fundamental Gaps Identified

@@ -51,6 +51,9 @@ docs/reviews/
 # Local review files
 reviews/
 
+# Generated documentation analysis reports
+.dryscope/
+
 # Test output files
 codex_rejection_session.jsonl
 

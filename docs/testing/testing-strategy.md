@@ -1,5 +1,14 @@
 # Testing Strategy for agent-history
 
+<!-- doc-meta
+doc_role: plan
+audience: maintainer
+lifecycle: current
+content_type: requirements
+surface: internal
+canonicality: primary
+-->
+
 Draft strategy for behavior-driven testing based on specifications.
 
 ## Table of Contents

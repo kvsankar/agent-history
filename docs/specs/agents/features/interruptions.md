@@ -1,5 +1,14 @@
 # Interruption Analysis
 
+<!-- doc-meta
+doc_role: research
+audience: contributor
+lifecycle: proposed
+content_type: decision
+surface: integration
+canonicality: supporting
+-->
+
 How Claude Code, Codex CLI, and Gemini CLI record user and system interruptions.
 
 > **Refresh 2026-06-04**: This document describes source-format detection

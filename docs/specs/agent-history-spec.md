@@ -1,5 +1,14 @@
 # agent-history Specification
 
+<!-- doc-meta
+doc_role: spec
+audience: contributor
+lifecycle: current
+content_type: requirements
+surface: public
+canonicality: primary
+-->
+
 This document specifies what `agent-history` does. It defines the functional requirements, supported agents, data sources, and operations.
 
 For CLI syntax and output formats, see [cli-spec.md](cli-spec.md).

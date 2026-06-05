@@ -1,5 +1,14 @@
 # CLI Command Structure Patterns: Research Report
 
+<!-- doc-meta
+doc_role: research
+audience: maintainer
+lifecycle: historical
+content_type: benchmark
+surface: internal
+canonicality: supporting
+-->
+
 Based on analysis of industry-leading CLI tools (git, docker, kubectl, GitHub CLI, AWS CLI, npm, Terraform).
 
 ## 1. Primary Command Structure Patterns

@@ -1,5 +1,14 @@
 # Context Compaction Analysis
 
+<!-- doc-meta
+doc_role: research
+audience: contributor
+lifecycle: proposed
+content_type: decision
+surface: integration
+canonicality: supporting
+-->
+
 How Claude Code, Codex CLI, and Gemini CLI handle context window compaction and summarization.
 
 > **Refresh 2026-06-04**: This is feature-format research, not a guarantee
