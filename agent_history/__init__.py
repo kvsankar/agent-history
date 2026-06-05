@@ -1,4 +1,4 @@
-"""agent-history: Browse and export AI coding assistant conversation history.
+"""cagelens: Browse and export AI coding assistant conversation history.
 
 This package provides tools for managing conversation sessions from:
 - Claude Code

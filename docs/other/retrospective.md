@@ -315,13 +315,13 @@
 - Source tagging for multi-environment consolidation
 
 **Database design (metrics feature):**
-- SQLite for local storage (`~/.agent-history/metrics.db`)
+- SQLite for local storage (`~/.cagelens/metrics.db`)
 - Incremental sync from JSONL files
 - Multiple views: summary, tool usage, model breakdown, workspace stats, daily trends
 - Time tracking with gap detection
 
 **Workspace aliasing:**
-- JSON configuration in `~/.agent-history/aliases.json`
+- JSON configuration in `~/.cagelens/aliases.json`
 - Groups workspaces across environments (local, WSL, Windows, SSH)
 - Automatic alias scoping when in aliased workspace
 - Import/export for sharing aliases across machines

@@ -1,4 +1,4 @@
-"""Claude.ai web sessions backend for agent-history.
+"""Claude.ai web sessions backend for cagelens.
 
 This module handles authentication discovery, session listing, and
 session retrieval from the Claude web API. It also provides helpers
@@ -14,7 +14,6 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Optional
 
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.paths import normalize_workspace_name
@@ -27,7 +26,7 @@ class WebSessionsError(RuntimeError):
     """Error accessing Claude web sessions."""
 
 
-def get_access_token_from_keychain() -> Optional[str]:
+def get_access_token_from_keychain() -> str | None:
     """Get Claude web access token from macOS Keychain."""
     if sys.platform != "darwin":
         return None
@@ -61,7 +60,7 @@ def get_access_token_from_keychain() -> Optional[str]:
     return creds.get("claudeAiOauth", {}).get("accessToken")
 
 
-def get_access_token_from_credentials_file() -> Optional[str]:
+def get_access_token_from_credentials_file() -> str | None:
     """Get Claude web access token from ~/.claude/.credentials.json."""
     creds_path = Path.home() / ".claude" / ".credentials.json"
     if not creds_path.exists():
@@ -76,7 +75,7 @@ def get_access_token_from_credentials_file() -> Optional[str]:
     return creds.get("claudeAiOauth", {}).get("accessToken")
 
 
-def get_access_token() -> Optional[str]:
+def get_access_token() -> str | None:
     """Resolve Claude web access token from available sources."""
     token = get_access_token_from_keychain()
     if token:
@@ -84,7 +83,7 @@ def get_access_token() -> Optional[str]:
     return get_access_token_from_credentials_file()
 
 
-def get_org_uuid_from_claude_config() -> Optional[str]:
+def get_org_uuid_from_claude_config() -> str | None:
     """Get Claude organization UUID from ~/.claude.json."""
     config_path = Path.home() / ".claude.json"
     if not config_path.exists():
@@ -100,7 +99,7 @@ def get_org_uuid_from_claude_config() -> Optional[str]:
 
 
 def resolve_web_credentials(
-    token: Optional[str] = None, org_uuid: Optional[str] = None
+    token: str | None = None, org_uuid: str | None = None
 ) -> tuple[str, str]:
     """Resolve web API credentials or raise if missing."""
     if token is None:
@@ -115,8 +114,7 @@ def resolve_web_credentials(
         org_uuid = get_org_uuid_from_claude_config()
     if not org_uuid:
         raise WebSessionsError(
-            "Missing Claude organization UUID. "
-            "Provide ~/.claude.json or use --org-uuid."
+            "Missing Claude organization UUID. " "Provide ~/.claude.json or use --org-uuid."
         )
 
     return token, org_uuid
@@ -187,7 +185,7 @@ def ensure_web_session_cache(
     return jsonl_path
 
 
-def extract_github_repo_from_git_url(url: str) -> Optional[str]:
+def extract_github_repo_from_git_url(url: str) -> str | None:
     """Extract owner/repo from git remote URL if hosted on GitHub."""
     if not url:
         return None
@@ -205,7 +203,7 @@ def extract_github_repo_from_git_url(url: str) -> Optional[str]:
     return None
 
 
-def get_web_session_github_repo(session: dict) -> Optional[str]:
+def get_web_session_github_repo(session: dict) -> str | None:
     """Extract GitHub repo (owner/repo) from a web session summary."""
     ctx = session.get("session_context", {})
     if isinstance(ctx, str):
@@ -230,7 +228,7 @@ def get_web_session_github_repo(session: dict) -> Optional[str]:
     return None
 
 
-def build_github_to_workspace_map(projects_dir: Optional[Path]) -> dict[str, str]:
+def build_github_to_workspace_map(projects_dir: Path | None) -> dict[str, str]:
     """Build a map of GitHub repos to local workspace paths."""
     repo_map: dict[str, str] = {}
     if not projects_dir or not projects_dir.exists():
@@ -272,7 +270,7 @@ def build_github_to_workspace_map(projects_dir: Optional[Path]) -> dict[str, str
     return repo_map
 
 
-def get_web_session_workspace(session: dict, github_map: Optional[dict] = None) -> Optional[str]:
+def get_web_session_workspace(session: dict, github_map: dict | None = None) -> str | None:
     """Resolve a workspace identifier for a web session."""
     github_repo = get_web_session_github_repo(session)
     if github_repo:
@@ -292,4 +290,3 @@ def get_web_session_workspace(session: dict, github_map: Optional[dict] = None) 
         return cwd
 
     return None
-

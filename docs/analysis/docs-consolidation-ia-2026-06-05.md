@@ -65,7 +65,7 @@ Consolidation notes:
 Canonical docs:
 
 - `docs/design-v2/scope-resolution-v2.md` - scope architecture and matching model.
-- `docs/specs/agent-history-spec.md` - product-level data/source model.
+- `docs/specs/cagelens-spec.md` - product-level data/source model.
 - `docs/testing/docker-e2e.md` - remote/SSH validation.
 
 Owns:
@@ -78,7 +78,7 @@ Owns:
 Consolidation notes:
 
 - Dryscope flagged this as an overloaded branch. Keep discovery, matching, home configuration, and remote/cross-platform access as distinct subtopics with cross-links.
-- Move duplicated storage-location explanations toward `agent-history-spec.md` plus agent-format specs, then link from troubleshooting and usage.
+- Move duplicated storage-location explanations toward `cagelens-spec.md` plus agent-format specs, then link from troubleshooting and usage.
 
 ### 3. Agent Formats and Normalization
 
@@ -117,7 +117,7 @@ Canonical docs:
 - `docs/design/DESIGN.md` - current architecture.
 - `docs/design-v2/pipeline-architecture.md` - proposed/current v2 pipeline detail.
 - `docs/design-v2/scope-resolution-v2.md` - scope model.
-- `docs/agent-history-code-map.md` - generated/supporting code map.
+- `docs/cagelens-code-map.md` - generated/supporting code map.
 
 Owns:
 
@@ -217,7 +217,7 @@ Priority docs for facet tagging:
 - `docs/analysis/*.md`
 - local ignored review outputs under `docs/reviews/`
 - `docs/specs/todo.md`
-- `docs/agent-history-code-map.md`
+- `docs/cagelens-code-map.md`
 
 ## High-Signal Consolidation Targets
 
@@ -225,13 +225,13 @@ These are not section-level duplicate copies. They are topic-coverage overlaps w
 
 | Topic | Canonical Owner | Supporting Docs To Link/Trim |
 |-------|-----------------|-------------------------------|
-| Usage statistics | `docs/user/usage.md` for commands; `docs/specs/agent-history-spec.md` or `docs/design/DESIGN.md` for storage | `cookbook.md`, `troubleshooting.md`, `cli-spec.md`, `testing-strategy.md`, `competitive-analysis.md` |
+| Usage statistics | `docs/user/usage.md` for commands; `docs/specs/cagelens-spec.md` or `docs/design/DESIGN.md` for storage | `cookbook.md`, `troubleshooting.md`, `cli-spec.md`, `testing-strategy.md`, `competitive-analysis.md` |
 | Message record schema | agent format specs plus `unified-json-schema.md` | feature docs should link instead of restating field-level schema |
 | Release follow-up items | `docs/specs/todo.md` | dated analysis/review docs should link here after findings are promoted |
-| Conversation export | `docs/user/usage.md` and `docs/user/cookbook.md` for workflows; `unified-json-schema.md` for NDJSON | `agent-history-spec.md`, `cli-spec.md`, local review output after findings are promoted |
+| Conversation export | `docs/user/usage.md` and `docs/user/cookbook.md` for workflows; `unified-json-schema.md` for NDJSON | `cagelens-spec.md`, `cli-spec.md`, local review output after findings are promoted |
 | Unified NDJSON schema | `docs/specs/schema/unified-json-schema.md` | `schema-refresh`, `clearing`, `compaction`, `interruptions`, `rejections` |
-| Agent storage locations | `docs/specs/agent-history-spec.md` and per-agent format specs | `troubleshooting.md`, `agent-history-process-image.md`, dated analysis |
-| Scope resolution | `docs/design-v2/scope-resolution-v2.md` | `agent-history-spec.md`, `DESIGN.md`, `code-reuse-mapping.md` |
+| Agent storage locations | `docs/specs/cagelens-spec.md` and per-agent format specs | `troubleshooting.md`, `cagelens-process-image.md`, dated analysis |
+| Scope resolution | `docs/design-v2/scope-resolution-v2.md` | `cagelens-spec.md`, `DESIGN.md`, `code-reuse-mapping.md` |
 | Tool call records | per-agent format specs and `unified-json-schema.md` | avoid duplicating tool-call mapping in feature docs |
 | Command result formatting | `docs/specs/cli-spec.md` | `pipeline-architecture.md`, `cli-command-patterns.md`, review docs |
 | Real-agent validation | `docs/testing/testing-strategy.md` and `docs/specs/todo.md` | `schema-refresh-2026-06-04.md` should stay dated evidence |
@@ -256,7 +256,7 @@ These are not section-level duplicate copies. They are topic-coverage overlaps w
 - `docs/reviews/` should remain ignored local review output after actionable findings are promoted.
 - `docs/other/exploration-log.md` after findings are promoted.
 - `docs/other/context-cli-test-restoration.md` once test restoration context is no longer active.
-- `docs/agent-history-code-map.md` as generated/supporting.
+- `docs/cagelens-code-map.md` as generated/supporting.
 
 ## Suggested Consolidation Order
 

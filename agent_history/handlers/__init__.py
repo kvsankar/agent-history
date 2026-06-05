@@ -1,4 +1,4 @@
-"""Command handlers for the agent-history CLI.
+"""Command handlers for the cagelens CLI.
 
 This module provides the handler framework for executing commands:
 - VerbHandler: Abstract base class for all command handlers
@@ -51,39 +51,39 @@ from agent_history.handlers.utilities import FetchHandler, InstallHandler, Reset
 __all__ = [
     # Base classes
     "CommandResult",
-    "VerbHandler",
     # Dispatcher
     "DispatchError",
-    "VerbDispatcher",
-    # List handlers
-    "SessionListHandler",
-    "WorkspaceListHandler",
-    "HomeListHandler",
+    "FetchHandler",
     "GeminiIndexHandler",
     # Home management handlers
     "HomeAddHandler",
-    "HomeRemoveHandler",
-    # Export handlers
-    "SessionExportHandler",
-    # Stats handlers
-    "SessionStatsHandler",
-    # Project handlers
-    "ProjectListHandler",
-    "ProjectShowHandler",
-    "ProjectStatsHandler",
-    # Stub handlers (not yet implemented)
-    "SessionShowHandler",
-    "WorkspaceShowHandler",
-    "WorkspaceExportHandler",
-    "WorkspaceStatsHandler",
-    "HomeShowHandler",
     "HomeExportHandler",
+    "HomeListHandler",
+    "HomeRemoveHandler",
+    "HomeShowHandler",
     "HomeStatsHandler",
-    "ProjectAddHandler",
-    "ProjectRemoveHandler",
-    "ProjectExportHandler",
     # Utility handlers
     "InstallHandler",
+    "ProjectAddHandler",
+    "ProjectExportHandler",
+    # Project handlers
+    "ProjectListHandler",
+    "ProjectRemoveHandler",
+    "ProjectShowHandler",
+    "ProjectStatsHandler",
     "ResetHandler",
-    "FetchHandler",
+    # Export handlers
+    "SessionExportHandler",
+    # List handlers
+    "SessionListHandler",
+    # Stub handlers (not yet implemented)
+    "SessionShowHandler",
+    # Stats handlers
+    "SessionStatsHandler",
+    "VerbDispatcher",
+    "VerbHandler",
+    "WorkspaceExportHandler",
+    "WorkspaceListHandler",
+    "WorkspaceShowHandler",
+    "WorkspaceStatsHandler",
 ]

@@ -13,6 +13,7 @@ from agent_history.adapters.remote import RemoteClientError, SSHRemoteClient
 from agent_history.backends.registry import AgentBackend, get_default_backend_id, iter_backends
 from agent_history.scope.context import ResolutionContext
 from agent_history.scope.home_resolver import get_resolver_for_home
+from agent_history.utils.env import has_env
 from agent_history.utils.paths import normalize_workspace_name
 from agent_history.utils.platform import AGENT_CLAUDE
 from agent_history.utils.workspace_ref import apply_workspace_ref, build_workspace_ref
@@ -31,7 +32,7 @@ class InventoryProvider:
         sessions: list[dict[str, Any]] = []
 
         # In test mode, skip remote probing to avoid slow SSH lookups.
-        test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
+        test_mode = has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE")
         if home.startswith("remote:") and test_mode:
             return sessions
 
@@ -50,7 +51,7 @@ class InventoryProvider:
         workspaces: set[str] = set()
 
         # Avoid remote SSH probing in test mode.
-        test_mode = bool(os.environ.get("AGENT_HISTORY_TEST_MODE"))
+        test_mode = has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE")
         if home.startswith("remote:") and test_mode:
             return []
 

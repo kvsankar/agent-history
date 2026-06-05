@@ -1,4 +1,4 @@
-"""Entry point for agent-history package.
+"""Entry point for cagelens package.
 
 This module allows running the package as a module:
     python -m agent_history [args]

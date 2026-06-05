@@ -1,4 +1,4 @@
-"""Claude Code backend functions for agent-history.
+"""Claude Code backend functions for cagelens.
 
 This module handles Claude Code session discovery, message parsing, and
 workspace management. It provides functions for:
@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
+from agent_history.utils.env import get_bool_env, has_env
 from agent_history.utils.paths import (
     encode_workspace_path,
     is_cached_workspace,
@@ -598,12 +599,12 @@ def _detect_wsl_base_path(projects_dir: Path) -> Optional[Path]:
 
 def _should_verify_workspace_paths(projects_dir: Path) -> bool:
     """Return False for injected non-local test fixtures that may touch slow mounts."""
-    if os.environ.get("AGENT_HISTORY_SKIP_PATH_VERIFY", "").lower() in ("1", "true", "yes"):
+    if get_bool_env("CAGELENS_SKIP_PATH_VERIFY", "AGENT_HISTORY_SKIP_PATH_VERIFY"):
         return False
     path_text = str(projects_dir).replace("\\", "/")
     if re.match(r"^/mnt/[A-Za-z]/", path_text):
         return False
-    if os.environ.get("AGENT_HISTORY_TEST_MODE"):
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE"):
         windows_override = os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR")
         if windows_override and Path(windows_override) == projects_dir:
             return False

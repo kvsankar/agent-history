@@ -489,7 +489,7 @@ class FluentContext:
         to markdown (or other formats) files.
 
         Args:
-            output_dir: Directory for output files. Defaults to "./ai-chats".
+            output_dir: Directory for output files. Defaults to "./.cagelens/exports".
             format: Export format ("markdown" or "json").
             minimal: If True, omit metadata in markdown output.
             split: Split files at this many lines. None to disable.

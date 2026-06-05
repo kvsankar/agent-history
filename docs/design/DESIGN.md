@@ -9,7 +9,7 @@ surface: internal
 canonicality: primary
 -->
 
-This document explains the architecture and data flow of `agent-history`.
+This document explains the architecture and data flow of `cagelens`.
 
 ## Goals
 
@@ -26,7 +26,7 @@ This document explains the architecture and data flow of `agent-history`.
 
 ## High-Level Architecture
 
-`agent-history` is a single-file Python CLI with these layers:
+`cagelens` is a single-file Python CLI with these layers:
 
 1. **Argument parsing**: Defines commands and flags, normalizes scope rules.
 2. **Source discovery**: Finds local/WSL/Windows/SSH homes and workspaces.
@@ -101,12 +101,12 @@ Concurrency:
 
 ## Configuration and Storage
 
-User config lives under `~/.agent-history/`:
+User config lives under `~/.cagelens/`:
 - `metrics.db`: SQLite database for stats and time tracking.
 - `config.json`: saved SSH remotes and settings.
 - `aliases.json`: workspace alias definitions.
 - `gemini_hash_index.json`: hash to path mappings for Gemini.
-- On first run, any legacy `~/.claude-history/` directory is migrated to this location and cleaned up.
+- On first run, legacy configuration directories are migrated to this location and cleaned up.
 
 ## Error Handling and Resilience
 

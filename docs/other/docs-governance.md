@@ -20,7 +20,7 @@ competing with each other.
 | Public docs map | [docs/README.md](../README.md) |
 | Specs map | [docs/specs/README.md](../specs/README.md) |
 | User commands and examples | [usage.md](../user/usage.md), [cookbook.md](../user/cookbook.md), [troubleshooting.md](../user/troubleshooting.md) |
-| Product behavior and storage model | [agent-history-spec.md](../specs/agent-history-spec.md) |
+| Product behavior and storage model | [cagelens-spec.md](../specs/cagelens-spec.md) |
 | CLI syntax and output contracts | [cli-spec.md](../specs/cli-spec.md) |
 | Unified export schema | [unified-json-schema.md](../specs/schema/unified-json-schema.md) |
 | Release/spec follow-ups | [todo.md](../specs/todo.md) |

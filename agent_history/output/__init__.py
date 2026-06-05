@@ -1,4 +1,4 @@
-"""Output formatting for agent-history.
+"""Output formatting for cagelens.
 
 This package provides output formatting components:
 - OutputFormatter: Main formatter coordinator

@@ -20,7 +20,7 @@ Items that need investigation or clarification before full specification.
 **Why:** Synthetic fixtures and Docker checks validate parsers against known shapes, but
 they do not prove current agent CLIs still write those shapes. Schema refresh work needs
 an opt-in validation path that creates fresh real sessions in isolated temp homes and
-workspaces without touching a user's default agent history.
+workspaces without touching a user's default cagelens.
 
 **Tracking checklist:**
 - [x] Research non-interactive real-session creation for Claude Code:
@@ -35,7 +35,7 @@ workspaces without touching a user's default agent history.
       prompt/export commands, `PI_SESSIONS_DIR` or `PI_CODING_AGENT_SESSION_DIR`, and
       auth requirements.
 - [x] Add an opt-in real-agent capture harness guarded by
-      `AGENT_HISTORY_REAL_AGENT_TESTS=1`.
+      `CAGELENS_REAL_AGENT_TESTS=1`.
 - [x] Make the harness create fresh temp homes, fresh workspaces, and fresh project
       settings so it never reads or writes default user session stores.
 - [x] Add a sanitizer that removes prompts, paths, environment details, tool outputs,
@@ -117,7 +117,7 @@ storage, export, stats, and scope explanations.
 - [x] Promote release/schema follow-up tracking into canonical docs and trim
       duplicated checklist prose from dated schema-refresh analysis.
 - [x] Trim duplicated storage-location explanations from user/troubleshooting
-      docs once all references point to `agent-history-spec.md` and per-agent
+      docs once all references point to `cagelens-spec.md` and per-agent
       format specs.
 - [x] Trim duplicated export schema explanations from user workflow and CLI docs
       once workflow text links to `schema/unified-json-schema.md`.
@@ -131,6 +131,35 @@ storage, export, stats, and scope explanations.
       consolidation-plan, and TODO docs keep growing.
 - [x] Consider a dedicated workspace/scope hub page if user, spec, design, and
       troubleshooting links remain hard to navigate after the current indexes.
+
+---
+
+### Package Rename / PyPI Reservation
+
+**Status:** In progress
+
+**Why:** the previous public package name is already taken on PyPI, so the
+project needs a PyPI-available distribution name before publishing. Selected
+name: `cagelens` (Coding Agent Lens), chosen to describe a tool that parses
+coding agent logs, collects statistics, and surfaces insights without implying
+that it generates logs.
+
+**Tracking checklist:**
+- [x] Re-check PyPI availability for `cagelens` immediately before acting.
+- [x] Decide whether only the PyPI distribution changes or whether the CLI
+      command, import package, docs, skill name, config paths, and output
+      examples also rename.
+- [ ] Keep the import package as `agent_history` for this slice and decide
+      separately whether to rename it or provide a public `cagelens` import
+      package later.
+- [ ] Reserve the PyPI name by publishing a legitimate minimal release, not an
+      empty placeholder.
+- [x] Update package metadata, project URLs, README, docs, and release notes for
+      the selected public name.
+- [x] Add compatibility/deprecation notes if legacy CLI commands or config paths
+      remain supported during migration.
+- [ ] Run packaging validation (`uv build`, publish dry-run/Twine check if
+      available) before release.
 
 ---
 
@@ -177,7 +206,7 @@ for the current commands.
 **Current state in implementation:**
 - `--web`/`--no-web` control scope resolution
 - `--ah` includes web by default
-- Sessions are fetched via Claude API and cached to `~/.agent-history/web-cache`
+- Sessions are fetched via Claude API and cached to `~/.cagelens/web-cache`
 
 **Action:** Spec updated to reflect web support.
 

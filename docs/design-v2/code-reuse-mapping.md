@@ -11,7 +11,7 @@ canonicality: supporting
 
 ## Overview
 
-This document maps existing code in `agent-history` to the new pipeline architecture entities, identifying what can be reused as-is, what needs modification, and what needs to be written new.
+This document maps existing code in `cagelens` to the new pipeline architecture entities, identifying what can be reused as-is, what needs modification, and what needs to be written new.
 
 ## Pipeline Entity → Existing Code Mapping
 
@@ -315,7 +315,7 @@ def _matches_workspace_pattern(session, pattern, match_type='exact'):
 5. `src/scope/utils.py` - flatten_scope, count_scope, etc.
 
 Or, if keeping single-file structure:
-- Add new section to `agent-history` with clear markers
+- Add new section to `cagelens` with clear markers
 
 ---
 

@@ -1,4 +1,4 @@
-# Claude History Tool: Competitive Analysis & Roadmap
+# Historical Competitive Analysis: Pre-cagelens
 
 <!-- doc-meta
 doc_role: research
@@ -10,6 +10,9 @@ canonicality: supporting
 -->
 
 *Research Date: December 2025*
+
+This document preserves pre-cagelens product naming as historical research
+context. It is not the current product positioning.
 
 ## Executive Summary
 

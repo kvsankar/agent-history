@@ -1,10 +1,8 @@
-# agent-history
+# cagelens
 
 A CLI tool to browse and export AI coding assistant conversation history with multi-environment support.
 
-> **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
-
-See [agent-history-process-image.md](docs/agent-history-process-image.md) for the process diagram brief.
+See [cagelens-process-image.md](docs/cagelens-process-image.md) for the process diagram brief.
 
 ## Supported Agents
 
@@ -44,43 +42,43 @@ Claude Code, Codex CLI, Gemini CLI, and Pi leave conversation data fragmented ac
 
 ```bash
 # Make executable
-chmod +x /path/to/agent-history
+chmod +x /path/to/cagelens
 
 # Go to your project directory
 cd /path/to/project
 
 # List sessions from current project
-/path/to/agent-history session list
+/path/to/cagelens session list
 
 # Export to markdown
-/path/to/agent-history session export
+/path/to/cagelens session export
 
 # Export offline HTML
-/path/to/agent-history session export --format html
+/path/to/cagelens session export --format html
 
-# Output goes to ./ai-chats/
+# Output goes to ./.cagelens/exports/
 ```
 
 **Windows:**
 ```powershell
 cd \path\to\project
-python \path\to\agent-history session list
-python \path\to\agent-history session export
+python \path\to\cagelens session list
+python \path\to\cagelens session export
 ```
 
 ## Installation
 
 ```bash
 # Download
-curl -O https://raw.githubusercontent.com/kvsankar/agent-history/main/agent-history
+curl -O https://raw.githubusercontent.com/kvsankar/cagelens/main/cagelens
 
 # Install (cli + skill + retention settings)
-python agent-history install
+python cagelens install
 ```
 
 By default the installer:
-- Copies the CLI to `~/.local/bin/agent-history` (no sudo needed).
-- Installs the Claude skill into `~/.claude/skills/agent-history` (CLI + SKILL.md).
+- Copies the CLI to `~/.local/bin/cagelens` (no sudo needed).
+- Installs the Claude skill into `~/.claude/skills/cagelens` (CLI + SKILL.md).
 - Ensures `~/.claude/settings.json` has `cleanupPeriodDays` set to `99999` so conversations aren’t purged.
   - If the existing `settings.json` contains additional preferences, they are preserved; only `cleanupPeriodDays` is adjusted.
   - If the installer encounters malformed JSON, it first renames the original file to `settings.json.<timestamp>.bak` before writing the corrected copy.
@@ -89,13 +87,13 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 
 **Requirements:** Python 3.11+ and project dependencies from `pyproject.toml`.
 
-> **Note:** Examples below assume `agent-history` is in your PATH.
+> **Note:** Examples below assume `cagelens` is in your PATH.
 
 ## Help
 
 <!-- help-snippet:start -->
 ```
-usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini,pi}] COMMAND ...
+usage: cagelens [-h] [--version] [--agent {auto,claude,codex,gemini,pi}] COMMAND ...
 
 Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI)
 
@@ -226,7 +224,7 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 ## Additional Resources
 
-- [Claude Collaboration Playbook](https://github.com/kvsankar/agent-history/blob/main/docs/claude-collaboration-playbook.md) – distilled lessons from hundreds of Claude Code sessions. Great to drop into your repo's `CLAUDE.md` or share with new collaborators.
+- [Claude Collaboration Playbook](https://github.com/kvsankar/cagelens/blob/main/docs/claude-collaboration-playbook.md) – distilled lessons from hundreds of Claude Code sessions. Great to drop into your repo's `CLAUDE.md` or share with new collaborators.
 
 ## Commands
 
@@ -245,51 +243,51 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 ```bash
 # List all workspaces
-agent-history ws list
+cagelens ws list
 
 # Export specific project
-agent-history session export myproject
+cagelens session export myproject
 
 # Export from all homes (local + WSL + Windows + remotes)
-agent-history session export myproject --ah
+cagelens session export myproject --ah
 
 # Date filtering
-agent-history session list --since 2025-11-01
+cagelens session list --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
-agent-history session export myproject --minimal
+cagelens session export myproject --minimal
 
 # Faster sync/export
-agent-history session stats --sync --ah --jobs 4
-agent-history session export myproject --jobs 4 --quiet
+cagelens session stats --sync --ah --jobs 4
+cagelens session export myproject --jobs 4 --quiet
 
 # Time tracking
-agent-history session stats --time
+cagelens session stats --time
 ```
 
 ## Multi-Environment Access
 
 ```bash
 # Discover all Claude installations
-agent-history home list
+cagelens home list
 
 # Add homes (explicit model - must add for --ah to include)
-agent-history home add --wsl              # add WSL
-agent-history home add --windows          # add Windows
-agent-history home add user@server        # add SSH remote
-agent-history home remove user@server     # remove a source
+cagelens home add --wsl              # add WSL
+cagelens home add --windows          # add Windows
+cagelens home add user@server        # add SSH remote
+cagelens home remove user@server     # remove a source
 
 # Access WSL (from Windows)
-agent-history session list --wsl
+cagelens session list --wsl
 
 # Access Windows (from WSL)
-agent-history session list --windows
+cagelens session list --windows
 
 # Access SSH remote
-agent-history session list -r user@server
+cagelens session list -r user@server
 
 # All homes at once (includes configured sources)
-agent-history session export --ah
+cagelens session export --ah
 ```
 
 ## Projects
@@ -298,19 +296,19 @@ Group related workspaces across environments:
 
 ```bash
 # Add workspaces
-agent-history project add myproject myproject
-agent-history project add myproject --windows myproject
-agent-history project add myproject -r user@vm myproject
+cagelens project add myproject myproject
+cagelens project add myproject --windows myproject
+cagelens project add myproject -r user@vm myproject
 
 # Use with @ prefix or --project flag
-agent-history session list @myproject
-agent-history session list --project myproject
-agent-history session export @myproject
-agent-history session export --project myproject
+cagelens session list @myproject
+cagelens session list --project myproject
+cagelens session export @myproject
+cagelens session export --project myproject
 
 # Remove entries using paths from any home
-agent-history project remove myproject -r user@vm /home/user/myproject
-agent-history project remove myproject --windows /mnt/c/Users/me/projects/myproject
+cagelens project remove myproject -r user@vm /home/user/myproject
+cagelens project remove myproject --windows /mnt/c/Users/me/projects/myproject
 ```
 
 ## Important: Preserve Your History
@@ -328,7 +326,7 @@ By default, Claude Code deletes conversation history after 30 days. Add this to 
 Set `CLAUDE_PROJECTS_DIR` to point the CLI at a different `.claude/projects` root. This is handy when running inside containers, CI pipelines, or when your Claude data lives on another drive:
 
 ```bash
-CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects agent-history ws list
+CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects cagelens ws list
 ```
 
 The directory must mirror Claude's standard layout (`<root>/<encoded-workspace>/*.jsonl`).
@@ -352,5 +350,3 @@ MIT License - See [LICENSE](LICENSE) file.
 
 Related projects worth exploring:
 - [ZeroSumQuant/claude-conversation-extractor](https://github.com/ZeroSumQuant/claude-conversation-extractor) – JSON→Markdown converter with a UI and filtering.
-- [thejud/claude-history](https://github.com/thejud/claude-history) – simple CLI to extract/format session files.
-- [raine/claude-history](https://github.com/raine/claude-history) – fuzzy-search across Claude history from the terminal.

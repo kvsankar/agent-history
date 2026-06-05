@@ -1,4 +1,4 @@
-"""Command orchestrator for agent-history CLI.
+"""Command orchestrator for cagelens CLI.
 
 This module provides the CommandOrchestrator class that coordinates the
 full command pipeline: parsing, context building, scope resolution,
@@ -575,7 +575,7 @@ class CommandOrchestrator:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point for agent-history CLI.
+    """Entry point for cagelens CLI.
 
     Args:
         argv: Command line arguments (defaults to sys.argv[1:])
@@ -588,6 +588,8 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    debug = os.environ.get("AGENT_HISTORY_DEBUG", "").lower() in ("1", "true", "yes")
+    debug = (
+        os.environ.get("CAGELENS_DEBUG") or os.environ.get("AGENT_HISTORY_DEBUG", "")
+    ).lower() in ("1", "true", "yes")
     orchestrator = CommandOrchestrator(debug=debug)
     return orchestrator.run(argv)

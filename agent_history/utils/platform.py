@@ -1,4 +1,4 @@
-"""Platform detection utilities for agent-history.
+"""Platform detection utilities for cagelens.
 
 This module provides functions for detecting the current platform environment,
 including WSL, Windows, and cross-platform path resolution.
@@ -15,6 +15,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
+from agent_history.utils.env import get_env, has_env
+
 # Agent backend identifiers (needed for WSL distro info)
 AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
@@ -23,7 +25,7 @@ AGENT_PI = "pi"
 
 
 def _get_wsl_timeout() -> float:
-    raw = os.environ.get("AGENT_HISTORY_WSL_TIMEOUT", "").strip()
+    raw = (get_env("CAGELENS_WSL_TIMEOUT", "AGENT_HISTORY_WSL_TIMEOUT") or "").strip()
     if not raw:
         return 2.0
     try:
@@ -34,7 +36,7 @@ def _get_wsl_timeout() -> float:
 
 
 def _get_unc_timeout() -> float:
-    raw = os.environ.get("AGENT_HISTORY_UNC_TIMEOUT", "").strip()
+    raw = (get_env("CAGELENS_UNC_TIMEOUT", "AGENT_HISTORY_UNC_TIMEOUT") or "").strip()
     if not raw:
         return 0.5
     try:
@@ -299,16 +301,18 @@ def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
     Returns:
         Path to Windows home directory, or None if not found.
 
-    If AGENT_HISTORY_HOME_WINDOWS is set, uses that path instead of probing
+    If CAGELENS_HOME_WINDOWS is set, uses that path instead of probing
     the real Windows filesystem (for testing).
     """
     # Check for test override - use injected Windows home path
-    windows_home_override = os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
+    windows_home_override = get_env("CAGELENS_HOME_WINDOWS", "AGENT_HISTORY_HOME_WINDOWS")
     if windows_home_override:
         return Path(windows_home_override)
 
-    # When using an isolated AGENT_HISTORY_HOME in test mode, don't probe the host.
-    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("AGENT_HISTORY_HOME"):
+    # When using an isolated CAGELENS_HOME in test mode, don't probe the host.
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and has_env(
+        "CAGELENS_HOME", "AGENT_HISTORY_HOME"
+    ):
         return None
 
     cache_key = username or "_default_"
@@ -371,13 +375,14 @@ def _scan_users_in_drive(drive: Path, results: list):
 def get_windows_users_with_claude():
     """Get list of all Windows users with Claude Code installed.
 
-    If overrides are set (AGENT_HISTORY_HOME_WINDOWS or CLAUDE_WINDOWS_PROJECTS_DIR),
+    If overrides are set (CAGELENS_HOME_WINDOWS or CLAUDE_WINDOWS_PROJECTS_DIR),
     returns empty list to skip real Windows filesystem scanning (for testing
     with injected fixtures).
     """
     # If running under a test/override home, avoid probing the host filesystem.
-    if os.environ.get("AGENT_HISTORY_TEST_MODE") and (
-        os.environ.get("AGENT_HISTORY_HOME") or os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and (
+        has_env("CAGELENS_HOME", "AGENT_HISTORY_HOME")
+        or has_env("CAGELENS_HOME_WINDOWS", "AGENT_HISTORY_HOME_WINDOWS")
     ):
         return []
     if os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
@@ -632,17 +637,21 @@ def get_wsl_distributions() -> list:
         then return a single entry using those values. This enables real
         filesystem E2E tests without mocking wsl.exe.
 
-        If AGENT_HISTORY_HOME_WSL is set, skip WSL scanning entirely (for testing
+        If CAGELENS_HOME_WSL is set, skip WSL scanning entirely (for testing
         with injected fixtures).
     """
-    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
-        if not os.environ.get("CLAUDE_WSL_TEST_DISTRO") and not os.environ.get(
-            "AGENT_HISTORY_HOME_WSL"
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and os.environ.get(
+        "CLAUDE_WINDOWS_PROJECTS_DIR"
+    ):
+        if (
+            not os.environ.get("CLAUDE_WSL_TEST_DISTRO")
+            and not os.environ.get("CAGELENS_HOME_WSL")
+            and not os.environ.get("AGENT_HISTORY_HOME_WSL")
         ):
             return []
 
     # Skip WSL scanning if WSL home is overridden for testing
-    if os.environ.get("AGENT_HISTORY_HOME_WSL"):
+    if has_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL"):
         return []
 
     # Test override
@@ -687,9 +696,9 @@ def get_wsl_distribution_names() -> list[str]:
         If CLAUDE_WSL_TEST_DISTRO and CLAUDE_WSL_PROJECTS_DIR are set,
         return just the synthetic distro name.
 
-        If AGENT_HISTORY_HOME_WSL is set, skip WSL scanning entirely.
+        If CAGELENS_HOME_WSL is set, skip WSL scanning entirely.
     """
-    if os.environ.get("AGENT_HISTORY_HOME_WSL"):
+    if has_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL"):
         return []
 
     test_distro = os.environ.get("CLAUDE_WSL_TEST_DISTRO")
@@ -831,7 +840,9 @@ def get_windows_codex_sessions_dir(username: Optional[str] = None) -> Optional[P
     if override and Path(override).exists():
         return Path(override)
 
-    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and os.environ.get(
+        "CLAUDE_WINDOWS_PROJECTS_DIR"
+    ):
         return None
 
     if not is_running_in_wsl():
@@ -851,7 +862,9 @@ def get_windows_gemini_sessions_dir(username: Optional[str] = None) -> Optional[
     if override and Path(override).exists():
         return Path(override)
 
-    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and os.environ.get(
+        "CLAUDE_WINDOWS_PROJECTS_DIR"
+    ):
         return None
 
     if not is_running_in_wsl():
@@ -871,7 +884,9 @@ def get_windows_pi_sessions_dir(username: Optional[str] = None) -> Optional[Path
     if override and Path(override).exists():
         return Path(override)
 
-    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and os.environ.get(
+        "CLAUDE_WINDOWS_PROJECTS_DIR"
+    ):
         return None
 
     if not is_running_in_wsl():

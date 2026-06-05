@@ -1,4 +1,4 @@
-"""CLI Parser for agent-history command.
+"""CLI Parser for cagelens command.
 
 This module provides the CLIParser class that builds the argparse parser
 and converts parsed arguments into structured CommandRequest objects.
@@ -80,7 +80,7 @@ def _validate_markdown_level(value: str) -> int:
 class CLIParser:
     """Parse command line into structured CommandRequest.
 
-    This class builds the argparse parser for agent-history and converts
+    This class builds the argparse parser for cagelens and converts
     parsed arguments into CommandRequest objects for processing by the
     scope resolver and verb dispatcher.
 
@@ -214,7 +214,7 @@ class CLIParser:
     def _build_parser(self) -> argparse.ArgumentParser:
         """Build argument parser with all subcommands."""
         parser = argparse.ArgumentParser(
-            prog="agent-history",
+            prog="cagelens",
             description=(
                 "Browse and export AI coding assistant conversation history "
                 "(Claude Code, Codex CLI, Gemini CLI)"
@@ -623,7 +623,7 @@ class CLIParser:
                 "Use --add to add project paths to the index. "
                 "For each path added, computes its SHA-256 hash and checks if Gemini "
                 "has sessions for that project. If sessions exist, adds the mapping "
-                "so agent-history can display readable workspace paths instead of hashes."
+                "so cagelens can display readable workspace paths instead of hashes."
             ),
         )
         gi_parser.set_defaults(command=RESOURCE_GEMINI_INDEX, gemini_index_verb=DEFAULT_VERB_LIST)

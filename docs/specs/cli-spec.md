@@ -9,11 +9,11 @@ surface: public
 canonicality: primary
 -->
 
-Command-line interface specification for `agent-history`.
+Command-line interface specification for `cagelens`.
 
 ## Design Principles
 
-1. **Noun-Verb structure**: `agent-history <object> <verb> [args] [flags]`
+1. **Noun-Verb structure**: `cagelens <object> <verb> [args] [flags]`
 2. **Orthogonal scopes**: Home and workspace scopes can be combined independently
 3. **Sensible defaults**: No args = list, current workspace, local home
 4. **Progressive disclosure**: Simple cases are simple, power features available via flags
@@ -82,10 +82,10 @@ project = cross-cutting alias that groups workspaces from any home
 
 When verb is omitted, `list` is assumed:
 ```
-agent-history home          # = home list
-agent-history ws            # = ws list
-agent-history session       # = session list
-agent-history project       # = project list
+cagelens home          # = home list
+cagelens ws            # = ws list
+cagelens session       # = session list
+cagelens project       # = project list
 ```
 
 ---
@@ -110,7 +110,7 @@ Computing aggregate metrics requires parsing every message in every session file
 - Model breakdown
 - Time tracking (gaps between messages)
 
-This is expensive. The metrics database (`~/.agent-history/metrics.db`) caches these computed values.
+This is expensive. The metrics database (`~/.cagelens/metrics.db`) caches these computed values.
 
 ### Sync Behavior
 
@@ -322,7 +322,7 @@ List Options:
   --counts                        # Include message counts (slower)
 
 Export Options:
-  -o, --output <dir>              # Output directory (default: ./ai-chats/)
+  -o, --output <dir>              # Output directory (default: ./.cagelens/exports/)
   --session <id>                  # Export specific session IDs or filenames (repeatable)
   --json                          # Export NDJSON (unified schema) instead of Markdown
   --minimal                       # No metadata
@@ -413,35 +413,35 @@ Environment variables for testing, automation, and overriding default behavior.
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_HISTORY_CONFIG_DIR` | Override config directory (`~/.agent-history/`). Bypasses migration logic. Used for test isolation. |
+| `CAGELENS_CONFIG_DIR` | Override config directory (`~/.cagelens/`). Bypasses migration logic. Used for test isolation. |
 
 ### Session Data Paths
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_HISTORY_HOME` | Override local home directory for session discovery |
-| `AGENT_HISTORY_HOME_WSL` | Override WSL home path (skips real WSL probing) |
-| `AGENT_HISTORY_HOME_WINDOWS` | Override Windows home path (skips real Windows probing) |
+| `CAGELENS_HOME` | Override local home directory for session discovery |
+| `CAGELENS_HOME_WSL` | Override WSL home path (skips real WSL probing) |
+| `CAGELENS_HOME_WINDOWS` | Override Windows home path (skips real Windows probing) |
 | `CLAUDE_PROJECTS_DIR` | Override Claude Code projects directory |
 | `CODEX_HOME` | Upstream Codex home directory; sessions are read from `CODEX_HOME/sessions` |
-| `CODEX_SESSIONS_DIR` | Direct Codex sessions directory override (agent-history compatibility/testing) |
+| `CODEX_SESSIONS_DIR` | Direct Codex sessions directory override (cagelens compatibility/testing) |
 | `GEMINI_CLI_HOME` | Upstream Gemini CLI home root; sessions are read from `GEMINI_CLI_HOME/.gemini/tmp` |
-| `GEMINI_SESSIONS_DIR` | Direct Gemini sessions directory override (agent-history compatibility/testing) |
+| `GEMINI_SESSIONS_DIR` | Direct Gemini sessions directory override (cagelens compatibility/testing) |
 | `PI_CODING_AGENT_SESSION_DIR` | Upstream Pi session directory override |
 | `PI_CODING_AGENT_DIR` | Upstream Pi agent config directory override |
-| `PI_SESSIONS_DIR` | Direct Pi sessions directory override (agent-history compatibility/testing) |
+| `PI_SESSIONS_DIR` | Direct Pi sessions directory override (cagelens compatibility/testing) |
 
 ### Usage Examples
 
 ```bash
 # Test isolation: use temporary config directory
-AGENT_HISTORY_CONFIG_DIR=/tmp/test-config agent-history session stats
+CAGELENS_CONFIG_DIR=/tmp/test-config cagelens session stats
 
 # Testing with mock session data
-AGENT_HISTORY_HOME=/tmp/mock-home agent-history session list
+CAGELENS_HOME=/tmp/mock-home cagelens session list
 
 # Skip WSL probing in tests
-AGENT_HISTORY_HOME_WSL=/tmp/mock-wsl agent-history ws --wsl
+CAGELENS_HOME_WSL=/tmp/mock-wsl cagelens ws --wsl
 ```
 
 ---
@@ -452,135 +452,135 @@ AGENT_HISTORY_HOME_WSL=/tmp/mock-wsl agent-history ws --wsl
 
 ```bash
 # List all workspaces
-agent-history ws
+cagelens ws
 
 # List sessions in current workspace
-agent-history session
+cagelens session
 
 # Export current workspace sessions
-agent-history session export
+cagelens session export
 
 # Show stats for current workspace
-agent-history session stats
+cagelens session stats
 ```
 
 ### Pattern Matching
 
 ```bash
 # List workspaces matching "auth"
-agent-history ws -n auth
+cagelens ws -n auth
 
 # List sessions from workspaces matching "auth"
-agent-history session -n auth
+cagelens session -n auth
 
 # Export sessions from matching workspaces
-agent-history session export -n auth -o ./exports
+cagelens session export -n auth -o ./exports
 ```
 
 ### Multi-Home Operations
 
 ```bash
 # List workspaces from all homes
-agent-history ws --aw --ah
+cagelens ws --aw --ah
 
 # List sessions from WSL
-agent-history session --wsl --aw
+cagelens session --wsl --aw
 
 # List sessions from Windows (from WSL)
-agent-history session --windows --aw
+cagelens session --windows --aw
 
 # Export from multiple homes
-agent-history session export --home local --home remote:vm01
+cagelens session export --home local --home remote:vm01
 
 # Stats across all homes
-agent-history session stats --ah --aw
+cagelens session stats --ah --aw
 ```
 
 ### Projects
 
 ```bash
 # Create a project (auto-created on first add)
-agent-history project add myproj /home/user/myproject
+cagelens project add myproj /home/user/myproject
 
 # Add workspace from WSL/Windows
-agent-history project add myproj /home/user/myproject --wsl
-agent-history project add myproj /mnt/c/Users/alice/myproject --windows
+cagelens project add myproj /home/user/myproject --wsl
+cagelens project add myproj /mnt/c/Users/alice/myproject --windows
 
 # Use the project
-agent-history session list --project myproj
-agent-history session export --project myproj
-agent-history session stats --project myproj
+cagelens session list --project myproj
+cagelens session export --project myproj
+cagelens session stats --project myproj
 
 # Project auto-detection (when in a project workspace)
-agent-history session list              # Auto-detects project
-agent-history session list --this       # Override: current workspace only
+cagelens session list              # Auto-detects project
+cagelens session list --this       # Override: current workspace only
 ```
 
 ### Export Options
 
 ```bash
 # Export with date filter
-agent-history session export --since 2025-01-01 --until 2025-01-31
+cagelens session export --since 2025-01-01 --until 2025-01-31
 
 # Export with custom output directory
-agent-history session export -o ./my-exports
+cagelens session export -o ./my-exports
 
 # Export by session ID or filename
-agent-history session export --session 550e8400-e29b-41d4 -o ./exports
+cagelens session export --session 550e8400-e29b-41d4 -o ./exports
 
 # Minimal export (no metadata)
-agent-history session export --minimal
+cagelens session export --minimal
 
 # Split long conversations
-agent-history session export --split 500
+cagelens session export --split 500
 
 # Flat structure (no workspace subdirectories)
-agent-history session export --flat
+cagelens session export --flat
 
 # Include raw source files
-agent-history session export --source
+cagelens session export --source
 
 # NDJSON export
-agent-history session export --json
+cagelens session export --json
 
 # Parallel export
-agent-history session export --jobs 4
+cagelens session export --jobs 4
 
 # Quiet mode (suppress per-file output)
-agent-history session export --quiet
+cagelens session export --quiet
 
 # Force re-export (ignore timestamps)
-agent-history session export --force
+cagelens session export --force
 ```
 
 ### Stats Options
 
 ```bash
 # Summary stats (scope only)
-agent-history session stats
+cagelens session stats
 
 # Stats across scopes
-agent-history session stats --aw             # All workspaces
-agent-history session stats --ah             # All homes
-agent-history session stats --ah --aw        # Everything
+cagelens session stats --aw             # All workspaces
+cagelens session stats --ah             # All homes
+cagelens session stats --ah --aw        # Everything
 
 # Make sync explicit or skip it
-agent-history session stats --sync
-agent-history session stats --sync --agent codex
-agent-history session stats --no-sync
+cagelens session stats --sync
+cagelens session stats --sync --agent codex
+cagelens session stats --no-sync
 
 # Add by_day key in JSON output
-agent-history session stats --by day --format json
+cagelens session stats --by day --format json
 
 # Time tracking (JSON output)
-agent-history session stats --sync --time --format json
+cagelens session stats --sync --time --format json
 
 # Limit results
-agent-history session stats --top-ws 10
+cagelens session stats --top-ws 10
 
 # Output format
-agent-history session stats --format json
-agent-history session stats --format tsv
+cagelens session stats --format json
+cagelens session stats --format tsv
 ```
 
 ---
@@ -669,14 +669,14 @@ Exports sessions to markdown files.
 
 **Default output:**
 ```
-./ai-chats/home/user/myproj/20250103181500_550e8400-e29b.md
-./ai-chats/home/user/myproj/20250103174500_agent-a1b2c3d4.md
-{'exported': 2, 'skipped': 0, 'failed': 0, 'output_dir': './ai-chats'}
+./.cagelens/exports/home/user/myproj/20250103181500_550e8400-e29b.md
+./.cagelens/exports/home/user/myproj/20250103174500_agent-a1b2c3d4.md
+{'exported': 2, 'skipped': 0, 'failed': 0, 'output_dir': './.cagelens/exports'}
 ```
 
 **With `--quiet`:**
 ```
-{'exported': 2, 'skipped': 0, 'failed': 0, 'output_dir': './ai-chats'}
+{'exported': 2, 'skipped': 0, 'failed': 0, 'output_dir': './.cagelens/exports'}
 ```
 
 **Exit codes:**
@@ -761,7 +761,7 @@ Shows workspace details.
 **Default:**
 ```
 HOME    WORKSPACE                 SESSIONS  STATUS  LAST_MODIFIED
-local   /home/user/claude-history      144  ok      2025-01-03 18:15
+local   /home/user/cagelens            144  ok      2025-01-03 18:15
 ```
 
 ### session show

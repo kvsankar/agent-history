@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agent_history.utils.env import get_env, has_env
+
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
 
@@ -303,7 +305,7 @@ class ContextBuilder:
         Checks multiple sources:
         1. If CWD is under Claude projects (~/.claude/projects/)
         2. If CWD matches a workspace path in project configuration
-        3. If AGENT_HISTORY_HOME is set, check if CWD relative to it matches a workspace
+        3. If CAGELENS_HOME is set, check if CWD relative to it matches a workspace
 
         Returns:
             Tuple of (home, workspace) where home is "local" and workspace
@@ -343,13 +345,12 @@ class ContextBuilder:
         cwd: Path,
         claude_projects: Path,
     ) -> tuple[str | None, str | None]:
-        """Detect synthetic test workspaces rooted under AGENT_HISTORY_HOME."""
-        import os
+        """Detect synthetic test workspaces rooted under CAGELENS_HOME."""
         import urllib.parse
 
         from agent_history.utils.paths import encode_workspace_path
 
-        agent_home = os.environ.get("AGENT_HISTORY_HOME")
+        agent_home = get_env("CAGELENS_HOME", "AGENT_HISTORY_HOME")
         if not agent_home:
             return (None, None)
 
@@ -502,14 +503,15 @@ class ContextBuilder:
         import os
 
         has_wsl_override = bool(
-            os.environ.get("CLAUDE_WSL_TEST_DISTRO") or os.environ.get("AGENT_HISTORY_HOME_WSL")
+            os.environ.get("CLAUDE_WSL_TEST_DISTRO")
+            or get_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL")
         )
         has_windows_override = bool(
             os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR")
-            or os.environ.get("AGENT_HISTORY_HOME_WINDOWS")
+            or get_env("CAGELENS_HOME_WINDOWS", "AGENT_HISTORY_HOME_WINDOWS")
         )
         return (
-            bool(os.environ.get("AGENT_HISTORY_TEST_MODE")),
+            has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE"),
             has_wsl_override,
             has_windows_override,
         )
@@ -520,10 +522,10 @@ class ContextBuilder:
 
         test_mode, has_wsl_override, has_windows_override = self._platform_scan_overrides()
         injected_home_envs = (
-            "AGENT_HISTORY_HOME",
-            "AGENT_HISTORY_HOME_WSL",
-            "AGENT_HISTORY_HOME_WINDOWS",
-            "AGENT_HISTORY_CONFIG_DIR",
+            ("CAGELENS_HOME", "AGENT_HISTORY_HOME"),
+            ("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL"),
+            ("CAGELENS_HOME_WINDOWS", "AGENT_HISTORY_HOME_WINDOWS"),
+            ("CAGELENS_CONFIG_DIR", "AGENT_HISTORY_CONFIG_DIR"),
             "CLAUDE_PROJECTS_DIR",
             "CODEX_SESSIONS_DIR",
             "CODEX_HOME",
@@ -534,7 +536,10 @@ class ContextBuilder:
         )
         return (
             test_mode
-            and any(os.environ.get(name) for name in injected_home_envs)
+            and any(
+                get_env(*name) if isinstance(name, tuple) else os.environ.get(name)
+                for name in injected_home_envs
+            )
             and not has_wsl_override
             and not has_windows_override
         )

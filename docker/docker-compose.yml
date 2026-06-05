@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile.node
     hostname: node-alpha
     networks:
-      - agent-history-net
+      - cagelens-net
     environment:
       - NODE_USERS=alice,bob
     volumes:
@@ -19,7 +19,7 @@ services:
       dockerfile: Dockerfile.node
     hostname: node-beta
     networks:
-      - agent-history-net
+      - cagelens-net
     environment:
       - NODE_USERS=charlie,dave
     volumes:
@@ -34,7 +34,7 @@ services:
       - node-alpha
       - node-beta
     networks:
-      - agent-history-net
+      - cagelens-net
     volumes:
       # Mount the project code (read-only)
       - ..:/app:ro
@@ -47,7 +47,7 @@ services:
       - NODE_BETA=node-beta
       - ALPHA_USERS=alice,bob
       - BETA_USERS=charlie,dave
-      # Script selection: v1 (ah.py) or v2 (agent-history, default)
+      # Script selection: v1 (ah.py) or v2 (cagelens, default)
       # Pass through from host: AGENT_HISTORY_TEST_SCRIPT=v1 docker compose run ...
       - AGENT_HISTORY_TEST_SCRIPT
       # Debug mode: AGENT_HISTORY_DEBUG=1 docker compose run ...
@@ -57,7 +57,7 @@ services:
       #   docker compose run --rm test-runner pytest --cov=. tests/e2e_docker/
 
 networks:
-  agent-history-net:
+  cagelens-net:
     driver: bridge
 
 volumes:

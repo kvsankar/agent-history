@@ -1,4 +1,4 @@
-"""Remote operations tests for agent-history.
+"""Remote operations tests for cagelens.
 
 Tests workspace listing, session listing, and export from remote hosts.
 """

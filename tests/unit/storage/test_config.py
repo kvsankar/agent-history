@@ -27,9 +27,10 @@ from agent_history.storage.config import (
 
 
 def _set_config_dir(tmp_path: Path, monkeypatch) -> Path:
-    """Point AGENT_HISTORY_CONFIG_DIR at a temp location."""
+    """Point CAGELENS_CONFIG_DIR at a temp location."""
     config_dir = tmp_path / "config"
-    monkeypatch.setenv("AGENT_HISTORY_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(config_dir))
+    monkeypatch.delenv("AGENT_HISTORY_CONFIG_DIR", raising=False)
     return config_dir
 
 
@@ -42,24 +43,50 @@ class TestConfigDir:
     """Tests for config directory resolution functions."""
 
     def test_get_config_dir_default(self, tmp_path, monkeypatch):
-        """Default should be ~/.agent-history/."""
+        """Default should be ~/.cagelens/."""
         # Clear any override
+        monkeypatch.delenv("CAGELENS_CONFIG_DIR", raising=False)
         monkeypatch.delenv("AGENT_HISTORY_CONFIG_DIR", raising=False)
         # Set HOME to tmp_path
         monkeypatch.setenv("HOME", str(tmp_path))
 
         config_dir = get_config_dir()
 
-        assert config_dir == tmp_path / ".agent-history"
+        assert config_dir == tmp_path / ".cagelens"
 
     def test_get_config_dir_from_env(self, tmp_path, monkeypatch):
-        """AGENT_HISTORY_CONFIG_DIR should override default."""
+        """CAGELENS_CONFIG_DIR should override default."""
         custom_config = tmp_path / "test-config"
+        monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(custom_config))
+
+        result = get_config_dir()
+
+        assert result == custom_config
+
+    def test_get_config_dir_from_legacy_env(self, tmp_path, monkeypatch):
+        """AGENT_HISTORY_CONFIG_DIR should still override default."""
+        custom_config = tmp_path / "legacy-test-config"
+        monkeypatch.delenv("CAGELENS_CONFIG_DIR", raising=False)
         monkeypatch.setenv("AGENT_HISTORY_CONFIG_DIR", str(custom_config))
 
         result = get_config_dir()
 
         assert result == custom_config
+
+    def test_get_config_dir_migrates_agent_history_dir(self, tmp_path, monkeypatch):
+        """Legacy ~/.agent-history should migrate to ~/.cagelens."""
+        monkeypatch.delenv("CAGELENS_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("AGENT_HISTORY_CONFIG_DIR", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        legacy = tmp_path / ".agent-history"
+        legacy.mkdir()
+        (legacy / "config.json").write_text('{"version": 1}\n', encoding="utf-8")
+
+        result = get_config_dir()
+
+        assert result == tmp_path / ".cagelens"
+        assert (result / "config.json").exists()
+        assert not legacy.exists()
 
     def test_get_config_file_returns_config_json(self, tmp_path, monkeypatch):
         """get_config_file should return path to config.json."""

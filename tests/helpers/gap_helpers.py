@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 def load_json_output(result: Any) -> Any:
@@ -34,8 +34,8 @@ def assert_exported_to_dir(result: Any, output_dir: Path) -> None:
     assert Path(reported_dir) == output_dir, "Expected output_dir to match export result"
 
 
-def ensure_config_env(env: Dict[str, str], config_dir: Path) -> Dict[str, str]:
+def ensure_config_env(env: dict[str, str], config_dir: Path) -> dict[str, str]:
     config_dir.mkdir(parents=True, exist_ok=True)
     updated = env.copy()
-    updated["AGENT_HISTORY_CONFIG_DIR"] = str(config_dir)
+    updated["CAGELENS_CONFIG_DIR"] = str(config_dir)
     return updated

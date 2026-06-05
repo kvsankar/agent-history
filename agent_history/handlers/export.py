@@ -82,7 +82,7 @@ class SessionExportHandler(VerbHandler):
         Args:
             scope: Resolved scope with sessions to export.
             verb_args: Export options:
-                - output_dir: Path for output (default: ./ai-chats)
+                - output_dir: Path for output (default: ./.cagelens/exports)
                 - minimal: bool - omit metadata in output
                 - split: int - split at N lines (None to disable)
                 - flat: bool - no workspace subdirs (default: False)

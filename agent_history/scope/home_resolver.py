@@ -22,6 +22,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agent_history.utils.env import get_env
+
 if TYPE_CHECKING:
     from agent_history.scope.context import ResolutionContext
 
@@ -121,7 +123,7 @@ class LocalHomeResolver(HomeResolver):
         """
         Get the local Claude projects directory.
 
-        Uses context.claude_projects_dir which respects AGENT_HISTORY_HOME
+        Uses context.claude_projects_dir which respects CAGELENS_HOME
         environment variable for testing.
         """
         return context.claude_projects_dir
@@ -189,10 +191,8 @@ class WSLHomeResolver(HomeResolver):
         Uses get_wsl_projects_dir() from platform utils which supports
         the CLAUDE_WSL_PROJECTS_DIR test override.
         """
-        import os
-
         if not self._distro:
-            override = os.environ.get("AGENT_HISTORY_HOME_WSL")
+            override = get_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL")
             if override:
                 candidate = Path(override) / ".claude" / "projects"
                 if candidate.exists():
@@ -210,10 +210,8 @@ class WSLHomeResolver(HomeResolver):
 
         Uses get_wsl_codex_sessions_dir() from platform utils.
         """
-        import os
-
         if not self._distro:
-            override = os.environ.get("AGENT_HISTORY_HOME_WSL")
+            override = get_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL")
             if override:
                 candidate = Path(override) / ".codex" / "sessions"
                 if candidate.exists():
@@ -231,10 +229,8 @@ class WSLHomeResolver(HomeResolver):
 
         Uses get_wsl_gemini_sessions_dir() from platform utils.
         """
-        import os
-
         if not self._distro:
-            override = os.environ.get("AGENT_HISTORY_HOME_WSL")
+            override = get_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL")
             if override:
                 candidate = Path(override) / ".gemini" / "tmp"
                 if candidate.exists():
@@ -252,10 +248,8 @@ class WSLHomeResolver(HomeResolver):
 
         Uses get_wsl_pi_sessions_dir() from platform utils.
         """
-        import os
-
         if not self._distro:
-            override = os.environ.get("AGENT_HISTORY_HOME_WSL")
+            override = get_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL")
             if override:
                 candidate = Path(override) / ".pi" / "agent" / "sessions"
                 if candidate.exists():

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List
 
+from agent_history.utils.env import has_env
 from agent_history.utils.paths import is_cached_workspace, normalize_workspace_name
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
 
@@ -145,7 +146,9 @@ def _claude_scan_sessions(projects_dir: Path) -> SessionList:
 
 def _claude_list_workspaces(projects_dir: Path, home: str) -> list[str]:
     verify_local = home == "local" or home.startswith("windows:")
-    if os.environ.get("AGENT_HISTORY_TEST_MODE") and os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and os.environ.get(
+        "CLAUDE_WINDOWS_PROJECTS_DIR"
+    ):
         verify_local = False
 
     workspaces: list[str] = []

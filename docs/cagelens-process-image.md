@@ -1,4 +1,4 @@
-# agent-history Process Image Brief
+# cagelens Process Image Brief
 
 <!-- doc-meta
 doc_role: architecture
@@ -9,7 +9,7 @@ surface: internal
 canonicality: supporting
 -->
 
-Use this document when creating the agent-history process image with ChatGPT
+Use this document when creating the cagelens process image with ChatGPT
 Images 2.0 or another image model.
 
 ## Preamble For The Diagram Agent
@@ -20,17 +20,17 @@ textual flowchart. Treat this file as the source of truth for the diagram.
 Return a single finished image. Do not output Mermaid, SVG code, ASCII art, a
 diagram description, or multiple disconnected mini-diagrams.
 
-The diagram must explain how agent-history collects fragmented AI coding
+The diagram must explain how cagelens collects fragmented AI coding
 assistant session files from many places, organizes them by workspace and
 project, and turns them into readable exports, queryable listings, and usage
 metrics that engineers (and Claude itself, via the bundled skill) can act on.
-The image should be accurate enough that an agent-history maintainer recognizes
+The image should be accurate enough that an cagelens maintainer recognizes
 the current system, and clear enough that a technically literate reader can
 understand the main moving parts without reading the repository.
 
 ## Diagram Goal
 
-Show agent-history as a unified browse-and-export front end for fragmented AI
+Show cagelens as a unified browse-and-export front end for fragmented AI
 coding assistant history:
 
 - It reads existing session files from Claude Code, Codex CLI, Gemini CLI, and Pi;
@@ -45,7 +45,7 @@ The diagram should communicate this core idea:
 
 > Scattered agent session files in -> consistent listings, exports, and metrics out.
 
-Avoid language that implies agent-history records or replays conversations,
+Avoid language that implies cagelens records or replays conversations,
 hosts a chat UI, runs an LLM, or modifies the upstream agents' data.
 
 ## Preferred Composition
@@ -56,7 +56,7 @@ Recommended layout:
 
 1. Top: title and short subtitle.
 2. Left: agent session sources across multiple homes.
-3. Middle: agent-history CLI as the unifying core, with per-agent adapters
+3. Middle: cagelens CLI as the unifying core, with per-agent adapters
    feeding a shared workspace/session model.
 4. Right: outputs (terminal listings, markdown exports, SQLite metrics,
    Claude skill integration).
@@ -71,11 +71,11 @@ metadata shape.
 Use a two-line title:
 
 ```text
-agent-history
+cagelens
 Browse, Export, and Measure AI Coding Assistant History
 ```
 
-Make `agent-history` clearly larger than the subtitle. The subtitle should feel
+Make `cagelens` clearly larger than the subtitle. The subtitle should feel
 like an explanatory caption, not an equal-weight headline.
 
 ## Visual Style
@@ -129,22 +129,22 @@ The diagram should show these major inputs:
 - **Projects**: user-defined groups of workspaces across homes/sources
 - **Date filters**: `--since`, `--until`
 
-The diagram should show agent-history producing these major outputs:
+The diagram should show cagelens producing these major outputs:
 
 - **Terminal listings**: `ws list` (workspaces), `session list` (sessions), `home list` (homes)
-- **Markdown/HTML exports**: per-workspace or per-session, in `./ai-chats/`
+- **Markdown/HTML exports**: per-workspace or per-session, in `./.cagelens/exports/`
   - export modes: default, `--format html`, `--minimal`, `--flat`, `--split N`
 - **Usage metrics**: `session stats` summaries with sessions, tokens, tools, and time
 - **Metrics SQLite database**: small local db used by `session stats`
 - **Gemini hash index**: `gemini-index` mapping SHA-256 hashes back to project paths
-- **Claude skill**: installed at `~/.claude/skills/agent-history/`, lets Claude
+- **Claude skill**: installed at `~/.claude/skills/cagelens/`, lets Claude
   query history through the same CLI
 
 Accuracy constraints:
 
-- Do not show agent-history acting as a chat client, MCP server, or LLM. It is
+- Do not show cagelens acting as a chat client, MCP server, or LLM. It is
   a CLI that reads existing session files and produces artifacts.
-- Do not show agent-history writing back into `~/.claude/projects/`,
+- Do not show cagelens writing back into `~/.claude/projects/`,
   `~/.codex/sessions/`, `~/.gemini/tmp/`, or `~/.pi/agent/sessions/`. The only exception is the install
   step setting `cleanupPeriodDays` in `~/.claude/settings.json` and creating the
   Claude skill folder.
@@ -216,7 +216,7 @@ Show that adapters operate uniformly on local and remote files; the transport
 layer hides path translation and SSH plumbing.
 
 `[missing]` markers should be shown as a small annotation: when a workspace is
-renamed or moved, agent-history surfaces the closest match rather than failing.
+renamed or moved, cagelens surfaces the closest match rather than failing.
 
 ## Shared Workspace / Session Model
 
@@ -239,7 +239,7 @@ Show the top-level commands as gates between the shared model and the outputs:
 - **`home list`** -> list homes and manage SSH remotes
 - **`ws list`** -> list workspaces
 - **`session list`** -> list sessions
-- **`session export`** -> Markdown/HTML bundle in `./ai-chats/`
+- **`session export`** -> Markdown/HTML bundle in `./.cagelens/exports/`
   (modes: default / `--format html` / `--minimal` / `--flat` / `--split N`)
 - **`project`** -> create / apply workspace projects
 - **`session stats`** -> usage metrics (sessions, tokens, tools, time, daily breakdown)
@@ -250,11 +250,11 @@ Show the top-level commands as gates between the shared model and the outputs:
 Output cards on the right side:
 
 - `Terminal Listings: ws / session / home`
-- `Markdown/HTML Exports: ./ai-chats/`
+- `Markdown/HTML Exports: ./.cagelens/exports/`
 - `Usage Stats: tokens / tools / time`
 - `Metrics SQLite DB`
 - `Gemini Hash Index`
-- `Claude Skill: ~/.claude/skills/agent-history/`
+- `Claude Skill: ~/.claude/skills/cagelens/`
 
 ## Shared Services And Storage
 
@@ -283,19 +283,19 @@ Required storage/service blocks:
   - backs up malformed JSON before rewriting
 
 - **Claude Skill Folder**
-  - `~/.claude/skills/agent-history/` (CLI + `SKILL.md`)
+  - `~/.claude/skills/cagelens/` (CLI + `SKILL.md`)
   - lets Claude Code itself search history via the same CLI
 
 Storage boundary accuracy:
 
 - Agent session files (`~/.claude/projects/`, `~/.codex/sessions/`,
   `~/.gemini/tmp/`, `~/.pi/agent/sessions/`) are read-only inputs from
-  agent-history's perspective.
-- The metrics DB, projects config, and Gemini hash index are agent-history's
+  cagelens's perspective.
+- The metrics DB, projects config, and Gemini hash index are cagelens's
   own data, used to accelerate and group queries.
-- Markdown/HTML exports under `./ai-chats/` are generated outputs in the user's
+- Markdown/HTML exports under `./.cagelens/exports/` are generated outputs in the user's
   current project, not authoritative session storage.
-- agent-history has no vector store, no embedding service, and no LLM backend.
+- cagelens has no vector store, no embedding service, and no LLM backend.
 
 ## Review And Gate Semantics
 
@@ -303,7 +303,7 @@ Show this tool as observation and export, not transformation of agent state.
 
 Required accuracy points:
 
-- agent-history never edits or deletes upstream agent session files.
+- cagelens never edits or deletes upstream agent session files.
 - The only writes outside the user's project directory are: the install step
   (skill folder + retention setting), the metrics DB under the user's home,
   and the projects / Gemini-index config.
@@ -350,7 +350,7 @@ Agent Sessions across Homes (Local / WSL / Windows / SSH)
                 list    export   stats
         |        |        |        |        |
         v        v        v        v        v
-   Terminal  Terminal  ./ai-chats  Stats  Projects
+   Terminal  Terminal  ./.cagelens/exports  Stats  Projects
                                  + DB
 
    Shared layer: Metrics DB, Projects, Gemini Hash Index,
@@ -393,7 +393,7 @@ Use short labels where possible:
 - `install`
 - `--this` / `--aw` / `--ah`
 - `--format html` / `--minimal` / `--flat` / `--split N`
-- `./ai-chats/`
+- `./.cagelens/exports/`
 - `[missing]`
 
 Do not use these labels:
@@ -415,7 +415,7 @@ The output must be:
 - readable at typical README/documentation width
 - suitable for a technical README, architecture page, or project announcement
 - visually polished but information-dense
-- accurate to the current agent-history process on the master/main branch
+- accurate to the current cagelens process on the master/main branch
 
 The output must not be:
 

@@ -1,4 +1,4 @@
-"""Gemini CLI backend for agent-history.
+"""Gemini CLI backend for cagelens.
 
 This module handles all Gemini CLI session operations:
 - Session scanning (~/.gemini/tmp/<project-id>/chats/)
@@ -127,7 +127,7 @@ def gemini_get_home_dir() -> Path:
     """Get Gemini sessions directory (~/.gemini/tmp/).
 
     Supports upstream GEMINI_CLI_HOME plus GEMINI_SESSIONS_DIR for tests and
-    agent-history compatibility. GEMINI_SESSIONS_DIR wins because it points
+    cagelens compatibility. GEMINI_SESSIONS_DIR wins because it points
     directly at the tmp/session root.
     """
     env_override = os.environ.get("GEMINI_SESSIONS_DIR")
@@ -658,7 +658,7 @@ def gemini_extract_metrics_from_json(json_file: Path) -> MetricsDict:
 
 
 def gemini_get_hash_index_file() -> Path:
-    """Get path to Gemini hash index file (~/.agent-history/gemini_index.json)."""
+    """Get path to Gemini hash index file (~/.cagelens/gemini_index.json)."""
     return get_config_dir() / "gemini_index.json"
 
 
@@ -720,7 +720,7 @@ def gemini_compute_project_hash(path: Path) -> str:
 def gemini_update_hash_index_from_cwd() -> dict:
     """Update Gemini hash index based on current working directory.
 
-    Called on each agent-history run to progressively build hash->path mapping.
+    Called on each cagelens run to progressively build hash->path mapping.
     Checks if the current directory's hash exists in Gemini's session storage,
     and if so, records the mapping.
 

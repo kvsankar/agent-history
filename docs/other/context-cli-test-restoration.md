@@ -38,10 +38,10 @@ project [list|add|remove|show|...]    # project commands
 
 ## Work Completed
 
-### 1. Removed legacy translation from agent-history script
+### 1. Removed legacy translation from cagelens script
 - Deleted `_translate_legacy_cli_args()` function (~60 lines)
 - Removed call in `main()` function
-- File: `agent-history` (lines 17585-17646 removed)
+- File: `cagelens` (lines 17585-17646 removed)
 
 ### 2. Removed legacy_cli import from integration tests
 Updated these files to remove `from tests.legacy_cli import translate_legacy_args`:
@@ -112,7 +112,7 @@ Current state of `tests/unit/test_claude_history.py`:
 ## Files Modified
 
 ```
-agent-history                                  # Removed _translate_legacy_cli_args
+cagelens                                  # Removed _translate_legacy_cli_args
 tests/integration/test_cli_flags.py            # Removed import + updated CLI calls
 tests/integration/test_e2e_cli.py              # Removed import + updated CLI calls
 tests/integration/test_e2e_codex.py            # Removed import only
@@ -153,7 +153,7 @@ tests/legacy_cli.py                            # No longer needed
    - Delete `tests/legacy_cli.py`
    - Rebuild unit test file with pure unit tests only
 3. If keeping legacy:
-   - Revert agent-history changes
+   - Revert cagelens changes
    - Keep `tests/legacy_cli.py`
    - Use translation layer in tests
 4. Run `uv run pytest` to verify

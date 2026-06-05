@@ -49,7 +49,7 @@ def _write_pi_session(root: Path) -> Path:
     return session_file
 
 
-def test_session_export_default_output_dir_is_ai_chats(isolated_home):
+def test_session_export_default_output_dir_is_cagelens_exports(isolated_home):
     _write_claude_session(isolated_home["claude_dir"])
 
     result = run_cli_subprocess(
@@ -59,7 +59,7 @@ def test_session_export_default_output_dir_is_ai_chats(isolated_home):
     )
 
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    output_dir = isolated_home["path"] / "ai-chats"
+    output_dir = isolated_home["path"] / ".cagelens" / "exports"
     assert list(output_dir.rglob("*.md")), "Expected markdown under default export directory"
 
 

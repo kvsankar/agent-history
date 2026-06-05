@@ -1,1 +1,1 @@
-"""Scope resolution tests for agent-history CLI."""
+"""Scope resolution tests for cagelens CLI."""

@@ -15,7 +15,7 @@ canonicality: primary
 
 Claude Code stores local sessions under its projects directory. For exact
 storage locations across all supported agents, see
-[agent-history-spec.md](../specs/agent-history-spec.md#supported-agents).
+[cagelens-spec.md](../specs/cagelens-spec.md#supported-agents).
 
 ---
 
@@ -23,12 +23,12 @@ storage locations across all supported agents, see
 
 List all workspaces:
 ```bash
-agent-history ws list
+cagelens ws list
 ```
 
 Or try a partial match:
 ```bash
-agent-history session projects  # Match any workspace with "projects"
+cagelens session projects  # Match any workspace with "projects"
 ```
 
 ---
@@ -37,9 +37,9 @@ agent-history session projects  # Match any workspace with "projects"
 
 Yes! Use multiple patterns or the `--aw` flag:
 ```bash
-agent-history export proj1 proj2         # Multiple specific patterns
-agent-history export django              # All workspaces containing "django"
-agent-history export --aw                # All workspaces
+cagelens export proj1 proj2         # Multiple specific patterns
+cagelens export django              # All workspaces containing "django"
+cagelens export --aw                # All workspaces
 ```
 
 ---
@@ -65,8 +65,8 @@ Both are extracted and converted.
 
 Use `--since` and `--until`:
 ```bash
-agent-history session myproject --since 2025-11-01 --until 2025-11-30
-agent-history export myproject --since 2025-11-01
+cagelens session myproject --since 2025-11-01 --until 2025-11-30
+cagelens export myproject --since 2025-11-01
 ```
 
 ---
@@ -78,15 +78,15 @@ Large histories across multiple homes can take several minutes, especially with 
 Tips:
 ```bash
 # Parallelize work
-agent-history export --ah --jobs 4
-agent-history stats --sync --ah --jobs 4
+cagelens export --ah --jobs 4
+cagelens stats --sync --ah --jobs 4
 
 # Skip sources that are slow or offline
-agent-history export --ah --no-remote
-agent-history stats --sync --ah --no-wsl
+cagelens export --ah --no-remote
+cagelens stats --sync --ah --no-wsl
 
 # Reduce output noise
-agent-history export --ah --quiet
+cagelens export --ah --quiet
 ```
 
 ---
@@ -95,11 +95,11 @@ agent-history export --ah --quiet
 
 Use the `--wsl` flag:
 ```powershell
-python agent-history home --wsl              # Find WSL distributions
-python agent-history session myproject --wsl    # List sessions
-python agent-history export myproject --wsl # Export
-python agent-history session --wsl --agent codex
-python agent-history session --wsl --agent gemini
+python cagelens home --wsl              # Find WSL distributions
+python cagelens session myproject --wsl    # List sessions
+python cagelens export myproject --wsl # Export
+python cagelens session --wsl --agent codex
+python cagelens session --wsl --agent gemini
 ```
 
 No SSH or rsync needed - uses direct filesystem access.
@@ -110,10 +110,10 @@ No SSH or rsync needed - uses direct filesystem access.
 
 Yes! Combine flags:
 ```bash
-agent-history ws list --ah                    # All homes
-agent-history session myproject --wsl         # WSL
-agent-history session myproject --windows     # Windows (from WSL)
-agent-history session myproject -r user@host  # SSH remote
+cagelens ws list --ah                    # All homes
+cagelens session myproject --wsl         # WSL
+cagelens session myproject --windows     # Windows (from WSL)
+cagelens session myproject -r user@host  # SSH remote
 ```
 
 ---
@@ -128,11 +128,11 @@ agent-history session myproject -r user@host  # SSH remote
 1. Install Claude Code: https://claude.com/claude-code
 2. Log in: `claude login`
 3. Create at least one conversation
-4. If your Claude data lives somewhere else (e.g., another drive or a mounted backup), set the `CLAUDE_PROJECTS_DIR` environment variable before running `agent-history`:
+4. If your Claude data lives somewhere else (e.g., another drive or a mounted backup), set the `CLAUDE_PROJECTS_DIR` environment variable before running `cagelens`:
 
    ```bash
    export CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects
-   agent-history ws list
+   cagelens ws list
    ```
 
 ---
@@ -142,7 +142,7 @@ agent-history session myproject -r user@host  # SSH remote
 **Problem:** No workspaces match your pattern
 
 **Solution:**
-1. List all workspaces: `agent-history ws list`
+1. List all workspaces: `cagelens ws list`
 2. Try a partial match
 3. Check spelling and case-sensitivity
 
@@ -169,7 +169,7 @@ chmod 700 ~/.claude/projects/  # Fix if needed
 2. Ensure the conversation wasn't interrupted mid-session
 3. Try converting individual files for better error messages:
    ```bash
-   agent-history export path/to/file.jsonl
+   cagelens export path/to/file.jsonl
    ```
 
 ---
@@ -200,7 +200,7 @@ chmod 700 ~/.claude/projects/  # Fix if needed
 
 **Solution:** Use WSL (most reliable):
 ```powershell
-wsl python agent-history export -r user@host
+wsl python cagelens export -r user@host
 ```
 
 Alternative options (Chocolatey, Git Bash) may have SSH integration issues.
@@ -213,7 +213,7 @@ Alternative options (Chocolatey, Git Bash) may have SSH integration issues.
 
 **Solution:** Use WSL:
 ```powershell
-wsl python agent-history export -r user@host
+wsl python cagelens export -r user@host
 ```
 
 ---
@@ -251,18 +251,18 @@ wsl python agent-history export -r user@host
 2. Install Claude Code
 3. Log in: `claude login`
 4. Create at least one conversation
-5. Run `agent-history ws list --wsl` to verify discovery
+5. Run `cagelens ws list --wsl` to verify discovery
 
 ---
 
 ### WSL user lookup fails or hangs
 
-If `wsl -d <distro> whoami` fails or hangs, `agent-history` falls back to UNC home scanning (e.g., `\\wsl.localhost\<distro>\home`) to find users and session paths. If discovery still fails:
+If `wsl -d <distro> whoami` fails or hangs, `cagelens` falls back to UNC home scanning (e.g., `\\wsl.localhost\<distro>\home`) to find users and session paths. If discovery still fails:
 
 **Solution:**
 1. Ensure the UNC path is accessible in File Explorer
 2. Restart WSL: `wsl --shutdown` then `wsl -d Ubuntu`
-3. Re-run `agent-history home --wsl`
+3. Re-run `cagelens home --wsl`
 
 ---
 
@@ -296,39 +296,39 @@ When syncing between machines (P1 ↔ P2), the tool automatically filters out ca
 
 ### Cache locations
 
-- Remote: `~/.agent-history/remote-cache/<host>/<agent>/<workspace>`
+- Remote: `~/.cagelens/remote-cache/<host>/<agent>/<workspace>`
 - WSL: Direct filesystem access (no caching)
 
 ---
 
 ## Reset & Data Management
 
-### Where does agent-history store its data?
+### Where does cagelens store its data?
 
-`agent-history` stores its own cache/config under `~/.agent-history/`. For the
+`cagelens` stores its own cache/config under `~/.cagelens/`. For the
 complete file list and migration behavior, see
-[agent-history-spec.md](../specs/agent-history-spec.md#file-locations).
+[cagelens-spec.md](../specs/cagelens-spec.md#file-locations).
 
 ### How do I start fresh?
 
 Use the reset command:
 ```bash
 # Delete everything (prompts for confirmation)
-agent-history reset
+cagelens reset
 
 # Delete only specific data
-agent-history reset db        # Metrics only
-agent-history reset config    # Homes/projects only
-agent-history reset settings  # Remote cache only
+cagelens reset db        # Metrics only
+cagelens reset config    # Homes/projects only
+cagelens reset settings  # Remote cache only
 
 # Skip confirmation (for scripts)
-agent-history reset -y
+cagelens reset -y
 ```
 
 ### Stats showing incorrect data?
 
 Try resetting the metrics database:
 ```bash
-agent-history reset db
-agent-history stats --sync
+cagelens reset db
+cagelens stats --sync
 ```

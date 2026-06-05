@@ -22,10 +22,10 @@ repos:
     hooks:
       - id: ty
         name: ty (type checker)
-        entry: uv run ty check agent-history
+        entry: uv run ty check cagelens
         language: system
         pass_filenames: false
-        files: ^agent-history$
+        files: ^cagelens$
 
   # Code complexity checks with radon
   - repo: local
@@ -41,8 +41,8 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
-        # Also check claude-history (no .py extension)
-        files: (\.py$|^claude-history$)
+        # Also check extensionless CLI scripts
+        files: (\.py$|^cagelens$|^agent-history$|^claude-history$)
         exclude: ^test_
 
       - id: radon-mi
@@ -52,7 +52,7 @@ repos:
         types: [python]
         args: [-s, --min, "B"]  # Show grade B or worse
         pass_filenames: true
-        files: (\.py$|^claude-history$)
+        files: (\.py$|^cagelens$|^agent-history$|^claude-history$)
         exclude: ^test_
         # MI is informational, don't fail
         verbose: true

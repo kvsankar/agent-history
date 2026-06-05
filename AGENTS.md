@@ -1,6 +1,6 @@
 # Supported Coding Agents
 
-This document compares the AI coding agents supported by `agent-history` and explains how they work with this tool.
+This document compares the AI coding agents supported by `cagelens` and explains how they work with this tool.
 
 ## Quick Comparison
 
@@ -53,7 +53,7 @@ This document compares the AI coding agents supported by `agent-history` and exp
 
 - **Workspace naming**: SHA-256 hash of absolute project path
 - **Session files**: JSON files (not JSONL) containing full session
-- **Hash index**: `agent-history` maintains a hash→path index for readable display
+- **Hash index**: `cagelens` maintains a hash→path index for readable display
 
 ### Pi
 
@@ -67,19 +67,19 @@ This document compares the AI coding agents supported by `agent-history` and exp
 - **Session files**: JSONL files with a `session` header and `message` entries
 - **Tool calls**: Assistant tool calls and tool execution results are preserved
 
-## How agent-history Works with Each Agent
+## How cagelens Works with Each Agent
 
 ### Listing Sessions (`lss`)
 
 ```bash
 # All agents (auto-detect)
-agent-history lss myproject
+cagelens lss myproject
 
 # Specific agent
-agent-history --agent claude lss myproject
-agent-history --agent codex lss myproject
-agent-history --agent gemini lss myproject
-agent-history --agent pi lss myproject
+cagelens --agent claude lss myproject
+cagelens --agent codex lss myproject
+cagelens --agent gemini lss myproject
+cagelens --agent pi lss myproject
 ```
 
 | Behavior | Claude | Codex | Gemini | Pi |
@@ -92,11 +92,11 @@ agent-history --agent pi lss myproject
 
 ```bash
 # Export to markdown
-agent-history export myproject -o ./output
+cagelens export myproject -o ./output
 
 # Agent-specific export
-agent-history --agent gemini export myproject
-agent-history --agent pi export myproject
+cagelens --agent gemini export myproject
+cagelens --agent pi export myproject
 ```
 
 | Feature | Claude | Codex | Gemini | Pi |
@@ -110,9 +110,9 @@ agent-history --agent pi export myproject
 
 ```bash
 # Sync and show stats
-agent-history stats --sync
-agent-history stats --by tool
-agent-history stats --by model
+cagelens stats --sync
+cagelens stats --by tool
+cagelens stats --by model
 ```
 
 | Metric | Claude | Codex | Gemini | Pi |
@@ -133,14 +133,14 @@ agent-history stats --by model
 
 ### Codex CLI
 
-- **Incremental indexing**: `agent-history` maintains session→workspace index for O(1) lookups
+- **Incremental indexing**: `cagelens` maintains session→workspace index for O(1) lookups
 - **Date-based scanning**: Only scans new date folders since last run
 - **CLI version**: Stores Codex CLI version in sessions
 
 ### Gemini CLI
 
 - **Reasoning/thoughts**: Captures model's reasoning steps with subjects and descriptions
-- **Hash→path index**: `agent-history` progressively learns hash→path mappings
+- **Hash→path index**: `cagelens` progressively learns hash→path mappings
 - **Built-in export**: Gemini has `/chat share` command (we provide more features)
 - **Bulk indexing**: Use `gemini-index` command to scan directories
 
@@ -167,10 +167,10 @@ abc123def456...  →  (index lookup)  →  /home/user/myapp
 **Building the Gemini index:**
 ```bash
 # Progressive learning (automatic)
-# Index updates when you run agent-history from a Gemini project directory
+# Index updates when you run cagelens from a Gemini project directory
 
 # Bulk indexing
-agent-history gemini-index ~/projects    # Scan for .gemini/ folders
+cagelens gemini-index ~/projects    # Scan for .gemini/ folders
 ```
 
 ## Environment Variables
@@ -227,18 +227,18 @@ Override default storage locations for testing or custom setups:
 
 ### Multi-Agent Development
 
-If you use multiple coding agents, `agent-history` unifies them:
+If you use multiple coding agents, `cagelens` unifies them:
 
 ```bash
 # List all sessions from all agents
-agent-history lss myproject
+cagelens lss myproject
 
 # Export everything
-agent-history export myproject -o ./backup
+cagelens export myproject -o ./backup
 
 # Stats across all agents
-agent-history stats --sync
-agent-history stats --by tool
+cagelens stats --sync
+cagelens stats --by tool
 ```
 
 ### Gemini-Specific Setup
@@ -247,20 +247,20 @@ For best experience with Gemini CLI:
 
 ```bash
 # Run once to index all your Gemini projects
-agent-history gemini-index ~/projects
+cagelens gemini-index ~/projects
 
 # Now workspace names display as paths instead of hashes
-agent-history --agent gemini lss
+cagelens --agent gemini lss
 ```
 
 ### Cross-Machine Sync
 
 ```bash
 # Sync from remote machines
-agent-history stats --sync --ah -r user@workstation
+cagelens stats --sync --ah -r user@workstation
 
 # Export from all sources
-agent-history export myproject --ah -o ./consolidated
+cagelens export myproject --ah -o ./consolidated
 ```
 
 ## See Also
