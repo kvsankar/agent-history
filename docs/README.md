@@ -89,5 +89,6 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | [retrospective.md](other/retrospective.md) | Collaboration retrospective. |
 | [claude-collaboration-playbook.md](other/claude-collaboration-playbook.md) | Behavioral playbook for Claude collaborations. |
 | [context-cli-test-restoration.md](other/context-cli-test-restoration.md) | Context for CLI test restoration work. |
+| [docs-governance.md](other/docs-governance.md) | Documentation ownership, metadata, generated output, and promotion rules. |
 
 If you add new docs, update this index so contributors can discover them quickly.
