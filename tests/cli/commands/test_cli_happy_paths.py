@@ -25,6 +25,45 @@ from tests.helpers.cli import (
 pytestmark = pytest.mark.v1
 
 
+class TestBareInvocation:
+    """Test top-level invocation behavior."""
+
+    def test_bare_cagelens_prints_help_without_listing_sessions(
+        self,
+        isolated_home: Dict[str, Any],
+        setup_golden_fixtures: Dict[str, Path],
+    ):
+        """Bare cagelens prints help and does not run session list."""
+        result = run_cli_subprocess(
+            [],
+            env=isolated_home["env"],
+            cwd=isolated_home["path"],
+        )
+
+        assert_cli_success(result, "bare cagelens should print help successfully")
+        assert "usage: cagelens" in result.stdout
+        assert "session" in result.stdout
+        assert "AGENT" not in result.stdout
+        assert "WORKSPACE" not in result.stdout
+
+    def test_global_flags_without_command_print_help(
+        self,
+        isolated_home: Dict[str, Any],
+        setup_golden_fixtures: Dict[str, Path],
+    ):
+        """Global flags without a command still print help without listing sessions."""
+        result = run_cli_subprocess(
+            ["--agent", "codex"],
+            env=isolated_home["env"],
+            cwd=isolated_home["path"],
+        )
+
+        assert_cli_success(result, "global flags without a command should print help")
+        assert "usage: cagelens" in result.stdout
+        assert "AGENT" not in result.stdout
+        assert "WORKSPACE" not in result.stdout
+
+
 class TestWsList:
     """Test ws list command."""
 

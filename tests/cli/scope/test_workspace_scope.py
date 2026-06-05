@@ -39,9 +39,9 @@ class TestCurrentWorkspaceScope:
     def test_session_list_defaults_to_current_workspace(
         self, current_workspace_setup: Dict[str, Any]
     ) -> None:
-        """session list with no args shows only current workspace sessions.
+        """session list with no extra scope args shows only current workspace sessions.
 
-        Spec: "No args = current workspace (from cwd)"
+        Spec: explicit session list defaults to current workspace (from cwd)
         """
         result = run_cli_subprocess(
             ["session", "list"],
