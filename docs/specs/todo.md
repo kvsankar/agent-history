@@ -129,7 +129,7 @@ storage, export, stats, and scope explanations.
       diagnostics in `docs/analysis/docs-consolidation-ia-2026-06-05.md`.
 - [ ] Consider adding an explicit documentation governance area if index,
       consolidation-plan, and TODO docs keep growing.
-- [ ] Consider a dedicated workspace/scope hub page if user, spec, design, and
+- [x] Consider a dedicated workspace/scope hub page if user, spec, design, and
       troubleshooting links remain hard to navigate after the current indexes.
 
 ---
