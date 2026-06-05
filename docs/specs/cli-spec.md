@@ -15,13 +15,19 @@ Command-line interface specification for `cagelens`.
 
 1. **Noun-Verb structure**: `cagelens <object> <verb> [args] [flags]`
 2. **Orthogonal scopes**: Home and workspace scopes can be combined independently
-3. **Sensible defaults**: No args = list, current workspace, local home
+3. **Sensible defaults**: Bare `cagelens` prints help; explicit commands use scoped defaults
 4. **Progressive disclosure**: Simple cases are simple, power features available via flags
 5. **Flat output**: Tab-separated data with headers for machine parsing
 
 ## Command Aliases
 
 Command aliases have been removed. Use the canonical command names: `home`, `ws`, `session`, `project`.
+
+## Bare Invocation
+
+Running `cagelens` without a command must print top-level help and exit successfully.
+It must not list sessions, scan agent stores, or read workspace/session data. Users
+must choose an explicit command such as `cagelens session list`.
 
 **Previously supported aliases (now removed):**
 - `lsh` → Use `home list` instead

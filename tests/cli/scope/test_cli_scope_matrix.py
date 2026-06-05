@@ -36,6 +36,18 @@ VERB_SUFFIX = {
 }
 
 
+def test_bare_parser_prints_help_without_defaulting_to_session_list(capsys) -> None:
+    parser = CLIParser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse([])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "usage: cagelens" in output
+    assert "COMMAND" in output
+
+
 @pytest.mark.parametrize("verb", ["list", "export", "stats"])
 @pytest.mark.parametrize("home_name,home_args", HOME_SCOPES)
 @pytest.mark.parametrize("ws_name,ws_args", WORKSPACE_SCOPES)

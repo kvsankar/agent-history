@@ -106,6 +106,9 @@ class CLIParser:
         # Preprocess argv to handle positional patterns that could conflict with subcommands
         argv = self._preprocess_argv(argv)
         args = self.parser.parse_args(argv)
+        if getattr(args, "command", None) is None:
+            self.parser.print_help()
+            raise SystemExit(0)
         return self._build_request(args)
 
     def _preprocess_argv(self, argv: list[str]) -> list[str]:
@@ -981,6 +984,8 @@ class CLIParser:
 
     def _build_request(self, args: argparse.Namespace) -> CommandRequest:
         """Convert parsed args to CommandRequest."""
+        if getattr(args, "command", None) is None:
+            raise ValueError("Command is required")
         self._normalize_export_args(args)
 
         # Determine resource and verb
@@ -1071,8 +1076,7 @@ class CLIParser:
         elif command == RESOURCE_FETCH:
             return (RESOURCE_FETCH, DEFAULT_VERB_RUN)
         else:
-            # Default to session list
-            return (RESOURCE_SESSION, DEFAULT_VERB_LIST)
+            raise ValueError(f"Unknown command: {command}")
 
     def _build_scope_args(self, args: argparse.Namespace) -> ScopeArgs:
         """Build ScopeArgs from parsed arguments."""

@@ -281,6 +281,10 @@ Forked exports include a **Conversation Structure** summary and anchor links for
 
 ## Operations
 
+Bare `cagelens` prints top-level help and exits successfully. It does not run a
+list operation or scan session stores. Scoped defaults apply after the user
+chooses an explicit operation such as `cagelens session list`.
+
 ### List Operations
 
 **`ws list`** - Enumerate workspaces
