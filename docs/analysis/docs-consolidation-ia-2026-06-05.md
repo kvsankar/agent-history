@@ -26,6 +26,16 @@ Run notes:
 - IA output: 7 top-level topic groups, 6 facet dimensions, 7 diagnostics, 98 consolidation clusters.
 - Doc-pair LLM analysis was skipped by dryscope because the estimated pair-analysis cost exceeded the configured cap.
 
+Post-consolidation rerun:
+
+- Run: `.dryscope/runs/20260605-141322/report.md`
+- Commit scanned: `674c5511`
+- Corpus: 39 documents, 942 sections.
+- Section similarity: 0 similar section pairs above threshold 0.9; 0 section recommendations.
+- IA output: 9 top-level topic groups, 6 facet dimensions, 7 diagnostics, 103 consolidation clusters.
+- Interpretation: copy-like section duplication remains clean. The IA cluster count rose because the consolidation work added explicit review/documentation-governance material (`docs/reviews/README.md`) and made status/index topics visible to Dryscope. The remaining diagnostics are now more about durable navigation hubs than duplicated prose.
+- Doc-pair LLM analysis was skipped again because the estimated pair-analysis cost exceeded the configured cap.
+
 ## Proposed IA
 
 ### 1. User Workflows
@@ -267,3 +277,13 @@ These are not section-level duplicate copies. They are topic-coverage overlaps w
 - Medium: agent formats mix local coding-agent formats with web/export ecosystems. Keep separate.
 - Low: documentation index/overview is a weak top-level topic. Keep as utility navigation only.
 - Low: process diagram requirements are a single-document intent. Keep as supporting architecture artifact.
+
+## Post-Rerun Residual Diagnostics
+
+The 2026-06-05 post-consolidation rerun no longer suggests section-level copy cleanup. It still flags IA-level navigation work:
+
+- High: workspace resolution remains the dominant cross-cutting topic. Treat it as a hub with child links for model, pipeline, cross-environment access, and matching reliability.
+- High: current/proposed/historical/draft docs still overlap across CLI behavior, pipeline architecture, scope resolution, and schema support. Lifecycle facets are now present, but indexes should keep exposing them.
+- Medium: export still spans workflow, pipeline, schema, and web-import research. Keep reciprocal links between those owners.
+- Medium: source-format lookup and normalized field/schema mapping are related but should remain distinct.
+- Low: documentation governance now appears as its own topic across indexes, IA plans, TODOs, and review status. This is expected after adding the review index, but it may deserve a small explicit governance section if the docs continue to grow.

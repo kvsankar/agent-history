@@ -125,8 +125,12 @@ storage, export, stats, and scope explanations.
       metrics storage, and token-source fields have clear canonical owners.
 - [x] Mark or archive resolved review documents after any remaining actionable
       findings are promoted into specs, tests, or architecture docs.
-- [ ] Re-run Dryscope docs scan after consolidation to verify the IA diagnostics
-      have improved.
+- [x] Re-run Dryscope docs scan after consolidation and document the residual
+      diagnostics in `docs/analysis/docs-consolidation-ia-2026-06-05.md`.
+- [ ] Consider adding an explicit documentation governance area if index,
+      consolidation-plan, TODO, and review-status docs keep growing.
+- [ ] Consider a dedicated workspace/scope hub page if user, spec, design, and
+      troubleshooting links remain hard to navigate after the current indexes.
 
 ---
 
