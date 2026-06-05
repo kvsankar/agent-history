@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
@@ -72,7 +72,8 @@ def _pi_format_timestamp(value: Any) -> str:
         return ""
     if isinstance(value, (int, float)):
         try:
-            return datetime.utcfromtimestamp(float(value) / 1000).isoformat() + "Z"
+            timestamp = datetime.fromtimestamp(float(value) / 1000, UTC)
+            return timestamp.isoformat().replace("+00:00", "Z")
         except (OSError, OverflowError, ValueError):
             return str(value)
     return str(value)
