@@ -2,6 +2,10 @@
 
 How Claude Code, Codex CLI, and Gemini CLI handle explicit context clearing (`/clear` command).
 
+> **Refresh 2026-06-04**: This document describes source-format detection
+> opportunities. Current unified NDJSON does not emit first-class clearing
+> event records, and clear operations can remain invisible in session files.
+
 ## Summary
 
 | Agent | Clears Context | New Session? | Where Recorded |

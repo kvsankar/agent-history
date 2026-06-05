@@ -2,13 +2,18 @@
 
 How Claude Code, Codex CLI, and Gemini CLI handle context window compaction and summarization.
 
+> **Refresh 2026-06-04**: This is feature-format research, not a guarantee
+> that `session export --json` emits first-class compaction event records.
+> Current unified NDJSON emits header/message/session records; compaction
+> details are preserved only where backend message parsing exposes them.
+
 ## Summary
 
 | Agent | Compaction | Storage | Summary Content |
 |-------|------------|---------|-----------------|
 | Claude Code | Yes (dual-layer) | Inline + separate `.md` files | Full structured Markdown |
 | Codex CLI | Yes (inline) | Inline in JSONL | Markdown in `payload.message` |
-| Gemini CLI | No | N/A | Uses `thoughts` for reasoning |
+| Gemini CLI | Evolving | JSONL metadata/snapshots | Uses thoughts and append-log updates; no stable first-class compaction event confirmed |
 
 ---
 

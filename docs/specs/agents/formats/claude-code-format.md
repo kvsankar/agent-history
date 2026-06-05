@@ -3,6 +3,11 @@
 This document captures our understanding of the `.jsonl` files created by Claude Code, based on empirical analysis of actual conversation data.
 
 > **Note**: This is reverse-engineered documentation based on observation. Claude Code's internal format may change without notice.
+>
+> **Refresh 2026-06-04**: Official Claude Code docs describe session storage
+> location and SDK session APIs, but not a stable raw JSONL schema. Treat
+> unknown top-level records and unknown fields as expected compatibility data.
+> See [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
 
 ## Table of Contents
 

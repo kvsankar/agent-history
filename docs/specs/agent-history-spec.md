@@ -29,18 +29,20 @@ For agent-specific session formats, see [agents/formats/](agents/formats/).
 | Agent | Developer | Format | Storage Location |
 |-------|-----------|--------|------------------|
 | Claude Code | Anthropic | JSONL | `~/.claude/projects/<workspace>/` |
-| Codex CLI | OpenAI | JSONL | `~/.codex/sessions/<date>/` |
-| Gemini CLI | Google | JSON | `~/.gemini/tmp/<hash>/chats/` |
+| Codex CLI | OpenAI | JSONL / JSONL.ZST | `~/.codex/sessions/<date>/` |
+| Gemini CLI | Google | JSONL / legacy JSON | `~/.gemini/tmp/<project-id>/chats/` |
+| Pi | Pi | JSONL | `~/.pi/agent/sessions/<workspace>/` |
 
 Each agent stores sessions differently. See format specifications:
 - [claude-code-format.md](agents/formats/claude-code-format.md)
 - [codex-cli-format.md](agents/formats/codex-cli-format.md)
 - [gemini-cli-format.md](agents/formats/gemini-cli-format.md)
+- [pi-format.md](agents/formats/pi-format.md)
 
 ### Agent Detection
 
 When `--agent auto` (default):
-1. Detect agent from storage path patterns (`.claude`, `.codex`, `.gemini`)
+1. Detect agent from storage path patterns (`.claude`, `.codex`, `.gemini`, `.pi`)
 2. For ambiguous contexts, scan all known locations
 3. Deduplicate sessions by file path
 
@@ -227,9 +229,11 @@ A session is a single conversation file containing messages.
 **Session file patterns by agent:**
 | Agent | Main Session | Agent/Sub-session | Format |
 |-------|--------------|-------------------|--------|
-| Claude Code | `<uuid>.jsonl` | `agent-<id>.jsonl` | JSONL |
-| Codex CLI | `rollout-<id>.jsonl` | N/A (single file) | JSONL |
-| Gemini CLI | `session-<date>-<id>.json` | N/A (single file) | JSON |
+| Claude Code | `<uuid>.jsonl` | `agent-<id>.jsonl` or nested subagent paths | JSONL |
+| Codex CLI | `rollout-<id>.jsonl` / `.jsonl.zst` | N/A (single file) | JSONL |
+| Gemini CLI | `session-<date>-<id>.jsonl` | nested `chats/<parent>/<agent>.jsonl` | JSONL |
+| Gemini CLI (legacy) | `session-<date>-<id>.json` | N/A (single file) | JSON |
+| Pi | `<timestamp>_<uuid>.jsonl` | branch tree entries in same file | JSONL |
 
 **Session types (Claude Code only):**
 | Type | Pattern | Description |
@@ -245,8 +249,8 @@ A message is a single turn in the conversation.
 | Role | Description | Agent-specific names |
 |------|-------------|---------------------|
 | `user` | Human input or task prompt | All agents use `user` |
-| `assistant` | AI response | Claude: `assistant`, Codex: `assistant`, Gemini: `model`/`gemini`/`assistant` |
-| `system` | System messages (compaction markers, etc.) | Claude only |
+| `assistant` | AI response | Claude: `assistant`, Codex: `assistant`, Gemini: `model`/`gemini`/`assistant`, Pi: `assistant` |
+| `system` | System messages, tool results, warnings, compaction markers | Claude system records, Gemini info/error/warning, Pi tool/internal records |
 
 The tool normalizes role names for consistent display: Gemini's `model`/`gemini` types are displayed as `assistant`.
 
@@ -561,7 +565,7 @@ Stats auto-sync by default. Sync happens for the resolved scope unless `--no-syn
 - Syncs only the sessions in scope (homes + workspaces + agent filters)
 - Incremental: Skips files unchanged since last sync (by mtime)
 - Additive: Deleted sessions remain until explicit reset
- 
+
 `--sync` is accepted for explicit refresh; `--force` re-syncs all files in scope.
 
 ### Schema

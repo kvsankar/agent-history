@@ -20,6 +20,7 @@ This directory contains Docker configuration for end-to-end testing of `agent-hi
 │  │  ~/.claude/     │              │  ~/.claude/     │      │
 │  │  ~/.codex/      │              │  ~/.codex/      │      │
 │  │  ~/.gemini/     │              │  ~/.gemini/     │      │
+│  │  ~/.pi/         │              │  ~/.pi/         │      │
 │  └─────────────────┘              └─────────────────┘      │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
@@ -59,7 +60,7 @@ docker-compose down -v
 
 All users have:
 - SSH key-based authentication (passwordless)
-- Synthetic Claude, Codex, and Gemini sessions
+- Synthetic Claude, Codex, Gemini, and Pi sessions
 - Home directories with project workspaces
 
 ## Synthetic Data
@@ -67,8 +68,10 @@ All users have:
 The `generate-sessions.sh` script creates:
 
 - **Claude sessions**: `~/.claude/projects/-home-{user}-myproject/session-claude-001.jsonl`
-- **Codex sessions**: `~/.codex/sessions/2025/01/15/session-codex-001.jsonl`
-- **Gemini sessions**: `~/.gemini/sessions/{hash}.json`
+- **Codex sessions**: `~/.codex/sessions/2025/01/15/rollout-*.jsonl`
+- **Gemini sessions**: `~/.gemini/tmp/{project-id}/chats/session-*.jsonl`
+  plus one legacy `session-*.json`
+- **Pi sessions**: `~/.pi/agent/sessions/--home-{user}-myproject--/session-pi-001.jsonl`
 
 Each user has sessions in:
 - `myproject` - main test workspace
@@ -78,10 +81,9 @@ Each user has sessions in:
 
 | File | Tests |
 |------|-------|
-| `test_ssh_remote.py` | SSH connectivity, `ws -r`, `ss -r`, `export -r` |
-| `test_multi_user.py` | User isolation, cross-user access |
-| `test_multi_agent.py` | `--agent` flag with Claude/Codex/Gemini |
-| `test_stats_sync.py` | `stats --sync -r` from remote nodes |
+| `test_ssh_connection.py` | SSH connectivity and generated session data |
+| `test_remote_operations.py` | `ws -r`, `session list -r`, `export -r`, and `--agent` filters |
+| `test_multi_home.py` | Local plus remote homes and multi-user scenarios |
 
 ## Debugging
 
