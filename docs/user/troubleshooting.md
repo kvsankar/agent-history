@@ -13,9 +13,8 @@ canonicality: primary
 
 ### Where are Claude Code conversations stored?
 
-`~/.claude/projects/` - each workspace has its own subdirectory.
-
-For all supported agent storage locations, see
+Claude Code stores local sessions under its projects directory. For exact
+storage locations across all supported agents, see
 [agent-history-spec.md](../specs/agent-history-spec.md#supported-agents).
 
 ---
@@ -25,8 +24,6 @@ For all supported agent storage locations, see
 List all workspaces:
 ```bash
 agent-history ws list
-# or
-ls ~/.claude/projects/
 ```
 
 Or try a partial match:
@@ -254,7 +251,7 @@ wsl python agent-history export -r user@host
 2. Install Claude Code
 3. Log in: `claude login`
 4. Create at least one conversation
-5. Verify: `ls ~/.claude/projects/`
+5. Run `agent-history ws list --wsl` to verify discovery
 
 ---
 
@@ -308,12 +305,9 @@ When syncing between machines (P1 ↔ P2), the tool automatically filters out ca
 
 ### Where does agent-history store its data?
 
-All data is stored in `~/.agent-history/`:
-- `metrics.db` - SQLite database for stats and time tracking
-- `config.json` - Settings (saved SSH remotes + projects)
-- `remote-cache/` - Cached remote session files
-- `gemini_index.json` - Gemini hash index
-- On first run, any legacy `~/.claude-history/` directory is migrated here and removed.
+`agent-history` stores its own cache/config under `~/.agent-history/`. For the
+complete file list and migration behavior, see
+[agent-history-spec.md](../specs/agent-history-spec.md#file-locations).
 
 ### How do I start fresh?
 

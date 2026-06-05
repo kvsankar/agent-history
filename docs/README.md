@@ -87,13 +87,7 @@ architecture docs.
 
 | Document | Purpose |
 |----------|---------|
-| [assessment_report.md](reviews/assessment_report.md) | Codebase assessment report. |
-| [codex_review.md](reviews/codex_review.md) | Codex integration review. |
-| [COVERAGE_REPORT.md](reviews/COVERAGE_REPORT.md) | Test coverage report. |
-| [RHODES_REVIEW.md](reviews/RHODES_REVIEW.md) | Rhodes coding principles review. |
-| [FORMAT_REFACTORING_REVIEW.md](reviews/FORMAT_REFACTORING_REVIEW.md) | Format refactoring review. |
-| [REFACTORING_REVIEW.md](reviews/REFACTORING_REVIEW.md) | General refactoring review. |
-| [done/](reviews/done/) | Completed code reviews (8 files). |
+| [reviews/](reviews/README.md) | Review index with current, superseded, closed, and historical status. |
 
 ## Other
 
