@@ -784,6 +784,7 @@ class CLIParser:
             action="store_true",
             help="Show full SHA-256 hashes instead of truncated (with --list)",
         )
+        self._add_output_format(gi_parser)
 
     def _add_install_parser(self, subparsers) -> None:
         """Add install subparser."""

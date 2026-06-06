@@ -322,6 +322,10 @@ class CommandOrchestrator:
             if self.debug:
                 sys.stderr.write(f"Debug: Parsed request: {request}\n")
 
+            scope_free_result = self._dispatch_scope_free_command(request)
+            if scope_free_result is not None:
+                return scope_free_result
+
             # 2. Build context
             context = self.context_builder.build()
 
@@ -400,6 +404,14 @@ class CommandOrchestrator:
     def _dispatch_config_home_management(self, request: CommandRequest) -> int | None:
         if request.resource != "home" or request.verb not in ("add", "remove"):
             return None
+        return self._dispatch_without_scope(request)
+
+    def _dispatch_scope_free_command(self, request: CommandRequest) -> int | None:
+        if request.resource not in {"gemini-index", "install", "reset"}:
+            return None
+        return self._dispatch_without_scope(request)
+
+    def _dispatch_without_scope(self, request: CommandRequest) -> int:
         try:
             result = self.dispatcher.dispatch(request, [])
         except DispatchError as e:

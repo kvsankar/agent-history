@@ -159,6 +159,19 @@ def test_reset_target_flags_are_not_supported() -> None:
         CLIParser().parse(["reset", "--db"])
 
 
+def test_gemini_index_does_not_build_resolution_context(monkeypatch, tmp_path: Path) -> None:
+    """gemini-index should read the local index without resolving workspaces."""
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
+    orchestrator = CommandOrchestrator()
+
+    def fail_build():
+        raise AssertionError("gemini-index should not build resolution context")
+
+    orchestrator.context_builder.build = fail_build
+
+    assert orchestrator.run(["gemini-index", "--format", "json"]) == 0
+
+
 def test_remote_session_listing_keeps_metadata_only_paths(monkeypatch, tmp_path: Path) -> None:
     """Remote list operations should not force a local cache fetch per session."""
     from agent_history.backends import ssh as ssh_backend
