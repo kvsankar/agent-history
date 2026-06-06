@@ -95,7 +95,7 @@ Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settin
 ```
 usage: cagelens [-h] [--version] [--agent {auto,claude,codex,gemini,pi}] COMMAND ...
 
-Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI)
+Browse, export, and analyze AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI, Pi).
 
 positional arguments:
   COMMAND                     Command to execute
@@ -113,6 +113,24 @@ options:
   --version                   show program's version number and exit
   --agent {auto,claude,codex,gemini,pi}
                               Agent backend to use (default: auto-detect based on available data)
+
+Progressive help:
+  cagelens ws --help              Discover workspaces and workspace flags
+  cagelens session --help         List, export, and analyze sessions
+  cagelens project --help         Group related workspaces
+  cagelens home --help            Configure local, Windows, WSL, web, and remote homes
+
+Common commands:
+  cagelens ws                     List all local workspaces with counts
+  cagelens session list           List sessions for the current workspace/project
+  cagelens session list --aw      List sessions from all local workspaces
+  cagelens session export -o DIR  Export current workspace/project sessions
+  cagelens session stats --sync   Refresh metrics and show stats
+
+Scope shortcuts:
+  --aw = all workspaces, --ah = all homes, -n TEXT = workspace substring match
+  --this = current workspace only, --project NAME = configured workspace group
+  --format json is best for automation; table/TSV are for terminal and pipes.
 ```
 <!-- help-snippet:end -->
 

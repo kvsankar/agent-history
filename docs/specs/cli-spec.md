@@ -607,7 +607,7 @@ Lists workspaces with session counts.
 
 **Table (default):**
 ```
-HOME    WORKSPACE                    SESSIONS  STATUS   LAST_MODIFIED
+HOME    WORKSPACE                    SESSIONS  STATUS   MODIFIED
 local   /home/user/projects/api           144  ok       2025-01-03 18:15
 local   /home/user/projects/my-app         23  ok       2025-01-02 10:30
 local   /home/user/projects/deleted        12  missing  2024-12-28 14:22
@@ -615,7 +615,7 @@ local   /home/user/projects/deleted        12  missing  2024-12-28 14:22
 
 **With multi-home (`--ah` or `-r`):**
 ```
-HOME              WORKSPACE                    SESSIONS  STATUS   LAST_MODIFIED
+HOME              WORKSPACE                    SESSIONS  STATUS   MODIFIED
 local             /home/user/projects/api           144  ok       2025-01-03 18:15
 remote:vm01       /home/user/projects/api            89  ok       2025-01-02 10:30
 wsl:Ubuntu        /home/user/projects/my-app         34  ok       2025-01-01 09:15
@@ -628,11 +628,11 @@ wsl:Ubuntu        /home/user/projects/my-app         34  ok       2025-01-01 09:
 | WORKSPACE | Decoded workspace path (full path, not short name) |
 | SESSIONS | Number of session files in workspace (or `-` if not available) |
 | STATUS | `ok` if path exists, `missing` if not, `unknown` for hashed/unresolvable paths |
-| LAST MODIFIED | Timestamp of most recent session |
+| MODIFIED | Timestamp of most recent session |
 
 **TSV (`--format tsv`):**
 ```
-HOME	WORKSPACE	SESSIONS	STATUS	LAST_MODIFIED
+HOME	WORKSPACE	SESSIONS	STATUS	MODIFIED
 local	/home/user/projects/api	144	ok	2025-01-03T18:15:00
 local	/home/user/projects/my-app	23	ok	2025-01-02T10:30:00
 local	/home/user/projects/deleted	12	missing	2024-12-28T14:22:00
@@ -652,7 +652,7 @@ Lists sessions with metadata.
 
 **Default (table):**
 ```
-AGENT    HOME    WORKSPACE              FILE                                 MESSAGES  DATE
+AGENT    HOME    WORKSPACE              FILE                                 MESSAGES  MODIFIED
 claude   local   /home/user/myproj      550e8400-e29b-41d4-a716.jsonl              127  2025-01-03
 claude   local   /home/user/myproj      agent-a1b2c3d4.jsonl                        34  2025-01-03
 codex    local   /home/user/other       rollout-173590.jsonl                        89  2025-01-02
@@ -660,7 +660,7 @@ codex    local   /home/user/other       rollout-173590.jsonl                    
 
 **With `--ah` (multi-home):**
 ```
-AGENT    HOME        WORKSPACE           FILE                               MESSAGES  DATE
+AGENT    HOME        WORKSPACE           FILE                               MESSAGES  MODIFIED
 claude   local       /home/user/myproj   550e8400-e29b-41d4.jsonl                127  2025-01-03
 claude   wsl:Ubuntu  /home/user/myproj   6ba7b810-9dad-11d1.jsonl                 89  2025-01-02
 claude   remote:vm01 /home/user/myproj   agent-a1b2c3d4.jsonl                     34  2025-01-03
@@ -766,7 +766,7 @@ Shows workspace details.
 
 **Default:**
 ```
-HOME    WORKSPACE                 SESSIONS  STATUS  LAST_MODIFIED
+HOME    WORKSPACE                 SESSIONS  STATUS  MODIFIED
 local   /home/user/cagelens            144  ok      2025-01-03 18:15
 ```
 

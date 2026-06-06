@@ -289,13 +289,16 @@ chooses an explicit operation such as `cagelens session list`.
 
 **`ws list`** - Enumerate workspaces
 - Input: Home scope, optional pattern filter
-- Output: Home, workspace path, session count, status, last modified
-- Behavior: Aggregate sessions from resolved scope (no extra scanning)
+- Output columns: HOME, WORKSPACE, SESSIONS, STATUS, MODIFIED
+- Behavior: Discovery command. Defaults to all workspaces in the selected homes
+  unless a workspace pattern, project, or `--this` is provided.
 
 **`session list`** - Enumerate sessions
 - Input: Workspace scope, home scope, optional date filter
-- Output: Agent, home, workspace, filename, message count, modified date
-- Behavior: List session file metadata from resolved scope (message counts are 0 unless `--counts` is used)
+- Output columns: AGENT, HOME, WORKSPACE, FILE, MESSAGES, MODIFIED
+- Behavior: List session file metadata from the resolved workspace scope. Defaults
+  to the current workspace, or its auto-detected project when configured. Message
+  counts are empty unless `--counts` is used.
 
 **`home list`** - Enumerate configured homes
 - Input: None
@@ -523,6 +526,11 @@ Sessions are **not** deduplicated across homes. Each home/workspace pair is trea
 
 ### Workspace Scope
 
+`ws list` is a discovery operation: with no workspace pattern, project, or
+`--this` flag, it lists all workspaces in the selected home scope. The priority
+order below applies to session-oriented commands (`session list`, `session
+export`, and `session stats`).
+
 Priority order for workspace resolution:
 
 1. **Explicit project**: `--project <name>` (single project) uses configured workspaces
@@ -561,7 +569,12 @@ Home and workspace scopes are orthogonal:
 | `session list --aw --ah` | all | all configured |
 | `session list -n auth --ah` | pattern "auth" | all configured |
 
-**Cross-home guard:** When running in a local workspace, non-local homes (`--ah`, `--wsl`, `--windows`, `-r/--home`) require an explicit workspace scope (`-n`, positional pattern, `--aw`, or `--project`). Otherwise the command errors to avoid ambiguous cross-home matching.
+**Cross-home guard:** When running session-oriented commands from a local
+workspace, non-local homes (`--ah`, `--wsl`, `--windows`, `-r/--home`) require an
+explicit workspace scope (`-n`, positional pattern, `--aw`, or `--project`).
+Otherwise the command errors to avoid ambiguous cross-home matching. `ws list`
+already defaults to workspace discovery and is not narrowed to the current
+workspace.
 
 ---
 

@@ -130,6 +130,84 @@ def _format_project_workspaces(
     return str(workspaces)
 
 
+def _stats_group_list(metadata: dict[str, Any]) -> list[str]:
+    group_by = metadata.get("group_by") or []
+    if isinstance(group_by, str):
+        group_list = [group_by]
+    else:
+        group_list = list(group_by)
+    return group_list or ["agent", "home", "workspace"]
+
+
+def _stats_count(value: Any, key: str) -> Any:
+    if not isinstance(value, dict):
+        return value
+    for candidate in (key, "sessions", "uses", "messages"):
+        if candidate in value:
+            return value[candidate]
+    return value
+
+
+def _append_simple_stats_group(
+    lines: list[str], *, title: str, values: dict[str, Any], key: str = "sessions"
+) -> None:
+    if not values:
+        return
+    lines.append(f"{title}:")
+    for label, value in sorted(values.items()):
+        lines.append(f"  {label}: {_stats_count(value, key)}")
+    lines.append("")
+
+
+def _append_workspace_stats_group(
+    lines: list[str], stats: StatsDict, workspace_display_map: dict[str, str]
+) -> None:
+    by_workspace = stats.get("by_workspace", {})
+    if not by_workspace:
+        return
+    lines.append("By Workspace:")
+    sorted_ws = sorted(by_workspace.items(), key=lambda x: -_stats_count(x[1], "sessions"))
+    for ws, value in sorted_ws[:10]:
+        ws_display = _workspace_display({"workspace": ws}, display_map=workspace_display_map)
+        if len(ws_display) > 50:
+            ws_display = "..." + ws_display[-47:]
+        lines.append(f"  {ws_display}: {_stats_count(value, 'sessions')}")
+    if len(by_workspace) > 10:
+        lines.append(f"  ... and {len(by_workspace) - 10} more")
+    lines.append("")
+
+
+def _append_model_stats_group(lines: list[str], stats: StatsDict) -> None:
+    by_model = stats.get("by_model", {})
+    if not by_model:
+        return
+    lines.append("By Model:")
+    for model, value in sorted(by_model.items()):
+        if isinstance(value, dict):
+            lines.append(
+                f"  {model}: {value.get('messages', 0)} messages"
+                f", {value.get('tokens', 0)} tokens"
+            )
+        else:
+            lines.append(f"  {model}: {value}")
+    lines.append("")
+
+
+def _append_tool_stats_group(lines: list[str], stats: StatsDict) -> None:
+    by_tool = stats.get("by_tool", {})
+    if not by_tool:
+        return
+    lines.append("By Tool:")
+    for tool, value in sorted(by_tool.items()):
+        if isinstance(value, dict):
+            lines.append(
+                f"  {tool}: {value.get('uses', 0)} uses" f", {value.get('errors', 0)} errors"
+            )
+        else:
+            lines.append(f"  {tool}: {value}")
+    lines.append("")
+
+
 class DataFormatter(ABC):
     """Abstract base class for data formatters.
 
@@ -192,7 +270,7 @@ class TableFormatter(DataFormatter):
         if not sessions:
             return "No sessions found."
 
-        headers = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "DATE"]
+        headers = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "MODIFIED"]
         rows = _build_session_rows(
             sessions,
             workspace_formatter=lambda ws: _truncate_tail(ws, 40) if self.width else ws,
@@ -208,7 +286,7 @@ class TableFormatter(DataFormatter):
         if not workspaces:
             return "No workspaces found."
 
-        headers = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
+        headers = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "MODIFIED"]
         rows = _build_workspace_rows(
             workspaces,
             workspace_formatter=lambda ws: _truncate_tail(ws, 50) if self.width else ws,
@@ -257,93 +335,24 @@ class TableFormatter(DataFormatter):
         lines.append(f"Sessions: {total_sessions}  Messages: {total_messages}")
         lines.append("")
 
-        group_by = metadata.get("group_by") or []
-        if isinstance(group_by, str):
-            group_list = [group_by]
-        else:
-            group_list = list(group_by)
-        if not group_list:
-            group_list = ["agent", "home", "workspace"]
-
-        def get_count(value: Any, key: str) -> Any:
-            if isinstance(value, dict):
-                if key in value:
-                    return value[key]
-                if "sessions" in value:
-                    return value["sessions"]
-                if "uses" in value:
-                    return value["uses"]
-                if "messages" in value:
-                    return value["messages"]
-            return value
-
+        group_list = _stats_group_list(metadata)
         if "agent" in group_list:
-            by_agent = stats.get("by_agent", {})
-            if by_agent:
-                lines.append("By Agent:")
-                for agent, value in sorted(by_agent.items()):
-                    lines.append(f"  {agent}: {get_count(value, 'sessions')}")
-                lines.append("")
+            _append_simple_stats_group(lines, title="By Agent", values=stats.get("by_agent", {}))
 
         if "home" in group_list:
-            by_home = stats.get("by_home", {})
-            if by_home:
-                lines.append("By Home:")
-                for home, value in sorted(by_home.items()):
-                    lines.append(f"  {home}: {get_count(value, 'sessions')}")
-                lines.append("")
+            _append_simple_stats_group(lines, title="By Home", values=stats.get("by_home", {}))
 
         if "workspace" in group_list:
-            by_workspace = stats.get("by_workspace", {})
-            if by_workspace:
-                lines.append("By Workspace:")
-                sorted_ws = sorted(by_workspace.items(), key=lambda x: -get_count(x[1], "sessions"))
-                for ws, value in sorted_ws[:10]:
-                    ws_display = _workspace_display(
-                        {"workspace": ws}, display_map=workspace_display_map
-                    )
-                    if len(ws_display) > 50:
-                        ws_display = "..." + ws_display[-47:]
-                    lines.append(f"  {ws_display}: {get_count(value, 'sessions')}")
-                if len(by_workspace) > 10:
-                    lines.append(f"  ... and {len(by_workspace) - 10} more")
-                lines.append("")
+            _append_workspace_stats_group(lines, stats, workspace_display_map)
 
         if "model" in group_list:
-            by_model = stats.get("by_model", {})
-            if by_model:
-                lines.append("By Model:")
-                for model, value in sorted(by_model.items()):
-                    if isinstance(value, dict):
-                        lines.append(
-                            f"  {model}: {value.get('messages', 0)} messages"
-                            f", {value.get('tokens', 0)} tokens"
-                        )
-                    else:
-                        lines.append(f"  {model}: {value}")
-                lines.append("")
+            _append_model_stats_group(lines, stats)
 
         if "tool" in group_list:
-            by_tool = stats.get("by_tool", {})
-            if by_tool:
-                lines.append("By Tool:")
-                for tool, value in sorted(by_tool.items()):
-                    if isinstance(value, dict):
-                        lines.append(
-                            f"  {tool}: {value.get('uses', 0)} uses"
-                            f", {value.get('errors', 0)} errors"
-                        )
-                    else:
-                        lines.append(f"  {tool}: {value}")
-                lines.append("")
+            _append_tool_stats_group(lines, stats)
 
         if "day" in group_list:
-            by_day = stats.get("by_day", {})
-            if by_day:
-                lines.append("By Day:")
-                for day, value in sorted(by_day.items()):
-                    lines.append(f"  {day}: {get_count(value, 'sessions')}")
-                lines.append("")
+            _append_simple_stats_group(lines, title="By Day", values=stats.get("by_day", {}))
 
         return "\n".join(lines)
 
@@ -528,7 +537,7 @@ class TsvFormatter(DataFormatter):
         if not workspaces:
             return ""
 
-        headers = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
+        headers = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "MODIFIED"]
         lines = ["\t".join(headers)]
         rows = _build_workspace_rows(
             workspaces,
@@ -642,60 +651,69 @@ class OutputFormatter:
             result: Command execution result.
             output_args: Output formatting options.
         """
-        # Determine format
-        format_name = output_args.format
-        if format_name is None:
-            # Default: table for TTY, tsv for pipes
-            format_name = "table" if sys.stdout.isatty() else "tsv"
-
-        # Get formatter
+        format_name = self._resolve_format(output_args)
         formatter = self.formatters.get(format_name)
         if not formatter:
             raise FormatterError(f"Unknown format: {format_name}")
 
-        # Update table width if specified
-        if (
-            format_name == "table"
-            and hasattr(output_args, "width")
-            and output_args.width is not None
-        ):
-            if isinstance(formatter, TableFormatter):
-                formatter.width = output_args.width if output_args.width > 0 else None
+        self._configure_table_width(format_name, formatter, output_args)
+        if self._handle_empty_result(result):
+            return
 
-        # Check for empty data and write appropriate message to stderr
+        output = formatter.format(result.data, result.data_type, result.metadata)
+        self._write_output(output, output_args)
+        self._write_warnings(result)
+
+    def _resolve_format(self, output_args: OutputArgs) -> str:
+        """Return explicit output format or TTY-aware default."""
+        if output_args.format is not None:
+            return output_args.format
+        return "table" if sys.stdout.isatty() else "tsv"
+
+    def _configure_table_width(
+        self, format_name: str, formatter: DataFormatter, output_args: OutputArgs
+    ) -> None:
+        if format_name != "table" or not isinstance(formatter, TableFormatter):
+            return
+        width = getattr(output_args, "width", None)
+        if width is None:
+            return
+        formatter.width = width if width > 0 else None
+
+    def _handle_empty_result(self, result: CommandResult) -> bool:
         is_empty = (isinstance(result.data, list) and len(result.data) == 0) or (
             result.data is None
         )
-        if is_empty:
-            # Write "no data" message to stderr based on data type
-            for error in result.errors:
-                sys.stderr.write(f"Error: {error}\n")
-            for warning in result.warnings:
-                sys.stderr.write(f"Warning: {warning}\n")
-            if result.errors or result.warnings:
-                return
-            if result.data_type == "session_list":
-                sys.stderr.write("No sessions found\n")
-            elif result.data_type == "workspace_list":
-                sys.stderr.write("No workspaces found\n")
-            elif result.data_type == "home_list":
-                sys.stderr.write("No homes found\n")
-            elif result.data_type == "project_list":
-                sys.stderr.write("No projects found\n")
-            # Don't print anything to stdout for empty results
-            return
+        if not is_empty:
+            return False
+        self._write_errors_and_warnings(result)
+        if not (result.errors or result.warnings):
+            self._write_empty_message(result.data_type)
+        return True
 
-        # Format data
-        output = formatter.format(result.data, result.data_type, result.metadata)
+    def _write_errors_and_warnings(self, result: CommandResult) -> None:
+        for error in result.errors:
+            sys.stderr.write(f"Error: {error}\n")
+        self._write_warnings(result)
 
-        # Write output
+    def _write_empty_message(self, data_type: str) -> None:
+        messages = {
+            "session_list": "No sessions found",
+            "workspace_list": "No workspaces found",
+            "home_list": "No homes found",
+            "project_list": "No projects found",
+        }
+        if message := messages.get(data_type):
+            sys.stderr.write(f"{message}\n")
+
+    def _write_output(self, output: str, output_args: OutputArgs) -> None:
         if output_args.output_path:
             output_args.output_path.parent.mkdir(parents=True, exist_ok=True)
             output_args.output_path.write_text(output + "\n")
         else:
             print(output)
 
-        # Write warnings to stderr
+    def _write_warnings(self, result: CommandResult) -> None:
         for warning in result.warnings:
             sys.stderr.write(f"Warning: {warning}\n")
 

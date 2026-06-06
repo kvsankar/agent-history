@@ -958,7 +958,7 @@ class TableFormatter(DataFormatter):
                 return str(data)
 
     def _format_session_list(self, sessions: List[dict]) -> str:
-        headers = ['AGENT', 'HOME', 'WORKSPACE', 'FILE', 'MESSAGES', 'DATE']
+        headers = ['AGENT', 'HOME', 'WORKSPACE', 'FILE', 'MESSAGES', 'MODIFIED']
         rows = []
         for s in sessions:
             rows.append([
@@ -1207,7 +1207,7 @@ argv: ["session", "list", "--wsl"]
     └───────┬───────┘
             │
             ▼
-    AGENT  HOME       WORKSPACE              FILE           MESSAGES  DATE
+    AGENT  HOME       WORKSPACE              FILE           MESSAGES  MODIFIED
     claude wsl:Ubuntu /home/user/projects/auth session-01.jsonl 15     2025-01-09
     ...
 ```

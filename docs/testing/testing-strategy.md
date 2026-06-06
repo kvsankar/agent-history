@@ -160,18 +160,19 @@ Before writing tests, these conflicts must be resolved:
 
 ### 1. `ws list` Output Fields
 
-**Status:** Spec differs from implementation (see `docs/specs/todo.md`)
+**Status:** Resolved
 
 | Field | Spec Says | Impl Does |
 |-------|-----------|-----------|
 | HOME | ✓ | ✓ |
 | WORKSPACE | ✓ | ✓ |
-| SESSIONS | ✓ (count) | ❌ (missing) |
-| LAST_MODIFIED | ✓ | ❌ (missing) |
+| SESSIONS | ✓ (count) | ✓ |
+| STATUS | ✓ | ✓ |
+| MODIFIED | ✓ | ✓ |
 
-**Decision:** Keep spec as-is. Implementation needs to be updated to add SESSIONS count and LAST_MODIFIED columns.
+**Decision:** Keep spec as-is. Implementation matches the spec output shape.
 
-**Testing Decision:** V1 tests are written against the **spec** (WORKSPACE, SESSIONS, LAST_MODIFIED). Tests will fail until implementation is updated. This is intentional - the test failure tracks the impl gap.
+**Testing Decision:** V1 tests are written against the **spec** (HOME, WORKSPACE, SESSIONS, STATUS, MODIFIED).
 
 ### 2. Web Sessions Scope
 

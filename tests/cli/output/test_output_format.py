@@ -87,7 +87,7 @@ class TestWsListOutputColumns:
     """Test ws list output columns are correct."""
 
     def test_ws_list_has_all_columns(self, output_test_home: Dict[str, Any]) -> None:
-        """ws list should have HOME, WORKSPACE, SESSIONS, STATUS, LAST_MODIFIED columns."""
+        """ws list should have HOME, WORKSPACE, SESSIONS, STATUS, MODIFIED columns."""
         result = run_cli_subprocess(
             ["ws", "list", "--aw"],
             env=output_test_home["env"],
@@ -97,9 +97,21 @@ class TestWsListOutputColumns:
 
         # Check header columns
         header = lines[0]
-        expected_cols = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "LAST_MODIFIED"]
+        expected_cols = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "MODIFIED"]
         for col in expected_cols:
             assert col in header, f"Header missing column {col}: {header}"
+
+    def test_session_list_uses_modified_header(self, output_test_home: Dict[str, Any]) -> None:
+        """session list should use MODIFIED, not DATE, for the timestamp column."""
+        result = run_cli_subprocess(
+            ["session", "list", "--aw"],
+            env=output_test_home["env"],
+        )
+        assert result.returncode == 0
+        header = result.stdout.strip().split("\n")[0]
+
+        assert "MODIFIED" in header
+        assert "DATE" not in header
 
     def test_ws_list_data_rows_have_correct_columns(self, output_test_home: Dict[str, Any]) -> None:
         """Data rows should have values for all columns (using TSV format for parsing)."""
@@ -114,7 +126,7 @@ class TestWsListOutputColumns:
         for line in lines[1:]:
             cols = line.split("\t")
             assert len(cols) == 5, f"Expected 5 columns, got {len(cols)}: {line}"
-            home, workspace, sessions, status, last_mod = cols
+            home, workspace, sessions, status, _modified = cols
             assert home == "local", f"HOME should be 'local', got: {home}"
             assert workspace.startswith("/") or workspace.startswith(
                 "["
