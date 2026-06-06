@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from agent_history.adapters.remote import SSHRemoteClient
 from agent_history.core.workspaces import build_scope_metadata
@@ -20,7 +20,7 @@ class InstallHandler(VerbHandler):
     """Handler for 'install' utility command."""
 
     def execute(
-        self, scope: ConcreteScope, verb_args: Dict[str, Any], output_args: OutputArgs
+        self, scope: ConcreteScope, verb_args: dict[str, Any], output_args: OutputArgs
     ) -> CommandResult:
         return CommandResult(
             success=True,
@@ -42,7 +42,7 @@ class ResetHandler(VerbHandler):
     """Handler for 'reset' utility command."""
 
     def execute(
-        self, scope: ConcreteScope, verb_args: Dict[str, Any], output_args: OutputArgs
+        self, scope: ConcreteScope, verb_args: dict[str, Any], output_args: OutputArgs
     ) -> CommandResult:
         force = verb_args.get("yes", False)
         if not force and sys.stdin.isatty():
@@ -67,17 +67,16 @@ class ResetHandler(VerbHandler):
 
         reset_db = verb_args.get("reset_db", False)
         reset_config = verb_args.get("reset_config", False)
-        reset_settings = verb_args.get("reset_settings", False)
-        reset_all = not any([reset_db, reset_config, reset_settings])
+        reset_cache = verb_args.get("reset_cache", False)
 
         removed = []
-        if reset_all or reset_db:
+        if reset_db:
             db_path = get_metrics_db_path()
             if db_path.exists():
                 db_path.unlink()
                 removed.append(str(db_path))
 
-        if reset_all or reset_config:
+        if reset_config:
             config_dir = get_config_dir()
             config_file = config_dir / "config.json"
             if config_file.exists():
@@ -89,7 +88,7 @@ class ResetHandler(VerbHandler):
                     extra_path.unlink()
                     removed.append(str(extra_path))
 
-        if reset_all or reset_settings:
+        if reset_cache:
             for cache_name in ("remote-cache", "web-cache"):
                 cache_dir = get_config_dir() / cache_name
                 if cache_dir.exists():
@@ -108,7 +107,7 @@ class FetchHandler(VerbHandler):
     """Handler for 'fetch' utility command."""
 
     def execute(
-        self, scope: ConcreteScope, verb_args: Dict[str, Any], output_args: OutputArgs
+        self, scope: ConcreteScope, verb_args: dict[str, Any], output_args: OutputArgs
     ) -> CommandResult:
         client = SSHRemoteClient()
         fetched = 0

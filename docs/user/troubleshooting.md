@@ -319,7 +319,7 @@ cagelens reset
 # Delete only specific data
 cagelens reset db        # Metrics only
 cagelens reset config    # Homes/projects only
-cagelens reset settings  # Remote cache only
+cagelens reset cache     # Remote/web caches only
 
 # Skip confirmation (for scripts)
 cagelens reset -y

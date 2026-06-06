@@ -806,20 +806,17 @@ class CLIParser:
         reset_parser = subparsers.add_parser(
             RESOURCE_RESET,
             help="Reset stored data",
-            description="Reset metrics database, config, and caches.",
+            description="Reset cagelens-managed metrics, config, or caches.",
         )
         reset_parser.set_defaults(command=RESOURCE_RESET, reset_verb=DEFAULT_VERB_RUN)
         reset_parser.add_argument(
-            "what",
+            "target",
             nargs="?",
-            choices=["all", "db", "config", "settings"],
+            choices=["all", "db", "config", "cache"],
             default="all",
-            help="What to reset (default: all)",
+            help="Reset target (default: all)",
         )
         reset_parser.add_argument("-y", "--yes", action="store_true", help="Confirm reset")
-        reset_parser.add_argument("--db", action="store_true", help="Reset metrics database")
-        reset_parser.add_argument("--config", action="store_true", help="Reset config files")
-        reset_parser.add_argument("--settings", action="store_true", help="Reset caches")
 
     def _add_fetch_parser(self, subparsers) -> None:
         """Add fetch subparser."""
@@ -1382,10 +1379,11 @@ class CLIParser:
             verb_args["skip_settings"] = getattr(args, "skip_settings", False)
 
         if resource == RESOURCE_RESET:
-            what = getattr(args, "what", "all")
-            verb_args["reset_db"] = getattr(args, "db", False) or what == "db"
-            verb_args["reset_config"] = getattr(args, "config", False) or what == "config"
-            verb_args["reset_settings"] = getattr(args, "settings", False) or what == "settings"
+            target = getattr(args, "target", "all")
+            verb_args["reset_target"] = target
+            verb_args["reset_db"] = target in ("all", "db")
+            verb_args["reset_config"] = target in ("all", "config")
+            verb_args["reset_cache"] = target in ("all", "cache")
             verb_args["yes"] = getattr(args, "yes", False)
 
         if resource == RESOURCE_FETCH:

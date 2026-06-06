@@ -764,12 +764,13 @@ When using SSH remote sources:
 - Clears configuration
 - Clears caches (remote + web fetch cache)
 
-**Options:**
-| Option | Effect |
+**Targets:**
+| Target | Effect |
 |--------|--------|
-| `--db` | Reset metrics database only |
-| `--config` | Reset configuration only |
-| `--settings` | Reset caches only |
+| `all` | Reset metrics database, config, and caches |
+| `db` | Reset metrics database only |
+| `config` | Reset configuration only |
+| `cache` | Reset remote/web caches only |
 
 **Notes:**
 - Prompts for confirmation when run interactively; use `-y` to skip
