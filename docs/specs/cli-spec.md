@@ -133,7 +133,7 @@ session stats --no-sync          # Query cached metrics only
 **Sync characteristics:**
 - **Scoped**: Syncs the resolved homes, workspaces, and agent filters
 - **Incremental**: Only processes new/modified files (based on mtime)
-- **Additive**: Deleted sessions remain in DB until `reset --db`
+- **Additive**: Deleted sessions remain in DB until `reset db`
 
 `--no-sync` skips the automatic metrics sync for stats.
 
@@ -395,9 +395,9 @@ install --bin-dir ~/.local/bin    # Custom bin directory
 install --skill-dir ~/.claude/skills/custom  # Custom skill directory
 
 reset                             # Interactive reset (prompts for confirmation)
-reset --db                        # Reset metrics database only
-reset --config                    # Reset configuration only
-reset --settings                  # Reset caches only
+reset db                          # Reset metrics database only
+reset config                      # Reset configuration only
+reset cache                       # Reset remote/web caches only
 
 fetch --ah                         # Prefetch from all homes
 fetch -r user@host                 # Prefetch from a remote host

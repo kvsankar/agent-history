@@ -515,19 +515,18 @@ cagelens session export myproject --windows
 Delete metrics database, config, and/or cache.
 
 ```bash
-cagelens reset [what] [-y]
+cagelens reset [all|db|config|cache] [-y]
 ```
 
 **Arguments:**
-- `what`: What to reset (optional, default: `all`)
+- Target: What to reset (optional, default: `all`)
   - `db`: Delete metrics database only
   - `config`: Delete config (homes/projects) only
-  - `settings`: Delete cache only
+  - `cache`: Delete remote/web caches only
   - `all`: Delete everything (default)
 
 **Options:**
 - `-y`, `--yes`: Skip confirmation prompt
-- `--db`, `--config`, `--settings`: Equivalent to `what` values above
 
 **Examples:**
 ```bash
@@ -536,7 +535,9 @@ cagelens reset
 
 # Reset only metrics database
 cagelens reset db
-cagelens reset --db
+
+# Reset only remote/web caches
+cagelens reset cache
 
 # Reset without confirmation (for scripts)
 cagelens reset -y

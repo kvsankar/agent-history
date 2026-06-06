@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_history.adapters.inventory import (
     InventoryProvider,
     _summarize_codex_sessions_dir,
@@ -126,7 +128,6 @@ def test_exact_path_scope_does_not_enumerate_workspaces(tmp_path: Path) -> None:
     )
     assert request.scope_args.patterns == ["/mnt/c/sankar/projects/claude-history"]
     assert request.scope_args.name_patterns == []
-
     resolver = ScopeResolver(_context(tmp_path))
 
     def fail_enumerate(_home: str):
@@ -139,6 +140,23 @@ def test_exact_path_scope_does_not_enumerate_workspaces(tmp_path: Path) -> None:
     assert len(result.scope) == 1
     assert result.scope[0].home == "windows:alice"
     assert result.scope[0].workspace == "/mnt/c/sankar/projects/claude-history"
+
+
+def test_reset_cache_target_is_positional_only() -> None:
+    """Reset target selection should use one positional argument shape."""
+    request = CLIParser().parse(["reset", "cache", "-y"])
+
+    assert request.verb_args["reset_target"] == "cache"
+    assert request.verb_args["reset_db"] is False
+    assert request.verb_args["reset_config"] is False
+    assert request.verb_args["reset_cache"] is True
+    assert request.verb_args["yes"] is True
+
+
+def test_reset_target_flags_are_not_supported() -> None:
+    """Reset should not expose overlapping --db/--config/--settings flags."""
+    with pytest.raises(SystemExit):
+        CLIParser().parse(["reset", "--db"])
 
 
 def test_remote_session_listing_keeps_metadata_only_paths(monkeypatch, tmp_path: Path) -> None:
