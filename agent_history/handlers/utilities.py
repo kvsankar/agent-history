@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from agent_history.adapters.remote import SSHRemoteClient
 from agent_history.core.workspaces import build_scope_metadata
@@ -19,9 +20,45 @@ from agent_history.storage.metrics import get_metrics_db_path
 class InstallHandler(VerbHandler):
     """Handler for 'install' utility command."""
 
+    SKILL_NAME = "cagelens"
+    AGENT_SKILL_DIRS: ClassVar[dict[str, Path]] = {
+        "claude": Path("~/.claude/skills/cagelens"),
+        "codex": Path("~/.codex/skills/cagelens"),
+        "gemini": Path("~/.gemini/skills/cagelens"),
+        "pi": Path("~/.pi/agent/skills/cagelens"),
+    }
+
     def execute(
         self, scope: ConcreteScope, verb_args: dict[str, Any], output_args: OutputArgs
     ) -> CommandResult:
+        actions = []
+        warnings = []
+
+        if not verb_args.get("skip_cli", False):
+            actions.append(self._install_cli(verb_args.get("bin_dir")))
+
+        if not verb_args.get("skip_skill", False):
+            actions.extend(self._install_skills(verb_args, warnings))
+
+        if verb_args.get("skip_settings", False):
+            actions.append(
+                {
+                    "component": "settings",
+                    "status": "skipped",
+                    "path": "",
+                    "message": "agent settings update skipped",
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "component": "settings",
+                    "status": "noop",
+                    "path": "",
+                    "message": "no agent settings update is required",
+                }
+            )
+
         return CommandResult(
             success=True,
             data={
@@ -32,10 +69,94 @@ class InstallHandler(VerbHandler):
                 "skip_cli": verb_args.get("skip_cli", False),
                 "skip_skill": verb_args.get("skip_skill", False),
                 "skip_settings": verb_args.get("skip_settings", False),
+                "installed": actions,
             },
             data_type="install_result",
             metadata={"message": "Install completed", "workspace_display_map": {}},
+            warnings=warnings,
         )
+
+    def _install_cli(self, bin_dir: str | None) -> dict[str, str]:
+        target_dir = Path(bin_dir or "~/.local/bin").expanduser()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        source = self._find_cli_source()
+        target = target_dir / "cagelens"
+        shutil.copy2(source, target)
+        target.chmod(target.stat().st_mode | 0o755)
+        return {
+            "component": "cli",
+            "status": "installed",
+            "path": str(target),
+            "message": "installed cagelens CLI wrapper",
+        }
+
+    def _install_skills(
+        self, verb_args: dict[str, Any], warnings: list[str]
+    ) -> list[dict[str, str]]:
+        skill_dir = verb_args.get("skill_dir")
+        if skill_dir:
+            return [self._install_skill_package("custom", Path(skill_dir).expanduser())]
+
+        agent = verb_args.get("agent")
+        agents = [agent] if agent else list(self.AGENT_SKILL_DIRS)
+        actions = []
+        for target_agent in agents:
+            target_template = self.AGENT_SKILL_DIRS.get(target_agent)
+            if target_template is None:
+                warnings.append(f"Install skipped for unsupported agent: {target_agent}")
+                continue
+            target_dir = self._resolve_agent_skill_dir(target_agent, target_template)
+            actions.append(self._install_skill_package(target_agent, target_dir))
+        return actions
+
+    def _install_skill_package(self, agent: str, target_dir: Path) -> dict[str, str]:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        skill_md = self._find_skill_source()
+        cli_source = self._find_cli_source()
+
+        shutil.copy2(skill_md, target_dir / "SKILL.md")
+        cli_target = target_dir / "cagelens"
+        shutil.copy2(cli_source, cli_target)
+        cli_target.chmod(cli_target.stat().st_mode | 0o755)
+
+        return {
+            "component": "skill",
+            "agent": agent,
+            "status": "installed",
+            "path": str(target_dir),
+            "message": f"installed {self.SKILL_NAME} skill package",
+        }
+
+    def _resolve_agent_skill_dir(self, agent: str, target_template: Path) -> Path:
+        if agent == "codex":
+            codex_home = Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+            return codex_home / "skills" / self.SKILL_NAME
+        return target_template.expanduser()
+
+    def _find_skill_source(self) -> Path:
+        for candidate in self._source_root_candidates():
+            skill_md = candidate / "SKILL.md"
+            if skill_md.is_file():
+                return skill_md
+        raise FileNotFoundError("Could not find SKILL.md to install")
+
+    def _find_cli_source(self) -> Path:
+        argv0 = Path(sys.argv[0]).expanduser()
+        candidates = []
+        if argv0.is_file():
+            candidates.append(argv0)
+        candidates.extend(candidate / "cagelens" for candidate in self._source_root_candidates())
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        raise FileNotFoundError("Could not find cagelens CLI wrapper to install")
+
+    def _source_root_candidates(self) -> list[Path]:
+        return [
+            Path.cwd(),
+            Path(__file__).resolve().parents[2],
+            Path(sys.argv[0]).expanduser().resolve().parent,
+        ]
 
 
 class ResetHandler(VerbHandler):
