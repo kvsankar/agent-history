@@ -41,6 +41,10 @@ BASELINE = {
     ("cagelens", "_resolve_existing_wsl_path"): 36,
 }
 
+# Legacy compatibility artifacts are kept for reference/comparison but are not
+# part of the active v2 implementation quality gate.
+EXCLUDED_FILES = {"ah.py"}
+
 
 def is_grade_acceptable(grade: str) -> bool:
     """Check if grade is acceptable (A, B, or C)."""
@@ -59,7 +63,8 @@ def filter_python_files(files: list[str]) -> list[str]:
         path = Path(f)
         is_python = path.suffix == ".py" or path.name == "cagelens"
         is_test = path.name.startswith("test_") or path.name.endswith("_test.py")
-        if is_python and not is_test:
+        is_excluded = path.name in EXCLUDED_FILES
+        if is_python and not is_test and not is_excluded:
             result.append(f)
     return result
 

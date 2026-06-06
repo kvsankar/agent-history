@@ -15,7 +15,9 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
+        exclude: ^ah\.py$
       - id: ruff-format
+        exclude: ^ah\.py$
 
   # Python type checking with ty (Astral's type checker)
   - repo: local
@@ -43,7 +45,7 @@ repos:
         pass_filenames: true
         # Also check extensionless CLI scripts
         files: (\.py$|^cagelens$|^agent-history$|^claude-history$)
-        exclude: ^test_
+        exclude: ^(test_|ah\.py$)
 
       - id: radon-mi
         name: radon-mi (maintainability index)
@@ -53,6 +55,6 @@ repos:
         args: [-s, --min, "B"]  # Show grade B or worse
         pass_filenames: true
         files: (\.py$|^cagelens$|^agent-history$|^claude-history$)
-        exclude: ^test_
+        exclude: ^(test_|ah\.py$)
         # MI is informational, don't fail
         verbose: true
