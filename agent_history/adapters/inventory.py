@@ -13,7 +13,7 @@ from agent_history.adapters.remote import RemoteClientError, SSHRemoteClient
 from agent_history.backends.registry import AgentBackend, get_default_backend_id, iter_backends
 from agent_history.scope.context import ResolutionContext
 from agent_history.scope.home_resolver import get_resolver_for_home
-from agent_history.utils.env import has_env
+from agent_history.utils.env import get_env, has_env
 from agent_history.utils.paths import normalize_workspace_name
 from agent_history.utils.platform import AGENT_CLAUDE
 from agent_history.utils.workspace_ref import apply_workspace_ref, build_workspace_ref
@@ -298,8 +298,21 @@ def _workspace_status(home: str, workspace_display: str) -> str:
         return "unknown"
     if workspace_display.startswith("[hash:"):
         return "unknown"
+    if not workspace_display:
+        return "unknown"
+    if (
+        "/" not in workspace_display
+        and "\\" not in workspace_display
+        and not (len(workspace_display) > 1 and workspace_display[1] == ":")
+    ):
+        return "unknown"
+
+    agent_home = get_env("CAGELENS_HOME", "AGENT_HISTORY_HOME")
+    check_path = (
+        Path(agent_home) / workspace_display.lstrip("/") if agent_home else Path(workspace_display)
+    )
     try:
-        return "ok" if Path(workspace_display).exists() else "missing"
+        return "ok" if check_path.exists() else "missing"
     except OSError:
         return "unknown"
 

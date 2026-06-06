@@ -44,6 +44,114 @@ from agent_history.scope.context import CommandRequest, OutputArgs, ScopeArgs
 __version__ = "2.0.0"
 
 
+TOP_LEVEL_EPILOG = """\
+Progressive help:
+  cagelens ws --help              Discover workspaces and workspace flags
+  cagelens session --help         List, export, and analyze sessions
+  cagelens project --help         Group related workspaces
+  cagelens home --help            Configure local, Windows, WSL, web, and remote homes
+
+Common commands:
+  cagelens ws                     List all local workspaces with counts
+  cagelens session list           List sessions for the current workspace/project
+  cagelens session list --aw      List sessions from all local workspaces
+  cagelens session export -o DIR  Export current workspace/project sessions
+  cagelens session stats --sync   Refresh metrics and show stats
+
+Scope shortcuts:
+  --aw = all workspaces, --ah = all homes, -n TEXT = workspace substring match
+  --this = current workspace only, --project NAME = configured workspace group
+  --format json is best for automation; table/TSV are for terminal and pipes.
+"""
+
+
+WS_EPILOG = """\
+Default behavior:
+  cagelens ws lists all workspaces in the selected homes.
+  Output columns: HOME, WORKSPACE, SESSIONS, STATUS, MODIFIED.
+
+Examples:
+  cagelens ws                     All local workspaces
+  cagelens ws -n auth             Workspaces whose path contains "auth"
+  cagelens ws --ah                Workspaces from all configured homes
+  cagelens ws --format json       Machine-readable workspace summaries
+
+Next help:
+  cagelens ws list --help         Workspace listing options
+  cagelens ws export --help       Export sessions from workspaces
+  cagelens session --help         Work with individual sessions
+"""
+
+
+WS_LIST_EPILOG = """\
+Default behavior:
+  Lists every workspace in the selected home scope. Counts and MODIFIED are
+  workspace summaries; message content is not parsed for this command.
+
+Examples:
+  cagelens ws list
+  cagelens ws list -n payments --ah
+  cagelens ws list --agent codex --format json
+"""
+
+
+SESSION_EPILOG = """\
+Default behavior:
+  cagelens session is the same as cagelens session list.
+  Without --aw or a pattern, session commands use the current workspace or its
+  auto-detected project.
+
+Examples:
+  cagelens session list           Current workspace/project sessions
+  cagelens session list --aw      All local workspace sessions
+  cagelens session list -n auth   Sessions from matching workspaces
+  cagelens session export -o DIR  Export current workspace/project sessions
+  cagelens session stats --sync   Refresh metrics and show stats
+
+Next help:
+  cagelens session list --help
+  cagelens session export --help
+  cagelens session stats --help
+"""
+
+
+SESSION_LIST_EPILOG = """\
+Default behavior:
+  Lists sessions for the current workspace or auto-detected project.
+  Output columns: AGENT, HOME, WORKSPACE, FILE, MESSAGES, MODIFIED.
+  MESSAGES is populated when available; use --counts to force message counting.
+
+Examples:
+  cagelens session list
+  cagelens session list --aw --format json
+  cagelens session list -n auth --since 2026-01-01
+  cagelens session list --ah --aw --agent codex
+"""
+
+
+PROJECT_EPILOG = """\
+Projects are named groups of related workspaces across homes.
+
+Examples:
+  cagelens project list
+  cagelens project add myproj --this
+  cagelens project show myproj
+  cagelens session list --project myproj
+"""
+
+
+HOME_EPILOG = """\
+Homes are session sources: local, Windows, WSL, Claude web, or SSH remotes.
+
+Examples:
+  cagelens home list
+  cagelens home add --windows
+  cagelens home add --wsl Ubuntu
+  cagelens home add user@host
+  cagelens ws --ah
+"""
+
+
 class WrappedHelpFormatter(argparse.RawDescriptionHelpFormatter):
     """Custom formatter that wraps help text nicely."""
 
@@ -219,10 +327,11 @@ class CLIParser:
         parser = argparse.ArgumentParser(
             prog="cagelens",
             description=(
-                "Browse and export AI coding assistant conversation history "
-                "(Claude Code, Codex CLI, Gemini CLI)"
+                "Browse, export, and analyze AI coding assistant conversation history "
+                "(Claude Code, Codex CLI, Gemini CLI, Pi)."
             ),
             formatter_class=WrappedHelpFormatter,
+            epilog=TOP_LEVEL_EPILOG,
         )
 
         parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -264,7 +373,9 @@ class CLIParser:
         session_parser = subparsers.add_parser(
             RESOURCE_SESSION,
             help="Session commands",
-            description="Browse and export conversation sessions.",
+            description="List, export, and analyze conversation sessions.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=SESSION_EPILOG,
         )
         session_parser.set_defaults(command=RESOURCE_SESSION, session_verb=DEFAULT_VERB_LIST)
         # Add flags to session top-level so session -n pattern, session --ah work
@@ -280,7 +391,13 @@ class CLIParser:
         sess_sub.default = DEFAULT_VERB_LIST
 
         # session list
-        sess_list = sess_sub.add_parser(DEFAULT_VERB_LIST, help="List sessions")
+        sess_list = sess_sub.add_parser(
+            DEFAULT_VERB_LIST,
+            help="List sessions",
+            description="List session files from the resolved workspace scope.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=SESSION_LIST_EPILOG,
+        )
         sess_list.set_defaults(command=RESOURCE_SESSION, session_verb=DEFAULT_VERB_LIST)
         self._add_workspace_scope_flags(sess_list, positional_name="workspace")
         self._add_home_scope_flags(sess_list)
@@ -340,6 +457,8 @@ class CLIParser:
             RESOURCE_WS,
             help="Workspace commands",
             description="Browse workspaces (project directories with sessions).",
+            formatter_class=WrappedHelpFormatter,
+            epilog=WS_EPILOG,
         )
         ws_parser.set_defaults(command=RESOURCE_WS, ws_verb=DEFAULT_VERB_LIST)
         # Add flags to ws top-level so ws --local, ws -n pattern work
@@ -350,7 +469,7 @@ class CLIParser:
         ws_parser.add_argument(
             "--counts",
             action="store_true",
-            help="Show session counts (slower)",
+            help="Accepted for compatibility; workspace counts are always shown",
         )
         self._add_output_format(ws_parser)
 
@@ -359,7 +478,13 @@ class CLIParser:
         ws_sub.default = DEFAULT_VERB_LIST
 
         # ws list
-        ws_list = ws_sub.add_parser(DEFAULT_VERB_LIST, help="List workspaces")
+        ws_list = ws_sub.add_parser(
+            DEFAULT_VERB_LIST,
+            help="List workspaces",
+            description="List workspace summaries from the selected homes.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=WS_LIST_EPILOG,
+        )
         ws_list.set_defaults(command=RESOURCE_WS, ws_verb=DEFAULT_VERB_LIST)
         self._add_workspace_scope_flags(ws_list)
         self._add_home_scope_flags(ws_list)
@@ -367,7 +492,7 @@ class CLIParser:
         ws_list.add_argument(
             "--counts",
             action="store_true",
-            help="Show session counts (slower)",
+            help="Accepted for compatibility; workspace counts are always shown",
         )
         self._add_output_format(ws_list)
 
@@ -410,6 +535,8 @@ class CLIParser:
             RESOURCE_PROJECT,
             help="Manage projects",
             description="Manage named workspace groups (projects).",
+            formatter_class=WrappedHelpFormatter,
+            epilog=PROJECT_EPILOG,
         )
         project_parser.set_defaults(command=RESOURCE_PROJECT, project_command=DEFAULT_VERB_LIST)
         proj_sub = project_parser.add_subparsers(dest="project_command")
@@ -482,6 +609,8 @@ class CLIParser:
             RESOURCE_HOME,
             help="Manage homes",
             description="Manage data sources (local, WSL, Windows, web, SSH remotes).",
+            formatter_class=WrappedHelpFormatter,
+            epilog=HOME_EPILOG,
         )
         home_parser.set_defaults(command=RESOURCE_HOME, home_verb=DEFAULT_VERB_LIST)
         # Add flags to home top-level so home --local, home --wsl work

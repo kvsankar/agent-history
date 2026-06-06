@@ -217,6 +217,6 @@ for the current commands.
 **Status:** Resolved
 
 **Current state:**
-- `ws list` outputs HOME, WORKSPACE, SESSIONS, STATUS, LAST_MODIFIED
+- `ws list` outputs HOME, WORKSPACE, SESSIONS, STATUS, MODIFIED
 
 **Action:** Spec updated to match current output.

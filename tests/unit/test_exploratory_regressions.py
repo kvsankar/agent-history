@@ -50,10 +50,10 @@ def test_home_add_windows_dispatches_without_scope_resolution(monkeypatch, tmp_p
     assert "windows" in load_config()["homes"]
 
 
-def test_workspace_counts_all_windows_uses_summaries_without_scope_resolution(
+def test_workspace_list_all_windows_uses_summaries_without_scope_resolution(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
-    """`ws list --counts --aw` should use source summaries instead of full scans."""
+    """`ws list --aw` should use source summaries instead of full scans."""
     context = _context(tmp_path)
     orchestrator = CommandOrchestrator()
     orchestrator.context_builder.build = lambda: context
@@ -82,12 +82,41 @@ def test_workspace_counts_all_windows_uses_summaries_without_scope_resolution(
 
     monkeypatch.setattr(InventoryProvider, "list_workspace_summaries", fake_summaries)
 
+    assert orchestrator.run(["ws", "list", "--windows", "--aw", "--format", "json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["workspace"] == "/mnt/c/work/project"
+    assert rows[0]["session_count"] == 2
+
+
+def test_workspace_list_counts_flag_remains_compatible(monkeypatch, tmp_path: Path, capsys) -> None:
+    """`ws list --counts` should keep working after counts became default."""
+    context = _context(tmp_path)
+    orchestrator = CommandOrchestrator()
+    orchestrator.context_builder.build = lambda: context
+
+    def fake_summaries(self, home: str, agent: str | None = None):
+        return [
+            {
+                "home": home,
+                "workspace": "/mnt/c/work/project",
+                "workspace_key": "path:/mnt/c/work/project",
+                "workspace_display": "/mnt/c/work/project",
+                "session_count": 2,
+                "sessions": 2,
+                "status": "unknown",
+                "last_modified": "2026-06-06T00:00:00",
+                "agents": ["claude"],
+            }
+        ]
+
+    monkeypatch.setattr(InventoryProvider, "list_workspace_summaries", fake_summaries)
+
     assert (
         orchestrator.run(["ws", "list", "--windows", "--aw", "--counts", "--format", "json"]) == 0
     )
     rows = json.loads(capsys.readouterr().out)
-    assert rows[0]["workspace"] == "/mnt/c/work/project"
     assert rows[0]["session_count"] == 2
+    assert rows[0]["last_modified"] == "2026-06-06T00:00:00"
 
 
 def test_exact_path_scope_does_not_enumerate_workspaces(tmp_path: Path) -> None:

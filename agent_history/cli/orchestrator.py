@@ -345,7 +345,7 @@ class CommandOrchestrator:
             if direct_result is not None:
                 return direct_result
 
-            if self._is_workspace_count_list(request):
+            if self._is_workspace_list(request):
                 return self._run_workspace_count_list(request, context)
 
             # 3. Resolve scope
@@ -410,12 +410,8 @@ class CommandOrchestrator:
             return self.error_handler.handle_formatter_error(e)
         return 0 if result.success else 1
 
-    def _is_workspace_count_list(self, request: CommandRequest) -> bool:
-        return (
-            request.resource == "ws"
-            and request.verb == "list"
-            and bool(request.verb_args.get("counts"))
-        )
+    def _is_workspace_list(self, request: CommandRequest) -> bool:
+        return request.resource == "ws" and request.verb == "list"
 
     def _prepare_scope_for_project_counts(self, request: CommandRequest) -> None:
         """Expand project-list counts to all configured projects when needed."""
@@ -440,7 +436,7 @@ class CommandOrchestrator:
         return True
 
     def _run_workspace_count_list(self, request: CommandRequest, context: ResolutionContext) -> int:
-        """Run `ws list --counts` with source-level workspace summaries."""
+        """Run `ws list` with source-level workspace summaries."""
         from agent_history.adapters.inventory import InventoryProvider
 
         allowed = self._workspace_count_allowed_scopes(request, context)
