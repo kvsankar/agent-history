@@ -778,14 +778,15 @@ When using SSH remote sources:
 ### Fetch
 
 **`fetch`** - Pre-fetch remote sessions into local cache
-- Applies the same home/workspace/agent filters as session export
+- Applies SSH remote, workspace, and agent filters
+- Does not fetch local, WSL, Windows, or Claude web sessions
 - Useful for offline export or warming remote caches ahead of large operations
 
 **Options:**
 | Option | Effect |
 |--------|--------|
 | `-r <user@host>` | Restrict to SSH remotes |
-| `--ah` | Fetch from all homes |
+| `--ah` / `--all-remotes` | Fetch from all configured SSH remotes |
 | `--agent <name>` | Filter by agent |
 
 ---

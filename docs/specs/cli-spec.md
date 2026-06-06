@@ -399,9 +399,10 @@ reset db                          # Reset metrics database only
 reset config                      # Reset configuration only
 reset cache                       # Reset remote/web caches only
 
-fetch --ah                         # Prefetch from all homes
-fetch -r user@host                 # Prefetch from a remote host
-fetch --agent codex --ah           # Prefetch Codex sessions
+fetch -r user@host --aw            # Prefetch all workspaces from one SSH remote
+fetch -r user@host -n auth         # Prefetch matching remote workspaces
+fetch --ah --aw                    # Prefetch all configured SSH remotes
+fetch --agent codex -r host --aw   # Prefetch Codex sessions from one SSH remote
 
 gemini-index                      # List hash→path mappings
 gemini-index --add                # Add current directory

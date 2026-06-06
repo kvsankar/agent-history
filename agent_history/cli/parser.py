@@ -152,6 +152,23 @@ Examples:
 """
 
 
+FETCH_EPILOG = """\
+What this does:
+  Fetch copies SSH remote session files into the local cagelens remote cache.
+  It does not fetch local, WSL, Windows, or Claude web sessions.
+
+Examples:
+  cagelens fetch -r user@host --aw          Fetch all workspaces from one SSH host
+  cagelens fetch -r user@host -n auth       Fetch matching remote workspaces
+  cagelens fetch --ah --aw                  Fetch all configured SSH remotes
+  cagelens fetch --agent codex -r host --aw Fetch only Codex sessions
+
+After fetching:
+  cagelens session list -r user@host -n auth
+  cagelens session export -r user@host -n auth
+"""
+
+
 class WrappedHelpFormatter(argparse.RawDescriptionHelpFormatter):
     """Custom formatter that wraps help text nicely."""
 
@@ -824,11 +841,38 @@ class CLIParser:
         fetch_parser = subparsers.add_parser(
             RESOURCE_FETCH,
             help="Fetch remote sessions into cache",
-            description="Fetch remote sessions and cache them locally.",
+            description="Fetch SSH remote sessions into the local cagelens cache.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=FETCH_EPILOG,
         )
         fetch_parser.set_defaults(command=RESOURCE_FETCH, fetch_verb=DEFAULT_VERB_RUN)
         self._add_workspace_scope_flags(fetch_parser)
-        self._add_home_scope_flags(fetch_parser)
+        fetch_parser.add_argument(
+            "--home",
+            action="append",
+            dest="homes",
+            metavar="NAME",
+            default=argparse.SUPPRESS,
+            help="Specific saved remote home (repeatable)",
+        )
+        fetch_parser.add_argument(
+            "--ah",
+            "--all-homes",
+            "--all-remotes",
+            dest="all_homes",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Include all configured SSH remotes",
+        )
+        fetch_parser.add_argument(
+            "-r",
+            "--remote",
+            action="append",
+            dest="remotes",
+            metavar="HOST",
+            default=argparse.SUPPRESS,
+            help="SSH remote (user@host) - repeatable",
+        )
         self._add_agent_filter(fetch_parser)
 
     # =========================================================================

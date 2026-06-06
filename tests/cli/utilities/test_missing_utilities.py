@@ -46,3 +46,17 @@ def test_reset_target_help_is_available(target: str, tmp_path: Path) -> None:
     assert_cli_success(result, f"reset {target} --help should succeed")
     assert "usage: cagelens reset" in result.stdout
     assert "{all,db,config,cache}" in result.stdout
+
+
+def test_fetch_help_is_remote_cache_focused(tmp_path: Path) -> None:
+    result = run_cli_subprocess(["fetch", "--help"], env={"HOME": str(tmp_path)})
+
+    assert_cli_success(result, "fetch help should succeed")
+    assert "Fetch SSH remote sessions into the local cagelens cache." in result.stdout
+    assert "It does not fetch local, WSL, Windows, or Claude web sessions." in result.stdout
+    assert "-r HOST, --remote HOST" in result.stdout
+    assert "--all-remotes" in result.stdout
+    assert "--wsl" not in result.stdout
+    assert "--windows" not in result.stdout
+    assert "--web" not in result.stdout
+    assert "--local" not in result.stdout
