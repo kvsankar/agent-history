@@ -22,7 +22,7 @@ Detailed documentation for all `cagelens` commands and options.
 | `project` | Manage workspace projects |
 | `session stats` | Show usage statistics and metrics |
 | `reset` | Reset stored data (metrics/config/cache) |
-| `install` | Report install settings (no-op in v2) |
+| `install` | Install CLI and agent skill packages |
 | `fetch` | Fetch remote sessions into local cache |
 | `gemini-index` | Add project paths to Gemini hash→path index |
 
@@ -644,20 +644,24 @@ The hash index also learns progressively when you run any `cagelens` command fro
 
 ---
 
-## `install` - Install CLI and Claude Skill
+## `install` - Install CLI and Agent Skill Packages
 
-Configure install settings (status-only in v2).
+Install the CLI wrapper and the `cagelens` skill package.
 
 ```bash
-cagelens install [--bin-dir DIR] [--skill-dir DIR]
+cagelens install [--bin-dir DIR] [--skill-dir DIR] [--agent AGENT]
                        [--skip-cli] [--skip-skill] [--skip-settings]
 ```
 
-**Current behavior:**
-- Validates flags and reports the requested install settings.
-- Does not copy binaries or modify Claude settings yet.
+By default, `install` writes:
+- CLI wrapper: `~/.local/bin/cagelens`
+- Claude Code skill: `~/.claude/skills/cagelens/`
+- Codex CLI skill: `${CODEX_HOME:-~/.codex}/skills/cagelens/`
+- Gemini CLI skill: `~/.gemini/skills/cagelens/`
+- Pi skill: `~/.pi/agent/skills/cagelens/`
 
 **Options:**
 - `--bin-dir DIR`: Custom binary install directory
-- `--skill-dir DIR`: Custom skill install directory
-- `--skip-cli`, `--skip-skill`, `--skip-settings`: Skip specific steps
+- `--skill-dir DIR`: Custom agent skill install directory
+- `--agent AGENT`: Install one agent skill package (`claude`, `codex`, `gemini`, or `pi`)
+- `--skip-cli`, `--skip-skill`, `--skip-settings`: Skip specific install steps

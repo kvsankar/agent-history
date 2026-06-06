@@ -807,16 +807,24 @@ class CLIParser:
         """Add install subparser."""
         install_parser = subparsers.add_parser(
             RESOURCE_INSTALL,
-            help="Install CLI and Claude skill",
-            description="Install the CLI binary and Claude skill files.",
+            help="Install CLI and agent skill packages",
+            description="Install the CLI wrapper and agent skill packages.",
         )
         install_parser.set_defaults(command=RESOURCE_INSTALL, install_verb=DEFAULT_VERB_RUN)
         install_parser.add_argument("--bin-dir", help="Custom binary install directory")
-        install_parser.add_argument("--skill-dir", help="Custom skill install directory")
+        install_parser.add_argument("--skill-dir", help="Custom agent skill install directory")
         install_parser.add_argument("--skip-cli", action="store_true", help="Skip CLI install")
-        install_parser.add_argument("--skip-skill", action="store_true", help="Skip skill install")
         install_parser.add_argument(
-            "--skip-settings", action="store_true", help="Skip settings update"
+            "--skip-skill", action="store_true", help="Skip agent skill install"
+        )
+        install_parser.add_argument(
+            "--skip-settings", action="store_true", help="Skip agent settings update"
+        )
+        install_parser.add_argument(
+            "--agent",
+            choices=get_agent_choices(),
+            default=DEFAULT_AGENT,
+            help="Agent skill target to install (default: all supported agents)",
         )
 
     def _add_reset_parser(self, subparsers) -> None:
@@ -1422,6 +1430,8 @@ class CLIParser:
             verb_args["skip_cli"] = getattr(args, "skip_cli", False)
             verb_args["skip_skill"] = getattr(args, "skip_skill", False)
             verb_args["skip_settings"] = getattr(args, "skip_settings", False)
+            agent = getattr(args, "agent", None)
+            verb_args["agent"] = None if agent == DEFAULT_AGENT else agent
 
         if resource == RESOURCE_RESET:
             target = getattr(args, "target", "all")

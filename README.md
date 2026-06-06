@@ -72,18 +72,16 @@ python \path\to\cagelens session export
 # Download
 curl -O https://raw.githubusercontent.com/kvsankar/cagelens/main/cagelens
 
-# Install (cli + skill + retention settings)
+# Install CLI and agent skills
 python cagelens install
 ```
 
-By default the installer:
-- Copies the CLI to `~/.local/bin/cagelens` (no sudo needed).
-- Installs the Claude skill into `~/.claude/skills/cagelens` (CLI + SKILL.md).
-- Ensures `~/.claude/settings.json` has `cleanupPeriodDays` set to `99999` so conversations aren’t purged.
-  - If the existing `settings.json` contains additional preferences, they are preserved; only `cleanupPeriodDays` is adjusted.
-  - If the installer encounters malformed JSON, it first renames the original file to `settings.json.<timestamp>.bak` before writing the corrected copy.
+By default, `install` copies the CLI wrapper to `~/.local/bin/cagelens` and
+installs the `cagelens` skill package for Claude Code, Codex CLI, Gemini CLI,
+and Pi in each agent's native user skill directory.
 
-Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settings` for custom setups.
+Pass `--agent`, `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or
+`--skip-settings` for custom setups.
 
 **Requirements:** Python 3.11+ and project dependencies from `pyproject.toml`.
 
@@ -104,7 +102,7 @@ positional arguments:
     project                   Manage projects
     home                      Manage homes
     gemini-index              Manage Gemini session index
-    install                   Install CLI and Claude skill
+    install                   Install CLI and agent skill packages
     reset                     Reset stored data
     fetch                     Fetch remote sessions into cache
 
@@ -258,7 +256,7 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 | `project` | Manage workspace projects |
 | `session stats` | Usage statistics |
 | `reset` | Reset stored data |
-| `install` | Install CLI + Claude skill and update retention settings |
+| `install` | Install CLI and agent skill packages |
 
 ## Common Examples
 

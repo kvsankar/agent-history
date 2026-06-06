@@ -39,7 +39,7 @@ coding assistant history:
 - It normalizes per-agent storage layouts into a consistent workspace/session view.
 - It groups workspaces across homes via projects.
 - It produces terminal listings, Markdown/HTML exports, and a small SQLite metrics db.
-- It ships as a Python CLI package, plus an optional Claude skill.
+- It ships as a Python CLI package, plus optional agent skill integration.
 
 The diagram should communicate this core idea:
 
@@ -59,7 +59,7 @@ Recommended layout:
 3. Middle: cagelens CLI as the unifying core, with per-agent adapters
    feeding a shared workspace/session model.
 4. Right: outputs (terminal listings, markdown exports, SQLite metrics,
-   Claude skill integration).
+   agent skill integration).
 5. Bottom: shared services and storage boundaries.
 
 The three agent adapters (Claude Code, Codex CLI, Gemini CLI) should be visually
@@ -137,17 +137,15 @@ The diagram should show cagelens producing these major outputs:
 - **Usage metrics**: `session stats` summaries with sessions, tokens, tools, and time
 - **Metrics SQLite database**: small local db used by `session stats`
 - **Gemini hash index**: `gemini-index` mapping SHA-256 hashes back to project paths
-- **Claude skill**: installed at `~/.claude/skills/cagelens/`, lets Claude
-  query history through the same CLI
+- **Agent skill integration**: lets coding agents query history through the same CLI
 
 Accuracy constraints:
 
 - Do not show cagelens acting as a chat client, MCP server, or LLM. It is
   a CLI that reads existing session files and produces artifacts.
 - Do not show cagelens writing back into `~/.claude/projects/`,
-  `~/.codex/sessions/`, `~/.gemini/tmp/`, or `~/.pi/agent/sessions/`. The only exception is the install
-  step setting `cleanupPeriodDays` in `~/.claude/settings.json` and creating the
-  Claude skill folder.
+  `~/.codex/sessions/`, `~/.gemini/tmp/`, or `~/.pi/agent/sessions/`. The
+  `install` command writes only the CLI wrapper and agent skill package files.
 - Do not show a vector database, embedding model, or semantic search. Search is
   string/path matching with optional date filters.
 - Do not collapse the agents into a single generic "AI Sessions" box;
@@ -245,7 +243,7 @@ Show the top-level commands as gates between the shared model and the outputs:
 - **`session stats`** -> usage metrics (sessions, tokens, tools, time, daily breakdown)
 - **`gemini-index`** -> manage Gemini hash -> path index
 - **`reset`** -> reset stored data (db, settings, projects)
-- **`install`** -> install CLI + Claude skill, set retention
+- **`install`** -> install CLI and agent skill packages
 
 Output cards on the right side:
 
@@ -254,7 +252,7 @@ Output cards on the right side:
 - `Usage Stats: tokens / tools / time`
 - `Metrics SQLite DB`
 - `Gemini Hash Index`
-- `Claude Skill: ~/.claude/skills/cagelens/`
+- `Agent Skill Integration`
 
 ## Shared Services And Storage
 
@@ -277,12 +275,11 @@ Required storage/service blocks:
   - kept up to date by `gemini-index`
   - lets Gemini workspaces be displayed and filtered by readable path
 
-- **Claude Settings Update**
-  - `install` ensures `cleanupPeriodDays = 99999` in `~/.claude/settings.json`
-  - preserves other keys
-  - backs up malformed JSON before rewriting
+- **Install Targets**
+  - CLI wrapper in `~/.local/bin/cagelens`
+  - agent skill package under each agent's native user skill directory
 
-- **Claude Skill Folder**
+- **Agent Skill Integration**
   - `~/.claude/skills/cagelens/` (CLI + `SKILL.md`)
   - lets Claude Code itself search history via the same CLI
 

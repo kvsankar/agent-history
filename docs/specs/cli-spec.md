@@ -381,18 +381,32 @@ These are top-level commands that don't follow the noun-verb pattern:
 
 | Command | Description |
 |---------|-------------|
-| `install` | Report install status (compatibility stub in v2) |
+| `install` | Install CLI and agent skill packages |
 | `reset` | Reset stored data (database, config, caches) |
 | `fetch` | Pre-fetch remote sessions into local cache |
 | `gemini-index` | Manage Gemini CLI hash→path mappings |
 
 ```
-install                           # Report install status (no filesystem changes)
-install --skip-skill              # Skip skill installation
+install                           # Install CLI and all supported agent skill packages
+install --agent codex             # Install Codex skill package only
+install --skip-skill              # Skip agent skill installation
 install --skip-cli                # Skip CLI installation
-install --skip-settings           # Skip settings update
+install --skip-settings           # Skip legacy agent settings step
 install --bin-dir ~/.local/bin    # Custom bin directory
-install --skill-dir ~/.claude/skills/custom  # Custom skill directory
+install --skill-dir ~/.config/agent/skills/custom  # Custom agent skill directory
+
+Default skill package targets:
+
+| Agent | Directory |
+|-------|-----------|
+| Claude Code | `~/.claude/skills/cagelens/` |
+| Codex CLI | `${CODEX_HOME:-~/.codex}/skills/cagelens/` |
+| Gemini CLI | `~/.gemini/skills/cagelens/` |
+| Pi | `~/.pi/agent/skills/cagelens/` |
+
+`--skill-dir` installs one custom skill package directory instead of the
+agent-native targets. `install` does not modify agent settings files;
+`--skip-settings` is retained for legacy compatibility.
 
 reset                             # Interactive reset (prompts for confirmation)
 reset db                          # Reset metrics database only

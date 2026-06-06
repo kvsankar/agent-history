@@ -744,18 +744,31 @@ When using SSH remote sources:
 
 ### Install
 
-**`install`** - Report install status (compatibility stub)
-- Accepts legacy install flags but performs no filesystem changes in v2
-- Returns a status payload describing requested paths and flags
+**`install`** - Install CLI and agent skill packages
+- Installs the CLI wrapper to `~/.local/bin/cagelens` by default
+- Installs the `cagelens` skill package into agent-native user skill directories
+- Use `--agent <name>` to install one agent target; default installs all supported targets
+- `--skill-dir` overrides agent-native skill targets with one explicit custom directory
+- Does not modify agent settings files; `--skip-settings` is retained for legacy
+  compatibility
 
 **Options:**
 | Option | Effect |
 |--------|--------|
 | `--bin-dir` | Custom binary installation directory |
-| `--skill-dir` | Custom skill installation directory |
+| `--skill-dir` | Custom agent skill installation directory |
 | `--skip-cli` | Skip binary installation |
-| `--skip-skill` | Skip skill installation |
-| `--skip-settings` | Skip settings update |
+| `--skip-skill` | Skip agent skill installation |
+| `--skip-settings` | Skip legacy agent settings step |
+| `--agent <name>` | Install skill package for one agent target |
+
+**Default skill targets:**
+| Agent | Directory |
+|-------|-----------|
+| Claude Code | `~/.claude/skills/cagelens/` |
+| Codex CLI | `${CODEX_HOME:-~/.codex}/skills/cagelens/` |
+| Gemini CLI | `~/.gemini/skills/cagelens/` |
+| Pi | `~/.pi/agent/skills/cagelens/` |
 
 ### Reset
 
