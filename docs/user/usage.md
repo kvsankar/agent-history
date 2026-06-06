@@ -549,16 +549,20 @@ For the internal files affected by each reset target, see
 
 ---
 
-## `fetch` - Fetch Remote Sessions
+## `fetch` - Fetch SSH Remote Sessions
 
-Fetch remote sessions into a local cache for export.
+Fetch SSH remote sessions into the local cagelens remote cache. This command
+does not fetch local, WSL, Windows, or Claude web sessions.
 
 ```bash
 cagelens fetch -r user@host --aw
 ```
 
 **Notes:**
-- Uses the same scope flags as `session list` (e.g., `-r`, `--aw`, `--agent`).
+- Use `-r HOST` for explicit SSH remotes, or `--ah --aw` for all configured
+  SSH remotes.
+- Use workspace filters such as `-n auth`, `--project NAME`, or `--aw`.
+- Use `--agent` to restrict the agent backend.
 - Remote cache layout is documented in [cagelens-spec.md](../specs/cagelens-spec.md#file-locations).
 
 ---
