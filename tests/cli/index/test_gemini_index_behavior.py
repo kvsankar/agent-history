@@ -47,3 +47,48 @@ def test_gemini_index_add_creates_mapping(isolated_home, tmp_path: Path):
 
     data = json.loads(index_file.read_text(encoding="utf-8"))
     assert data.get("hashes", {}).get(project_hash) == str(project_dir.resolve())
+
+
+def test_gemini_index_list_table_output(isolated_home):
+    """gemini-index should render readable table output by default in table mode."""
+    project_hash = "abcd1234" * 8
+    project_path = "/home/user/gemini-project"
+    index_file = isolated_home["history_dir"] / "gemini_index.json"
+    index_file.write_text(
+        json.dumps({"version": 1, "hashes": {project_hash: project_path}}),
+        encoding="utf-8",
+    )
+
+    result = run_cli_subprocess(
+        ["gemini-index", "--format", "table"],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "HASH" in result.stdout
+    assert "PATH" in result.stdout
+    assert project_hash[:8] in result.stdout
+    assert project_path in result.stdout
+    assert "{'action':" not in result.stdout
+
+
+def test_gemini_index_list_tsv_output(isolated_home):
+    """gemini-index should render TSV when requested or piped."""
+    project_hash = "dcba4321" * 8
+    project_path = "/home/user/gemini-project"
+    index_file = isolated_home["history_dir"] / "gemini_index.json"
+    index_file.write_text(
+        json.dumps({"version": 1, "hashes": {project_hash: project_path}}),
+        encoding="utf-8",
+    )
+
+    result = run_cli_subprocess(
+        ["gemini-index", "--format", "tsv"],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "HASH\tPATH"
+    assert f"{project_hash[:8]}\t{project_path}" in result.stdout

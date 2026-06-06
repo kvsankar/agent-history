@@ -247,6 +247,7 @@ class TableFormatter(DataFormatter):
             "project_list": self._format_project_list,
             "project_details": self._format_project_details,
             "exported_files": self._format_exported_files,
+            "gemini_index": self._format_gemini_index,
         }
 
     def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
@@ -260,6 +261,7 @@ class TableFormatter(DataFormatter):
                 "exported_files",
                 "project_list",
                 "home_list",
+                "gemini_index",
             ):
                 return formatter(data, metadata)
             return formatter(data)
@@ -418,6 +420,33 @@ class TableFormatter(DataFormatter):
             lines.append(f"  {f}")
         return "\n".join(lines)
 
+    def _format_gemini_index(self, data: dict[str, Any], metadata: dict[str, Any]) -> str:
+        """Format Gemini hash index results."""
+        action = data.get("action")
+        mappings = data.get("mappings", [])
+        if action == "list":
+            if not mappings:
+                return str(metadata.get("message") or "No Gemini mappings found.")
+            rows = [[str(item.get("hash", "")), str(item.get("path", ""))] for item in mappings]
+            return self._render_table(["HASH", "PATH"], rows)
+
+        lines = [str(metadata.get("message") or f"Gemini index {action or 'updated'}.")]
+        for key in ("added", "existing", "no_sessions", "indexed", "scanned"):
+            if key in data:
+                lines.append(f"{key}: {data[key]}")
+        if mappings:
+            rows = [
+                [
+                    str(item.get("status", "")),
+                    str(item.get("hash", "")),
+                    str(item.get("path", "")),
+                ]
+                for item in mappings
+            ]
+            lines.append("")
+            lines.append(self._render_table(["STATUS", "HASH", "PATH"], rows))
+        return "\n".join(lines)
+
     def _render_table(self, headers: list[str], rows: list[list[str]]) -> str:
         """Render headers and rows as ASCII table."""
         if not rows:
@@ -503,6 +532,7 @@ class TsvFormatter(DataFormatter):
             "home_list": self._format_home_list,
             "project_list": self._format_project_list,
             "stats": self._format_stats,
+            "gemini_index": self._format_gemini_index,
         }
 
     def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
@@ -621,6 +651,23 @@ class TsvFormatter(DataFormatter):
                     ]
                 )
             )
+        return "\n".join(lines)
+
+    def _format_gemini_index(self, data: dict[str, Any]) -> str:
+        """Format Gemini hash index results as TSV."""
+        mappings = data.get("mappings", [])
+        if not mappings:
+            return ""
+        if data.get("action") == "list":
+            lines = ["HASH\tPATH"]
+            lines.extend(f"{item.get('hash', '')}\t{item.get('path', '')}" for item in mappings)
+            return "\n".join(lines)
+
+        lines = ["STATUS\tHASH\tPATH"]
+        lines.extend(
+            f"{item.get('status', '')}\t{item.get('hash', '')}\t{item.get('path', '')}"
+            for item in mappings
+        )
         return "\n".join(lines)
 
 
