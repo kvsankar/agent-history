@@ -83,13 +83,15 @@ Concurrency:
 
 ## Stats Pipeline
 
-1. Optional sync step (`--sync` or `--ah` auto-sync):
-   - Scan sources and insert session metrics into SQLite.
+1. Default query:
+   - Read cached metrics from SQLite without scanning raw session files.
+   - Scope by homes, workspaces, projects, agent, and date filters.
+2. Optional sync step (`--sync`):
+   - Scan source files and insert session metrics into SQLite.
    - Incremental by default; `--force` ignores mtimes.
-   - `--jobs` parallelizes remote sync.
-2. Query and render:
+3. Query and render:
    - Summary dashboard and breakdowns (`--by tool`, `--by model`, `--by day`).
-   - Filters (`--source`, `--since`, `--until`).
+   - Filters (`--home`, `--ah`, workspace scope, `--since`, `--until`).
 
 ## Remote and Cross-OS Access
 

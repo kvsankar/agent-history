@@ -158,7 +158,7 @@ cagelens home
 
 # Now --ah includes configured homes automatically
 cagelens ws --ah              # includes configured sources
-cagelens stats --time --ah     # syncs from all homes
+cagelens stats --time --ah     # cached stats from all homes
 ```
 
 ---

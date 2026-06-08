@@ -625,7 +625,7 @@ class TestHomeScopeEdgeCases:
     def test_empty_home(self, multi_home_setup: Dict[str, Any]) -> None:
         """Home with no sessions should return empty, not error."""
         run_cli_subprocess(
-            ["session", "list", "--home", "local", "-n", "nonexistent"],
+            ["session", "list", "--home", "local", "--glob", "*nonexistent*"],
             env=multi_home_setup["env"],
         )
 

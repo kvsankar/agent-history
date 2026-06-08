@@ -13,6 +13,7 @@ See docs/design-v2/pipeline-architecture.md for specifications.
 
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 __all__ = [
     "get_metrics_db_path",
     "get_session_stats_from_db",
+    "get_stats_rollup_from_db",
     "get_time_stats_from_db",
     "get_tool_usage_stats_from_db",
     "init_metrics_db",
@@ -84,6 +86,7 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     is_new_db = not db_path.exists()
 
     conn = sqlite3.connect(str(db_path), timeout=30.0)
+    conn.create_function("REGEXP", 2, _sqlite_regexp)
 
     # Enable foreign key enforcement (disabled by default in SQLite)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -215,6 +218,16 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
     conn.commit()
     return conn
+
+
+def _sqlite_regexp(pattern: str, value: str | None) -> int:
+    """SQLite REGEXP implementation for workspace filters."""
+    if value is None:
+        return 0
+    try:
+        return 1 if re.search(pattern, str(value)) else 0
+    except re.error:
+        return 0
 
 
 def _run_migrations(conn: sqlite3.Connection, current_version: int, is_new: bool) -> None:
@@ -1129,6 +1142,447 @@ def _normalize_file_paths(file_paths: Optional[List[str]]) -> Optional[List[str]
     if file_paths is None:
         return None
     return [str(path) for path in file_paths if path]
+
+
+def _where_sql(filters: Optional[Dict[str, Any]], alias: str = "sessions") -> tuple[str, list[Any]]:
+    if not filters:
+        return "", []
+
+    clauses: list[str] = []
+    params: list[Any] = []
+    prefix = f"{alias}."
+
+    homes = filters.get("homes")
+    if homes:
+        placeholders = ", ".join("?" for _ in homes)
+        clauses.append(f"{prefix}home IN ({placeholders})")
+        params.extend(homes)
+
+    agent = filters.get("agent")
+    if agent:
+        clauses.append(f"{prefix}agent = ?")
+        params.append(agent)
+
+    workspaces = filters.get("workspaces")
+    if workspaces:
+        placeholders = ", ".join("?" for _ in workspaces)
+        clauses.append(f"{prefix}workspace IN ({placeholders})")
+        params.extend(workspaces)
+
+    workspace_patterns = filters.get("workspace_patterns")
+    if workspace_patterns:
+        pattern_clauses = []
+        for pattern in workspace_patterns:
+            pattern_clauses.append(f"LOWER({prefix}workspace) LIKE ?")
+            params.append(f"%{str(pattern).lower()}%")
+        clauses.append("(" + " OR ".join(pattern_clauses) + ")")
+
+    workspace_globs = filters.get("workspace_globs")
+    if workspace_globs:
+        glob_clauses = []
+        for pattern in workspace_globs:
+            glob_clauses.append(f"{prefix}workspace GLOB ?")
+            params.append(str(pattern))
+        clauses.append("(" + " OR ".join(glob_clauses) + ")")
+
+    workspace_regexes = filters.get("workspace_regexes")
+    if workspace_regexes:
+        regex_clauses = []
+        for pattern in workspace_regexes:
+            regex_clauses.append(f"{prefix}workspace REGEXP ?")
+            params.append(str(pattern))
+        clauses.append("(" + " OR ".join(regex_clauses) + ")")
+
+    since = filters.get("since")
+    if since:
+        clauses.append(
+            f"COALESCE({prefix}start_time, {prefix}first_timestamp, {prefix}last_timestamp) >= ?"
+        )
+        params.append(str(since))
+
+    until = filters.get("until")
+    if until:
+        clauses.append(
+            f"SUBSTR(COALESCE({prefix}start_time, {prefix}first_timestamp, {prefix}last_timestamp), 1, 10) <= ?"
+        )
+        params.append(str(until)[:10])
+
+    if not clauses:
+        return "", []
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def get_scoped_stats_from_db(
+    filters: Optional[Dict[str, Any]] = None,
+    db_path: Optional[Path] = None,
+    include_day: bool = False,
+) -> Dict[str, Any]:
+    """Get aggregate stats directly from SQLite using session predicates."""
+    conn = init_metrics_db(db_path)
+    try:
+        where_sql, params = _where_sql(filters, "sessions")
+        cursor = conn.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                COUNT(*) as sessions,
+                COALESCE(SUM(is_agent), 0) as agent_sessions,
+                COALESCE(SUM(CASE WHEN is_agent THEN 0 ELSE 1 END), 0) as main_sessions,
+                COALESCE(SUM(message_count), 0) as messages,
+                COALESCE(SUM(user_messages), 0) as user_messages,
+                COALESCE(SUM(assistant_messages), 0) as assistant_messages,
+                COALESCE(SUM(work_period_seconds), 0) as total_seconds,
+                SUM(CASE WHEN work_period_seconds > 0 THEN 1 ELSE 0 END) as sessions_with_time,
+                MAX(file_mtime) as last_synced
+            FROM sessions
+            {where_sql}
+            """,
+            params,
+        )
+        row = cursor.fetchone()
+        total_seconds = row["total_seconds"] if row else 0
+        sessions_with_time = row["sessions_with_time"] if row else 0
+        avg_seconds = total_seconds / sessions_with_time if sessions_with_time else 0
+
+        by_agent = _stats_group_query(conn, "agent", where_sql, params)
+        by_home = _stats_group_query(conn, "home", where_sql, params)
+        by_workspace = _stats_group_query(conn, "workspace", where_sql, params)
+        by_model = _model_stats_query(conn, filters)
+        by_tool = _tool_stats_query(conn, filters)
+        time_by_day = _time_by_day_query(conn, where_sql, params)
+
+        stats: Dict[str, Any] = {
+            "sessions": row["sessions"] if row else 0,
+            "total_sessions": row["sessions"] if row else 0,
+            "main_sessions": row["main_sessions"] if row else 0,
+            "agent_sessions": row["agent_sessions"] if row else 0,
+            "messages": row["messages"] if row else 0,
+            "total_messages": row["messages"] if row else 0,
+            "user_messages": row["user_messages"] if row else 0,
+            "assistant_messages": row["assistant_messages"] if row else 0,
+            "tokens": {
+                "input": row["input_tokens"] if row else 0,
+                "output": row["output_tokens"] if row else 0,
+                "cache_creation": row["cache_creation_tokens"] if row else 0,
+                "cache_read": row["cache_read_tokens"] if row else 0,
+            },
+            "by_agent": by_agent,
+            "by_home": by_home,
+            "by_workspace": by_workspace,
+            "by_model": by_model,
+            "by_tool": by_tool,
+            "time_stats": {
+                "total_duration_seconds": total_seconds,
+                "sessions_with_time": sessions_with_time,
+                "average_duration_seconds": avg_seconds,
+                "by_day": time_by_day,
+            },
+            "cache": {
+                "cached": True,
+                "last_synced": row["last_synced"] if row else None,
+            },
+        }
+
+        if include_day:
+            stats["by_day"] = _day_stats_query(conn, where_sql, params)
+
+        return stats
+    finally:
+        conn.close()
+
+
+ROLLUP_DIMENSIONS: Dict[str, str] = {
+    "project": "COALESCE(project, project_short, workspace)",
+    "workspace": "workspace",
+    "home": "home",
+    "agent": "agent",
+    "day": "SUBSTR(COALESCE(start_time, first_timestamp, last_timestamp), 1, 10)",
+    "month": "SUBSTR(COALESCE(start_time, first_timestamp, last_timestamp), 1, 7)",
+}
+
+MESSAGE_ROLLUP_DIMENSIONS: Dict[str, str] = {
+    "project": "COALESCE(s.project, s.project_short, s.workspace)",
+    "workspace": "s.workspace",
+    "home": "s.home",
+    "agent": "s.agent",
+    "day": "SUBSTR(COALESCE(s.start_time, s.first_timestamp, s.last_timestamp), 1, 10)",
+    "month": "SUBSTR(COALESCE(s.start_time, s.first_timestamp, s.last_timestamp), 1, 7)",
+    "model": "m.model",
+}
+
+
+def get_stats_rollup_from_db(
+    filters: Optional[Dict[str, Any]] = None,
+    db_path: Optional[Path] = None,
+    by: Optional[List[str]] = None,
+    metric: str = "all",
+    top: Optional[int] = None,
+) -> list[Dict[str, Any]]:
+    """Return DB-backed stats rollup rows grouped by requested dimensions."""
+    dimensions = by or ["project"]
+    dimension_map = MESSAGE_ROLLUP_DIMENSIONS if "model" in dimensions else ROLLUP_DIMENSIONS
+    invalid = [dimension for dimension in dimensions if dimension not in dimension_map]
+    if invalid:
+        raise ValueError(f"Unsupported rollup dimension(s): {', '.join(invalid)}")
+    if metric not in {"time", "tokens", "all"}:
+        raise ValueError(f"Unsupported rollup metric: {metric}")
+
+    conn = init_metrics_db(db_path)
+    try:
+        if "model" in dimensions:
+            return _message_stats_rollup(conn, filters, dimensions, metric, top)
+
+        where_sql, params = _where_sql(filters, "sessions")
+        select_parts = [
+            f"{ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
+            for index, dimension in enumerate(dimensions)
+        ]
+        group_parts = [f"dim_{index}" for index in range(len(dimensions))]
+        sql = f"""
+            SELECT
+                {", ".join(select_parts)},
+                COUNT(*) as sessions,
+                COALESCE(SUM(message_count), 0) as messages,
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+                COALESCE(SUM(work_period_seconds), 0) as time_seconds
+            FROM sessions
+            {where_sql}
+            GROUP BY {", ".join(group_parts)}
+        """
+        order_sql = _rollup_order_sql(dimensions, metric)
+        limit_sql = ""
+        if top:
+            limit_sql = " LIMIT ?"
+            params = [*params, top]
+        cursor = conn.execute(f"{sql} {order_sql}{limit_sql}", params)
+        rows: list[Dict[str, Any]] = []
+        for row in cursor.fetchall():
+            item: Dict[str, Any] = {
+                "sessions": row["sessions"],
+                "messages": row["messages"],
+                "input_tokens": row["input_tokens"],
+                "output_tokens": row["output_tokens"],
+                "cache_read_tokens": row["cache_read_tokens"],
+                "cache_creation_tokens": row["cache_creation_tokens"],
+                "time_seconds": row["time_seconds"],
+                "time_hours": row["time_seconds"] / 3600 if row["time_seconds"] else 0,
+            }
+            for index, dimension in enumerate(dimensions):
+                item[dimension] = row[f"dim_{index}"] or "(none)"
+            rows.append(item)
+        return rows
+    finally:
+        conn.close()
+
+
+def _message_stats_rollup(
+    conn: sqlite3.Connection,
+    filters: Optional[Dict[str, Any]],
+    dimensions: list[str],
+    metric: str,
+    top: Optional[int],
+) -> list[Dict[str, Any]]:
+    where_sql, params = _where_sql(filters, "s")
+    model_filter = "m.model IS NOT NULL AND m.model != ''"
+    if where_sql:
+        where_sql += f" AND {model_filter}"
+    else:
+        where_sql = f" WHERE {model_filter}"
+    select_parts = [
+        f"{MESSAGE_ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
+        for index, dimension in enumerate(dimensions)
+    ]
+    group_parts = [f"dim_{index}" for index in range(len(dimensions))]
+    sql = f"""
+        SELECT
+            {", ".join(select_parts)},
+            COUNT(DISTINCT s.file_path) as sessions,
+            COUNT(*) as messages,
+            COALESCE(SUM(m.input_tokens), 0) as input_tokens,
+            COALESCE(SUM(m.output_tokens), 0) as output_tokens,
+            COALESCE(SUM(m.cache_read_tokens), 0) as cache_read_tokens,
+            COALESCE(SUM(m.cache_creation_tokens), 0) as cache_creation_tokens,
+            0 as time_seconds
+        FROM messages m
+        JOIN sessions s ON s.file_path = m.file_path
+        {where_sql}
+        GROUP BY {", ".join(group_parts)}
+    """
+    order_sql = _rollup_order_sql(dimensions, metric, message_query=True)
+    limit_sql = ""
+    if top:
+        limit_sql = " LIMIT ?"
+        params = [*params, top]
+    cursor = conn.execute(f"{sql} {order_sql}{limit_sql}", params)
+    rows: list[Dict[str, Any]] = []
+    for row in cursor.fetchall():
+        item: Dict[str, Any] = {
+            "sessions": row["sessions"],
+            "messages": row["messages"],
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "cache_read_tokens": row["cache_read_tokens"],
+            "cache_creation_tokens": row["cache_creation_tokens"],
+            "time_seconds": None,
+            "time_hours": None,
+        }
+        for index, dimension in enumerate(dimensions):
+            item[dimension] = row[f"dim_{index}"] or "(none)"
+        rows.append(item)
+    return rows
+
+
+def _rollup_order_sql(dimensions: list[str], metric: str, message_query: bool = False) -> str:
+    if dimensions and all(dimension in {"day", "month"} for dimension in dimensions):
+        return " ORDER BY " + ", ".join(f"dim_{index}" for index in range(len(dimensions)))
+    if message_query and metric == "tokens":
+        return (
+            " ORDER BY (COALESCE(SUM(m.input_tokens), 0) + "
+            "COALESCE(SUM(m.output_tokens), 0) + "
+            "COALESCE(SUM(m.cache_read_tokens), 0) + "
+            "COALESCE(SUM(m.cache_creation_tokens), 0)) DESC"
+        )
+    if message_query and metric == "all":
+        return (
+            " ORDER BY (COALESCE(SUM(m.input_tokens), 0) + "
+            "COALESCE(SUM(m.output_tokens), 0)) DESC, sessions DESC"
+        )
+    if metric == "time":
+        return " ORDER BY time_seconds DESC"
+    if metric == "tokens":
+        return " ORDER BY (input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) DESC"
+    return " ORDER BY time_seconds DESC, (input_tokens + output_tokens) DESC, sessions DESC"
+
+
+def _stats_group_query(
+    conn: sqlite3.Connection, column: str, where_sql: str, params: list[Any]
+) -> Dict[str, Dict[str, int]]:
+    cursor = conn.execute(
+        f"""
+        SELECT {column} as name,
+               COUNT(*) as sessions,
+               COALESCE(SUM(message_count), 0) as messages
+        FROM sessions
+        {where_sql}
+        GROUP BY {column}
+        ORDER BY sessions DESC
+        """,
+        params,
+    )
+    return {
+        row["name"]: {"sessions": row["sessions"], "messages": row["messages"]}
+        for row in cursor.fetchall()
+        if row["name"]
+    }
+
+
+def _model_stats_query(
+    conn: sqlite3.Connection, filters: Optional[Dict[str, Any]]
+) -> Dict[str, Dict[str, int]]:
+    where_sql, params = _where_sql(filters, "s")
+    if where_sql:
+        where_sql += " AND m.model IS NOT NULL AND m.model != ''"
+    else:
+        where_sql = " WHERE m.model IS NOT NULL AND m.model != ''"
+    cursor = conn.execute(
+        f"""
+        SELECT m.model,
+               COUNT(*) as messages,
+               COALESCE(SUM(m.output_tokens), 0) as tokens
+        FROM messages m
+        JOIN sessions s ON s.file_path = m.file_path
+        {where_sql}
+        GROUP BY m.model
+        ORDER BY messages DESC
+        """,
+        params,
+    )
+    return {
+        row["model"]: {"messages": row["messages"], "tokens": row["tokens"]}
+        for row in cursor.fetchall()
+        if row["model"]
+    }
+
+
+def _tool_stats_query(
+    conn: sqlite3.Connection, filters: Optional[Dict[str, Any]]
+) -> Dict[str, Dict[str, int]]:
+    where_sql, params = _where_sql(filters, "s")
+    cursor = conn.execute(
+        f"""
+        SELECT t.tool_name,
+               COUNT(*) as uses,
+               COALESCE(SUM(t.is_error), 0) as errors
+        FROM tool_uses t
+        JOIN sessions s ON s.file_path = t.file_path
+        {where_sql}
+        GROUP BY t.tool_name
+        ORDER BY uses DESC
+        """,
+        params,
+    )
+    return {
+        row["tool_name"]: {"uses": row["uses"], "errors": row["errors"]}
+        for row in cursor.fetchall()
+        if row["tool_name"]
+    }
+
+
+def _time_by_day_query(
+    conn: sqlite3.Connection, where_sql: str, params: list[Any]
+) -> Dict[str, float]:
+    day_filter = "first_timestamp IS NOT NULL AND work_period_seconds > 0"
+    scoped_where = where_sql
+    if scoped_where:
+        scoped_where += f" AND {day_filter}"
+    else:
+        scoped_where = f" WHERE {day_filter}"
+    cursor = conn.execute(
+        f"""
+        SELECT SUBSTR(first_timestamp, 1, 10) as day,
+               COALESCE(SUM(work_period_seconds), 0) as total_seconds
+        FROM sessions
+        {scoped_where}
+        GROUP BY day
+        ORDER BY day
+        """,
+        params,
+    )
+    return {row["day"]: row["total_seconds"] for row in cursor.fetchall() if row["day"]}
+
+
+def _day_stats_query(
+    conn: sqlite3.Connection, where_sql: str, params: list[Any]
+) -> Dict[str, Dict[str, int]]:
+    day_filter = "first_timestamp IS NOT NULL"
+    scoped_where = where_sql
+    if scoped_where:
+        scoped_where += f" AND {day_filter}"
+    else:
+        scoped_where = f" WHERE {day_filter}"
+    cursor = conn.execute(
+        f"""
+        SELECT SUBSTR(first_timestamp, 1, 10) as day,
+               COUNT(*) as sessions,
+               COALESCE(SUM(message_count), 0) as messages
+        FROM sessions
+        {scoped_where}
+        GROUP BY day
+        ORDER BY day
+        """,
+        params,
+    )
+    return {
+        row["day"]: {"sessions": row["sessions"], "messages": row["messages"]}
+        for row in cursor.fetchall()
+        if row["day"]
+    }
 
 
 def get_session_stats_from_db(

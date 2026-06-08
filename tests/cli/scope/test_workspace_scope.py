@@ -3,7 +3,7 @@
 Tests workspace scope modifiers:
 - Current workspace (default, from cwd)
 - Named workspace (positional argument)
-- Pattern matching (-n, --name)
+- Pattern matching (--glob, --regex)
 - All workspaces (--aw, --all-workspaces)
 - Project scope (--project)
 - Current only override (--this)
@@ -134,39 +134,41 @@ class TestNamedWorkspaceScope:
 
 
 # ---------------------------------------------------------------------------
-# Pattern Matching Scope (-n, --name)
+# Pattern Matching Scope (--glob, --regex)
 # ---------------------------------------------------------------------------
 
 
 class TestPatternMatchingScope:
-    """Tests for pattern matching with -n/--name flag."""
+    """Tests for explicit workspace pattern matching flags."""
 
     def test_name_flag_filters_by_pattern(self, multi_workspace_home: Dict[str, Any]) -> None:
-        """session list -n <pattern> filters workspaces by pattern.
+        """session list --glob <pattern> filters workspaces by pattern.
 
         Spec: "Patterns match against workspace names (case-insensitive substring)"
         """
         result = run_cli_subprocess(
-            ["session", "list", "-n", "alpha"],
+            ["session", "list", "--glob", "*alpha*"],
             env=multi_workspace_home["env"],
         )
 
-        assert_cli_success(result, "session list with -n pattern should succeed")
+        assert_cli_success(result, "session list with --glob pattern should succeed")
 
-    def test_name_flag_case_insensitive(self, multi_workspace_home: Dict[str, Any]) -> None:
-        """Pattern matching should be case-insensitive.
+    def test_regex_flag_can_match_case_insensitively(
+        self, multi_workspace_home: Dict[str, Any]
+    ) -> None:
+        """Regex matching can be made case-insensitive explicitly.
 
-        Spec: "case-insensitive substring"
+        Spec: explicit --regex uses Python regular expressions.
         """
         # These should all match "project-alpha"
         patterns = ["ALPHA", "Alpha", "aLpHa"]
 
         for pattern in patterns:
             result = run_cli_subprocess(
-                ["session", "list", "-n", pattern],
+                ["session", "list", "--regex", f"(?i){pattern}"],
                 env=multi_workspace_home["env"],
             )
-            assert_cli_success(result, f"Pattern '{pattern}' should match case-insensitively")
+            assert_cli_success(result, f"Regex '{pattern}' should match case-insensitively")
 
     def test_name_flag_substring_match(self, multi_workspace_home: Dict[str, Any]) -> None:
         """Pattern should match as substring, not exact match.
@@ -175,23 +177,23 @@ class TestPatternMatchingScope:
         """
         # "service" should match "auth-service" and "api-gateway" (if they contain it)
         result = run_cli_subprocess(
-            ["session", "list", "-n", "service"],
+            ["session", "list", "--glob", "*service*"],
             env=multi_workspace_home["env"],
         )
 
         assert_cli_success(result, "Substring pattern should succeed")
 
     def test_name_flag_multiple_patterns(self, multi_workspace_home: Dict[str, Any]) -> None:
-        """Multiple -n flags should match any pattern.
+        """Multiple --glob flags should match any pattern.
 
         Spec: "Multiple patterns: match any"
         """
         result = run_cli_subprocess(
-            ["session", "list", "-n", "alpha", "-n", "beta"],
+            ["session", "list", "--glob", "*alpha*", "--glob", "*beta*"],
             env=multi_workspace_home["env"],
         )
 
-        assert_cli_success(result, "Multiple -n patterns should succeed")
+        assert_cli_success(result, "Multiple --glob patterns should succeed")
 
     def test_name_flag_no_match_returns_empty(self, multi_workspace_home: Dict[str, Any]) -> None:
         """Pattern with no matches should return empty result, not error.
@@ -199,7 +201,7 @@ class TestPatternMatchingScope:
         Spec: "Pattern matches nothing - Empty result (not error)"
         """
         result = run_cli_subprocess(
-            ["session", "list", "-n", "xyznonexistent123"],
+            ["session", "list", "--glob", "*xyznonexistent123*"],
             env=multi_workspace_home["env"],
         )
 
@@ -212,7 +214,7 @@ class TestPatternMatchingScope:
         Spec: "Empty pattern or '*' or 'all': match all workspaces"
         """
         result = run_cli_subprocess(
-            ["session", "list", "-n", "*"],
+            ["session", "list", "--glob", "***"],
             env=multi_workspace_home["env"],
         )
 
@@ -270,16 +272,16 @@ class TestAllWorkspacesScope:
         assert_cli_success(result, "ws list should succeed")
 
     def test_aw_overrides_pattern(self, multi_workspace_home: Dict[str, Any]) -> None:
-        """--aw should override -n pattern (or combine with it).
+        """--aw should override --glob "*pattern*" (or combine with it).
 
-        Spec: "-n pattern + --aw: --aw wins (all workspaces)"
+        Spec: "--glob "*pattern*" + --aw: --aw wins (all workspaces)"
         """
         result = run_cli_subprocess(
-            ["session", "list", "-n", "alpha", "--aw"],
+            ["session", "list", "--glob", "*alpha*", "--aw"],
             env=multi_workspace_home["env"],
         )
 
-        assert_cli_success(result, "--aw with -n should succeed")
+        assert_cli_success(result, "--aw with --glob should succeed")
 
 
 # ---------------------------------------------------------------------------
@@ -402,11 +404,11 @@ class TestWorkspaceScopeWithCommands:
         """
         output_dir = tmp_path / "export_output"
         result = run_cli_subprocess(
-            ["session", "export", "-n", "alpha", "-o", str(output_dir)],
+            ["session", "export", "--glob", "*alpha*", "-o", str(output_dir)],
             env=multi_workspace_home["env"],
         )
 
-        assert_cli_success(result, "session export with -n should succeed")
+        assert_cli_success(result, "session export with --glob should succeed")
 
     def test_session_stats_with_workspace_scope(self, multi_workspace_home: Dict[str, Any]) -> None:
         """session stats respects workspace scope.
@@ -414,11 +416,11 @@ class TestWorkspaceScopeWithCommands:
         Spec: Stats commands use same scope modifiers.
         """
         result = run_cli_subprocess(
-            ["session", "stats", "-n", "alpha"],
+            ["session", "stats", "--glob", "*alpha*"],
             env=multi_workspace_home["env"],
         )
 
-        assert_cli_success(result, "session stats with -n should succeed")
+        assert_cli_success(result, "session stats with --glob should succeed")
 
     def test_ws_export_workspace(
         self, multi_workspace_home: Dict[str, Any], tmp_path: Path
@@ -450,7 +452,7 @@ class TestWorkspaceScopeEdgeCases:
         """Session list in workspace with no sessions should return empty."""
         # Create an empty workspace scenario
         result = run_cli_subprocess(
-            ["session", "list", "-n", "nonexistent"],
+            ["session", "list", "--glob", "*nonexistent*"],
             env=multi_workspace_home["env"],
         )
 
@@ -460,7 +462,7 @@ class TestWorkspaceScopeEdgeCases:
         """Workspace names with special characters should be handled."""
         # Pattern with special regex characters
         run_cli_subprocess(
-            ["session", "list", "-n", "project.*"],
+            ["session", "list", "--glob", "*project.**"],
             env=multi_workspace_home["env"],
         )
 
@@ -469,7 +471,7 @@ class TestWorkspaceScopeEdgeCases:
     def test_workspace_pattern_with_dashes(self, multi_workspace_home: Dict[str, Any]) -> None:
         """Workspace patterns with dashes should work correctly."""
         result = run_cli_subprocess(
-            ["session", "list", "-n", "auth-service"],
+            ["session", "list", "--glob", "*auth-service*"],
             env=multi_workspace_home["env"],
         )
 
@@ -479,7 +481,7 @@ class TestWorkspaceScopeEdgeCases:
         """Workspace with sessions from multiple agents should list all."""
         # project-alpha has both Claude and Codex sessions
         result = run_cli_subprocess(
-            ["session", "list", "-n", "alpha"],
+            ["session", "list", "--glob", "*alpha*"],
             env=multi_workspace_home["env"],
         )
 
@@ -533,11 +535,11 @@ class TestWorkspaceScopePrecedence:
     [
         (["project-alpha"], "single named workspace"),
         (["project-alpha", "project-beta"], "multiple named workspaces"),
-        (["-n", "alpha"], "single pattern"),
-        (["-n", "alpha", "-n", "beta"], "multiple patterns"),
+        (["--glob", "*alpha*"], "single pattern"),
+        (["--glob", "*alpha*", "--glob", "*beta*"], "multiple patterns"),
         (["--aw"], "all workspaces short flag"),
         (["--all-workspaces"], "all workspaces long flag"),
-        (["-n", "*"], "wildcard pattern"),
+        (["--glob", "***"], "wildcard pattern"),
     ],
 )
 def test_workspace_scope_variants(
@@ -585,7 +587,7 @@ def test_pattern_matching_expected_results(
         multi_workspace_home: Test fixture
     """
     result = run_cli_subprocess(
-        ["session", "list", "-n", pattern],
+        ["session", "list", "--glob", f"*{pattern}*"],
         env=multi_workspace_home["env"],
     )
 

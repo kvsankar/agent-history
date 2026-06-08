@@ -120,22 +120,25 @@ This is expensive. The metrics database (`~/.cagelens/metrics.db`) caches these 
 
 ### Sync Behavior
 
-Stats auto-sync the resolved scope by default unless `--no-sync` is passed.
-Use `--sync` when you want to make that refresh explicit, and `--force` when
-unchanged files should be reprocessed.
+Stats use cached metrics from the SQLite DB by default. Use `--sync` when you
+want to refresh source session files before display, and `--force` when
+unchanged files should be reprocessed during that refresh.
 
 ```
-session stats                    # Syncs resolved scope, then shows stats
-session stats --sync --agent codex
-session stats --no-sync          # Query cached metrics only
+stats                            # Query cached metrics
+stats --sync --agent codex
+stats --no-sync                  # Same as default, explicit cache-only mode
+stats --sync --quiet             # Suppress sync progress
 ```
 
 **Sync characteristics:**
 - **Scoped**: Syncs the resolved homes, workspaces, and agent filters
 - **Incremental**: Only processes new/modified files (based on mtime)
 - **Additive**: Deleted sessions remain in DB until `reset db`
+- **Visible**: `--sync` table output prints bounded progress to stderr unless `--quiet`
 
-`--no-sync` skips the automatic metrics sync for stats.
+Cached stats may be stale. If no cached rows match the requested scope, run
+`stats --sync` to build or refresh the metrics DB.
 
 ---
 
@@ -172,14 +175,21 @@ Notes:
 | Argument/Flag | Description |
 |---------------|-------------|
 | (none) | Current workspace (from cwd) |
-| `<pattern>` | Workspace name pattern (positional, repeatable) |
+| `<workspace>` | Exact workspace path or identifier (positional, repeatable) |
+| `--glob <pattern>` | Explicit shell-style workspace pattern (repeatable) |
+| `--regex <regex>` | Explicit regular expression workspace pattern (repeatable) |
 | `--aw` / `--all-workspaces` | All workspaces |
 | `--this` | Current workspace only (override project auto-detection) |
 
 **Pattern matching:**
-- Positional patterns use exact matching when path-like (`/`, `-`, or contains `/`), otherwise substring matching
-- `-n` patterns always use case-insensitive substring matching
-- Multiple patterns: match any
+- Positional workspace arguments are exact. They never imply substring matching.
+- `--glob` uses shell-style `fnmatch` matching against workspace paths/ids.
+- `--regex` uses Python regular-expression search against workspace paths/ids.
+- Multiple exact/glob/regex matchers are combined with OR semantics.
+- `-n`/`--name` is not supported; users must choose `--glob` or `--regex` explicitly.
+- Users should quote glob and regex patterns in the shell, for example
+  `--glob '/home/user/projects/auth*'`, so the shell does not expand them to
+  existing filesystem paths before `cagelens` receives them.
 
 ### Project Scope
 
@@ -201,7 +211,7 @@ session list --project other    # Explicit project selection
 ### Cross-Home Access Guard
 
 When accessing non-local homes (`--windows`, `--wsl`, `-r user@host`, `--home <name>`, `--ah`) from within a local workspace, all session verbs (`list`, `export`, `stats`) require either:
-1. An explicit workspace pattern (`-n <pattern>`)
+1. An explicit workspace scope (`<workspace>`, `--glob <pattern>`, or `--regex <regex>`)
 2. A project that ties the local workspace to remote workspaces
 3. The `--aw` flag (explicitly requesting all workspaces)
 
@@ -210,11 +220,11 @@ When accessing non-local homes (`--windows`, `--wsl`, `-r user@host`, `--home <n
 ```
 # In ~/myproject (no project defined)
 session list --windows              # ERROR: requires project or pattern
-session list --windows -n myproject # OK: explicit pattern
+session list --windows --glob '*myproject*' # OK: explicit pattern
 session list -r vm01                # ERROR: requires project or pattern
-session list -r vm01 -n myproject   # OK: explicit pattern
+session list -r vm01 --regex '(^|/)myproject$' # OK: explicit pattern
 session list --ah                   # ERROR: requires project or pattern
-session list --ah -n myproject      # OK: explicit pattern
+session list --ah /home/user/myproject # OK: explicit exact workspace
 session list --ah --aw              # OK: explicitly requesting all workspaces
 
 # In ~/myproject (part of project "myproj" that includes remote workspaces)
@@ -232,7 +242,7 @@ session list --ah                   # OK: project ties homes together
 - Outside any workspace (e.g., in `~/`): `session list --windows --aw`
 - In a workspace but explicitly all workspaces: `session list --ah --aw`
 - With a project that links homes: `session list --wsl --project myproj`
-- Explicit patterns without a project: `session list --windows -n myproj`
+- Explicit patterns without a project: `session list --windows --glob '*myproj*'`
 
 ### Agent Filter
 
@@ -253,7 +263,7 @@ All scope modifiers are orthogonal and can be combined:
 session list                      # current ws, local home, auto agent
 session list --aw                 # all ws, local home
 session list --aw --ah            # all ws, all homes
-session list -n auth --ah         # pattern "auth", all homes
+session list --glob '*auth*' --ah     # workspaces containing "auth", all homes
 session list --agent codex        # codex sessions only
 session list --ah --agent gemini  # gemini sessions, all homes
 ```
@@ -292,7 +302,8 @@ ws stats <path> [options]         # Stats for workspace
 Options:
   --home <name>                   # Specific home (repeatable)
   --ah, --all-homes               # All homes
-  -n, --name <pattern>            # Pattern match workspace names
+  --glob <pattern>                # Shell-style workspace pattern
+  --regex <regex>                 # Python regex workspace pattern
   -o, --output <dir>              # Output directory (for export)
 ```
 
@@ -340,15 +351,40 @@ Export Options:
   --force                         # Re-export even if up-to-date
 
 Stats Options:
-  --sync                          # Force sync before display
-  --no-sync                       # Skip auto-sync (faster, uses cached DB)
+  --sync                          # Refresh source files before display (slower)
+  --no-sync                       # Use cached metrics (default)
+  --force                         # With --sync, reprocess unchanged session files
+  --quiet                         # Suppress sync progress
   --by <dimension>                # Group by (comma-separated): model, tool, day, workspace, home, agent
-  --time                          # Time tracking mode
-  --top-ws <n>                    # Limit to top N workspaces
-  -H                              # Accepted but currently ignored
+                                  # Rollup also supports: project, month
+  --metric <metric>                # Rollup metric: time, tokens, all
+  --top <n>                       # Rollup row limit
+  --models                        # Alias for --by model
+  --tools                         # Alias for --by tool
+  --by-day                        # Alias for --by day
+  --by-workspace                  # Alias for --by workspace
+  --time                          # Expand work-period time details
+  --top-ws <n|all>                # Limit to top N workspaces, or show all
+  -H, --human                     # Compact human-readable numbers/durations
 
 Output Options:
   --format <fmt>                  # Output format: table, tsv, json
+```
+
+### stats
+
+Top-level stats is the canonical analytics surface. It uses the same cached
+metrics DB and scope flags as `session stats`, while resource-scoped stats
+commands remain supported for convenience.
+
+```
+stats [summary] [options]          # Cached dashboard summary
+stats rollup [options]             # Stable tabular rollups
+
+Rollup Options:
+  --metric <time|tokens|all>        # Metric family (default: all)
+  --by <dims>                      # project, workspace, home, agent, model, day, month
+  --top <n>                        # Limit rows
 ```
 
 ### project
@@ -359,7 +395,7 @@ Manage named workspace groups (cross-cutting aliases).
 project [list]                    # List all projects
 project show <name>               # Show project details
 project add <name> <workspace>    # Add workspace to project
-project add <name> -n <pattern>   # Add by pattern
+project add <name> --glob <pattern>   # Add by pattern
 project add <name> --ah ...       # Add from all homes (local + wsl + windows + remotes + web)
 project remove <name> [workspace] # Remove workspace (or entire project)
 project export <name> [options]   # Export all sessions in project; accepts --agent
@@ -388,6 +424,7 @@ These are top-level commands that don't follow the noun-verb pattern:
 
 ```
 install                           # Install CLI and all supported agent skill packages
+install --dry-run                 # Show exact resolved paths without writing files
 install --agent codex             # Install Codex skill package only
 install --skip-skill              # Skip agent skill installation
 install --skip-cli                # Skip CLI installation
@@ -408,13 +445,16 @@ Default skill package targets:
 agent-native targets. `install` does not modify agent settings files;
 `--skip-settings` is retained for legacy compatibility.
 
+`install --help` includes default CLI and skill locations plus examples. Table
+output renders install actions as rows with component, agent, status, and path.
+
 reset                             # Interactive reset (prompts for confirmation)
 reset db                          # Reset metrics database only
 reset config                      # Reset configuration only
 reset cache                       # Reset remote/web caches only
 
 fetch -r user@host --aw            # Prefetch all workspaces from one SSH remote
-fetch -r user@host -n auth         # Prefetch matching remote workspaces
+fetch -r user@host --glob '*auth*'      # Prefetch matching remote workspaces
 fetch --ah --aw                    # Prefetch all configured SSH remotes
 fetch --agent codex -r host --aw   # Prefetch Codex sessions from one SSH remote
 
@@ -489,13 +529,13 @@ cagelens session stats
 
 ```bash
 # List workspaces matching "auth"
-cagelens ws -n auth
+cagelens ws --glob '*auth*'
 
 # List sessions from workspaces matching "auth"
-cagelens session -n auth
+cagelens session --glob '*auth*'
 
 # Export sessions from matching workspaces
-cagelens session export -n auth -o ./exports
+cagelens session export --glob '*auth*' -o ./exports
 ```
 
 ### Multi-Home Operations
@@ -577,32 +617,63 @@ cagelens session export --force
 ### Stats Options
 
 ```bash
-# Summary stats (scope only)
-cagelens session stats
+# Summary stats (cached)
+cagelens stats
+cagelens stats summary
+cagelens session stats              # compatibility/convenience form
 
 # Stats across scopes
-cagelens session stats --aw             # All workspaces
-cagelens session stats --ah             # All homes
-cagelens session stats --ah --aw        # Everything
+cagelens stats --aw                     # All workspaces
+cagelens stats --ah                     # All homes
+cagelens stats --ah --aw                # Everything
 
 # Make sync explicit or skip it
-cagelens session stats --sync
-cagelens session stats --sync --agent codex
-cagelens session stats --no-sync
+cagelens stats --sync
+cagelens stats --sync --agent codex
+cagelens stats --no-sync
 
 # Add by_day key in JSON output
-cagelens session stats --by day --format json
+cagelens stats --by day --format json
+cagelens stats --by-day
 
-# Time tracking (JSON output)
-cagelens session stats --sync --time --format json
+# Add model/tool summaries
+cagelens stats --models
+cagelens stats --tools
+
+# Time drilldown
+cagelens stats --time
 
 # Limit results
-cagelens session stats --top-ws 10
+cagelens stats --top-ws 10
+cagelens stats --top-ws all
+
+# Rollups
+cagelens stats rollup --metric time --by project
+cagelens stats rollup --metric time --by project,month
+cagelens stats rollup --metric time --by workspace,day
+cagelens stats rollup --metric tokens --by project,agent,model
+cagelens stats rollup --metric all --by project
 
 # Output format
-cagelens session stats --format json
-cagelens session stats --format tsv
+cagelens stats --format json
+cagelens stats --format tsv
 ```
+
+Stats table output begins with an explicit scope banner before metrics:
+
+```text
+Scope:
+  Request: workspace glob *bptrial*
+  Homes: local
+  Workspaces: 3 (bptrial-main, /home/sankar/sankar/projects/bptrial-main, bptrial-mobile)
+  Sessions: 7
+```
+
+This banner is required for both `stats summary` and `stats rollup` table
+output. It must distinguish project scope from workspace-pattern scope:
+`cagelens stats --glob '*bptrial*'` is a workspace glob filter, while
+`cagelens stats --project bptrial` is a project filter. Bare
+`cagelens stats bptrial` is exact workspace scope.
 
 ---
 
@@ -728,8 +799,8 @@ By Workspace:
 ```
 
 **Notes:**
-- Token/tool/time breakdowns are available in `--format json` after sync (auto unless `--no-sync`)
-- `--by` controls which groupings appear in table output; `by_day` is included only when requested
+- Token/tool/time breakdowns come from the cached metrics DB; run `--sync` to refresh that cache
+- `--by` adds groupings to table output; `by_day` is included only when requested
 
 ### home list
 

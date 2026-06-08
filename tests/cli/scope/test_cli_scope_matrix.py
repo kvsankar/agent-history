@@ -24,7 +24,7 @@ WORKSPACE_SCOPES = [
     ("implicit", []),
     ("all_workspaces", ["--aw"]),
     ("path_1", ["/home/user/project-alpha"]),
-    ("name_1", ["-n", "project"]),
+    ("name_1", ["--glob", "*project*"]),
     ("project_1", ["--project", "alpha"]),
     ("this_only", ["--this"]),
 ]

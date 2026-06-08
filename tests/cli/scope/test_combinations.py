@@ -67,7 +67,7 @@ pytestmark = [pytest.mark.scope, pytest.mark.scope_combination]
 WS_SCOPES = {
     "current": [],  # Default: current workspace
     "named": ["project-alpha"],  # Positional workspace name
-    "pattern": ["-n", "alpha"],  # Pattern match
+    "pattern": ["--glob", "*alpha*"],  # Pattern match
     "all": ["--aw"],  # All workspaces
     "project": ["--project", "myproject"],  # Project scope
 }
@@ -254,7 +254,7 @@ class TestWorkspaceHomeMatrix:
     ) -> None:
         """Pattern workspace works with all home scopes."""
         run_cli_subprocess(
-            ["session", "list", "-n", "alpha", *home_args],
+            ["session", "list", "--glob", "*alpha*", *home_args],
             env=multi_workspace_home["env"],
             timeout=10,
         )
@@ -324,7 +324,7 @@ class TestFilterOverlay:
             ["--aw"],  # all workspaces
             ["--ah"],  # all homes
             ["--aw", "--ah"],  # all workspaces, all homes
-            ["-n", "alpha"],  # pattern
+            ["--glob", "*alpha*"],  # pattern
         ],
         ids=["all_ws", "all_homes", "all_all", "pattern"],
     )
@@ -416,7 +416,7 @@ class TestScopePrecedence:
     | Scenario | Expected Behavior |
     |----------|-------------------|
     | --project X + --this | --this wins (current ws only) |
-    | -n pattern + --aw | --aw wins (all workspaces) |
+    | --glob "*pattern*" + --aw | --aw wins (all workspaces) |
     | --home foo + --ah | Both apply? Or --ah wins? |
     | --wsl + --windows | Both apply (multi-home) |
     | --agent claude + Codex-only workspace | Empty result |
@@ -435,12 +435,12 @@ class TestScopePrecedence:
         assert_cli_success(result, "--this should override --project")
 
     def test_aw_overrides_pattern(self, multi_workspace_home: Dict[str, Any]) -> None:
-        """--aw should override -n pattern.
+        """--aw should override --glob "*pattern*".
 
-        Spec: "-n pattern + --aw: --aw wins (all workspaces)"
+        Spec: "--glob "*pattern*" + --aw: --aw wins (all workspaces)"
         """
         result = run_cli_subprocess(
-            ["session", "list", "-n", "alpha", "--aw"],
+            ["session", "list", "--glob", "*alpha*", "--aw"],
             env=multi_workspace_home["env"],
         )
 
@@ -477,7 +477,7 @@ class TestScopePrecedence:
         Spec: "--agent claude + Codex-only workspace: Empty result"
         """
         result = run_cli_subprocess(
-            ["session", "list", "--agent", "claude", "-n", "nonexistent"],
+            ["session", "list", "--agent", "claude", "--glob", "*nonexistent*"],
             env=agent_filter_sessions["env"],
         )
 
@@ -626,7 +626,7 @@ class TestExpectedResultCounts:
     | --aw, local | All sessions in local home |
     | current ws, --ah | Current ws across all homes |
     | --aw --ah | Everything |
-    | -n auth, local | Sessions in workspaces matching "auth" |
+    | --glob "*auth*", local | Sessions in workspaces matching "auth" |
     | --aw --agent claude, local | All Claude sessions in local |
     | --aw --ah --since 2025-01-01 | Everything after date |
     """
@@ -648,11 +648,11 @@ class TestExpectedResultCounts:
         """Pattern match returns expected workspaces."""
         # Pattern "auth" should match "auth-service"
         result = run_cli_subprocess(
-            ["session", "list", "-n", "auth", "--format", "json"],
+            ["session", "list", "--glob", "*auth*", "--format", "json"],
             env=multi_workspace_home["env"],
         )
 
-        assert_cli_success(result, "-n auth should succeed")
+        assert_cli_success(result, '--glob "*auth*" should succeed')
 
     def test_agent_filter_count(self, multi_workspace_home: Dict[str, Any]) -> None:
         """Agent filter returns correct count."""
@@ -698,7 +698,7 @@ class TestScopeCombinationEdgeCases:
         Spec: "Valid scope but no matching sessions - Empty result"
         """
         result = run_cli_subprocess(
-            ["session", "list", "-n", "nonexistent", "--agent", "claude"],
+            ["session", "list", "--glob", "*nonexistent*", "--agent", "claude"],
             env=scope_combo_setup["env"],
         )
 

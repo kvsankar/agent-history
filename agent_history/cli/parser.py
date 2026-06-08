@@ -34,6 +34,7 @@ from agent_history.cli.constants import (
     RESOURCE_PROJECT,
     RESOURCE_RESET,
     RESOURCE_SESSION,
+    RESOURCE_STATS,
     RESOURCE_WS,
     SESSION_SUBCOMMANDS,
     WS_SUBCOMMANDS,
@@ -56,12 +57,13 @@ Common commands:
   cagelens session list           List sessions for the current workspace/project
   cagelens session list --aw      List sessions from all local workspaces
   cagelens session export -o DIR  Export current workspace/project sessions
-  cagelens session stats --sync   Refresh metrics and show stats
+  cagelens stats --sync           Refresh metrics and show stats
 
 Scope shortcuts:
-  --aw = all workspaces, --ah = all homes, -n TEXT = workspace substring match
+  --aw = all workspaces, --ah = all homes, --glob PAT = workspace glob, --regex RE = workspace regex
   --this = current workspace only, --project NAME = configured workspace group
   --format json is best for automation; table/TSV are for terminal and pipes.
+  Quote glob/regex patterns so your shell passes them to cagelens unchanged.
 """
 
 
@@ -72,9 +74,12 @@ Default behavior:
 
 Examples:
   cagelens ws                     All local workspaces
-  cagelens ws -n auth             Workspaces whose path contains "auth"
+  cagelens ws --glob "*auth*"             Workspaces whose path contains "auth"
   cagelens ws --ah                Workspaces from all configured homes
   cagelens ws --format json       Machine-readable workspace summaries
+
+Tip:
+  Quote glob patterns, for example --glob '/home/user/projects/auth*'.
 
 Next help:
   cagelens ws list --help         Workspace listing options
@@ -90,8 +95,11 @@ Default behavior:
 
 Examples:
   cagelens ws list
-  cagelens ws list -n payments --ah
+  cagelens ws list --glob "*payments*" --ah
   cagelens ws list --agent codex --format json
+
+Tip:
+  Quote glob patterns, for example --glob '/home/user/projects/auth*'.
 """
 
 
@@ -104,9 +112,13 @@ Default behavior:
 Examples:
   cagelens session list           Current workspace/project sessions
   cagelens session list --aw      All local workspace sessions
-  cagelens session list -n auth   Sessions from matching workspaces
+  cagelens session list --glob "*auth*"   Sessions from matching workspaces
   cagelens session export -o DIR  Export current workspace/project sessions
-  cagelens session stats --sync   Refresh metrics and show stats
+  cagelens stats --sync           Refresh metrics and show stats
+
+Tip:
+  Quote glob patterns, for example --glob "*auth*", so the shell does not
+  expand them to existing filesystem paths before cagelens sees them.
 
 Next help:
   cagelens session list --help
@@ -124,8 +136,11 @@ Default behavior:
 Examples:
   cagelens session list
   cagelens session list --aw --format json
-  cagelens session list -n auth --since 2026-01-01
+  cagelens session list --glob "*auth*" --since 2026-01-01
   cagelens session list --ah --aw --agent codex
+
+Tip:
+  Quote glob patterns, for example --glob '/home/user/projects/auth*'.
 """
 
 
@@ -159,13 +174,29 @@ What this does:
 
 Examples:
   cagelens fetch -r user@host --aw          Fetch all workspaces from one SSH host
-  cagelens fetch -r user@host -n auth       Fetch matching remote workspaces
+  cagelens fetch -r user@host --glob "*auth*"       Fetch matching remote workspaces
   cagelens fetch --ah --aw                  Fetch all configured SSH remotes
   cagelens fetch --agent codex -r host --aw Fetch only Codex sessions
 
 After fetching:
-  cagelens session list -r user@host -n auth
-  cagelens session export -r user@host -n auth
+  cagelens session list -r user@host --glob "*auth*"
+  cagelens session export -r user@host --glob "*auth*"
+"""
+
+
+INSTALL_EPILOG = """\
+Default locations:
+  CLI wrapper   ~/.local/bin/cagelens
+  Claude Code   ~/.claude/skills/cagelens/
+  Codex CLI     ${CODEX_HOME:-~/.codex}/skills/cagelens/
+  Gemini CLI    ~/.gemini/skills/cagelens/
+  Pi            ~/.pi/agent/skills/cagelens/
+
+Examples:
+  cagelens install                 Install CLI and all supported agent skills
+  cagelens install --dry-run        Show exact paths without writing files
+  cagelens install --agent codex    Install only the Codex skill package
+  cagelens install --skip-cli       Install skill packages only
 """
 
 
@@ -200,6 +231,17 @@ def _validate_markdown_level(value: str) -> int:
             f"--markdown-level must be between 1 and {MARKDOWN_MAX_LEVEL}"
         )
     return level
+
+
+def _validate_positive_int(value: str) -> int:
+    """Validate positive integer CLI arguments."""
+    try:
+        parsed = int(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"Invalid number: {value}") from err
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
 
 
 class CLIParser:
@@ -237,38 +279,27 @@ class CLIParser:
         return self._build_request(args)
 
     def _preprocess_argv(self, argv: list[str]) -> list[str]:
-        """Preprocess arguments to handle positional patterns.
-
-        Converts positional patterns to -n flags for ws and session commands
-        when they would otherwise be interpreted as subcommands.
+        """Preprocess arguments to preserve default verbs with exact workspace args.
 
         Args:
             argv: Original command line arguments.
 
         Returns:
-            Preprocessed arguments with patterns converted to -n flags.
+            Preprocessed arguments with default verbs inserted when needed.
         """
         if not argv:
             return argv
 
         result = list(argv)
 
-        def _looks_like_path(value: str) -> bool:
-            if value.startswith("/"):
-                return True
-            if "/" in value:
-                return True
-            if "\\" in value:
-                return True
-            return len(value) > 1 and value[1] == ":"
-
-        # Find the position of ws or session command (may be after global flags like --agent)
+        # Find the position of a command that supports positional pattern normalization
+        # (may be after global flags like --agent).
         cmd_pos = None
         cmd_type = None
         i = 0
         while i < len(argv):
             arg = argv[i]
-            if arg in (RESOURCE_WS, RESOURCE_SESSION):
+            if arg in (RESOURCE_WS, RESOURCE_SESSION, RESOURCE_STATS):
                 cmd_pos = i
                 cmd_type = arg
                 break
@@ -278,31 +309,32 @@ class CLIParser:
                 if arg in GLOBAL_FLAGS_WITH_VALUES:
                     i += 2  # Skip flag and its value
                     continue
+            if not arg.startswith("-"):
+                return result
             i += 1
 
         if cmd_pos is None or cmd_type is None:
             return result
 
+        if cmd_type == RESOURCE_STATS:
+            return self._preprocess_stats_argv(argv, cmd_pos)
+
         subcommands = WS_SUBCOMMANDS if cmd_type == RESOURCE_WS else SESSION_SUBCOMMANDS
 
-        # Case 1: Command followed directly by pattern (e.g., "session django" or "ws myproj")
-        # Convert: [cmd, pattern, ...] -> [cmd, -n, pattern, ...]
+        # Case 1: Command followed directly by workspace (e.g., "session /repo" or "ws auth")
+        # Convert: [cmd, workspace, ...] -> [cmd, list, workspace, ...]
         if cmd_pos + 1 < len(argv):
             next_arg = argv[cmd_pos + 1]
-            if (
-                not next_arg.startswith("-")
-                and next_arg not in subcommands
-                and not _looks_like_path(next_arg)
-            ):
-                # Insert -n before the pattern
-                result = [*list(argv[: cmd_pos + 1]), "-n", next_arg, *list(argv[cmd_pos + 2 :])]
+            if not next_arg.startswith("-") and next_arg not in subcommands:
+                result = [
+                    *list(argv[: cmd_pos + 1]),
+                    DEFAULT_VERB_LIST,
+                    next_arg,
+                    *list(argv[cmd_pos + 2 :]),
+                ]
                 return result
 
-        # Case 2: Command with verb followed by pattern (e.g., "session list django")
-        # Convert non-path patterns after verbs to -n flags for substring matching.
-        # Users typically expect "session list django" to match "/home/user/django-app".
-        # However, full paths like "/home/user/projects/auth" should remain positional
-        # for exact matching to avoid matching "/home/user/projects/auth-infra".
+        # Case 2: Command with explicit verb keeps following workspace args exact.
         if cmd_pos + 2 < len(argv):
             verb = argv[cmd_pos + 1]
             if verb in subcommands:
@@ -310,34 +342,42 @@ class CLIParser:
                     return result
                 if cmd_type == RESOURCE_SESSION and verb == "show":
                     return result
-                # Check for patterns after the verb
-                new_result = list(argv[: cmd_pos + 2])  # Keep up to and including verb
-                i = cmd_pos + 2
-                while i < len(argv):
-                    arg = argv[i]
-                    # If it's a non-flag argument (potential pattern), convert to -n flag
-                    # UNLESS it looks like a full path (starts with / or contains path separators)
-                    if not arg.startswith("-"):
-                        # Keep full paths as positional for exact matching
-                        # Convert simple names/patterns to -n for substring matching
-                        if _looks_like_path(arg):
-                            # It's a path - keep as positional for exact matching
-                            new_result.append(arg)
-                        else:
-                            # It's a simple pattern - convert to -n for substring matching
-                            new_result.extend(["-n", arg])
-                    else:
-                        # Keep flags as-is, including their values
-                        new_result.append(arg)
-                        # If this flag takes a value, include it
-                        if arg in FLAGS_WITH_VALUES:
-                            if i + 1 < len(argv):
-                                i += 1
-                                new_result.append(argv[i])
-                    i += 1
-                return new_result
 
         return result
+
+    def _preprocess_stats_argv(self, argv: list[str], cmd_pos: int) -> list[str]:
+        """Normalize `stats [summary] [workspace]` around optional subcommands."""
+        subcommands = {"summary", "rollup"}
+
+        # Find the first non-flag argument after `stats`, skipping values for
+        # flags like --by and --agent. If it is not a stats subcommand, treat
+        # the command as `stats summary ...`.
+        i = cmd_pos + 1
+        explicit_verb_pos = None
+        while i < len(argv):
+            arg = argv[i]
+            if arg.startswith("-"):
+                if arg in FLAGS_WITH_VALUES:
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if arg in subcommands:
+                explicit_verb_pos = i
+            break
+
+        if explicit_verb_pos is None:
+            if any(arg in ("-h", "--help") for arg in argv[cmd_pos + 1 :]):
+                return list(argv)
+            prefix = [*list(argv[: cmd_pos + 1]), "summary"]
+            return [*prefix, *list(argv[cmd_pos + 1 :])]
+
+        verb = argv[explicit_verb_pos]
+        prefix = [*list(argv[:cmd_pos]), RESOURCE_STATS, verb]
+        suffix_start = explicit_verb_pos + 1
+        if explicit_verb_pos > cmd_pos + 1:
+            prefix.extend(argv[cmd_pos + 1 : explicit_verb_pos])
+        return [*prefix, *list(argv[suffix_start:])]
 
     def _build_parser(self) -> argparse.ArgumentParser:
         """Build argument parser with all subcommands."""
@@ -374,6 +414,7 @@ class CLIParser:
         self._add_workspace_parser(subparsers)
         self._add_project_parser(subparsers)
         self._add_home_parser(subparsers)
+        self._add_stats_parser(subparsers)
         self._add_gemini_index_parser(subparsers)
         self._add_install_parser(subparsers)
         self._add_reset_parser(subparsers)
@@ -395,7 +436,7 @@ class CLIParser:
             epilog=SESSION_EPILOG,
         )
         session_parser.set_defaults(command=RESOURCE_SESSION, session_verb=DEFAULT_VERB_LIST)
-        # Add flags to session top-level so session -n pattern, session --ah work
+        # Add flags to session top-level so session --glob "*pattern*", session --ah work
         # Note: include_positional=False to avoid conflict with subcommand selection
         self._add_workspace_scope_flags(session_parser, include_positional=False)
         self._add_home_scope_flags(session_parser)
@@ -478,7 +519,7 @@ class CLIParser:
             epilog=WS_EPILOG,
         )
         ws_parser.set_defaults(command=RESOURCE_WS, ws_verb=DEFAULT_VERB_LIST)
-        # Add flags to ws top-level so ws --local, ws -n pattern work
+        # Add flags to ws top-level so ws --local, ws --glob "*pattern*" work
         # Note: include_positional=False to avoid conflict with subcommand selection
         self._add_workspace_scope_flags(ws_parser, include_positional=False)
         self._add_home_scope_flags(ws_parser)
@@ -759,6 +800,42 @@ class CLIParser:
         self._add_home_scope_flags(home_stats)
 
     # =========================================================================
+    # Top-level stats parser
+    # =========================================================================
+
+    def _add_stats_parser(self, subparsers) -> None:
+        """Add top-level stats parser."""
+        stats_parser = subparsers.add_parser(
+            RESOURCE_STATS,
+            help="Usage statistics and rollups",
+            description="Analyze cached usage metrics across sessions, workspaces, homes, and projects.",
+            formatter_class=WrappedHelpFormatter,
+        )
+        stats_parser.set_defaults(command=RESOURCE_STATS, stats_verb="summary")
+        self._add_workspace_scope_flags(stats_parser, include_positional=False)
+        self._add_stats_options(stats_parser)
+        self._add_home_scope_flags(stats_parser)
+        self._add_agent_filter(stats_parser)
+
+        stats_sub = stats_parser.add_subparsers(dest="stats_verb")
+        stats_sub.required = False
+        stats_sub.default = "summary"
+
+        summary = stats_sub.add_parser("summary", help="Show cached stats dashboard")
+        summary.set_defaults(command=RESOURCE_STATS, stats_verb="summary")
+        self._add_workspace_scope_flags(summary)
+        self._add_stats_options(summary)
+        self._add_home_scope_flags(summary)
+        self._add_agent_filter(summary)
+
+        rollup = stats_sub.add_parser("rollup", help="Show tabular stats rollups")
+        rollup.set_defaults(command=RESOURCE_STATS, stats_verb="rollup")
+        self._add_workspace_scope_flags(rollup)
+        self._add_stats_options(rollup, rollup=True)
+        self._add_home_scope_flags(rollup)
+        self._add_agent_filter(rollup)
+
+    # =========================================================================
     # Gemini index subparser
     # =========================================================================
 
@@ -809,10 +886,15 @@ class CLIParser:
             RESOURCE_INSTALL,
             help="Install CLI and agent skill packages",
             description="Install the CLI wrapper and agent skill packages.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=INSTALL_EPILOG,
         )
         install_parser.set_defaults(command=RESOURCE_INSTALL, install_verb=DEFAULT_VERB_RUN)
         install_parser.add_argument("--bin-dir", help="Custom binary install directory")
         install_parser.add_argument("--skill-dir", help="Custom agent skill install directory")
+        install_parser.add_argument(
+            "--dry-run", action="store_true", help="Show install plan without writing files"
+        )
         install_parser.add_argument("--skip-cli", action="store_true", help="Skip CLI install")
         install_parser.add_argument(
             "--skip-skill", action="store_true", help="Skip agent skill install"
@@ -974,14 +1056,22 @@ class CLIParser:
                 conflicts where the positional consumes the subcommand name.
         """
         if include_positional:
-            parser.add_argument(positional_name, nargs="*", help="Workspace path(s) (exact)")
+            parser.add_argument(positional_name, nargs="*", help="Exact workspace path/id(s)")
         parser.add_argument(
-            "-n",
-            "--name",
-            dest="name_patterns",
+            "--glob",
+            dest="glob_patterns",
             action="append",
             default=argparse.SUPPRESS,
-            help="Substring match workspace names/paths (repeatable)",
+            metavar="PATTERN",
+            help="Shell-style workspace glob; quote patterns in your shell (repeatable)",
+        )
+        parser.add_argument(
+            "--regex",
+            dest="regex_patterns",
+            action="append",
+            default=argparse.SUPPRESS,
+            metavar="REGEX",
+            help="Regular-expression workspace match (repeatable)",
         )
         parser.add_argument(
             "--aw",
@@ -1118,26 +1208,71 @@ class CLIParser:
         )
         self._add_date_filters(parser)
 
-    def _add_stats_options(self, parser) -> None:
+    def _add_stats_options(self, parser, rollup: bool = False) -> None:
         """Add stats options."""
         parser.add_argument(
             "--sync",
             action="store_true",
-            help="Force sync before showing stats",
+            help="Refresh source files before showing stats (slower)",
         )
         parser.add_argument(
             "--no-sync",
             action="store_true",
             dest="no_sync",
-            help="Skip auto-sync (faster, uses cached data)",
+            help="Use cached metrics without refresh (default)",
         )
         parser.add_argument(
-            "--force", action="store_true", help="Force re-sync all files (ignore mtime)"
+            "--force",
+            action="store_true",
+            help="With --sync, reprocess unchanged source files too",
+        )
+        parser.add_argument(
+            "--quiet",
+            action="store_true",
+            help="Suppress sync progress and informational output",
         )
         parser.add_argument(
             "--by",
             metavar="DIMS",
-            help="Group by dimensions (comma-separated): home, agent, workspace, day, model, tool",
+            help=(
+                "Group by dimensions (comma-separated): home, agent, workspace, day, "
+                "model, tool" + (", project, month" if rollup else "")
+            ),
+        )
+        if rollup:
+            parser.add_argument(
+                "--metric",
+                choices=["time", "tokens", "all"],
+                default="all",
+                help="Rollup metric family (default: all)",
+            )
+            parser.add_argument(
+                "--top",
+                type=_validate_positive_int,
+                default=None,
+                help="Limit rollup rows",
+            )
+        parser.add_argument(
+            "--models",
+            action="store_true",
+            help="Show model usage (alias for --by model)",
+        )
+        parser.add_argument(
+            "--tools",
+            action="store_true",
+            help="Show tool usage (alias for --by tool)",
+        )
+        parser.add_argument(
+            "--by-day",
+            action="store_true",
+            dest="by_day",
+            help="Show daily usage (alias for --by day)",
+        )
+        parser.add_argument(
+            "--by-workspace",
+            action="store_true",
+            dest="by_workspace",
+            help="Show workspace usage (alias for --by workspace)",
         )
         self._add_output_format(parser)
         parser.add_argument(
@@ -1147,15 +1282,32 @@ class CLIParser:
             help="Human-readable numbers (K/M/B) and time (Xd Xh Xm)",
         )
         parser.add_argument(
-            "--time", action="store_true", help="Show time tracking with daily breakdown"
+            "--time",
+            action="store_true",
+            help="Expand work-period time details, including daily totals",
         )
         parser.add_argument(
             "--top-ws",
-            type=int,
+            type=self._parse_top_ws,
             default=None,
-            help="Limit the number of workspaces shown per home (default: all)",
+            metavar="N|all",
+            help="Limit workspace rows shown, or use 'all' to show every workspace",
         )
         self._add_date_filters(parser)
+
+    def _parse_top_ws(self, value: str) -> int | str:
+        """Parse --top-ws as a positive integer or 'all'."""
+        if value.lower() == "all":
+            return "all"
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                "--top-ws must be a positive integer or 'all'"
+            ) from exc
+        if parsed <= 0:
+            raise argparse.ArgumentTypeError("--top-ws must be greater than zero")
+        return parsed
 
     # =========================================================================
     # Build CommandRequest from parsed args
@@ -1246,6 +1398,8 @@ class CLIParser:
             return (RESOURCE_PROJECT, getattr(args, "project_command", DEFAULT_VERB_LIST))
         elif command == RESOURCE_HOME:
             return (RESOURCE_HOME, getattr(args, "home_verb", DEFAULT_VERB_LIST))
+        elif command == RESOURCE_STATS:
+            return (RESOURCE_STATS, getattr(args, "stats_verb", "summary"))
         elif command == RESOURCE_GEMINI_INDEX:
             return (RESOURCE_GEMINI_INDEX, DEFAULT_VERB_INDEX)
         elif command == RESOURCE_INSTALL:
@@ -1305,7 +1459,8 @@ class CLIParser:
             if value:
                 patterns.extend(value)
 
-        # Get name patterns from -n flag (substring match) - keep separate
+        glob_patterns = getattr(args, "glob_patterns", None) or []
+        regex_patterns = getattr(args, "regex_patterns", None) or []
         name_patterns = getattr(args, "name_patterns", None) or []
 
         this_only = getattr(args, "this_only", False)
@@ -1316,7 +1471,15 @@ class CLIParser:
             command == RESOURCE_SESSION
             and getattr(args, "session_verb", None) == "export"
             and session_ids
-            and not (patterns or name_patterns or projects or all_workspaces or this_only)
+            and not (
+                patterns
+                or glob_patterns
+                or regex_patterns
+                or name_patterns
+                or projects
+                or all_workspaces
+                or this_only
+            )
         ):
             all_workspaces = True
 
@@ -1343,6 +1506,8 @@ class CLIParser:
             all_workspaces=all_workspaces,
             projects=projects,
             patterns=patterns,
+            glob_patterns=glob_patterns,
+            regex_patterns=regex_patterns,
             name_patterns=name_patterns,
             this_only=this_only,
             agent=agent,
@@ -1390,7 +1555,7 @@ class CLIParser:
         """Build verb-specific arguments."""
         if verb == "export":
             verb_args = self._build_export_verb_args(args, resource)
-        elif verb == "stats":
+        elif verb == "stats" or resource == RESOURCE_STATS:
             verb_args = self._build_stats_verb_args(args)
         elif verb == "list":
             verb_args = self._build_list_verb_args(args, resource)
@@ -1430,6 +1595,7 @@ class CLIParser:
             verb_args["skip_cli"] = getattr(args, "skip_cli", False)
             verb_args["skip_skill"] = getattr(args, "skip_skill", False)
             verb_args["skip_settings"] = getattr(args, "skip_settings", False)
+            verb_args["dry_run"] = getattr(args, "dry_run", False)
             agent = getattr(args, "agent", None)
             verb_args["agent"] = None if agent == DEFAULT_AGENT else agent
 
@@ -1473,13 +1639,27 @@ class CLIParser:
     def _build_stats_verb_args(self, args: argparse.Namespace) -> dict[str, Any]:
         """Build stats-specific arguments."""
         raw_by = getattr(args, "by", None)
+        group_by = self._split_csv_list([raw_by]) if raw_by else []
+        alias_groups = [
+            ("models", "model"),
+            ("tools", "tool"),
+            ("by_day", "day"),
+            ("by_workspace", "workspace"),
+        ]
+        for attr, group in alias_groups:
+            if getattr(args, attr, False) and group not in group_by:
+                group_by.append(group)
         return {
             "sync": getattr(args, "sync", False),
             "no_sync": getattr(args, "no_sync", False),
             "force": getattr(args, "force", False),
-            "by": self._split_csv_list([raw_by]) if raw_by else None,
+            "by": group_by or None,
             "time": getattr(args, "time", False),
             "top_ws": getattr(args, "top_ws", None),
+            "human": getattr(args, "human", False),
+            "metric": getattr(args, "metric", None),
+            "top": getattr(args, "top", None),
+            "stats_mode": getattr(args, "stats_verb", "summary"),
         }
 
     def _build_list_verb_args(self, args: argparse.Namespace, resource: str) -> dict[str, Any]:

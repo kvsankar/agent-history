@@ -86,7 +86,7 @@ class ScopeArgs:
         home_names: List of explicit home names from --home flags.
         all_workspaces: If True, search all workspaces in selected homes (--aw flag).
         projects: Project names for project-scoped operations (--project flag, repeatable).
-        patterns: Workspace patterns from positional arguments.
+        patterns: Exact workspace paths/ids from positional arguments.
         this_only: If True, restrict to current workspace only (--this flag).
         agent: Agent filter ("claude", "codex", "gemini", or None for all).
         since: Start date filter for sessions (date string).
@@ -110,8 +110,10 @@ class ScopeArgs:
     # Workspace selection
     all_workspaces: bool = False
     projects: list[str] = field(default_factory=list)
-    patterns: list[str] = field(default_factory=list)  # Positional patterns (exact match)
-    name_patterns: list[str] = field(default_factory=list)  # -n patterns (substring match)
+    patterns: list[str] = field(default_factory=list)  # Positional exact workspaces
+    glob_patterns: list[str] = field(default_factory=list)  # --glob workspace patterns
+    regex_patterns: list[str] = field(default_factory=list)  # --regex workspace patterns
+    name_patterns: list[str] = field(default_factory=list)  # Legacy -n patterns
     this_only: bool = False
 
     # Session filters

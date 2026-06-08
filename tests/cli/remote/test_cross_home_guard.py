@@ -2,7 +2,7 @@
 
 When accessing non-local homes (--windows, --wsl, -r user@host, --ah) from within
 a local workspace, the command requires either:
-1. An explicit workspace pattern (-n <pattern>)
+1. An explicit workspace pattern (--glob <pattern>)
 2. A project that ties the local workspace to remote workspaces
 3. The --aw flag (explicitly requesting all workspaces)
 
@@ -141,9 +141,9 @@ class TestCrossHomeGuardWindowsFlag:
     def test_windows_list_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session list --windows -n myproject should succeed."""
+        """session list --windows --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "list", "--windows", "-n", "myproject"],
+            ["session", "list", "--windows", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -165,9 +165,9 @@ class TestCrossHomeGuardWindowsFlag:
     def test_windows_export_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session export --windows -n myproject should succeed."""
+        """session export --windows --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "export", "--windows", "-n", "myproject"],
+            ["session", "export", "--windows", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -189,9 +189,9 @@ class TestCrossHomeGuardWindowsFlag:
     def test_windows_stats_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session stats --windows -n myproject should succeed."""
+        """session stats --windows --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "stats", "--windows", "-n", "myproject"],
+            ["session", "stats", "--windows", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -213,9 +213,9 @@ class TestCrossHomeGuardWindowsFlag:
     def test_ws_list_windows_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """ws list --windows with -n pattern should succeed."""
+        """ws list --windows with --glob "*pattern*" should succeed."""
         result = run_cli_subprocess(
-            ["ws", "list", "--windows", "-n", "myproject"],
+            ["ws", "list", "--windows", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -239,9 +239,9 @@ class TestCrossHomeGuardWslFlag:
         assert_cross_home_guard_error(result)
 
     def test_wsl_list_with_pattern_succeeds(self, cross_home_test_setup: Dict[str, Any]) -> None:
-        """session list --wsl -n myproject should succeed."""
+        """session list --wsl --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "list", "--wsl", "-n", "myproject"],
+            ["session", "list", "--wsl", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -261,9 +261,9 @@ class TestCrossHomeGuardWslFlag:
         assert_cross_home_guard_error(result)
 
     def test_wsl_export_with_pattern_succeeds(self, cross_home_test_setup: Dict[str, Any]) -> None:
-        """session export --wsl -n myproject should succeed."""
+        """session export --wsl --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "export", "--wsl", "-n", "myproject"],
+            ["session", "export", "--wsl", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -283,9 +283,9 @@ class TestCrossHomeGuardWslFlag:
         assert_cross_home_guard_error(result)
 
     def test_wsl_stats_with_pattern_succeeds(self, cross_home_test_setup: Dict[str, Any]) -> None:
-        """session stats --wsl -n myproject should succeed."""
+        """session stats --wsl --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "stats", "--wsl", "-n", "myproject"],
+            ["session", "stats", "--wsl", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -309,21 +309,22 @@ class TestCrossHomeGuardRemoteFlag:
         assert_cross_home_guard_error(result)
 
     def test_remote_list_with_pattern_succeeds(self, cross_home_test_setup: Dict[str, Any]) -> None:
-        """session list -r vm01 -n myproject should pass the cross-home guard.
+        """session list -r vm01 --glob "*myproject*" should pass the cross-home guard.
 
         Note: Command may fail due to SSH connectivity (vm01 doesn't exist),
         but should NOT fail due to the cross-home guard.
         """
         result = run_cli_subprocess(
-            ["session", "list", "-r", "vm01", "-n", "myproject"],
+            ["session", "list", "-r", "vm01", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
         # Should NOT be a cross-home guard error
         if result.returncode != 0:
             error_lower = result.stderr.lower()
-            assert "pattern" not in error_lower or "ssh" in error_lower, \
-                f"Got cross-home guard error instead of SSH error: {result.stderr}"
+            assert (
+                "pattern" not in error_lower or "ssh" in error_lower
+            ), f"Got cross-home guard error instead of SSH error: {result.stderr}"
 
     # --- session export ---
 
@@ -341,21 +342,22 @@ class TestCrossHomeGuardRemoteFlag:
     def test_remote_export_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session export -r vm01 -n myproject should pass the cross-home guard.
+        """session export -r vm01 --glob "*myproject*" should pass the cross-home guard.
 
         Note: Command may fail due to SSH connectivity (vm01 doesn't exist),
         but should NOT fail due to the cross-home guard.
         """
         result = run_cli_subprocess(
-            ["session", "export", "-r", "vm01", "-n", "myproject"],
+            ["session", "export", "-r", "vm01", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
         # Should NOT be a cross-home guard error
         if result.returncode != 0:
             error_lower = result.stderr.lower()
-            assert "pattern" not in error_lower or "ssh" in error_lower, \
-                f"Got cross-home guard error instead of SSH error: {result.stderr}"
+            assert (
+                "pattern" not in error_lower or "ssh" in error_lower
+            ), f"Got cross-home guard error instead of SSH error: {result.stderr}"
 
     # --- session stats ---
 
@@ -373,21 +375,22 @@ class TestCrossHomeGuardRemoteFlag:
     def test_remote_stats_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session stats -r vm01 -n myproject should pass the cross-home guard.
+        """session stats -r vm01 --glob "*myproject*" should pass the cross-home guard.
 
         Note: Command may fail due to SSH connectivity (vm01 doesn't exist),
         but should NOT fail due to the cross-home guard.
         """
         result = run_cli_subprocess(
-            ["session", "stats", "-r", "vm01", "-n", "myproject"],
+            ["session", "stats", "-r", "vm01", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
         # Should NOT be a cross-home guard error
         if result.returncode != 0:
             error_lower = result.stderr.lower()
-            assert "pattern" not in error_lower or "ssh" in error_lower, \
-                f"Got cross-home guard error instead of SSH error: {result.stderr}"
+            assert (
+                "pattern" not in error_lower or "ssh" in error_lower
+            ), f"Got cross-home guard error instead of SSH error: {result.stderr}"
 
     # --- ws list ---
 
@@ -405,21 +408,22 @@ class TestCrossHomeGuardRemoteFlag:
     def test_ws_list_remote_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """ws list -r vm01 with -n pattern should pass the cross-home guard.
+        """ws list -r vm01 with --glob "*pattern*" should pass the cross-home guard.
 
         Note: Command may fail due to SSH connectivity (vm01 doesn't exist),
         but should NOT fail due to the cross-home guard.
         """
         result = run_cli_subprocess(
-            ["ws", "list", "-r", "vm01", "-n", "myproject"],
+            ["ws", "list", "-r", "vm01", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
         # Should NOT be a cross-home guard error
         if result.returncode != 0:
             error_lower = result.stderr.lower()
-            assert "pattern" not in error_lower or "ssh" in error_lower, \
-                f"Got cross-home guard error instead of SSH error: {result.stderr}"
+            assert (
+                "pattern" not in error_lower or "ssh" in error_lower
+            ), f"Got cross-home guard error instead of SSH error: {result.stderr}"
 
 
 class TestCrossHomeGuardAllHomesFlag:
@@ -441,9 +445,9 @@ class TestCrossHomeGuardAllHomesFlag:
     def test_all_homes_list_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session list --ah -n myproject should succeed."""
+        """session list --ah --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "list", "--ah", "-n", "myproject"],
+            ["session", "list", "--ah", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -476,9 +480,9 @@ class TestCrossHomeGuardAllHomesFlag:
     def test_all_homes_export_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session export --ah -n myproject should succeed."""
+        """session export --ah --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "export", "--ah", "-n", "myproject"],
+            ["session", "export", "--ah", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -511,9 +515,9 @@ class TestCrossHomeGuardAllHomesFlag:
     def test_all_homes_stats_with_pattern_succeeds(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session stats --ah -n myproject should succeed."""
+        """session stats --ah --glob "*myproject*" should succeed."""
         result = run_cli_subprocess(
-            ["session", "stats", "--ah", "-n", "myproject"],
+            ["session", "stats", "--ah", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -587,8 +591,9 @@ class TestCrossHomeGuardWithProject:
         # Should NOT be a cross-home guard error
         if result.returncode != 0:
             error_lower = result.stderr.lower()
-            assert "pattern" not in error_lower or "ssh" in error_lower, \
-                f"Got cross-home guard error instead of SSH error: {result.stderr}"
+            assert (
+                "pattern" not in error_lower or "ssh" in error_lower
+            ), f"Got cross-home guard error instead of SSH error: {result.stderr}"
 
     def test_all_homes_list_with_project_succeeds(
         self, cross_home_with_project: Dict[str, Any]
@@ -630,8 +635,9 @@ class TestCrossHomeGuardWithProject:
         # Should NOT be a cross-home guard error
         if result.returncode != 0:
             error_lower = result.stderr.lower()
-            assert "pattern" not in error_lower or "ssh" in error_lower, \
-                f"Got cross-home guard error instead of SSH error: {result.stderr}"
+            assert (
+                "pattern" not in error_lower or "ssh" in error_lower
+            ), f"Got cross-home guard error instead of SSH error: {result.stderr}"
 
     def test_all_homes_export_with_project_succeeds(
         self, cross_home_with_project: Dict[str, Any]
@@ -673,8 +679,9 @@ class TestCrossHomeGuardWithProject:
         # Should NOT be a cross-home guard error
         if result.returncode != 0:
             error_lower = result.stderr.lower()
-            assert "pattern" not in error_lower or "ssh" in error_lower, \
-                f"Got cross-home guard error instead of SSH error: {result.stderr}"
+            assert (
+                "pattern" not in error_lower or "ssh" in error_lower
+            ), f"Got cross-home guard error instead of SSH error: {result.stderr}"
 
     def test_all_homes_stats_with_project_succeeds(
         self, cross_home_with_project: Dict[str, Any]
@@ -791,38 +798,38 @@ class TestCrossHomeGuardErrorMessages:
     def test_error_message_list_mentions_pattern_option(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session list error message should mention -n pattern as a solution."""
+        """session list error message should mention --glob "*pattern*" as a solution."""
         result = run_cli_subprocess(
             ["session", "list", "--windows"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
         assert result.returncode != 0
-        assert "-n" in result.stderr or "pattern" in result.stderr.lower()
+        assert "--glob" in result.stderr or "pattern" in result.stderr.lower()
 
     def test_error_message_export_mentions_pattern_option(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session export error message should mention -n pattern as a solution."""
+        """session export error message should mention --glob "*pattern*" as a solution."""
         result = run_cli_subprocess(
             ["session", "export", "--windows"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
         assert result.returncode != 0
-        assert "-n" in result.stderr or "pattern" in result.stderr.lower()
+        assert "--glob" in result.stderr or "pattern" in result.stderr.lower()
 
     def test_error_message_stats_mentions_pattern_option(
         self, cross_home_test_setup: Dict[str, Any]
     ) -> None:
-        """session stats error message should mention -n pattern as a solution."""
+        """session stats error message should mention --glob "*pattern*" as a solution."""
         result = run_cli_subprocess(
             ["session", "stats", "--windows"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
         assert result.returncode != 0
-        assert "-n" in result.stderr or "pattern" in result.stderr.lower()
+        assert "--glob" in result.stderr or "pattern" in result.stderr.lower()
 
     def test_error_message_mentions_all_workspaces_option(
         self, cross_home_test_setup: Dict[str, Any]
@@ -870,7 +877,7 @@ class TestCrossHomeGuardMultipleFlags:
     ) -> None:
         """session list with multiple remote flags and pattern should succeed."""
         result = run_cli_subprocess(
-            ["session", "list", "--windows", "--wsl", "-n", "myproject"],
+            ["session", "list", "--windows", "--wsl", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -894,7 +901,7 @@ class TestCrossHomeGuardMultipleFlags:
     ) -> None:
         """session export with multiple remote flags and pattern should succeed."""
         result = run_cli_subprocess(
-            ["session", "export", "--windows", "--wsl", "-n", "myproject"],
+            ["session", "export", "--windows", "--wsl", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )
@@ -918,7 +925,7 @@ class TestCrossHomeGuardMultipleFlags:
     ) -> None:
         """session stats with multiple remote flags and pattern should succeed."""
         result = run_cli_subprocess(
-            ["session", "stats", "--windows", "--wsl", "-n", "myproject"],
+            ["session", "stats", "--windows", "--wsl", "--glob", "*myproject*"],
             env=cross_home_test_setup["env"],
             cwd=cross_home_test_setup["local_project"],
         )

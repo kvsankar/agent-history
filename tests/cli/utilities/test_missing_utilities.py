@@ -45,11 +45,34 @@ def test_install_help_is_agent_skill_generic(tmp_path: Path) -> None:
     assert_cli_success(result, "install help should succeed")
     assert "Install the CLI wrapper and agent skill packages." in result.stdout
     assert "Custom agent skill install directory" in result.stdout
+    assert "--dry-run" in result.stdout
     assert "Skip agent skill install" in result.stdout
     assert "Skip agent settings update" in result.stdout
     assert "--agent {auto,claude,codex,gemini,pi}" in result.stdout
+    assert "~/.local/bin/cagelens" in result.stdout
+    assert "~/.claude/skills/cagelens/" in result.stdout
+    assert "${CODEX_HOME:-~/.codex}/skills/cagelens/" in result.stdout
+    assert "~/.gemini/skills/cagelens/" in result.stdout
+    assert "~/.pi/agent/skills/cagelens/" in result.stdout
+    assert "cagelens install --dry-run" in result.stdout
     assert "Claude skill" not in result.stdout
     assert "Claude settings" not in result.stdout
+
+
+def test_install_dry_run_reports_paths_without_writing(tmp_path: Path) -> None:
+    env = {"HOME": str(tmp_path), "CODEX_HOME": str(tmp_path / ".codex-custom")}
+    result = run_cli_subprocess(
+        ["install", "--dry-run", "--skip-cli", "--skip-settings", "--agent", "codex"],
+        env=env,
+    )
+
+    assert_cli_success(result, "install --dry-run should succeed")
+    assert "COMPONENT" in result.stdout
+    assert "skill" in result.stdout
+    assert "codex" in result.stdout
+    assert "planned" in result.stdout
+    assert str(tmp_path / ".codex-custom" / "skills" / "cagelens") in result.stdout
+    assert not (tmp_path / ".codex-custom" / "skills" / "cagelens").exists()
 
 
 def test_install_creates_selected_agent_skill_package(tmp_path: Path) -> None:
@@ -60,6 +83,10 @@ def test_install_creates_selected_agent_skill_package(tmp_path: Path) -> None:
     )
 
     assert_cli_success(result, "install should create selected agent skill package")
+    assert "COMPONENT" in result.stdout
+    assert "installed" in result.stdout
+    assert "codex" in result.stdout
+    assert "{" not in result.stdout
     target = tmp_path / ".codex-custom" / "skills" / "cagelens"
     assert (target / "SKILL.md").is_file()
     assert (target / "cagelens").is_file()

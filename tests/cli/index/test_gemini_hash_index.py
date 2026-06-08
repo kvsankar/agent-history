@@ -12,7 +12,9 @@ from tests.helpers.session_builders import GeminiSessionBuilder
 pytestmark = pytest.mark.v1
 
 
-def _write_gemini_session(gemini_dir: Path, project_hash: str, session_id: str = "session-001") -> Path:
+def _write_gemini_session(
+    gemini_dir: Path, project_hash: str, session_id: str = "session-001"
+) -> Path:
     """Create a minimal Gemini session under the hash directory."""
     builder = GeminiSessionBuilder(session_id=session_id, project_hash=project_hash)
     builder.add_user_message("hi").add_gemini_message("hello", input_tokens=10, output_tokens=5)
@@ -53,7 +55,7 @@ def test_pattern_filter_matches_path_with_index(isolated_home):
     _write_gemini_session(isolated_home["gemini_dir"], project_hash, "session-filter")
 
     result = run_cli_subprocess(
-        ["--agent", "gemini", "session", "list", "django", "--format", "json"],
+        ["--agent", "gemini", "session", "list", "--glob", "*django*", "--format", "json"],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )

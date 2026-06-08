@@ -904,7 +904,7 @@ Synthetic JSONL fixtures → App syncs to temp SQLite → Stats query → Valida
 
 | Dimension | Options | Flag |
 |-----------|---------|------|
-| **Scope** | (same as session list) | `--aw`, `--ah`, `-n`, etc. |
+| **Scope** | (same as session list) | `--aw`, `--ah`, `--glob`, `--regex`, etc. |
 | **Grouping** | none, model, tool, day, workspace, home, agent | `--by` |
 | **Multi-group** | combinations | `--by model,tool` |
 | **Time mode** | off, on | `--time` |
@@ -1083,7 +1083,7 @@ Tests for workspace and home scope handling. This is the most complex test categ
 | Dimension | Options | Flag/Mechanism |
 |-----------|---------|----------------|
 | **Session** | one, some, all | positional ID, pattern, implicit |
-| **Workspace** | current, one, some, all, project | cwd, positional, `-n`, `--aw`, `--project` |
+| **Workspace** | current, one, some, all, project | cwd, positional exact workspace, `--glob`, `--regex`, `--aw`, `--project` |
 | **Home** | local, wsl, windows, remote, named, all | default, `--wsl`, `--windows`, `-r`, `--home`, `--ah` |
 | **Date filter** | none, since, until, range | `--since`, `--until` |
 | **Agent filter** | auto, claude, codex, gemini | `--agent` |
@@ -1128,7 +1128,7 @@ Tests for workspace and home scope handling. This is the most complex test categ
 | Scenario | Expected Behavior |
 |----------|-------------------|
 | `--project X` + `--this` | `--this` wins (current ws only) |
-| `-n pattern` + `--aw` | `--aw` wins (all workspaces) |
+| `--glob "*pattern*"` + `--aw` | `--aw` wins (all workspaces) |
 | `--home foo` + `--ah` | Both apply? Or `--ah` wins? |
 | `--wsl` + `--windows` | Both apply (multi-home) |
 | `--agent claude` + Codex-only workspace | Empty result |
@@ -1140,7 +1140,7 @@ Tests for workspace and home scope handling. This is the most complex test categ
 WS_SCOPES = [
     ("current", [], {}),                    # Default: current workspace
     ("named", ["my-project"], {}),          # Positional workspace name
-    ("pattern", [], {"-n": "auth"}),        # Pattern match
+    ("pattern", [], {"--glob": "*auth*"}),        # Pattern match
     ("all", [], {"--aw": True}),            # All workspaces
     ("project", [], {"--project": "proj"}), # Project scope
 ]
@@ -1228,7 +1228,7 @@ test_home/
 | `--aw`, local | All sessions in local home |
 | current ws, `--ah` | Current ws across all homes |
 | `--aw --ah` | Everything |
-| `-n auth`, local | Sessions in workspaces matching "auth" |
+| `--glob "*auth*"`, local | Sessions in workspaces matching "auth" |
 | `--aw --agent claude`, local | All Claude sessions in local |
 | `--aw --ah --since 2025-01-01` | Everything after date |
 

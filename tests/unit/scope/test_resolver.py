@@ -171,6 +171,39 @@ class TestBuildTemplate:
             assert isinstance(record, ScopeRecord)
             assert isinstance(record.workspace, WorkspaceSpecPath)
 
+    def test_bare_workspace_pattern_creates_exact_pattern_spec(
+        self, resolver: ScopeResolver
+    ) -> None:
+        """Bare positional workspace args should be exact, not substring."""
+        args = ScopeArgs(patterns=["auth"])
+
+        template = resolver._build_template(args)
+
+        assert len(template) == 1
+        assert isinstance(template[0], ScopeRecord)
+        workspace_spec = template[0].workspace
+        assert isinstance(workspace_spec, WorkspaceSpecPattern)
+        assert workspace_spec.pattern == "auth"
+        assert workspace_spec.match_type == MatchType.EXACT
+
+    def test_glob_and_regex_patterns_create_explicit_pattern_specs(
+        self, resolver: ScopeResolver
+    ) -> None:
+        """--glob and --regex should create explicit pattern specs."""
+        args = ScopeArgs(glob_patterns=["*auth*"], regex_patterns=[r"(^|/)api($|/)"])
+
+        template = resolver._build_template(args)
+
+        assert len(template) == 2
+        assert isinstance(template[0], ScopeRecord)
+        assert isinstance(template[1], ScopeRecord)
+        assert isinstance(template[0].workspace, WorkspaceSpecPattern)
+        assert isinstance(template[1].workspace, WorkspaceSpecPattern)
+        assert template[0].workspace.pattern == "*auth*"
+        assert template[0].workspace.match_type == MatchType.GLOB
+        assert template[1].workspace.pattern == r"(^|/)api($|/)"
+        assert template[1].workspace.match_type == MatchType.REGEX
+
     def test_this_flag_creates_workspace_current(self, resolver: ScopeResolver) -> None:
         """--this flag should create WorkspaceSpec.Current.
 
@@ -467,6 +500,25 @@ class TestWorkspaceMatching:
         assert "/home/user/projects/auth" in result
         assert "/home/user/projects/auth-infra" in result
         assert "/home/user/services/auth-api" not in result
+
+    def test_regex_match_works(self, mock_context: ResolutionContext) -> None:
+        """REGEX match should use Python regular-expression search."""
+        resolver = ScopeResolver(mock_context)
+
+        workspaces = [
+            "/home/user/projects/auth",
+            "/home/user/projects/auth-infra",
+            "/home/user/services/oauth",
+        ]
+
+        with patch.object(resolver, "_enumerate_workspaces", return_value=workspaces):
+            result = resolver._match_workspaces(
+                home="local",
+                pattern=r"(^|/)auth($|/)",
+                match_type=MatchType.REGEX,
+            )
+
+        assert result == ["/home/user/projects/auth"]
 
     def test_glob_match_with_question_mark(self, mock_context: ResolutionContext) -> None:
         """GLOB match should support ? for single character."""

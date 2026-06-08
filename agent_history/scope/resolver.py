@@ -196,7 +196,7 @@ class ScopeResolver:
             raise ValueError(
                 f"Cross-home access to {target} requires a workspace pattern.\n\n"
                 "Options:\n"
-                "  1. Add a workspace pattern: -n <pattern>\n"
+                "  1. Add a workspace matcher: --glob <pattern> or --regex <regex>\n"
                 "  2. Use --aw to list all workspaces\n"
                 "  3. Use --project to use a project's workspaces"
             )
@@ -219,10 +219,9 @@ class ScopeResolver:
                 )
             ]
 
-        # Check for explicit patterns
-        # Positional patterns: EXACT for paths, CONTAINS for names
-        # -n patterns use CONTAINS matching (for discovery by partial name)
-        if args.patterns or args.name_patterns:
+        # Check for explicit workspace scope. Positional workspaces are exact;
+        # pattern matching requires explicit --glob or --regex.
+        if args.patterns or args.glob_patterns or args.regex_patterns or args.name_patterns:
             return self._build_pattern_records(args, home_spec, session_spec)
 
         # Workspace listing defaults to discovery across selected homes.
@@ -243,7 +242,13 @@ class ScopeResolver:
         # Check for --aw (all workspaces) - but patterns can still filter
         # If --aw is used without patterns, show all workspaces
         # If --aw is used with patterns, patterns will filter (handled above)
-        if args.all_workspaces and not args.patterns and not args.name_patterns:
+        if (
+            args.all_workspaces
+            and not args.patterns
+            and not args.glob_patterns
+            and not args.regex_patterns
+            and not args.name_patterns
+        ):
             return [
                 ScopeRecord(
                     home=home_spec,
@@ -281,6 +286,8 @@ class ScopeResolver:
             or bool(args.projects)
             or self.context.cwd_project
             or bool(args.patterns)
+            or bool(args.glob_patterns)
+            or bool(args.regex_patterns)
             or bool(args.name_patterns)
         )
         return needs_cross_home and not has_explicit_scope and bool(self.context.cwd_workspace)
@@ -314,6 +321,22 @@ class ScopeResolver:
                     sessions=session_spec,
                 )
             )
+        for pattern in args.glob_patterns:
+            records.append(
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=WorkspaceSpecFactory.Pattern(pattern, MatchType.GLOB),
+                    sessions=session_spec,
+                )
+            )
+        for pattern in args.regex_patterns:
+            records.append(
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=WorkspaceSpecFactory.Pattern(pattern, MatchType.REGEX),
+                    sessions=session_spec,
+                )
+            )
         return records
 
     def _workspace_spec_for_pattern(self, pattern: str) -> WorkspaceSpec:
@@ -324,7 +347,7 @@ class ScopeResolver:
             # Use a direct path spec so exact cross-home lookups do not
             # enumerate an entire slow home just to confirm the path.
             return WorkspaceSpecFactory.Path(pattern)
-        return WorkspaceSpecFactory.Pattern(pattern, MatchType.CONTAINS)
+        return WorkspaceSpecFactory.Pattern(pattern, MatchType.EXACT)
 
     def _build_home_spec(self, args: ScopeArgs) -> HomeSpec:
         """
@@ -692,6 +715,7 @@ class ScopeResolver:
             List of matching workspace paths.
         """
         import fnmatch
+        import re
 
         all_workspaces = self._enumerate_workspaces(home, agent=agent)
         normalized_pattern = pattern
@@ -716,6 +740,12 @@ class ScopeResolver:
             return result
         elif match_type == MatchType.GLOB:
             return [ws for ws in all_workspaces if fnmatch.fnmatch(ws, pattern)]
+        elif match_type == MatchType.REGEX:
+            try:
+                regex = re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"Invalid workspace regex {pattern!r}: {exc}") from exc
+            return [ws for ws in all_workspaces if regex.search(ws)]
         else:
             return [ws for ws in all_workspaces if ws == pattern]
 

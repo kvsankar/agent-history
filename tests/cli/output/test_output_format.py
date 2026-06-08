@@ -57,9 +57,9 @@ class TestWsListOutputFormat:
         assert "STATUS" in header
 
     def test_ws_list_pattern_has_header(self, output_test_home: Dict[str, Any]) -> None:
-        """ws list -n pattern should have tabular header."""
+        """ws list --glob "*pattern*" should have tabular header."""
         result = run_cli_subprocess(
-            ["ws", "list", "-n", "app", "--aw"],
+            ["ws", "list", "--glob", "*app*", "--aw"],
             env=output_test_home["env"],
         )
         assert result.returncode == 0

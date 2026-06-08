@@ -439,22 +439,77 @@ Forked Claude sessions include a **Conversation Structure** summary and per-mess
 
 ### Stats Operations
 
-**`session stats`** - Compute and display usage metrics
+**`stats`** - Compute and display usage metrics
 - Input: Session scope, home scope, grouping options
-- Output: Aggregate statistics
+- Output: Aggregate statistics, with token/tool/model/time overlays when available
 - Behavior:
-  1. Auto sync: Sync the resolved scope to the metrics DB (unless `--no-sync`)
-  2. Compute: Aggregate stats from the resolved scope
-  3. Overlay: Overlay token/tool/time totals from the DB when sync runs
+  1. Default: Query cached metrics from the SQLite DB without scanning raw session files
+  2. Fresh mode: With `--sync`, resolve the raw scope and refresh changed session files first
+  3. Progress: For `--sync` table output, print a bounded sync indicator to stderr unless `--quiet`
+  4. Compute: Aggregate stats from cached DB rows for the resolved DB scope
 
 **Metrics computed:**
 | Metric | Source |
 |--------|--------|
-| Session count | File count |
-| Message count | Message array length |
-| Token usage | Metrics DB (requires sync; auto by default) |
-| Tool usage | Metrics DB (requires sync; auto by default) |
-| Time spent | Metrics DB work-period calculation (requires sync; auto by default) |
+| Session count | Metrics DB session rows |
+| Message count | Metrics DB session/message rows |
+| Token usage | Metrics DB |
+| Tool usage | Metrics DB |
+| Time spent | Metrics DB work-period calculation |
+
+Top-level `cagelens stats` is the canonical stats entry point because metrics
+cut across sessions, workspaces, homes, and projects. Resource-scoped stats
+commands remain supported as convenience aliases:
+- `session stats` -> top-level stats with session/workspace scope flags
+- `ws stats` -> same stats engine, workspace-oriented scope
+- `project stats <name>` -> same stats engine scoped to one project
+- `home stats [name]` -> same stats engine scoped to selected homes
+
+**Default summary output:**
+- Starts with a scope banner:
+  - requested scope, such as `all workspaces`, `project <name>`,
+    `workspace glob <pattern>`, `workspace regex <regex>`,
+    `current project <name>`, or `current workspace <path>`
+  - matched home count/names
+  - matched workspace count, with workspace names when the set is small
+  - matched session count
+- Then shows a compact dashboard:
+  - total sessions and messages
+  - main vs agent/subagent sessions when available
+  - user vs assistant messages when available
+  - token totals (input, output, cache read, cache creation) when available
+  - tool totals and error counts when available
+  - top model names when available
+  - time summary when metrics DB data is available
+- Then shows default breakdowns by agent, home, and workspace.
+- Ends with concise coverage and drilldown pointers so users can see which
+  metric families are summarized and how to expand each family.
+- Workspace rows are truncated to the display limit. Truncation must include an actionable hint such as `use --top-ws all` or `--format json`.
+- JSON output returns the full stats payload and must not be truncated for display.
+- TSV output is explicit machine-readable output and must include summary rows as well as breakdown rows, not only workspace rows.
+- The table scope banner must make workspace-vs-project scope visible. For
+  example, `cagelens stats --glob '*bptrial*'` must identify the request as a
+  workspace glob, while `cagelens stats --project bptrial` must identify it as
+  a project scope. Bare `cagelens stats bptrial` is exact workspace scope.
+
+**Rollup output:**
+- `stats rollup` returns a stable table intended for repeated analysis and
+  coding-agent consumption.
+- Table output also starts with the same scope banner as summary stats.
+- Required dimensions are supplied with `--by`, accepting comma-separated values.
+- Supported dimensions: `project`, `workspace`, `home`, `agent`, `model`, `day`, `month`.
+- Supported metrics:
+  - `time`: work-period seconds/hours
+  - `tokens`: input/output/cache token totals
+  - `all`: time, tokens, sessions, messages, and tool/error counts
+- Rollup rows are sorted by the primary metric descending unless the grouping
+  is time-only (`day`/`month`), which sorts chronologically.
+- Examples:
+  - `cagelens stats rollup --metric time --by project`
+  - `cagelens stats rollup --metric time --by project,month`
+  - `cagelens stats rollup --metric time --by workspace,day`
+  - `cagelens stats rollup --metric tokens --by project,agent,model`
+  - `cagelens stats rollup --metric all --by project`
 
 **Time tracking algorithm (metrics DB):**
 - **Gap threshold:** 30 minutes of inactivity marks end of a work period
@@ -471,10 +526,30 @@ Forked Claude sessions include a **Conversation Structure** summary and per-mess
 | `home` | Home identifier |
 | `agent` | Agent type (claude, codex, gemini) |
 
+**Stats flags:**
+| Flag | Behavior |
+|------|----------|
+| `--sync` | Refresh source files before display (slower, freshest) |
+| `--no-sync` | Query cached metrics only (default; retained for explicitness) |
+| `--force` | With `--sync`, reprocess unchanged files too |
+| `--quiet` | Suppress sync progress and informational stderr output |
+| `--by <dims>` | Add requested groupings; accepts comma-separated values |
+| `--models` | Compatibility alias for `--by model` |
+| `--tools` | Compatibility alias for `--by tool` |
+| `--by-day` | Compatibility alias for `--by day` |
+| `--by-workspace` | Compatibility alias for `--by workspace` |
+| `--time` | Expand work-period time details, including daily time totals |
+| `--metric <name>` | Rollup metric: `time`, `tokens`, or `all` |
+| `--top <N>` | Rollup row limit |
+| `--top-ws <N>` | Show top N workspaces in table output |
+| `--top-ws all` | Show all workspace rows in table output |
+| `-H`, `--human` | Use compact human-readable numbers and durations in table output |
+
 **Notes:**
 - `--by` accepts comma-separated dimensions (e.g., `--by model,tool,day`)
-- Table output shows only the requested groupings; JSON output always includes `by_agent`, `by_home`, `by_workspace`, `by_model`, and `by_tool`, with `by_day` added only when requested
-- `--no-sync` skips the automatic metrics sync (faster, but tokens/tools/time may be stale)
+- Table output always shows the dashboard, coverage/drilldown pointers, and default agent/home/workspace breakdowns, and adds requested groupings for model/tool/day/time
+- JSON output always includes `by_agent`, `by_home`, `by_workspace`, `by_model`, and `by_tool`, with `by_day` added only when requested
+- Cached stats can be stale. Use `--sync` to refresh from raw agent storage.
 
 ### Project Operations
 
@@ -512,13 +587,23 @@ Forked Claude sessions include a **Conversation Structure** summary and per-mess
 
 ### Pattern Matching
 
-The `-n <pattern>` flag performs **case-insensitive substring matching** on workspace names.
-Positional patterns use **exact matching** when the pattern looks path-like (`/`, `-`, or contains `/`), otherwise they use substring matching.
+Workspace matching must be intentional:
+
+- Positional workspace arguments are exact workspace paths or identifiers.
+- `--glob <pattern>` performs explicit shell-style matching using `fnmatch`.
+- `--regex <regex>` performs explicit Python regular-expression search.
+- Multiple exact/glob/regex matchers are combined with OR semantics.
+- `-n`/`--name` and implicit substring matching are not supported.
+- Glob and regex patterns should be quoted in the shell. For example,
+  `--glob '/home/user/projects/auth*'` reaches `cagelens` as a pattern, while
+  an unquoted shell glob may be expanded to an existing filesystem path before
+  `cagelens` runs.
 
 Examples:
-- Pattern `auth` matches `authentication`, `oauth-service`, `my-auth-lib`
-- Pattern `API` matches `api-server`, `rest-api`, `graphql-api`
-- Empty pattern or `*` matches all workspaces
+- `ws list /home/user/projects/auth` matches only that exact workspace.
+- `ws list --glob '/home/user/projects/auth*'` matches shell-style wildcard paths.
+- `ws list --regex '(^|/)auth($|/)'` matches paths containing `auth` as a path segment.
+- `ws list --aw` lists all workspaces.
 
 ### Deduplication
 
@@ -537,11 +622,11 @@ Priority order for workspace resolution:
 2. **`--this` flag**: Force current workspace only (skip project auto-detection)
 3. **Auto-detect project**: If cwd belongs to a project, use that project
 4. **`--aw` (all workspaces)**: Only when no patterns are provided
-5. **Explicit patterns**: Positional patterns and `-n <pattern>` filters
+5. **Explicit workspace scope**: positional exact workspaces, `--glob`, or `--regex`
 6. **Current workspace**: If cwd is in a workspace
 7. **Fallback**: All workspaces
 
-Positional patterns use exact matching when path-like; `-n` patterns always use substring matching.
+Positional workspace arguments are exact; pattern matching requires `--glob` or `--regex`.
 
 ### Home Scope
 
@@ -567,11 +652,11 @@ Home and workspace scopes are orthogonal:
 | `session list --aw` | all | local |
 | `session list --ah` | current | all configured |
 | `session list --aw --ah` | all | all configured |
-| `session list -n auth --ah` | pattern "auth" | all configured |
+| `session list --glob '*auth*' --ah` | glob pattern "*auth*" | all configured |
 
 **Cross-home guard:** When running session-oriented commands from a local
 workspace, non-local homes (`--ah`, `--wsl`, `--windows`, `-r/--home`) require an
-explicit workspace scope (`-n`, positional pattern, `--aw`, or `--project`).
+explicit workspace scope (exact workspace, `--glob`, `--regex`, `--aw`, or `--project`).
 Otherwise the command errors to avoid ambiguous cross-home matching. `ws list`
 already defaults to workspace discovery and is not narrowed to the current
 workspace.
@@ -588,12 +673,12 @@ Caches computed metrics for fast querying. Parsing every message in every sessio
 
 ### Sync Behavior
 
-Stats auto-sync by default. Sync happens for the resolved scope unless `--no-sync` is passed:
+Stats query cached metrics by default. Sync happens only when `--sync` is passed:
 - Syncs only the sessions in scope (homes + workspaces + agent filters)
 - Incremental: Skips files unchanged since last sync (by mtime)
 - Additive: Deleted sessions remain until explicit reset
 
-`--sync` is accepted for explicit refresh; `--force` re-syncs all files in scope.
+`--no-sync` is accepted as an explicit cache-only no-op. `--force` re-syncs all files in scope when combined with `--sync`.
 
 ### Schema
 
@@ -749,8 +834,13 @@ When using SSH remote sources:
 - Installs the `cagelens` skill package into agent-native user skill directories
 - Use `--agent <name>` to install one agent target; default installs all supported targets
 - `--skill-dir` overrides agent-native skill targets with one explicit custom directory
+- `--dry-run` prints the exact resolved install plan without writing files
 - Does not modify agent settings files; `--skip-settings` is retained for legacy
   compatibility
+- `install --help` must include default CLI/skill locations and examples while
+  remaining short enough for quick terminal use
+- Table output must render install actions as rows with component, agent, status,
+  and path instead of a raw Python/JSON dictionary
 
 **Options:**
 | Option | Effect |
@@ -761,6 +851,7 @@ When using SSH remote sources:
 | `--skip-skill` | Skip agent skill installation |
 | `--skip-settings` | Skip legacy agent settings step |
 | `--agent <name>` | Install skill package for one agent target |
+| `--dry-run` | Print resolved install plan without writing files |
 
 **Default skill targets:**
 | Agent | Directory |
@@ -769,6 +860,14 @@ When using SSH remote sources:
 | Codex CLI | `${CODEX_HOME:-~/.codex}/skills/cagelens/` |
 | Gemini CLI | `~/.gemini/skills/cagelens/` |
 | Pi | `~/.pi/agent/skills/cagelens/` |
+
+**Examples:**
+```bash
+cagelens install                 # Install CLI and all supported agent skills
+cagelens install --dry-run        # Show exact paths without writing files
+cagelens install --agent codex    # Install only the Codex skill package
+cagelens install --skip-cli       # Install skill packages only
+```
 
 ### Reset
 
