@@ -86,6 +86,11 @@ class TestMatchTypeEnum:
         assert hasattr(MatchType, "GLOB")
         assert MatchType.GLOB is not None
 
+    def test_matchtype_regex_exists(self) -> None:
+        """REGEX match type should exist."""
+        assert hasattr(MatchType, "REGEX")
+        assert MatchType.REGEX is not None
+
     def test_matchtype_exact_value_is_correct(self) -> None:
         """EXACT should have string value 'exact'."""
         assert MatchType.EXACT.value == "exact"
@@ -102,16 +107,21 @@ class TestMatchTypeEnum:
         """GLOB should have string value 'glob'."""
         assert MatchType.GLOB.value == "glob"
 
+    def test_matchtype_regex_value_is_correct(self) -> None:
+        """REGEX should have string value 'regex'."""
+        assert MatchType.REGEX.value == "regex"
+
     def test_matchtype_str_returns_value(self) -> None:
         """String conversion should return the enum value."""
         assert str(MatchType.EXACT) == "exact"
         assert str(MatchType.PREFIX) == "prefix"
         assert str(MatchType.CONTAINS) == "contains"
         assert str(MatchType.GLOB) == "glob"
+        assert str(MatchType.REGEX) == "regex"
 
-    def test_matchtype_has_exactly_four_values(self) -> None:
-        """MatchType should have exactly four values."""
-        assert len(MatchType) == 4
+    def test_matchtype_has_exactly_five_values(self) -> None:
+        """MatchType should have exactly five values."""
+        assert len(MatchType) == 5
 
 
 # =============================================================================
@@ -496,6 +506,12 @@ class TestWorkspaceSpecPattern:
         spec = WorkspaceSpecPattern(pattern="*/projects/*", match_type=MatchType.GLOB)
         assert spec.pattern == "*/projects/*"
         assert spec.match_type == MatchType.GLOB
+
+    def test_workspacespecpattern_creation_with_regex_match(self) -> None:
+        """WorkspaceSpecPattern should be creatable with REGEX match type."""
+        spec = WorkspaceSpecPattern(pattern=r"(^|/)auth($|/)", match_type=MatchType.REGEX)
+        assert spec.pattern == r"(^|/)auth($|/)"
+        assert spec.match_type == MatchType.REGEX
 
     def test_workspacespecpattern_str_representation_exact(self) -> None:
         """WorkspaceSpecPattern with EXACT should have correct string repr."""

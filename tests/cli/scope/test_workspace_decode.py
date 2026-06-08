@@ -20,6 +20,7 @@ import pytest
 from tests.helpers.cli import run_cli_subprocess
 from tests.helpers.workspace_paths import create_workspace_fixture
 
+
 @pytest.fixture
 def decode_test_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
     """Create a test home with various workspace path patterns."""
@@ -288,7 +289,7 @@ class TestHierarchicalWorkspaces:
         """Parent workspace sessions should not include child workspace sessions."""
         # Verify via ws list that workspaces are separate
         ws_result = run_cli_subprocess(
-            ["ws", "list", "-n", "monorepo", "--aw"],
+            ["ws", "list", "--glob", "*monorepo*", "--aw"],
             env=hierarchical_home["env"],
         )
         assert ws_result.returncode == 0
@@ -306,7 +307,7 @@ class TestHierarchicalWorkspaces:
         """Pattern matching on child path should not include parent."""
         # Use TSV format to get full, non-truncated paths
         result = run_cli_subprocess(
-            ["ws", "list", "-n", "packages/api", "--aw", "--format", "tsv"],
+            ["ws", "list", "--glob", "*packages/api*", "--aw", "--format", "tsv"],
             env=hierarchical_home["env"],
         )
         assert result.returncode == 0

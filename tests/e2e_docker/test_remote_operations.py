@@ -42,7 +42,7 @@ class TestRemoteWorkspaceList:
     def test_ws_remote_pattern_filter(self, docker_env, cli_path):
         """ws -r with pattern filters workspaces."""
         node = docker_env["node_alpha"]
-        result = run_cli(["ws", "-r", f"alice@{node}", "-n", "myproject"], cli_path)
+        result = run_cli(["ws", "-r", f"alice@{node}", "--glob", "*myproject*"], cli_path)
 
         assert result.returncode == 0, f"Failed: {result.stderr}"
 

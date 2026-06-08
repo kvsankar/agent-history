@@ -194,6 +194,10 @@ class CommandOrchestrator:
         dispatcher.register("project", "remove", ProjectRemoveHandler())
         dispatcher.register("project", "export", ProjectExportHandler())
 
+        # Top-level stats handlers
+        dispatcher.register("stats", "summary", SessionStatsHandler())
+        dispatcher.register("stats", "rollup", SessionStatsHandler())
+
         # Gemini index handler
         dispatcher.register("gemini-index", "index", GeminiIndexHandler())
 
@@ -253,6 +257,8 @@ class CommandOrchestrator:
             or bool(args.projects)
             or context.cwd_project
             or bool(args.patterns)
+            or bool(args.glob_patterns)
+            or bool(args.regex_patterns)
             or bool(args.name_patterns)
         )
         is_in_workspace = bool(context.cwd_workspace)
@@ -292,7 +298,7 @@ class CommandOrchestrator:
 
     def _handle_stats_sync(self, request: CommandRequest, scope) -> None:
         """Auto-sync stats scope unless --no-sync is specified."""
-        if request.verb != "stats":
+        if not self._is_stats_request(request):
             return
         if request.verb_args.get("no_sync"):
             return
@@ -300,9 +306,27 @@ class CommandOrchestrator:
         conn = init_metrics_db()
         try:
             force = request.verb_args.get("force", False)
-            sync_scope_to_db(conn, scope, force=force)
+            show_progress = not request.output_args.quiet and (
+                request.output_args.format == "table"
+                or (request.output_args.format is None and sys.stdout.isatty())
+            )
+            session_count = sum(len(record.sessions) for record in scope)
+            if show_progress:
+                sys.stderr.write(f"Syncing stats cache for {session_count} sessions...\n")
+            sync_stats = sync_scope_to_db(conn, scope, force=force)
             conn.commit()
             request.verb_args["sync"] = True
+            request.verb_args["sync_stats"] = sync_stats
+            if show_progress:
+                sys.stderr.write(
+                    "Stats cache synced: "
+                    f"{sync_stats.get('synced', 0)} updated, "
+                    f"{sync_stats.get('skipped', 0)} unchanged"
+                )
+                errors = sync_stats.get("errors", 0)
+                if errors:
+                    sys.stderr.write(f", {errors} errors")
+                sys.stderr.write(".\n")
         finally:
             conn.close()
 
@@ -334,6 +358,10 @@ class CommandOrchestrator:
 
             # 2.5. Enrich verb_args with context-derived values
             self._enrich_verb_args(request, context)
+
+            cached_stats_result = self._run_cached_stats_if_applicable(request, context)
+            if cached_stats_result is not None:
+                return cached_stats_result
 
             # 2.7. Pre-flight check: verify SSH connectivity to remotes
             # (skipped if cross-home guard would trigger - let guard error show first)
@@ -422,6 +450,58 @@ class CommandOrchestrator:
             return self.error_handler.handle_formatter_error(e)
         return 0 if result.success else 1
 
+    def _run_cached_stats_if_applicable(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> int | None:
+        """Run stats from the metrics DB without raw scope/session discovery."""
+        if not self._is_stats_request(request):
+            return None
+        if request.verb_args.get("sync"):
+            return None
+        if self._would_cross_home_guard_trigger(request, context):
+            return None
+
+        try:
+            result = SessionStatsHandler().execute_cached(
+                request.scope_args,
+                context,
+                request.verb_args,
+                request.output_args,
+            )
+        except DispatchError as e:
+            return self.error_handler.handle_dispatch_error(e)
+
+        try:
+            self.formatter.format(result, request.output_args)
+        except FormatterError as e:
+            return self.error_handler.handle_formatter_error(e)
+        return 0 if result.success else 1
+
+    def _is_stats_request(self, request: CommandRequest) -> bool:
+        if request.resource == "stats":
+            return True
+        return request.resource in {"session", "ws"} and request.verb == "stats"
+
+    def _would_cross_home_guard_trigger(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> bool:
+        args = request.scope_args
+        needs_cross_home = (
+            args.home_type in ("wsl", "windows", "remote")
+            or args.all_homes
+            or bool(args.home_names)
+        )
+        has_explicit_scope = (
+            args.all_workspaces
+            or bool(args.projects)
+            or context.cwd_project
+            or bool(args.patterns)
+            or bool(args.glob_patterns)
+            or bool(args.regex_patterns)
+            or bool(args.name_patterns)
+        )
+        return needs_cross_home and not has_explicit_scope and bool(context.cwd_workspace)
+
     def _is_workspace_list(self, request: CommandRequest) -> bool:
         return request.resource == "ws" and request.verb == "list"
 
@@ -509,6 +589,8 @@ class CommandOrchestrator:
         return (
             request.scope_args.all_workspaces
             and not request.scope_args.patterns
+            and not request.scope_args.glob_patterns
+            and not request.scope_args.regex_patterns
             and not request.scope_args.name_patterns
             and not request.scope_args.projects
         )
@@ -573,7 +655,10 @@ class CommandOrchestrator:
 
         # 3. Resolve scope
         resolver = ScopeResolver(context)
-        resolution = resolver.resolve(request.scope_args)
+        resolution = resolver.resolve(
+            request.scope_args,
+            load_sessions=self._should_load_sessions(request),
+        )
 
         # Auto-sync stats after scope resolution (unless --no-sync)
         self._handle_stats_sync(request, resolution.scope)

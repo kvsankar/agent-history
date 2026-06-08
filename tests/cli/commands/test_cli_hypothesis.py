@@ -16,9 +16,7 @@ from tests.helpers.cli import run_cli_subprocess
 pytestmark = pytest.mark.v1
 
 # Common values
-workspace_patterns = st.sampled_from(
-    ["*", "myproject", "test", "nonexistent-ws-12345", ""]
-)
+workspace_patterns = st.sampled_from(["*", "myproject", "test", "nonexistent-ws-12345", ""])
 agent_choices = st.sampled_from(["auto", "claude", "codex", "gemini"])
 date_strings = st.sampled_from(
     [
@@ -125,7 +123,7 @@ class TestSessionCombinations:
     @settings(max_examples=50, suppress_health_check=DEFAULT_HEALTH, deadline=None)
     def test_session_date_combinations(self, since, until, isolated_home):
         """session list date filter permutations."""
-        args = ["session", "-n", "*"]
+        args = ["session", "--glob", "***"]
         if since:
             args.extend(["--since", since])
         if until:
@@ -193,7 +191,7 @@ class TestExportCombinations:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             output_dir = tmp_path / "output"
-            args = ["session", "export", "-n", "*", "-o", str(output_dir)]
+            args = ["session", "export", "--glob", "***", "-o", str(output_dir)]
             if split_value is not None:
                 args.extend(["--split", str(split_value)])
 
@@ -223,7 +221,7 @@ class TestStatsCombinations:
 
         args = ["session", "stats"]
         if workspace:
-            args.extend(["-n", workspace])
+            args.extend(["--glob", f"*{workspace}*"])
         if use_sync:
             args.append("--sync")
         if use_ah:
@@ -295,11 +293,11 @@ class TestCrossCommandConsistency:
         output_dir = isolated_home["path"] / "output"
         args: list[str]
         if command == "ws":
-            args = ["ws", "-n", "*", "--agent", agent]
+            args = ["ws", "--glob", "***", "--agent", agent]
         elif command == "session":
-            args = ["session", "-n", "*", "--agent", agent]
+            args = ["session", "--glob", "***", "--agent", agent]
         else:
-            args = ["session", "export", "-n", "*", "-o", str(output_dir), "--agent", agent]
+            args = ["session", "export", "--glob", "***", "-o", str(output_dir), "--agent", agent]
 
         result = _run(args, env=isolated_home["env"], cwd=isolated_home["path"])
         assert "Traceback" not in result.stderr
@@ -318,9 +316,9 @@ class TestCrossCommandConsistency:
         output_dir = isolated_home["path"] / "output"
         args: list[str]
         if command == "session":
-            args = ["session", "-n", "*"]
+            args = ["session", "--glob", "***"]
         else:
-            args = ["session", "export", "-n", "*", "-o", str(output_dir)]
+            args = ["session", "export", "--glob", "***", "-o", str(output_dir)]
 
         if use_ah:
             args.append("--ah")
@@ -355,7 +353,9 @@ class TestEdgeCases:
         """Arbitrary text patterns shouldn't crash."""
         assume(not pattern.startswith("-"))
 
-        result = _run(["ws", "-n", pattern], env=isolated_home["env"], cwd=isolated_home["path"])
+        result = _run(
+            ["ws", "--glob", f"*{pattern}*"], env=isolated_home["env"], cwd=isolated_home["path"]
+        )
         assert "Traceback" not in result.stderr
 
     @given(num_patterns=st.integers(min_value=0, max_value=5))
@@ -364,7 +364,7 @@ class TestEdgeCases:
         """Multiple patterns should parse."""
         args = ["ws"]
         for i in range(num_patterns):
-            args.extend(["-n", f"pattern{i}"])
+            args.extend(["--glob", f"*pattern{i}*"])
 
         result = _run(args, env=isolated_home["env"], cwd=isolated_home["path"])
         assert "Traceback" not in result.stderr

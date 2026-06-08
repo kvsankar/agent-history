@@ -163,6 +163,39 @@ that it generates logs.
 
 ---
 
+### Stats Output Shape / Analytics UI
+
+**Status:** Open
+
+**Why:** `session stats` now returns fast cached metrics, but the default table
+output is not actually a table. It is a series of loose text sections. That is
+readable for a quick terminal glance, but it may be too informal for a metrics
+surface that needs breadth-wise coverage, drilldowns, comparison, and machine
+or agent-friendly interpretation.
+
+**Tracking checklist:**
+- [ ] Decide whether stats table output should remain section-oriented,
+      become one or more real tables, or support both compact dashboard and
+      tabular drilldown modes.
+- [ ] Define the canonical stats views: summary, agents, homes, workspaces,
+      models, tools, days, time, cache freshness, and sync/errors.
+- [ ] Decide whether terminal table output should optimize for humans, coding
+      agents, or both, and document the output contract.
+- [ ] Generalize the stats scope banner into a shared table-output scope banner
+      for all scoped commands (`session list`, `ws list`, `export`, resource
+      stats), including command-specific counts and compact truncation rules.
+- [ ] Evaluate Datasette as an optional analytics UI over `metrics.db`,
+      including project-specific metadata YAML, saved canned queries, facets,
+      labels, and safe defaults for local-only use.
+- [ ] Decide whether Datasette support should be documentation-only,
+      a generated `metadata.yml`, a `cagelens datasette` helper command, or a
+      separate optional extra.
+- [ ] If Datasette is adopted, specify privacy/security defaults: bind address,
+      read-only DB access, hidden raw path columns if needed, and no accidental
+      publication of personal logs.
+
+---
+
 ### Unified Event Envelope / Lossless Schema
 
 **Status:** Planned for a post-release v2.1 schema round

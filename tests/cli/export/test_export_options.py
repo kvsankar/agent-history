@@ -27,7 +27,7 @@ def test_session_export_accepts_positional_output_dir(isolated_home: Dict[str, A
     output_dir = isolated_home["path"] / "session_positional_out"
 
     result = run_cli_subprocess(
-        ["session", "export", "positional-session", str(output_dir), "--force"],
+        ["session", "export", "/home/user/positional-session", str(output_dir), "--force"],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )
@@ -41,7 +41,7 @@ def test_ws_export_accepts_positional_output_dir(isolated_home: Dict[str, Any]) 
     output_dir = isolated_home["path"] / "ws_positional_out"
 
     result = run_cli_subprocess(
-        ["ws", "export", "positional-ws", str(output_dir), "--force"],
+        ["ws", "export", "/home/user/positional-ws", str(output_dir), "--force"],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )
@@ -149,7 +149,16 @@ def test_session_export_split_creates_parts(isolated_home: Dict[str, Any]) -> No
     output_dir.mkdir()
 
     result = run_cli_subprocess(
-        ["session", "export", "split-target", "--split", "10", "--force", "-o", str(output_dir)],
+        [
+            "session",
+            "export",
+            "/home/user/split-target",
+            "--split",
+            "10",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )

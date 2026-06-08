@@ -377,8 +377,8 @@ class TestCombinedFilters:
                 "2025-01-31",
                 "--agent",
                 "claude",
-                "-n",
-                "alpha",
+                "--glob",
+                "*alpha*",
                 "--aw",
             ],
             env=scope_combo_setup["env"],
@@ -469,7 +469,7 @@ class TestFilterEdgeCases:
         """Agent filter on workspace with no matching agent returns empty."""
         # This tests the case where workspace has only one agent type
         result = run_cli_subprocess(
-            ["session", "list", "--agent", "claude", "-n", "nonexistent"],
+            ["session", "list", "--agent", "claude", "--glob", "*nonexistent*"],
             env=agent_filter_sessions["env"],
         )
 

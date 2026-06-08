@@ -65,7 +65,7 @@ cagelens home add alice@server       # add SSH remote
 # Now --ah includes configured sources
 cagelens ws list --ah                # includes configured homes
 cagelens session export --ah         # exports from all homes
-cagelens session stats --time --ah   # syncs from all homes
+cagelens session stats --time --ah   # cached stats from all homes
 ```
 
 **Examples:**
@@ -341,12 +341,19 @@ cagelens session list --this
 
 ---
 
-## `session stats` - Usage Statistics
+## `stats` - Usage Statistics
 
 Display usage statistics and metrics from coding-agent sessions.
+The default table summarizes the full metric surface: sessions, messages,
+tokens, tools, models, time, agents, homes, and workspaces. Use the drilldown
+flags printed at the bottom of the table to expand each metric family.
+`cagelens stats` is the canonical analytics entry point. `cagelens session stats`,
+`cagelens ws stats`, `cagelens project stats`, and `cagelens home stats` remain
+supported convenience forms.
 
 ```bash
-cagelens session stats [WORKSPACE] [OPTIONS]
+cagelens stats [WORKSPACE] [OPTIONS]
+cagelens stats rollup --metric METRIC --by DIMS [OPTIONS]
 ```
 
 **Scope Flags (Orthogonal):**
@@ -355,50 +362,64 @@ cagelens session stats [WORKSPACE] [OPTIONS]
 - `--this`: Use current workspace only, not its project membership
 
 **Sync Options:**
-- `--sync`: Explicitly sync session files to the metrics database before showing stats
-- `--no-sync`: Query cached metrics without refreshing first
-- `--force`: Force re-sync all files
-- `--jobs N`: Parallel remote sync workers (default: 1)
-- `--no-remote`: Skip SSH remotes during sync
-- `--no-wsl`: Skip WSL sources during sync
-- `--no-windows`: Skip Windows sources during sync
+- `--sync`: Refresh source session files before showing stats (slower, freshest)
+- `--no-sync`: Query cached metrics without refreshing first (default)
+- `--force`: With `--sync`, reprocess unchanged files too
+- `--quiet`: Suppress sync progress
 
 **View Options:**
-- `--time`: Show time tracking with daily breakdown (default summary already includes a time summary)
+- `--time`: Expand work-period time details, including daily time totals
 - `--by DIMS`: Group by dimensions (comma-separated): home, agent, workspace, day, model, tool
-- `--top-ws N`: Limit workspaces shown per home in the summary (default: all; N must be > 0)
+- `--metric time|tokens|all`: Rollup metric family
+- `--top N`: Limit rollup rows
+- `--models`: Shortcut for `--by model`
+- `--tools`: Shortcut for `--by tool`
+- `--by-day`: Shortcut for `--by day`
+- `--by-workspace`: Shortcut for `--by workspace`
+- `--top-ws N`: Limit workspaces shown in the summary (N must be > 0)
+- `--top-ws all`: Show every workspace row
+- `-H`, `--human`: Compact large numbers and durations
 
 **Filters:**
-- `--source SOURCE`: Filter by source (local, wsl:distro, windows, remote:host)
 - `--since DATE`: Filter from this date
 - `--until DATE`: Filter until this date
-Note: `--source` defaults to all workspaces for that source unless `--this` is set. If you are outside a workspace, pass a pattern or use `--aw`.
+If you are outside a known workspace, pass a workspace pattern or use `--aw`.
 
 **Examples:**
 ```bash
 # Summary dashboard (current workspace)
-cagelens session stats
+cagelens stats
 
 # All workspaces (Homes & Workspaces section plus summary with time)
-cagelens session stats --aw
+cagelens stats --aw
 
-# Time tracking with auto-sync from all homes
-cagelens session stats --time --ah
+# Time tracking from cached all-home metrics
+cagelens stats --time --ah
 
 # Tool usage statistics
-cagelens session stats --by tool
+cagelens stats --by tool
 
 # Daily trends
-cagelens session stats --by day
+cagelens stats --by day
 
 # Multi-dimension grouping
-cagelens session stats --by home,agent
+cagelens stats --by home,agent
 
 # Filter by date range
-cagelens session stats --since 2025-11-01 --until 2025-11-30
+cagelens stats --since 2025-11-01 --until 2025-11-30
 
-# Faster sync with selective sources
-cagelens session stats --sync --ah --jobs 4 --no-remote
+# Show every workspace row
+cagelens stats --top-ws all
+
+# Refresh the metrics cache before display
+cagelens stats --sync --aw
+
+# Rollups
+cagelens stats rollup --metric time --by project
+cagelens stats rollup --metric time --by project,month
+cagelens stats rollup --metric time --by workspace,day
+cagelens stats rollup --metric tokens --by project,agent,model
+cagelens stats rollup --metric all --by project
 ```
 
 **Metrics Available:**
@@ -561,7 +582,7 @@ cagelens fetch -r user@host --aw
 **Notes:**
 - Use `-r HOST` for explicit SSH remotes, or `--ah --aw` for all configured
   SSH remotes.
-- Use workspace filters such as `-n auth`, `--project NAME`, or `--aw`.
+- Use workspace filters such as `--glob "*auth*"`, `--project NAME`, or `--aw`.
 - Use `--agent` to restrict the agent backend.
 - Remote cache layout is documented in [cagelens-spec.md](../specs/cagelens-spec.md#file-locations).
 
@@ -650,7 +671,7 @@ Install the CLI wrapper and the `cagelens` skill package.
 
 ```bash
 cagelens install [--bin-dir DIR] [--skill-dir DIR] [--agent AGENT]
-                       [--skip-cli] [--skip-skill] [--skip-settings]
+                       [--dry-run] [--skip-cli] [--skip-skill] [--skip-settings]
 ```
 
 By default, `install` writes:
@@ -664,4 +685,13 @@ By default, `install` writes:
 - `--bin-dir DIR`: Custom binary install directory
 - `--skill-dir DIR`: Custom agent skill install directory
 - `--agent AGENT`: Install one agent skill package (`claude`, `codex`, `gemini`, or `pi`)
+- `--dry-run`: Show the exact install plan without writing files
 - `--skip-cli`, `--skip-skill`, `--skip-settings`: Skip specific install steps
+
+**Examples:**
+```bash
+cagelens install
+cagelens install --dry-run
+cagelens install --agent codex
+cagelens install --skip-cli
+```

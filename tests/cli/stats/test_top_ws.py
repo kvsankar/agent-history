@@ -16,11 +16,9 @@ def _data_lines(output: str) -> List[str]:
         if "\t" not in line:
             continue
         cols = line.split("\t")
-        if cols[0].upper() == "HOME":
+        if cols[0].upper() == "SECTION":
             continue
-        # Workspaces have HOME column values like local/wsl/windows/remote:host
-        home_val = cols[0].lower()
-        if home_val in {"local", "wsl", "windows"} or home_val.startswith("remote"):
+        if cols[0] == "workspace":
             rows.append(line)
     return rows
 

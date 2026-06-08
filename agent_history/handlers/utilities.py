@@ -31,71 +31,60 @@ class InstallHandler(VerbHandler):
     def execute(
         self, scope: ConcreteScope, verb_args: dict[str, Any], output_args: OutputArgs
     ) -> CommandResult:
-        actions = []
         warnings = []
+        dry_run = verb_args.get("dry_run", False)
+        actions = self._build_install_plan(verb_args, warnings)
 
-        if not verb_args.get("skip_cli", False):
-            actions.append(self._install_cli(verb_args.get("bin_dir")))
-
-        if not verb_args.get("skip_skill", False):
-            actions.extend(self._install_skills(verb_args, warnings))
-
-        if verb_args.get("skip_settings", False):
-            actions.append(
-                {
-                    "component": "settings",
-                    "status": "skipped",
-                    "path": "",
-                    "message": "agent settings update skipped",
-                }
-            )
-        else:
-            actions.append(
-                {
-                    "component": "settings",
-                    "status": "noop",
-                    "path": "",
-                    "message": "no agent settings update is required",
-                }
-            )
+        if not dry_run:
+            actions = [self._execute_install_action(action) for action in actions]
 
         return CommandResult(
             success=True,
             data={
                 "action": "install",
-                "status": "ok",
+                "status": "planned" if dry_run else "ok",
                 "bin_dir": verb_args.get("bin_dir"),
                 "skill_dir": verb_args.get("skill_dir"),
                 "skip_cli": verb_args.get("skip_cli", False),
                 "skip_skill": verb_args.get("skip_skill", False),
                 "skip_settings": verb_args.get("skip_settings", False),
+                "dry_run": dry_run,
                 "installed": actions,
             },
             data_type="install_result",
-            metadata={"message": "Install completed", "workspace_display_map": {}},
+            metadata={
+                "message": "Install plan" if dry_run else "Install completed",
+                "workspace_display_map": {},
+            },
             warnings=warnings,
         )
 
-    def _install_cli(self, bin_dir: str | None) -> dict[str, str]:
-        target_dir = Path(bin_dir or "~/.local/bin").expanduser()
-        target_dir.mkdir(parents=True, exist_ok=True)
-        source = self._find_cli_source()
-        target = target_dir / "cagelens"
-        shutil.copy2(source, target)
-        target.chmod(target.stat().st_mode | 0o755)
-        return {
-            "component": "cli",
-            "status": "installed",
-            "path": str(target),
-            "message": "installed cagelens CLI wrapper",
-        }
-
-    def _install_skills(
+    def _build_install_plan(
         self, verb_args: dict[str, Any], warnings: list[str]
     ) -> list[dict[str, str]]:
+        actions = []
+        if not verb_args.get("skip_cli", False):
+            actions.append(self._plan_cli(verb_args.get("bin_dir")))
+        if not verb_args.get("skip_skill", False):
+            actions.extend(self._plan_skills(verb_args, warnings))
+        actions.append(self._plan_settings(verb_args))
+        return actions
+
+    def _plan_cli(self, bin_dir: str | None) -> dict[str, str]:
+        target_dir = Path(bin_dir or "~/.local/bin").expanduser()
+        target = target_dir / "cagelens"
+        return {
+            "component": "cli",
+            "agent": "",
+            "status": "planned",
+            "path": str(target),
+            "message": "install cagelens CLI wrapper",
+        }
+
+    def _plan_skills(self, verb_args: dict[str, Any], warnings: list[str]) -> list[dict[str, str]]:
         skill_dir = verb_args.get("skill_dir")
         if skill_dir:
-            return [self._install_skill_package("custom", Path(skill_dir).expanduser())]
+            return [self._plan_skill_package("custom", Path(skill_dir).expanduser())]
 
         agent = verb_args.get("agent")
         agents = [agent] if agent else list(self.AGENT_SKILL_DIRS)
@@ -106,8 +95,55 @@ class InstallHandler(VerbHandler):
                 warnings.append(f"Install skipped for unsupported agent: {target_agent}")
                 continue
             target_dir = self._resolve_agent_skill_dir(target_agent, target_template)
-            actions.append(self._install_skill_package(target_agent, target_dir))
+            actions.append(self._plan_skill_package(target_agent, target_dir))
         return actions
+
+    def _plan_skill_package(self, agent: str, target_dir: Path) -> dict[str, str]:
+        return {
+            "component": "skill",
+            "agent": agent,
+            "status": "planned",
+            "path": str(target_dir),
+            "message": f"install {self.SKILL_NAME} skill package",
+        }
+
+    def _plan_settings(self, verb_args: dict[str, Any]) -> dict[str, str]:
+        if verb_args.get("skip_settings", False):
+            return {
+                "component": "settings",
+                "agent": "",
+                "status": "skipped",
+                "path": "",
+                "message": "legacy agent settings step skipped",
+            }
+        return {
+            "component": "settings",
+            "agent": "",
+            "status": "noop",
+            "path": "",
+            "message": "no agent settings update is required",
+        }
+
+    def _execute_install_action(self, action: dict[str, str]) -> dict[str, str]:
+        if action["component"] == "cli" and action["status"] == "planned":
+            return self._install_cli(Path(action["path"]))
+        if action["component"] == "skill" and action["status"] == "planned":
+            return self._install_skill_package(action["agent"], Path(action["path"]))
+        return action
+
+    def _install_cli(self, target: Path) -> dict[str, str]:
+        target_dir = target.parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+        source = self._find_cli_source()
+        shutil.copy2(source, target)
+        target.chmod(target.stat().st_mode | 0o755)
+        return {
+            "component": "cli",
+            "agent": "",
+            "status": "installed",
+            "path": str(target),
+            "message": "installed cagelens CLI wrapper",
+        }
 
     def _install_skill_package(self, agent: str, target_dir: Path) -> dict[str, str]:
         target_dir.mkdir(parents=True, exist_ok=True)

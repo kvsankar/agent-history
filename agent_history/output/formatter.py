@@ -131,12 +131,17 @@ def _format_project_workspaces(
 
 
 def _stats_group_list(metadata: dict[str, Any]) -> list[str]:
+    default_groups = ["agent", "home", "workspace"]
     group_by = metadata.get("group_by") or []
     if isinstance(group_by, str):
         group_list = [group_by]
     else:
         group_list = list(group_by)
-    return group_list or ["agent", "home", "workspace"]
+    result = list(default_groups)
+    for group in group_list:
+        if group not in result:
+            result.append(group)
+    return result
 
 
 def _stats_count(value: Any, key: str) -> Any:
@@ -148,64 +153,335 @@ def _stats_count(value: Any, key: str) -> Any:
     return value
 
 
+def _format_scope_request(scope_request: dict[str, Any] | None) -> str:
+    if not isinstance(scope_request, dict):
+        return "resolved scope"
+    values = [str(value) for value in scope_request.get("values", [])]
+    scope_type = scope_request.get("type")
+    joined = ", ".join(values)
+    if scope_type == "project":
+        return f"project {joined}" if len(values) == 1 else f"projects {joined}"
+    if scope_type == "current_project":
+        return f"current project {joined}"
+    if scope_type == "all_workspaces":
+        return "all workspaces"
+    if scope_type == "workspace_glob":
+        return f"workspace glob {joined}" if len(values) == 1 else f"workspace globs {joined}"
+    if scope_type == "workspace_regex":
+        return f"workspace regex {joined}" if len(values) == 1 else f"workspace regexes {joined}"
+    if scope_type == "workspace_name":
+        return (
+            f"workspace name contains {joined}"
+            if len(values) == 1
+            else f"workspace name contains any of {joined}"
+        )
+    if scope_type == "workspace_path":
+        return f"workspace path {joined}" if len(values) == 1 else f"workspace paths {joined}"
+    if scope_type == "current_workspace":
+        return f"current workspace {joined}"
+    if scope_type == "cached_default":
+        return "cached local metrics"
+    return "resolved scope"
+
+
+def _format_scope_items(values: Any, *, max_items: int = 4) -> str:
+    if not values:
+        return "0"
+    items = [str(value) for value in values]
+    count = len(items)
+    if count <= max_items:
+        return f"{count} ({', '.join(items)})"
+    shown = ", ".join(items[:max_items])
+    return f"{count} ({shown}, ...)"
+
+
+def _append_scope_summary(
+    lines: list[str],
+    stats: Any,
+    metadata: dict[str, Any],
+) -> None:
+    homes = metadata.get("homes") or []
+    workspaces = metadata.get("workspaces") or []
+    if isinstance(stats, dict):
+        total_sessions = stats.get("total_sessions", stats.get("sessions"))
+    else:
+        total_sessions = metadata.get("total_sessions")
+
+    lines.append("Scope:")
+    lines.append(f"  Request: {_format_scope_request(metadata.get('scope_request'))}")
+    lines.append(f"  Homes: {_format_scope_items(homes)}")
+    lines.append(f"  Workspaces: {_format_scope_items(workspaces)}")
+    if total_sessions is not None:
+        lines.append(f"  Sessions: {total_sessions}")
+    lines.append("")
+
+
+def _format_stat_number(value: Any, *, human: bool = False) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if not human:
+        return str(int(number)) if number.is_integer() else str(number)
+    abs_number = abs(number)
+    for suffix, divisor in (("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
+        if abs_number >= divisor:
+            formatted = number / divisor
+            return f"{formatted:.1f}{suffix}".replace(".0", "")
+    return str(int(number)) if number.is_integer() else f"{number:.1f}"
+
+
+def _format_duration(value: Any, *, human: bool = False) -> str:
+    try:
+        seconds = int(float(value))
+    except (TypeError, ValueError):
+        return str(value)
+    if not human:
+        return f"{seconds}s"
+    days, remainder = divmod(seconds, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
 def _append_simple_stats_group(
-    lines: list[str], *, title: str, values: dict[str, Any], key: str = "sessions"
+    lines: list[str],
+    *,
+    title: str,
+    values: dict[str, Any],
+    key: str = "sessions",
+    human: bool = False,
 ) -> None:
     if not values:
         return
     lines.append(f"{title}:")
     for label, value in sorted(values.items()):
-        lines.append(f"  {label}: {_stats_count(value, key)}")
+        lines.append(f"  {label}: {_format_stat_number(_stats_count(value, key), human=human)}")
     lines.append("")
 
 
 def _append_workspace_stats_group(
-    lines: list[str], stats: StatsDict, workspace_display_map: dict[str, str]
+    lines: list[str],
+    stats: StatsDict,
+    workspace_display_map: dict[str, str],
+    *,
+    limit: int | str | None = None,
+    human: bool = False,
 ) -> None:
     by_workspace = stats.get("by_workspace", {})
     if not by_workspace:
         return
     lines.append("By Workspace:")
     sorted_ws = sorted(by_workspace.items(), key=lambda x: -_stats_count(x[1], "sessions"))
-    for ws, value in sorted_ws[:10]:
+    display_limit = len(sorted_ws) if limit == "all" else (limit or 10)
+    for ws, value in sorted_ws[:display_limit]:
         ws_display = _workspace_display({"workspace": ws}, display_map=workspace_display_map)
         if len(ws_display) > 50:
             ws_display = "..." + ws_display[-47:]
-        lines.append(f"  {ws_display}: {_stats_count(value, 'sessions')}")
-    if len(by_workspace) > 10:
-        lines.append(f"  ... and {len(by_workspace) - 10} more")
+        count = _format_stat_number(_stats_count(value, "sessions"), human=human)
+        lines.append(f"  {ws_display}: {count}")
+    if len(by_workspace) > display_limit:
+        lines.append(
+            f"  ... and {len(by_workspace) - display_limit} more "
+            "(use --top-ws all or --format json)"
+        )
     lines.append("")
 
 
-def _append_model_stats_group(lines: list[str], stats: StatsDict) -> None:
+def _append_model_stats_group(lines: list[str], stats: StatsDict, *, human: bool = False) -> None:
     by_model = stats.get("by_model", {})
     if not by_model:
         return
     lines.append("By Model:")
     for model, value in sorted(by_model.items()):
         if isinstance(value, dict):
-            lines.append(
-                f"  {model}: {value.get('messages', 0)} messages"
-                f", {value.get('tokens', 0)} tokens"
-            )
+            messages = _format_stat_number(value.get("messages", 0), human=human)
+            tokens = _format_stat_number(value.get("tokens", 0), human=human)
+            lines.append(f"  {model}: {messages} messages, {tokens} tokens")
         else:
             lines.append(f"  {model}: {value}")
     lines.append("")
 
 
-def _append_tool_stats_group(lines: list[str], stats: StatsDict) -> None:
+def _append_tool_stats_group(lines: list[str], stats: StatsDict, *, human: bool = False) -> None:
     by_tool = stats.get("by_tool", {})
     if not by_tool:
         return
     lines.append("By Tool:")
     for tool, value in sorted(by_tool.items()):
         if isinstance(value, dict):
-            lines.append(
-                f"  {tool}: {value.get('uses', 0)} uses" f", {value.get('errors', 0)} errors"
-            )
+            uses = _format_stat_number(value.get("uses", 0), human=human)
+            errors = _format_stat_number(value.get("errors", 0), human=human)
+            lines.append(f"  {tool}: {uses} uses, {errors} errors")
         else:
             lines.append(f"  {tool}: {value}")
     lines.append("")
+
+
+def _append_time_stats_group(lines: list[str], stats: StatsDict, *, human: bool = False) -> None:
+    time_stats = stats.get("time_stats", {})
+    if not isinstance(time_stats, dict):
+        return
+    by_day = time_stats.get("by_day", {})
+    if not isinstance(by_day, dict) or not by_day:
+        return
+    lines.append("Time by Day:")
+    for day, seconds in sorted(by_day.items()):
+        lines.append(f"  {day}: {_format_duration(seconds, human=human)}")
+    lines.append("")
+
+
+def _append_stats_dashboard(lines: list[str], stats: StatsDict, *, human: bool = False) -> None:
+    total_sessions = stats.get("total_sessions", stats.get("sessions", 0))
+    total_messages = stats.get("total_messages", stats.get("messages", 0))
+    lines.append(
+        "Sessions: "
+        f"{_format_stat_number(total_sessions, human=human)}  "
+        f"Messages: {_format_stat_number(total_messages, human=human)}"
+    )
+
+    main_sessions = stats.get("main_sessions", 0)
+    agent_sessions = stats.get("agent_sessions", 0)
+    if main_sessions or agent_sessions:
+        lines.append(
+            "Session Types: "
+            f"main {_format_stat_number(main_sessions, human=human)}, "
+            f"agent {_format_stat_number(agent_sessions, human=human)}"
+        )
+
+    user_messages = stats.get("user_messages", 0)
+    assistant_messages = stats.get("assistant_messages", 0)
+    if user_messages or assistant_messages:
+        lines.append(
+            "Message Types: "
+            f"user {_format_stat_number(user_messages, human=human)}, "
+            f"assistant {_format_stat_number(assistant_messages, human=human)}"
+        )
+
+    tokens = stats.get("tokens", {})
+    if isinstance(tokens, dict) and any(tokens.values()):
+        lines.append(
+            "Tokens: "
+            f"input {_format_stat_number(tokens.get('input', 0), human=human)}, "
+            f"output {_format_stat_number(tokens.get('output', 0), human=human)}, "
+            f"cache read {_format_stat_number(tokens.get('cache_read', 0), human=human)}, "
+            f"cache create {_format_stat_number(tokens.get('cache_creation', 0), human=human)}"
+        )
+
+    by_tool = stats.get("by_tool", {})
+    if isinstance(by_tool, dict) and by_tool:
+        tool_uses = sum(_stats_count(value, "uses") or 0 for value in by_tool.values())
+        tool_errors = sum(
+            value.get("errors", 0) for value in by_tool.values() if isinstance(value, dict)
+        )
+        lines.append(
+            "Tools: "
+            f"{_format_stat_number(tool_uses, human=human)} uses, "
+            f"{_format_stat_number(tool_errors, human=human)} errors"
+        )
+
+    by_model = stats.get("by_model", {})
+    if isinstance(by_model, dict) and by_model:
+        top_models = ", ".join(str(model) for model in list(by_model)[:3])
+        suffix = f" ({top_models})" if top_models else ""
+        lines.append(f"Models: {len(by_model)}{suffix}")
+
+    time_stats = stats.get("time_stats", {})
+    if isinstance(time_stats, dict) and time_stats:
+        total_time = time_stats.get("total_duration_seconds", 0)
+        sessions_with_time = time_stats.get("sessions_with_time", 0)
+        average_time = time_stats.get("average_duration_seconds", 0)
+        lines.append(
+            "Time: "
+            f"total {_format_duration(total_time, human=human)}, "
+            f"avg {_format_duration(average_time, human=human)}, "
+            f"sessions {_format_stat_number(sessions_with_time, human=human)}"
+        )
+
+    lines.append("")
+
+
+def _append_stats_guidance(
+    lines: list[str],
+    stats: StatsDict,
+    metadata: dict[str, Any],
+) -> None:
+    coverage = [
+        "sessions",
+        "messages",
+        "tokens",
+        "tools",
+        "models",
+        "time",
+        "agents",
+        "homes",
+        "workspaces",
+    ]
+    if stats.get("by_day"):
+        coverage.append("days")
+    lines.append("Metric Coverage:")
+    lines.append(f"  summarized: {', '.join(coverage)}")
+
+    drilldowns = [
+        "--models for per-model messages/tokens",
+        "--tools for per-tool uses/errors",
+        "--time for time by day",
+        "--by-day for session/message counts by day",
+        "--top-ws all for all workspace rows",
+        "--format json for the full metrics payload",
+    ]
+    sync_stats = metadata.get("sync_stats")
+    if isinstance(sync_stats, dict) and sync_stats.get("errors"):
+        drilldowns.append("--sync --force to retry failed metric syncs")
+    lines.append("Drilldowns:")
+    for item in drilldowns:
+        lines.append(f"  {item}")
+    lines.append("")
+
+
+def _rollup_columns(metadata: dict[str, Any]) -> list[str]:
+    dimensions = [str(dimension).upper() for dimension in metadata.get("dimensions", [])]
+    metric = metadata.get("metric") or "all"
+    columns = list(dimensions)
+    if metric in ("time", "all"):
+        columns.extend(["TIME_HOURS", "TIME_SECONDS"])
+    if metric in ("tokens", "all"):
+        columns.extend(["INPUT_TOKENS", "OUTPUT_TOKENS", "CACHE_READ", "CACHE_CREATE"])
+    if metric == "all":
+        columns.extend(["SESSIONS", "MESSAGES"])
+    return columns
+
+
+def _rollup_row_values(row: dict[str, Any], metadata: dict[str, Any]) -> list[str]:
+    dimensions = [str(dimension) for dimension in metadata.get("dimensions", [])]
+    metric = metadata.get("metric") or "all"
+    values = [str(row.get(dimension, "")) for dimension in dimensions]
+    if metric in ("time", "all"):
+        time_hours = row.get("time_hours")
+        values.append("" if time_hours is None else f"{float(time_hours):.2f}")
+        time_seconds = row.get("time_seconds")
+        values.append("" if time_seconds is None else str(int(time_seconds)))
+    if metric in ("tokens", "all"):
+        values.extend(
+            [
+                str(row.get("input_tokens", 0)),
+                str(row.get("output_tokens", 0)),
+                str(row.get("cache_read_tokens", 0)),
+                str(row.get("cache_creation_tokens", 0)),
+            ]
+        )
+    if metric == "all":
+        values.extend([str(row.get("sessions", 0)), str(row.get("messages", 0))])
+    return values
 
 
 class DataFormatter(ABC):
@@ -244,10 +520,12 @@ class TableFormatter(DataFormatter):
             "workspace_list": self._format_workspace_list,
             "home_list": self._format_home_list,
             "stats": self._format_stats,
+            "stats_rollup": self._format_stats_rollup,
             "project_list": self._format_project_list,
             "project_details": self._format_project_details,
             "exported_files": self._format_exported_files,
             "gemini_index": self._format_gemini_index,
+            "install_result": self._format_install_result,
         }
 
     def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
@@ -257,11 +535,13 @@ class TableFormatter(DataFormatter):
             # Some formatters need metadata, some don't
             if data_type in (
                 "stats",
+                "stats_rollup",
                 "project_details",
                 "exported_files",
                 "project_list",
                 "home_list",
                 "gemini_index",
+                "install_result",
             ):
                 return formatter(data, metadata)
             return formatter(data)
@@ -330,32 +610,68 @@ class TableFormatter(DataFormatter):
         workspace_display_map = (
             metadata.get("workspace_display_map") or stats.get("workspace_display_map") or {}
         )
+        human = bool(metadata.get("human"))
+        top_ws = metadata.get("top_ws")
 
-        # Summary line
-        total_sessions = stats.get("total_sessions", stats.get("sessions", 0))
-        total_messages = stats.get("total_messages", stats.get("messages", 0))
-        lines.append(f"Sessions: {total_sessions}  Messages: {total_messages}")
-        lines.append("")
+        _append_scope_summary(lines, stats, metadata)
+        _append_stats_dashboard(lines, stats, human=human)
 
         group_list = _stats_group_list(metadata)
         if "agent" in group_list:
-            _append_simple_stats_group(lines, title="By Agent", values=stats.get("by_agent", {}))
+            _append_simple_stats_group(
+                lines,
+                title="By Agent",
+                values=stats.get("by_agent", {}),
+                human=human,
+            )
 
         if "home" in group_list:
-            _append_simple_stats_group(lines, title="By Home", values=stats.get("by_home", {}))
+            _append_simple_stats_group(
+                lines,
+                title="By Home",
+                values=stats.get("by_home", {}),
+                human=human,
+            )
 
         if "workspace" in group_list:
-            _append_workspace_stats_group(lines, stats, workspace_display_map)
+            _append_workspace_stats_group(
+                lines,
+                stats,
+                workspace_display_map,
+                limit=top_ws,
+                human=human,
+            )
 
         if "model" in group_list:
-            _append_model_stats_group(lines, stats)
+            _append_model_stats_group(lines, stats, human=human)
 
         if "tool" in group_list:
-            _append_tool_stats_group(lines, stats)
+            _append_tool_stats_group(lines, stats, human=human)
 
         if "day" in group_list:
-            _append_simple_stats_group(lines, title="By Day", values=stats.get("by_day", {}))
+            _append_simple_stats_group(
+                lines,
+                title="By Day",
+                values=stats.get("by_day", {}),
+                human=human,
+            )
 
+        if metadata.get("include_time"):
+            _append_time_stats_group(lines, stats, human=human)
+
+        _append_stats_guidance(lines, stats, metadata)
+
+        return "\n".join(lines)
+
+    def _format_stats_rollup(self, rows: list[dict[str, Any]], metadata: dict[str, Any]) -> str:
+        """Format stats rollup rows as a stable table."""
+        if not rows:
+            return "No cached stats matched this scope. Run with --sync to refresh."
+        headers = _rollup_columns(metadata)
+        table_rows = [_rollup_row_values(row, metadata) for row in rows]
+        lines: list[str] = []
+        _append_scope_summary(lines, rows, metadata)
+        lines.append(self._render_table(headers, table_rows))
         return "\n".join(lines)
 
     def _format_project_list(
@@ -447,6 +763,26 @@ class TableFormatter(DataFormatter):
             lines.append(self._render_table(["STATUS", "HASH", "PATH"], rows))
         return "\n".join(lines)
 
+    def _format_install_result(self, data: dict[str, Any], metadata: dict[str, Any]) -> str:
+        """Format install result rows."""
+        actions = data.get("installed", [])
+        if not actions:
+            return str(metadata.get("message") or "No install actions.")
+
+        heading = str(metadata.get("message") or "Install")
+        rows = [
+            [
+                str(item.get("component", "")),
+                str(item.get("agent", "")),
+                str(item.get("status", "")),
+                str(item.get("path", "")),
+            ]
+            for item in actions
+        ]
+        return "\n".join(
+            [heading, "", self._render_table(["COMPONENT", "AGENT", "STATUS", "PATH"], rows)]
+        )
+
     def _render_table(self, headers: list[str], rows: list[list[str]]) -> str:
         """Render headers and rows as ASCII table."""
         if not rows:
@@ -532,14 +868,16 @@ class TsvFormatter(DataFormatter):
             "home_list": self._format_home_list,
             "project_list": self._format_project_list,
             "stats": self._format_stats,
+            "stats_rollup": self._format_stats_rollup,
             "gemini_index": self._format_gemini_index,
+            "install_result": self._format_install_result,
         }
 
     def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
         """Format data as TSV."""
         formatter = self._formatters.get(data_type)
         if formatter:
-            if data_type in ("project_list", "home_list"):
+            if data_type in ("project_list", "home_list", "stats", "stats_rollup"):
                 return formatter(data, metadata)
             return formatter(data)
         # Fallback to JSON for complex types
@@ -633,24 +971,91 @@ class TsvFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_stats(self, stats: StatsDict) -> str:
-        """Format stats workspace breakdown as TSV."""
-        rows = stats.get("workspace_rows", [])
-        if not rows:
-            return ""
-        headers = ["HOME", "WORKSPACE", "SESSIONS", "MESSAGES"]
+    def _format_stats(self, stats: StatsDict, metadata: dict[str, Any] | None = None) -> str:
+        """Format stats as machine-readable TSV records."""
+        metadata = metadata or {}
+        workspace_display_map = (
+            metadata.get("workspace_display_map") or stats.get("workspace_display_map") or {}
+        )
+        headers = ["SECTION", "NAME", "SESSIONS", "MESSAGES", "VALUE", "EXTRA"]
+        lines = ["\t".join(headers)]
+
+        lines.append(
+            "\t".join(
+                [
+                    "summary",
+                    "total",
+                    str(stats.get("total_sessions", stats.get("sessions", 0))),
+                    str(stats.get("total_messages", stats.get("messages", 0))),
+                    "",
+                    "",
+                ]
+            )
+        )
+
+        tokens = stats.get("tokens", {})
+        if isinstance(tokens, dict):
+            for key in ("input", "output", "cache_read", "cache_creation"):
+                lines.append("\t".join(["token", key, "", "", str(tokens.get(key, 0)), ""]))
+
+        for section, values, count_key in (
+            ("agent", stats.get("by_agent", {}), "sessions"),
+            ("home", stats.get("by_home", {}), "sessions"),
+            ("workspace", stats.get("by_workspace", {}), "sessions"),
+            ("model", stats.get("by_model", {}), "messages"),
+            ("tool", stats.get("by_tool", {}), "uses"),
+            ("day", stats.get("by_day", {}), "sessions"),
+        ):
+            if not isinstance(values, dict):
+                continue
+            section_items = list(values.items())
+            if section == "workspace" and isinstance(metadata.get("top_ws"), int):
+                section_items = section_items[: metadata["top_ws"]]
+            for name, value in section_items:
+                display_name = str(name)
+                if section == "workspace":
+                    display_name = _workspace_display(
+                        {"workspace": str(name)}, display_map=workspace_display_map
+                    )
+                sessions = ""
+                messages = ""
+                metric = ""
+                extra = ""
+                if isinstance(value, dict):
+                    sessions = str(value.get("sessions", "")) if "sessions" in value else ""
+                    messages = str(value.get("messages", "")) if "messages" in value else ""
+                    metric = str(_stats_count(value, count_key))
+                    if section == "tool":
+                        extra = f"errors={value.get('errors', 0)}"
+                    elif section == "model":
+                        extra = f"tokens={value.get('tokens', 0)}"
+                else:
+                    metric = str(value)
+                lines.append("\t".join([section, display_name, sessions, messages, metric, extra]))
+
+        time_stats = stats.get("time_stats", {})
+        if isinstance(time_stats, dict) and time_stats:
+            for key in (
+                "total_duration_seconds",
+                "average_duration_seconds",
+                "sessions_with_time",
+            ):
+                lines.append("\t".join(["time", key, "", "", str(time_stats.get(key, 0)), ""]))
+            by_day = time_stats.get("by_day", {})
+            if isinstance(by_day, dict):
+                for day, seconds in by_day.items():
+                    lines.append("\t".join(["time_day", str(day), "", "", str(seconds), ""]))
+        return "\n".join(lines)
+
+    def _format_stats_rollup(
+        self, rows: list[dict[str, Any]], metadata: dict[str, Any] | None = None
+    ) -> str:
+        """Format stats rollup rows as TSV."""
+        metadata = metadata or {}
+        headers = _rollup_columns(metadata)
         lines = ["\t".join(headers)]
         for row in rows:
-            lines.append(
-                "\t".join(
-                    [
-                        str(row.get("home", "")),
-                        _workspace_display(row),
-                        str(row.get("sessions", 0)),
-                        str(row.get("messages", 0)),
-                    ]
-                )
-            )
+            lines.append("\t".join(_rollup_row_values(row, metadata)))
         return "\n".join(lines)
 
     def _format_gemini_index(self, data: dict[str, Any]) -> str:
@@ -667,6 +1072,25 @@ class TsvFormatter(DataFormatter):
         lines.extend(
             f"{item.get('status', '')}\t{item.get('hash', '')}\t{item.get('path', '')}"
             for item in mappings
+        )
+        return "\n".join(lines)
+
+    def _format_install_result(self, data: dict[str, Any]) -> str:
+        """Format install result as TSV."""
+        actions = data.get("installed", [])
+        if not actions:
+            return ""
+        lines = ["COMPONENT\tAGENT\tSTATUS\tPATH"]
+        lines.extend(
+            "\t".join(
+                [
+                    str(item.get("component", "")),
+                    str(item.get("agent", "")),
+                    str(item.get("status", "")),
+                    str(item.get("path", "")),
+                ]
+            )
+            for item in actions
         )
         return "\n".join(lines)
 

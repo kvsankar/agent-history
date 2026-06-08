@@ -15,8 +15,8 @@ The new implementation uses EXACT matching by default:
 from __future__ import annotations
 
 import fnmatch
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+import re
+from typing import TYPE_CHECKING, Callable
 
 from agent_history.scope.context import ResolutionError
 from agent_history.scope.types import (
@@ -57,7 +57,7 @@ class WorkspaceStage:
     def __init__(
         self,
         context: ResolutionContext,
-        enumerate_workspaces_fn: Optional[Callable[[str], List[str]]] = None,
+        enumerate_workspaces_fn: Callable[[str], list[str]] | None = None,
     ):
         """
         Initialize the workspace stage with a resolution context.
@@ -73,7 +73,7 @@ class WorkspaceStage:
             enumerate_workspaces_fn or self._enumerate_workspaces_default
         )
 
-    def resolve(self, scope: TemplateScope) -> Tuple[TemplateScope, List[ResolutionError]]:
+    def resolve(self, scope: TemplateScope) -> tuple[TemplateScope, list[ResolutionError]]:
         """
         Resolve WorkspaceSpecs to concrete workspace paths.
 
@@ -86,7 +86,7 @@ class WorkspaceStage:
             - List of errors
         """
         result: TemplateScope = []
-        errors: List[ResolutionError] = []
+        errors: list[ResolutionError] = []
 
         for record in scope:
             if isinstance(record, ProjectRecord):
@@ -135,7 +135,7 @@ class WorkspaceStage:
 
     def _expand_workspace_spec(
         self, spec: WorkspaceSpec, home: str
-    ) -> Tuple[List[str], Optional[ResolutionError]]:
+    ) -> tuple[list[str], ResolutionError | None]:
         """
         Expand a WorkspaceSpec to a list of concrete workspace paths.
 
@@ -211,7 +211,7 @@ class WorkspaceStage:
                 suggestions=[],
             )
 
-    def _enumerate_workspaces(self, home: str) -> List[str]:
+    def _enumerate_workspaces(self, home: str) -> list[str]:
         """
         List all workspaces in a home.
 
@@ -226,7 +226,7 @@ class WorkspaceStage:
         """
         return self._enumerate_workspaces_fn(home)
 
-    def _enumerate_workspaces_default(self, home: str) -> List[str]:
+    def _enumerate_workspaces_default(self, home: str) -> list[str]:
         """
         Default implementation to enumerate workspaces.
 
@@ -243,7 +243,7 @@ class WorkspaceStage:
 
         return self._inventory.list_workspaces(home)
 
-    def _match_workspaces(self, home: str, pattern: str, match_type: MatchType) -> List[str]:
+    def _match_workspaces(self, home: str, pattern: str, match_type: MatchType) -> list[str]:
         """
         Match workspaces against a pattern with specified semantics.
 
@@ -255,6 +255,7 @@ class WorkspaceStage:
         - PREFIX: workspace.startswith(pattern)
         - CONTAINS: pattern.lower() in workspace.lower() (old buggy behavior)
         - GLOB: fnmatch.fnmatch(workspace, pattern)
+        - REGEX: re.search(pattern, workspace)
 
         Args:
             home: Home identifier to search in.
@@ -300,6 +301,13 @@ class WorkspaceStage:
         elif match_type == MatchType.GLOB:
             # Glob/fnmatch-style matching
             return [ws for ws in all_workspaces if fnmatch.fnmatch(ws, pattern)]
+
+        elif match_type == MatchType.REGEX:
+            try:
+                regex = re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"Invalid workspace regex {pattern!r}: {exc}") from exc
+            return [ws for ws in all_workspaces if regex.search(ws)]
 
         else:
             # Unknown match type - default to exact
@@ -347,7 +355,7 @@ class WorkspaceStage:
             base_path=base_path,
         )
 
-    def _resolve_gemini_hash(self, hash_value: str) -> Optional[str]:
+    def _resolve_gemini_hash(self, hash_value: str) -> str | None:
         """
         Resolve a Gemini hash to a workspace path.
 

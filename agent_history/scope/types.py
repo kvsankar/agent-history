@@ -45,6 +45,9 @@ class MatchType(Enum):
     GLOB = "glob"
     """Glob/fnmatch-style matching: fnmatch.fnmatch(workspace, pattern). For wildcards."""
 
+    REGEX = "regex"
+    """Regular-expression matching: re.search(pattern, workspace). For advanced filters."""
+
     def __str__(self) -> str:
         return self.value
 

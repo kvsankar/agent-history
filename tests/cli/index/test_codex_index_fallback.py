@@ -15,7 +15,9 @@ pytestmark = pytest.mark.v1
 def _write_codex_session(tmp_codex_dir: Path, cwd: str) -> Path:
     """Create a minimal Codex session with the given cwd."""
     builder = CodexSessionBuilder(cwd=cwd, session_id="fallback-test")
-    builder.add_user_message("hi").add_assistant_message("hello").add_token_count(100, 15, cached=40)
+    builder.add_user_message("hi").add_assistant_message("hello").add_token_count(
+        100, 15, cached=40
+    )
     return builder.write_to(tmp_codex_dir, date_str="2025-01-15")
 
 
@@ -66,7 +68,17 @@ def test_pattern_filter_with_fallback_workspace(isolated_home: Dict[str, Path]) 
     _write_index(isolated_home["history_dir"], {str(session_file): ""})
 
     result = run_cli_subprocess(
-        ["--agent", "codex", "session", "list", "react", "--local", "--format", "json"],
+        [
+            "--agent",
+            "codex",
+            "session",
+            "list",
+            "--glob",
+            "*react*",
+            "--local",
+            "--format",
+            "json",
+        ],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )
@@ -74,7 +86,17 @@ def test_pattern_filter_with_fallback_workspace(isolated_home: Dict[str, Path]) 
     assert result.stdout.strip(), "Expected sessions when pattern matches"
 
     result2 = run_cli_subprocess(
-        ["--agent", "codex", "session", "list", "nonexistent", "--local", "--format", "json"],
+        [
+            "--agent",
+            "codex",
+            "session",
+            "list",
+            "--glob",
+            "*nonexistent*",
+            "--local",
+            "--format",
+            "json",
+        ],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )

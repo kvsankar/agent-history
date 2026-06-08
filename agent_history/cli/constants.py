@@ -13,8 +13,6 @@ from __future__ import annotations
 # Flags that require a value argument (used in argument preprocessing)
 FLAGS_WITH_VALUES = frozenset(
     {
-        "-n",
-        "--name",
         "--format",
         "--since",
         "--until",
@@ -26,6 +24,8 @@ FLAGS_WITH_VALUES = frozenset(
         "--split",
         "--jobs",
         "--home",
+        "--glob",
+        "--regex",
         "-r",
         "--remote",
         "--project",
@@ -33,6 +33,8 @@ FLAGS_WITH_VALUES = frozenset(
         "--session-id",
         "--by",
         "--top-ws",
+        "--metric",
+        "--top",
         "--bin-dir",
         "--skill-dir",
         "--markdown-level",
@@ -49,6 +51,7 @@ RESOURCE_SUBCOMMANDS = {
     "session": frozenset({"list", "show", "export", "stats"}),
     "project": frozenset({"list", "show", "add", "remove", "export", "stats"}),
     "home": frozenset({"list", "show", "add", "remove", "export", "stats"}),
+    "stats": frozenset({"summary", "rollup"}),
     "gemini-index": frozenset({"index"}),
     "install": frozenset({"run"}),
     "reset": frozenset({"run"}),
@@ -101,6 +104,7 @@ RESOURCE_SESSION = "session"
 RESOURCE_WS = "ws"
 RESOURCE_PROJECT = "project"
 RESOURCE_HOME = "home"
+RESOURCE_STATS = "stats"
 RESOURCE_GEMINI_INDEX = "gemini-index"
 RESOURCE_INSTALL = "install"
 RESOURCE_RESET = "reset"

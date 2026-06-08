@@ -53,7 +53,7 @@ def test_session_export_default_output_dir_is_cagelens_exports(isolated_home):
     _write_claude_session(isolated_home["claude_dir"])
 
     result = run_cli_subprocess(
-        ["session", "export", "export-target", "--force"],
+        ["session", "export", "/home/user/export-target", "--force"],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )
@@ -87,7 +87,7 @@ def test_session_export_markdown_level_1_writes_compact_turns(isolated_home):
         [
             "session",
             "export",
-            "export-target",
+            "/home/user/export-target",
             "--markdown-level",
             "1",
             "--force",
@@ -120,7 +120,7 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
         [
             "session",
             "export",
-            "export-target",
+            "/home/user/export-target",
             "--format",
             "html",
             "--force",

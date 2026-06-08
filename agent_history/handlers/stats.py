@@ -11,8 +11,9 @@ from typing import Any, Dict
 
 from agent_history.core.workspaces import build_scope_metadata, build_workspace_rows
 from agent_history.handlers.base import CommandResult, VerbHandler
-from agent_history.scope.context import OutputArgs
+from agent_history.scope.context import OutputArgs, ResolutionContext, ScopeArgs
 from agent_history.scope.types import ConcreteScope
+from agent_history.utils.paths import decode_workspace_path, is_encoded_workspace_name
 
 
 class SessionStatsHandler(VerbHandler):
@@ -64,6 +65,7 @@ class SessionStatsHandler(VerbHandler):
         include_time = verb_args.get("time", False)
         top_limit = verb_args.get("top")
         top_ws = verb_args.get("top_ws")
+        human = bool(verb_args.get("human"))
 
         # Compute statistics
         from agent_history.core.stats import apply_top_limit, compute_stats, overlay_metrics
@@ -75,6 +77,34 @@ class SessionStatsHandler(VerbHandler):
             group_list = [group_by]
 
         include_day = "day" in group_list
+
+        if verb_args.get("stats_mode") == "rollup":
+            from agent_history.storage.metrics import get_stats_rollup_from_db
+
+            filters = self._filters_from_scope(scope)
+            rows = get_stats_rollup_from_db(
+                filters=filters,
+                by=group_list or ["project"],
+                metric=verb_args.get("metric") or "all",
+                top=verb_args.get("top"),
+            )
+            metadata = build_scope_metadata(scope)
+            return CommandResult(
+                success=True,
+                data=rows,
+                data_type="stats_rollup",
+                metadata={
+                    "homes": metadata["homes"],
+                    "workspaces": metadata["workspaces"],
+                    "dimensions": group_list or ["project"],
+                    "metric": verb_args.get("metric") or "all",
+                    "cached": False,
+                    "scope_request": verb_args.get("scope_request"),
+                    "total_sessions": sum(len(record.sessions) for record in scope),
+                    "sync_stats": verb_args.get("sync_stats"),
+                },
+            )
+
         stats = compute_stats(scope, "day" if include_day else None, include_time)
 
         # Overlay parsed metrics from the database for the already-resolved scope.
@@ -101,8 +131,7 @@ class SessionStatsHandler(VerbHandler):
                 file_paths = self._scope_file_paths(scope)
                 db_stats = get_session_stats_from_db(file_paths=file_paths)
                 db_stats["by_tool"] = get_tool_usage_stats_from_db(file_paths=file_paths)
-                if include_time:
-                    db_stats["time_stats"] = get_time_stats_from_db(file_paths=file_paths)
+                db_stats["time_stats"] = get_time_stats_from_db(file_paths=file_paths)
                 stats = overlay_metrics(stats, db_stats)
             except Exception:
                 pass  # Fall back to scope-based stats if DB query fails
@@ -110,11 +139,6 @@ class SessionStatsHandler(VerbHandler):
         # Apply top limit to breakdowns if specified
         if top_limit:
             stats = apply_top_limit(stats, top_limit)
-
-        if top_ws:
-            by_workspace = stats.get("by_workspace")
-            if isinstance(by_workspace, dict):
-                stats["by_workspace"] = dict(list(by_workspace.items())[:top_ws])
 
         stats["total_sessions"] = stats.get("sessions", 0)
         stats["total_messages"] = stats.get("messages", 0)
@@ -131,7 +155,7 @@ class SessionStatsHandler(VerbHandler):
                         "messages", row.get("messages", 0)
                     )
         workspace_rows.sort(key=lambda r: r["sessions"], reverse=True)
-        if top_ws:
+        if isinstance(top_ws, int):
             workspace_rows = workspace_rows[:top_ws]
         stats["workspace_rows"] = workspace_rows
         stats["workspace_display_map"] = workspace_display_map
@@ -150,7 +174,121 @@ class SessionStatsHandler(VerbHandler):
                 "workspace_display_map": workspace_display_map,
                 "group_by": group_list,
                 "include_time": include_time,
+                "top_ws": top_ws,
+                "human": human,
+                "scope_request": verb_args.get("scope_request"),
+                "sync_stats": verb_args.get("sync_stats"),
             },
+        )
+
+    def execute_cached(
+        self,
+        scope_args: ScopeArgs,
+        context: ResolutionContext,
+        verb_args: Dict[str, Any],
+        output_args: OutputArgs,
+    ) -> CommandResult:
+        """Compute statistics directly from the metrics DB without raw session discovery."""
+        from agent_history.storage.metrics import (
+            get_metrics_db_path,
+            get_scoped_stats_from_db,
+            get_stats_rollup_from_db,
+        )
+
+        group_by = verb_args.get("by")
+        group_list: list[str] = []
+        if isinstance(group_by, list):
+            group_list = [value for value in group_by if value]
+        elif isinstance(group_by, str):
+            group_list = [group_by]
+
+        filters, metadata = self._cached_filters(scope_args, context)
+        metadata["scope_request"] = self._scope_request_metadata(scope_args, context)
+        if scope_args.agent:
+            filters["agent"] = scope_args.agent
+        if scope_args.since:
+            filters["since"] = scope_args.since
+        if scope_args.until:
+            filters["until"] = scope_args.until
+
+        db_path = get_metrics_db_path()
+        if not db_path.exists():
+            return CommandResult(
+                success=True,
+                data=self._empty_cached_stats(),
+                data_type="stats",
+                metadata={
+                    **metadata,
+                    "group_by": group_list,
+                    "include_time": bool(verb_args.get("time")),
+                    "top_ws": verb_args.get("top_ws"),
+                    "human": bool(verb_args.get("human")),
+                    "cached": True,
+                    "cache_warning": "No cached stats found. Run with --sync to build metrics.",
+                },
+                warnings=["No cached stats found. Run `cagelens stats --sync` to refresh."],
+            )
+
+        if verb_args.get("stats_mode") == "rollup":
+            dimensions = group_list or ["project"]
+            rows = get_stats_rollup_from_db(
+                filters=filters,
+                by=dimensions,
+                metric=verb_args.get("metric") or "all",
+                top=verb_args.get("top"),
+            )
+            scoped_summary = get_scoped_stats_from_db(filters=filters)
+            return CommandResult(
+                success=True,
+                data=rows,
+                data_type="stats_rollup",
+                metadata={
+                    **metadata,
+                    "homes": sorted(scoped_summary.get("by_home", {}).keys())
+                    or metadata.get("homes", []),
+                    "workspaces": sorted(scoped_summary.get("by_workspace", {}).keys())
+                    or metadata.get("workspaces", []),
+                    "dimensions": dimensions,
+                    "metric": verb_args.get("metric") or "all",
+                    "cached": True,
+                    "total_sessions": scoped_summary.get("total_sessions", 0),
+                },
+                warnings=["Using cached metrics. Run with `--sync` to refresh from source files."],
+            )
+
+        stats = get_scoped_stats_from_db(filters=filters, include_day="day" in group_list)
+        stats["workspace_rows"] = self._workspace_rows_from_db(stats)
+        stats["workspace_display_map"] = {
+            workspace: workspace for workspace in stats.get("by_workspace", {})
+        }
+        warnings = ["Using cached metrics. Run with `--sync` to refresh from source files."]
+        cache_warning = "Using cached metrics. Run with --sync to refresh from source files."
+        if not stats.get("total_sessions"):
+            warnings = [
+                "No cached stats matched this scope. Run `cagelens stats --sync` to refresh."
+            ]
+            cache_warning = "No cached stats matched this scope. Run with --sync to refresh."
+
+        metadata.update(
+            {
+                "homes": sorted(stats.get("by_home", {}).keys()) or metadata.get("homes", []),
+                "workspaces": sorted(stats.get("by_workspace", {}).keys())
+                or metadata.get("workspaces", []),
+                "workspace_display_map": stats["workspace_display_map"],
+                "group_by": group_list,
+                "include_time": bool(verb_args.get("time")),
+                "top_ws": verb_args.get("top_ws"),
+                "human": bool(verb_args.get("human")),
+                "cached": True,
+                "cache_warning": cache_warning,
+            }
+        )
+        return CommandResult(
+            success=True,
+            data=stats,
+            data_type="stats",
+            metadata=metadata,
+            warnings=warnings,
         )
 
     def _scope_file_paths(self, scope: ConcreteScope) -> list[str]:
@@ -162,3 +300,191 @@ class SessionStatsHandler(VerbHandler):
                 if file_value:
                     file_paths.append(str(file_value))
         return file_paths
+
+    def _cached_filters(
+        self, scope_args: ScopeArgs, context: ResolutionContext
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        filters: dict[str, Any] = {}
+        metadata: dict[str, Any] = {"homes": [], "workspaces": [], "workspace_display_map": {}}
+
+        if scope_args.projects:
+            homes, workspaces = self._project_filter(scope_args, context)
+            filters["homes"] = homes
+            filters["workspaces"] = workspaces
+            metadata["homes"] = homes
+            metadata["workspaces"] = workspaces
+            return filters, metadata
+
+        homes = self._selected_homes(scope_args, context)
+        filters["homes"] = homes
+        metadata["homes"] = homes
+
+        workspaces = self._workspace_values(scope_args, context)
+        if workspaces:
+            filters["workspaces"] = workspaces
+            metadata["workspaces"] = workspaces
+
+        if scope_args.glob_patterns:
+            filters["workspace_globs"] = list(scope_args.glob_patterns)
+        if scope_args.regex_patterns:
+            filters["workspace_regexes"] = list(scope_args.regex_patterns)
+        if scope_args.name_patterns:
+            filters["workspace_patterns"] = list(scope_args.name_patterns)
+
+        return filters, metadata
+
+    def _scope_request_metadata(
+        self, scope_args: ScopeArgs, context: ResolutionContext
+    ) -> dict[str, Any]:
+        """Describe the user's requested scope for human output."""
+        if scope_args.projects:
+            return {"type": "project", "values": list(scope_args.projects)}
+        if scope_args.all_workspaces:
+            return {"type": "all_workspaces", "values": []}
+        if scope_args.glob_patterns:
+            return {"type": "workspace_glob", "values": list(scope_args.glob_patterns)}
+        if scope_args.regex_patterns:
+            return {"type": "workspace_regex", "values": list(scope_args.regex_patterns)}
+        if scope_args.name_patterns:
+            return {"type": "workspace_name", "values": list(scope_args.name_patterns)}
+        if scope_args.patterns:
+            return {"type": "workspace_path", "values": list(scope_args.patterns)}
+        if scope_args.this_only and context.cwd_workspace:
+            return {"type": "current_workspace", "values": [context.cwd_workspace]}
+        if context.cwd_project:
+            return {"type": "current_project", "values": [context.cwd_project]}
+        if context.cwd_workspace:
+            return {"type": "current_workspace", "values": [context.cwd_workspace]}
+        return {"type": "cached_default", "values": []}
+
+    def _selected_homes(self, scope_args: ScopeArgs, context: ResolutionContext) -> list[str]:
+        if scope_args.all_homes:
+            homes = ["local"]
+            if not scope_args.no_wsl:
+                homes.extend(f"wsl:{item}" for item in context.available_homes.get("wsl", []))
+            if not scope_args.no_windows:
+                homes.extend(
+                    f"windows:{item}" for item in context.available_homes.get("windows", [])
+                )
+            if not scope_args.no_remote:
+                homes.extend(f"remote:{item}" for item in context.available_homes.get("remote", []))
+            if not scope_args.no_web:
+                homes.append("web")
+            return list(dict.fromkeys(homes))
+        if scope_args.home_names:
+            return list(dict.fromkeys(scope_args.home_names))
+        if scope_args.home_type:
+            if scope_args.home_type == "local":
+                return ["local"]
+            return [
+                f"{scope_args.home_type}:{item}"
+                for item in context.available_homes.get(scope_args.home_type, [])
+            ]
+        return ["local"]
+
+    def _workspace_values(self, scope_args: ScopeArgs, context: ResolutionContext) -> list[str]:
+        if scope_args.all_workspaces:
+            return []
+        if scope_args.this_only and context.cwd_workspace:
+            return self._workspace_candidates(context.cwd_workspace)
+        if scope_args.patterns:
+            candidates: list[str] = []
+            for pattern in scope_args.patterns:
+                candidates.extend(self._workspace_candidates(pattern))
+            return list(dict.fromkeys(candidates))
+        if context.cwd_project:
+            return []
+        if context.cwd_workspace:
+            return self._workspace_candidates(context.cwd_workspace)
+        return []
+
+    def _project_filter(
+        self, scope_args: ScopeArgs, context: ResolutionContext
+    ) -> tuple[list[str], list[str]]:
+        homes: list[str] = []
+        workspaces: list[str] = []
+        selected_homes = set(self._selected_homes(scope_args, context))
+        home_filter_explicit = bool(
+            scope_args.all_homes or scope_args.home_names or scope_args.home_type
+        )
+        for project in scope_args.projects:
+            project_def = context.project_config.get(project, {})
+            for home, configured in project_def.items():
+                if home_filter_explicit and home not in selected_homes:
+                    continue
+                homes.append(home)
+                values = configured if isinstance(configured, list) else [configured]
+                for value in values:
+                    workspaces.extend(self._workspace_candidates(str(value)))
+        return list(dict.fromkeys(homes)), list(dict.fromkeys(workspaces))
+
+    def _workspace_candidates(self, value: str) -> list[str]:
+        candidates = [value]
+        decoded = decode_workspace_path(value, verify_local=False)
+        if decoded not in candidates:
+            candidates.append(decoded)
+        if is_encoded_workspace_name(value):
+            short = value.strip("-").split("-")[-1]
+            if short and short not in candidates:
+                candidates.append(short)
+        return candidates
+
+    def _workspace_rows_from_db(self, stats: Dict[str, Any]) -> list[dict[str, Any]]:
+        rows = []
+        for workspace, values in stats.get("by_workspace", {}).items():
+            if not isinstance(values, dict):
+                continue
+            rows.append(
+                {
+                    "home": "",
+                    "workspace": workspace,
+                    "workspace_key": workspace,
+                    "workspace_display": workspace,
+                    "sessions": values.get("sessions", 0),
+                    "messages": values.get("messages", 0),
+                }
+            )
+        rows.sort(key=lambda row: row["sessions"], reverse=True)
+        return rows
+
+    def _empty_cached_stats(self) -> Dict[str, Any]:
+        return {
+            "sessions": 0,
+            "total_sessions": 0,
+            "messages": 0,
+            "total_messages": 0,
+            "main_sessions": 0,
+            "agent_sessions": 0,
+            "user_messages": 0,
+            "assistant_messages": 0,
+            "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+            "by_agent": {},
+            "by_home": {},
+            "by_workspace": {},
+            "by_model": {},
+            "by_tool": {},
+            "time_stats": {
+                "total_duration_seconds": 0,
+                "sessions_with_time": 0,
+                "average_duration_seconds": 0,
+                "by_day": {},
+            },
+            "workspace_rows": [],
+            "workspace_display_map": {},
+            "cache": {"cached": True, "last_synced": None},
+        }
+
+    def _filters_from_scope(self, scope: ConcreteScope) -> dict[str, Any]:
+        homes: list[str] = []
+        workspaces: list[str] = []
+        for record in scope:
+            homes.append(record.home)
+            workspaces.append(record.workspace_key or record.workspace)
+            if record.workspace not in workspaces:
+                workspaces.append(record.workspace)
+        filters: dict[str, Any] = {}
+        if homes:
+            filters["homes"] = list(dict.fromkeys(homes))
+        if workspaces:
+            filters["workspaces"] = list(dict.fromkeys(workspaces))
+        return filters

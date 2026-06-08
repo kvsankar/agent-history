@@ -34,7 +34,7 @@ project [list|add|remove|show|...]    # project commands
 - `export` → `session export`
 - `stats` → `session stats`
 - `alias` → `project`
-- Pattern matching now uses `-n <pattern>` flag
+- Pattern matching now uses `--glob <pattern>` flag
 
 ## Work Completed
 
@@ -90,9 +90,9 @@ Current state of `tests/unit/test_claude_history.py`:
 | Old | New | Notes |
 |-----|-----|-------|
 | `["lsw"]` | `["ws"]` | |
-| `["lss", "pattern"]` | `["session", "-n", "pattern"]` | Pattern now uses `-n` flag |
+| `["lss", "pattern"]` | `["session", "--glob", "*pattern*"]` | Pattern now uses explicit --glob/--regex flags |
 | `["lsh"]` | `["home"]` | |
-| `["export", "pattern"]` | `["session", "export", "-n", "pattern"]` | |
+| `["export", "pattern"]` | `["session", "export", "--glob", "*pattern*"]` | |
 | `["stats", "--aw"]` | `["session", "stats", "--aw"]` | |
 | `["stats", "--sync"]` | `["session", "stats", "--sync"]` | |
 | `["alias", "create", name]` | `["project", "add", name, "--allow-empty"]` | |

@@ -101,6 +101,7 @@ positional arguments:
     ws                        Workspace commands
     project                   Manage projects
     home                      Manage homes
+    stats                     Usage statistics and rollups
     gemini-index              Manage Gemini session index
     install                   Install CLI and agent skill packages
     reset                     Reset stored data
@@ -123,12 +124,13 @@ Common commands:
   cagelens session list           List sessions for the current workspace/project
   cagelens session list --aw      List sessions from all local workspaces
   cagelens session export -o DIR  Export current workspace/project sessions
-  cagelens session stats --sync   Refresh metrics and show stats
+  cagelens stats --sync           Refresh metrics and show stats
 
 Scope shortcuts:
-  --aw = all workspaces, --ah = all homes, -n TEXT = workspace substring match
+  --aw = all workspaces, --ah = all homes, --glob PAT = workspace glob, --regex RE = workspace regex
   --this = current workspace only, --project NAME = configured workspace group
   --format json is best for automation; table/TSV are for terminal and pipes.
+  Quote glob/regex patterns so your shell passes them to cagelens unchanged.
 ```
 <!-- help-snippet:end -->
 
@@ -139,7 +141,7 @@ Scope shortcuts:
 | `session list` | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, projects (`@name` / `--project`), `--aw`, `--this` | Uses the current workspace (or its project) even when you target other homes. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
 | `ws list` | Same as `session list` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
 | `export` | `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), projects, `--aw`, `--this` | Exports the current workspace (or project) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
-| `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/projects, `--aw`, `--this` | Defaults to the current workspace (or project). If not in a workspace, pass a pattern or use `--aw`. Use `--aw` for every workspace in the metrics DB, or pass patterns/projects to filter. `--source` limits results to a specific home and defaults to all workspaces for that source unless `--this` is set. |
+| `stats` | `--wsl`, `--windows`, `-r`, `--ah`, `--home`, `--local` | Workspace patterns/projects, `--aw`, `--this` | Uses cached metrics by default. Defaults to the current workspace (or project) when available; outside a workspace it reads cached local metrics. Use `--sync` to refresh from source files before display. |
 
 When in doubt: `--aw` means "all workspaces"; `--ah` means "all homes." `ws list`
 already lists all workspaces in the selected homes. `session list`, `export`,
@@ -254,7 +256,8 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 | `session` | List sessions |
 | `session export` | Export sessions to Markdown or HTML |
 | `project` | Manage workspace projects |
-| `session stats` | Usage statistics |
+| `stats` | Usage statistics and rollups |
+| `session stats` | Usage statistics (compatibility form) |
 | `reset` | Reset stored data |
 | `install` | Install CLI and agent skill packages |
 
@@ -276,12 +279,17 @@ cagelens session list --since 2025-11-01
 # Minimal export (no metadata, for sharing)
 cagelens session export myproject --minimal
 
-# Faster sync/export
-cagelens session stats --sync --ah --jobs 4
+# Stats sync
+cagelens stats --sync --ah
+
+# Faster export
 cagelens session export myproject --jobs 4 --quiet
 
 # Time tracking
-cagelens session stats --time
+cagelens stats --time
+
+# Project rollup
+cagelens stats rollup --metric time --by project
 ```
 
 ## Multi-Environment Access

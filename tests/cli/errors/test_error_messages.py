@@ -57,7 +57,7 @@ class TestNoSessionsErrorMessages:
     def test_local_pattern_no_match_message(self, home_with_workspaces: Dict[str, Any]) -> None:
         """Local source with non-matching pattern should show consistent error."""
         result = run_cli_subprocess(
-            ["session", "list", "-n", "nonexistent-pattern", "--aw"],
+            ["session", "list", "--glob", "*nonexistent-pattern*", "--aw"],
             env=home_with_workspaces["env"],
         )
         # Should mention the pattern that didn't match
@@ -79,7 +79,7 @@ class TestNoWorkspacesErrorMessages:
     def test_local_pattern_no_match_workspaces(self, home_with_workspaces: Dict[str, Any]) -> None:
         """Local source with non-matching pattern should show consistent error."""
         result = run_cli_subprocess(
-            ["ws", "list", "-n", "nonexistent-pattern", "--aw"],
+            ["ws", "list", "--glob", "*nonexistent-pattern*", "--aw"],
             env=home_with_workspaces["env"],
         )
         # No output when pattern doesn't match
