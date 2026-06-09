@@ -230,6 +230,29 @@ for the current commands.
 - [ ] Update `docs/specs/schema/unified-json-schema.md` with versioning and
       backwards-compatibility guidance for consumers that only read messages.
 
+## First-Class Lineage Model
+
+**Status:** Planned for enhanced HTML timeline export
+
+**Why:** Main sessions, child agents, branch trees, and extension-provided
+delegation all need a common representation before the timeline can place
+concurrent work on separate tracks.
+
+**Tracking checklist:**
+- [ ] Add backend lineage extractors for Claude, Codex, Gemini, and Pi.
+- [ ] Normalize `kind: main | subagent | branch`.
+- [ ] Promote Codex child rollouts with `thread_source: "subagent"` and
+      `source.subagent.thread_spawn.parent_thread_id`.
+- [ ] Preserve Codex `event_msg.task_complete` as completion data.
+- [ ] Join Claude nested `subagents/agent-<task-id>.jsonl` files to parent
+      `<task-notification>` records.
+- [ ] Represent Gemini subagent `toolCalls[]` entries as child-agent spans;
+      link nested child JSONL files when present.
+- [ ] Keep Pi `id` / `parentId` tree links as branch lineage, and detect
+      subagents only from extension-provided `subagent` tool result metadata.
+- [ ] Add `confidence` and `evidence` fields so timeline UI can distinguish
+      confirmed lineage from inferred lineage.
+
 ---
 
 ### Web Sessions (Claude.ai)

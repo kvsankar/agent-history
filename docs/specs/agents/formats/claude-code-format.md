@@ -50,13 +50,17 @@ Where `<encoded-workspace-name>` is the workspace path with:
 |---------|-------------|
 | `<uuid>.jsonl` | Main conversation session |
 | `agent-<short-id>.jsonl` | Task agent (spawned by main session) |
+| `<sessionId>/subagents/agent-<task-id>.jsonl` | Newer nested task agent transcript |
 
 Example:
 ```
 ~/.claude/projects/-home-alice-myproject/
 ├── 6c073d8e-2bb1-45cb-90bc-a28ce44da090.jsonl  (main session)
 ├── agent-d2969342.jsonl                         (task agent)
-└── agent-8e57872d.jsonl                         (task agent)
+├── agent-8e57872d.jsonl                         (task agent)
+└── 6c073d8e-2bb1-45cb-90bc-a28ce44da090/
+    └── subagents/
+        └── agent-a3f71355d0d4f7a45.jsonl        (nested task agent)
 ```
 
 ---
@@ -341,6 +345,28 @@ Agent files have additional fields:
 - `isSidechain`: `true`
 - `agentId`: Short identifier (e.g., "d2969342")
 - `userType`: Often "external"
+
+### Nested Subagent Notification Join
+
+Newer Claude Code sessions can store child transcripts under:
+
+```text
+<workspace>/<sessionId>/subagents/agent-<task-id>.jsonl
+```
+
+The parent session can also include queued `<task-notification>` records with:
+
+- `task-id`
+- `tool-use-id`
+- `output-file`
+- `status`
+- `summary`
+- `result`
+- `usage` with token, tool-use, and `duration_ms` data
+
+For lineage, join `task-id` to `subagents/agent-<task-id>.jsonl`, then use
+the parent notification's `tool-use-id`, `status`, `result`, and `usage` as
+the completion/merge-back record.
 
 ### Concurrent Agents
 
