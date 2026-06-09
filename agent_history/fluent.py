@@ -34,7 +34,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Union
 
-from agent_history.cli.constants import DEFAULT_OUTPUT_DIR
+from agent_history.cli.constants import DEFAULT_OUTPUT_DIR, EXPORT_LAYOUT_DEFAULT
 from agent_history.core.workspaces import build_scope_metadata
 from agent_history.handlers.base import CommandResult
 from agent_history.handlers.export import SessionExportHandler
@@ -479,6 +479,7 @@ class FluentContext:
         format: str = "markdown",
         minimal: bool = False,
         split: int | None = None,
+        layout: str = EXPORT_LAYOUT_DEFAULT,
         flat: bool = False,
         force: bool = False,
         include_source: bool = False,
@@ -493,6 +494,7 @@ class FluentContext:
             format: Export format ("markdown" or "json").
             minimal: If True, omit metadata in markdown output.
             split: Split files at this many lines. None to disable.
+            layout: Directory layout ("tree", "squashed", or "flat").
             flat: If True, use flat directory structure (no workspace subdirs).
             force: If True, overwrite existing files.
             include_source: If True, copy raw source files alongside exports.
@@ -514,6 +516,7 @@ class FluentContext:
             "output_dir": Path(output_dir) if output_dir else Path(DEFAULT_OUTPUT_DIR),
             "minimal": minimal,
             "split": split,
+            "layout": layout,
             "flat": flat,
             "force": force,
             "include_source": include_source,

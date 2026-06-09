@@ -18,7 +18,7 @@ def _write_claude_session(root: Path, workspace: str = "-home-user-export-target
     builder = ClaudeSessionBuilder(workspace=workspace, session_id="export-session")
     tool = builder.make_tool_use("Bash", {"command": "echo ok"})
     builder.add_user_message("Hello")
-    builder.add_assistant_message("Running it", tools=[tool])
+    builder.add_assistant_message("Running it\n\n```python\nprint('ok')\n```", tools=[tool])
     builder.add_tool_result(tool["id"], "ok")
     return builder.write_to(root)
 
@@ -140,9 +140,56 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     assert "Tool call: Bash" in html
     assert 'data-origin="tool_call"' in html
     assert 'data-origin="tool_result"' in html
+    assert 'data-theme-toggle aria-pressed="false">Dark mode</button>' in html
+    assert 'class="turn-nav-button"' in html
+    assert 'data-view-toggle="rendered" aria-pressed="true">Formatted</button>' in html
     assert 'data-view-toggle="raw" aria-pressed="false"' in html
+    assert 'class="markdown-body"' in html
+    assert 'class="code-text code-theme-light"' in html
+    assert 'class="code-text code-theme-dark"' in html
+    assert 'class="diff-view"' in html
     assert '<span class="diff-line diff-line-add">' in html
     assert "Raw message" in html
+
+
+def test_session_export_html_skips_claude_snapshot_only_files(isolated_home):
+    _write_claude_session(isolated_home["claude_dir"])
+    workspace_dir = isolated_home["claude_dir"] / "-home-user-export-target"
+    snapshot_file = workspace_dir / "snapshot-only.jsonl"
+    snapshot_file.write_text(
+        json.dumps(
+            {
+                "type": "file-history-snapshot",
+                "messageId": "snapshot-message",
+                "snapshot": {"trackedFileBackups": {}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_dir = isolated_home["path"] / "html-snapshot-export"
+
+    result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "/home/user/export-target",
+            "--format",
+            "html",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    html_files = [path for path in output_dir.glob("**/*.html") if path.name != "index.html"]
+
+    assert html_files, "Expected the real conversation to be exported"
+    assert not (output_dir / "home" / "user" / "export-target" / "snapshot-only.html").exists()
+    assert all("<dt>Messages</dt><dd>0</dd>" not in path.read_text() for path in html_files)
 
 
 def test_session_export_html_to_stdout_uses_file_target(isolated_home):
@@ -182,7 +229,7 @@ def test_project_export_preserves_non_claude_absolute_workspace_path(isolated_ho
     output_dir = isolated_home["path"] / "project-export"
 
     result = run_cli_subprocess(
-        ["project", "export", "codexproj", "--force", "-o", str(output_dir)],
+        ["project", "export", "codexproj", "--layout", "tree", "--force", "-o", str(output_dir)],
         env=isolated_home["env"],
         cwd=isolated_home["path"],
     )

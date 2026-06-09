@@ -318,6 +318,7 @@ class TestExport:
                     tmp_path,
                     minimal=True,
                     split=1000,
+                    layout="squashed",
                     flat=True,
                     force=True,
                 )
@@ -326,6 +327,7 @@ class TestExport:
         verb_args = call_args[0][1]
         assert verb_args["minimal"] is True
         assert verb_args["split"] == 1000
+        assert verb_args["layout"] == "squashed"
         assert verb_args["flat"] is True
         assert verb_args["force"] is True
 
