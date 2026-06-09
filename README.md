@@ -131,6 +131,9 @@ Scope shortcuts:
   --this = current workspace only, --project NAME = configured workspace group
   --format json is best for automation; table/TSV are for terminal and pipes.
   Quote glob/regex patterns so your shell passes them to cagelens unchanged.
+
+Migration:
+  Old short aliases are not part of the current CLI. Use session list, ws, project, and home.
 ```
 <!-- help-snippet:end -->
 

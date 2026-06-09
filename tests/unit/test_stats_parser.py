@@ -74,7 +74,17 @@ def test_top_level_stats_parses_glob_and_regex_workspace_scope() -> None:
 
 def test_top_level_stats_rollup_parses_metrics_dimensions_and_limit() -> None:
     request = CLIParser().parse(
-        ["stats", "rollup", "--metric", "time", "--by", "project,month", "--top", "5"]
+        [
+            "stats",
+            "rollup",
+            "--metric",
+            "time",
+            "--by",
+            "project,month",
+            "--top",
+            "5",
+            "--separator",
+        ]
     )
 
     assert request.resource == "stats"
@@ -83,6 +93,60 @@ def test_top_level_stats_rollup_parses_metrics_dimensions_and_limit() -> None:
     assert request.verb_args["metric"] == "time"
     assert request.verb_args["by"] == ["project", "month"]
     assert request.verb_args["top"] == 5
+    assert request.verb_args["total"] is True
+    assert request.verb_args["human"] is True
+    assert request.verb_args["separator"] is True
+
+
+def test_top_level_stats_rollup_accepts_total_alias_and_raw_opt_out() -> None:
+    request = CLIParser().parse(
+        [
+            "stats",
+            "rollup",
+            "--metric",
+            "tokens",
+            "--by",
+            "ws,month",
+            "--totals",
+            "--raw",
+        ]
+    )
+
+    assert request.verb_args["by"] == ["workspace", "month"]
+    assert request.verb_args["total"] is True
+    assert request.verb_args["human"] is False
+
+
+def test_top_level_stats_rollup_parses_sort_fields_and_direction() -> None:
+    request = CLIParser().parse(
+        [
+            "stats",
+            "rollup",
+            "--metric",
+            "tokens",
+            "--by",
+            "agent,month",
+            "--sort",
+            "month,agent",
+            "--asc",
+        ]
+    )
+
+    assert request.verb_args["sort"] == ["month", "agent"]
+    assert request.verb_args["sort_direction"] == "asc"
+
+
+def test_top_level_stats_rollup_can_suppress_default_total() -> None:
+    request = CLIParser().parse(["stats", "rollup", "--no-total", "--no-human"])
+
+    assert request.verb_args["total"] is False
+    assert request.verb_args["human"] is False
+
+
+def test_top_level_stats_rollup_normalizes_dimension_aliases() -> None:
+    request = CLIParser().parse(["stats", "rollup", "--metric", "time", "--by", "ws,proj,months"])
+
+    assert request.verb_args["by"] == ["workspace", "project", "month"]
 
 
 def test_top_level_stats_rollup_rejects_non_positive_top() -> None:

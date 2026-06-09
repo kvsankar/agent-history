@@ -341,6 +341,7 @@ class TestProjectScope:
         )
 
         assert_cli_success(result, "project show should succeed")
+        assert '"total_workspaces": 2' in result.stdout
 
 
 # ---------------------------------------------------------------------------

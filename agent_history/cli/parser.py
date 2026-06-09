@@ -44,6 +44,19 @@ from agent_history.scope.context import CommandRequest, OutputArgs, ScopeArgs
 # Version - will be updated by package metadata
 __version__ = "2.0.0"
 
+STATS_DIMENSION_ALIASES = {
+    "ws": "workspace",
+    "workspaces": "workspace",
+    "proj": "project",
+    "projects": "project",
+    "homes": "home",
+    "agents": "agent",
+    "days": "day",
+    "months": "month",
+    "models": "model",
+    "tools": "tool",
+}
+
 
 TOP_LEVEL_EPILOG = """\
 Progressive help:
@@ -64,6 +77,9 @@ Scope shortcuts:
   --this = current workspace only, --project NAME = configured workspace group
   --format json is best for automation; table/TSV are for terminal and pipes.
   Quote glob/regex patterns so your shell passes them to cagelens unchanged.
+
+Migration:
+  Old short aliases are not part of the current CLI. Use session list, ws, project, and home.
 """
 
 
@@ -144,14 +160,149 @@ Tip:
 """
 
 
+SESSION_SHOW_EPILOG = """\
+Examples:
+  cagelens session list --aw
+      First find the FILE or session ID to inspect.
+
+  cagelens session show /path/to/session.jsonl
+      Show details for a specific source file.
+
+  cagelens session show SESSION_ID --project myproj
+      Search a configured project when the ID is not unique locally.
+"""
+
+
+EXPORT_EPILOG = """\
+Output:
+  Prefer -o DIR for export destination. Positional workspace/target arguments
+  are exact paths or IDs; use --glob or --regex for pattern matching.
+
+Examples:
+  cagelens session export --project myproj -o ./exports
+  cagelens session export --glob "*auth*" -o ./exports
+  cagelens ws export /home/user/project -o ./exports
+  cagelens project export myproj -o ./exports
+"""
+
+
+STATS_EPILOG = """\
+Stats modes:
+  cagelens stats                  Dashboard summary from cached metrics
+  cagelens stats --sync           Refresh metrics first, then show summary
+  cagelens stats rollup           Tabular rollups for time, tokens, sessions
+
+Examples:
+  cagelens stats --time
+      Show the dashboard with time coverage and daily time details.
+
+  cagelens stats rollup --metric time --by month
+      Show work-period time totals by month.
+
+  cagelens stats rollup --metric time --by project,month
+      Show monthly work-period time totals per project.
+
+  cagelens stats rollup --metric time --by workspace,month --project myproj
+      Show monthly work-period time totals per workspace in a project.
+
+  cagelens stats rollup --metric tokens --by workspace,model
+      Show token totals by workspace and model.
+
+  cagelens stats rollup --metric tokens --by ws,month
+      Show compact token totals using K/M/B suffixes.
+
+  cagelens stats rollup --metric tokens --by ws,month --separator
+      Add a -- separator before the table.
+
+  cagelens stats rollup --metric tokens --by ws,month --raw --no-total
+      Show raw token counts and suppress the default totals row.
+
+  cagelens stats rollup --metric tokens --by agent,month --sort month,agent --asc
+      Sort grouped rows chronologically, then by agent.
+
+Tip:
+  Summary flags such as --time expand the dashboard. Use stats rollup with
+  --metric and --by for monthly, project, workspace, model, or token tables.
+"""
+
+
+STATS_SUMMARY_EPILOG = """\
+Summary examples:
+  cagelens stats
+      Fast cached dashboard for the current workspace or auto-detected project.
+
+  cagelens stats --sync --force
+      Rebuild metrics for the selected scope before showing the dashboard.
+
+  cagelens stats --time
+      Add time coverage and daily work-period totals to the dashboard.
+
+For monthly totals:
+  cagelens stats rollup --metric time --by month
+  cagelens stats rollup --metric time --by project,month
+"""
+
+
+STATS_ROLLUP_EPILOG = """\
+Rollup examples:
+  cagelens stats rollup --metric time --by month
+      Work-period time totals by month.
+
+  cagelens stats rollup --metric time --by project,month
+      Monthly work-period time totals per project.
+
+  cagelens stats rollup --metric time --by workspace,month --project myproj
+      Monthly work-period time totals per workspace in a project.
+
+  cagelens stats rollup --metric tokens --by workspace,model
+      Token totals by workspace and model.
+
+  cagelens stats rollup --metric tokens --by ws,month
+      Compact token totals using K/M/B suffixes.
+
+  cagelens stats rollup --metric tokens --by ws,month --separator
+      Add a -- separator before the table.
+
+  cagelens stats rollup --metric tokens --by ws,month --raw --no-total
+      Show raw token counts and suppress the default totals row.
+
+  cagelens stats rollup --metric tokens --by agent,month --sort month,agent --asc
+      Sort grouped rows chronologically, then by agent.
+
+  cagelens stats rollup --metric all --by project --format json
+      Full metric payload grouped by project.
+"""
+
+
 PROJECT_EPILOG = """\
 Projects are named groups of related workspaces across homes.
 
 Examples:
   cagelens project list
   cagelens project add myproj --this
+  cagelens project add myproj --glob "*auth*" --dry-run
   cagelens project show myproj
   cagelens session list --project myproj
+"""
+
+
+PROJECT_ADD_EPILOG = """\
+Matching:
+  Positional workspace arguments are exact paths or IDs. Use --glob for
+  shell-style matching and quote the pattern so your shell does not expand it.
+
+Examples:
+  cagelens project add myproj --this
+      Add the current workspace.
+
+  cagelens project add myproj /home/user/projects/auth
+      Add one exact workspace path.
+
+  cagelens project add myproj --glob "*auth*" --dry-run
+      Preview all matching local workspaces before writing config.
+
+  cagelens project add myproj --glob "*auth*" --ah
+      Add matching workspaces across configured homes.
 """
 
 
@@ -164,6 +315,44 @@ Examples:
   cagelens home add --wsl Ubuntu
   cagelens home add user@host
   cagelens ws --ah
+"""
+
+
+HOME_ADD_EPILOG = """\
+What this does:
+  Adds a source to cagelens config. It does not fetch remote sessions.
+
+Examples:
+  cagelens home add user@host
+      Add an SSH remote source.
+
+  cagelens fetch -r user@host --aw
+      Fetch remote sessions after adding or before offline use.
+
+  cagelens session list -r user@host --aw
+      List remote sessions without fetching first.
+
+  cagelens home add --wsl
+      Add auto-detected WSL distributions.
+
+  cagelens home add --wsl Ubuntu
+      Add one WSL distribution.
+"""
+
+
+GEMINI_INDEX_EPILOG = """\
+Examples:
+  cagelens gemini-index
+      List known Gemini hash-to-path mappings.
+
+  cagelens gemini-index --add
+      Add the current directory to the index.
+
+  cagelens gemini-index --add ~/projects/myapp
+      Add a specific project path.
+
+  cagelens gemini-index --list --full-hash
+      List mappings with full SHA-256 hashes.
 """
 
 
@@ -181,6 +370,19 @@ Examples:
 After fetching:
   cagelens session list -r user@host --glob "*auth*"
   cagelens session export -r user@host --glob "*auth*"
+"""
+
+
+RESET_EPILOG = """\
+Targets:
+  db       Clears cached metrics only. Raw agent session files are not changed.
+  cache    Clears cagelens-managed fetch/cache files.
+  config   Removes cagelens project/home settings.
+  all      Resets db, cache, and config.
+
+Examples:
+  cagelens reset db -y
+  cagelens reset cache -y
 """
 
 
@@ -469,14 +671,26 @@ class CLIParser:
         self._add_output_format(sess_list)
 
         # session show
-        sess_show = sess_sub.add_parser("show", help="Show session details")
+        sess_show = sess_sub.add_parser(
+            "show",
+            help="Show session details",
+            description="Show details for one session by ID, filename, or path.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=SESSION_SHOW_EPILOG,
+        )
         sess_show.set_defaults(command=RESOURCE_SESSION, session_verb="show")
         sess_show.add_argument("session_id", help="Session identifier or path")
         self._add_home_scope_flags(sess_show)
         self._add_workspace_scope_flags(sess_show, positional_name="workspace")
 
         # session export
-        sess_export = sess_sub.add_parser("export", help="Export sessions to markdown")
+        sess_export = sess_sub.add_parser(
+            "export",
+            help="Export sessions to markdown",
+            description="Export selected sessions to Markdown or NDJSON.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=EXPORT_EPILOG,
+        )
         sess_export.set_defaults(command=RESOURCE_SESSION, session_verb="export")
         self._add_workspace_scope_flags(sess_export, positional_name="target")
         sess_export.add_argument(
@@ -562,7 +776,13 @@ class CLIParser:
         self._add_agent_filter(ws_show)
 
         # ws export
-        ws_export = ws_sub.add_parser("export", help="Export sessions from workspace")
+        ws_export = ws_sub.add_parser(
+            "export",
+            help="Export sessions from workspace",
+            description="Export sessions from selected workspaces.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=EXPORT_EPILOG,
+        )
         ws_export.set_defaults(command=RESOURCE_WS, ws_verb="export")
         ws_export.add_argument("target", nargs="*", help="Workspace path(s)")
         ws_export.add_argument(
@@ -618,13 +838,24 @@ class CLIParser:
         proj_show.add_argument("name", nargs="?", help="Project name (defaults to current project)")
 
         # project add
-        proj_add = proj_sub.add_parser("add", help="Add workspace to project")
+        proj_add = proj_sub.add_parser(
+            "add",
+            help="Add workspace to project",
+            description="Add exact or matched workspaces to a named project.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=PROJECT_ADD_EPILOG,
+        )
         proj_add.set_defaults(command=RESOURCE_PROJECT, project_command="add")
         proj_add.add_argument("name", help="Project name")
         self._add_workspace_scope_flags(
             proj_add, positional_name="workspaces", include_project=False
         )
         self._add_home_scope_flags(proj_add)
+        proj_add.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Preview resolved workspaces without updating config",
+        )
         proj_add.add_argument("--pick", action="store_true", help="Interactive picker")
 
         # project remove
@@ -636,7 +867,13 @@ class CLIParser:
         proj_remove.add_argument("--windows", action="store_true", help="Remove from Windows")
 
         # project export
-        proj_export = proj_sub.add_parser("export", help="Export all sessions in project")
+        proj_export = proj_sub.add_parser(
+            "export",
+            help="Export all sessions in project",
+            description="Export all sessions in a named project.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=EXPORT_EPILOG,
+        )
         proj_export.set_defaults(command=RESOURCE_PROJECT, project_command="export")
         proj_export.add_argument("name", help="Project name")
         proj_export.add_argument(
@@ -756,7 +993,13 @@ class CLIParser:
         home_show.add_argument("name", help="Home name")
 
         # home add
-        home_add = home_sub.add_parser("add", help="Add a home")
+        home_add = home_sub.add_parser(
+            "add",
+            help="Add a home",
+            description="Add a local-adjacent, web, or SSH remote source to cagelens config.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=HOME_ADD_EPILOG,
+        )
         home_add.set_defaults(command=RESOURCE_HOME, home_verb="add")
         home_add.add_argument("source", nargs="?", help="SSH remote (user@hostname)")
         home_add.add_argument("--windows", action="store_true", help="Add Windows as a home")
@@ -780,7 +1023,13 @@ class CLIParser:
         home_remove.add_argument("--web", action="store_true", help="Remove Claude.ai web")
 
         # home export
-        home_export = home_sub.add_parser("export", help="Export all sessions from home(s)")
+        home_export = home_sub.add_parser(
+            "export",
+            help="Export all sessions from home(s)",
+            description="Export sessions from selected homes.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=EXPORT_EPILOG,
+        )
         home_export.set_defaults(command=RESOURCE_HOME, home_verb="export")
         home_export.add_argument("names", nargs="*", help="Home names (default: local)")
         home_export.add_argument(
@@ -810,6 +1059,7 @@ class CLIParser:
             help="Usage statistics and rollups",
             description="Analyze cached usage metrics across sessions, workspaces, homes, and projects.",
             formatter_class=WrappedHelpFormatter,
+            epilog=STATS_EPILOG,
         )
         stats_parser.set_defaults(command=RESOURCE_STATS, stats_verb="summary")
         self._add_workspace_scope_flags(stats_parser, include_positional=False)
@@ -821,14 +1071,26 @@ class CLIParser:
         stats_sub.required = False
         stats_sub.default = "summary"
 
-        summary = stats_sub.add_parser("summary", help="Show cached stats dashboard")
+        summary = stats_sub.add_parser(
+            "summary",
+            help="Show cached stats dashboard",
+            description="Show a cached stats dashboard for the selected scope.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=STATS_SUMMARY_EPILOG,
+        )
         summary.set_defaults(command=RESOURCE_STATS, stats_verb="summary")
         self._add_workspace_scope_flags(summary)
         self._add_stats_options(summary)
         self._add_home_scope_flags(summary)
         self._add_agent_filter(summary)
 
-        rollup = stats_sub.add_parser("rollup", help="Show tabular stats rollups")
+        rollup = stats_sub.add_parser(
+            "rollup",
+            help="Show tabular stats rollups",
+            description="Show tabular cached stats grouped by dimensions such as month or project.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=STATS_ROLLUP_EPILOG,
+        )
         rollup.set_defaults(command=RESOURCE_STATS, stats_verb="rollup")
         self._add_workspace_scope_flags(rollup)
         self._add_stats_options(rollup, rollup=True)
@@ -851,6 +1113,8 @@ class CLIParser:
                 "has sessions for that project. If sessions exist, adds the mapping "
                 "so cagelens can display readable workspace paths instead of hashes."
             ),
+            formatter_class=WrappedHelpFormatter,
+            epilog=GEMINI_INDEX_EPILOG,
         )
         gi_parser.set_defaults(command=RESOURCE_GEMINI_INDEX, gemini_index_verb=DEFAULT_VERB_LIST)
         gi_parser.add_argument(
@@ -915,6 +1179,8 @@ class CLIParser:
             RESOURCE_RESET,
             help="Reset stored data",
             description="Reset cagelens-managed metrics, config, or caches.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=RESET_EPILOG,
         )
         reset_parser.set_defaults(command=RESOURCE_RESET, reset_verb=DEFAULT_VERB_RUN)
         reset_parser.add_argument(
@@ -1235,8 +1501,8 @@ class CLIParser:
             "--by",
             metavar="DIMS",
             help=(
-                "Group by dimensions (comma-separated): home, agent, workspace, day, "
-                "model, tool" + (", project, month" if rollup else "")
+                "Group by dimensions (comma-separated): home, agent, workspace/ws, day, "
+                "model, tool" + (", project/proj, month" if rollup else "")
             ),
         )
         if rollup:
@@ -1251,6 +1517,49 @@ class CLIParser:
                 type=_validate_positive_int,
                 default=None,
                 help="Limit rollup rows",
+            )
+            parser.add_argument(
+                "--sort",
+                metavar="FIELDS",
+                help=(
+                    "Sort rollup rows by comma-separated fields: metric, tokens, time, "
+                    "sessions, messages, input, output, cache-read, or dimensions"
+                ),
+            )
+            sort_direction = parser.add_mutually_exclusive_group()
+            sort_direction.add_argument(
+                "--asc",
+                action="store_const",
+                const="asc",
+                dest="sort_direction",
+                help="Sort rollup rows ascending",
+            )
+            sort_direction.add_argument(
+                "--desc",
+                action="store_const",
+                const="desc",
+                dest="sort_direction",
+                help="Sort rollup rows descending",
+            )
+            parser.add_argument(
+                "-c",
+                "--total",
+                "--totals",
+                action="store_true",
+                default=True,
+                help="Append a totals row to rollup output",
+            )
+            parser.add_argument(
+                "--no-total",
+                "--no-totals",
+                action="store_false",
+                dest="total",
+                help="Suppress the default totals row",
+            )
+            parser.add_argument(
+                "--separator",
+                action="store_true",
+                help="Print a record-separator line before the rollup table",
             )
         parser.add_argument(
             "--models",
@@ -1275,16 +1584,39 @@ class CLIParser:
             help="Show workspace usage (alias for --by workspace)",
         )
         self._add_output_format(parser)
-        parser.add_argument(
-            "-H",
-            "--human",
-            action="store_true",
-            help="Human-readable numbers (K/M/B) and time (Xd Xh Xm)",
-        )
+        if rollup:
+            parser.add_argument(
+                "-H",
+                "--human",
+                action="store_true",
+                default=True,
+                help="Human-readable numbers (K/M/B) and time (default for rollups)",
+            )
+            parser.add_argument(
+                "--raw",
+                "--no-human",
+                action="store_false",
+                dest="human",
+                help="Use raw numeric values instead of compact K/M/B numbers",
+            )
+        else:
+            parser.add_argument(
+                "-H",
+                "--human",
+                action="store_true",
+                help="Human-readable numbers (K/M/B) and time (total hours, minutes, seconds)",
+            )
         parser.add_argument(
             "--time",
             action="store_true",
-            help="Expand work-period time details, including daily totals",
+            help=(
+                "Not needed for rollups; use --metric time with --by day/month/project/workspace"
+                if rollup
+                else (
+                    "Expand summary time details, including daily totals; "
+                    "use `stats rollup --metric time --by month` for monthly totals"
+                )
+            ),
         )
         parser.add_argument(
             "--top-ws",
@@ -1411,9 +1743,10 @@ class CLIParser:
         else:
             raise ValueError(f"Unknown command: {command}")
 
-    def _build_scope_args(self, args: argparse.Namespace, resource: str, verb: str) -> ScopeArgs:
-        """Build ScopeArgs from parsed arguments."""
-        # Home selection
+    def _home_scope_values(
+        self, args: argparse.Namespace
+    ) -> tuple[bool, str | None, Any, list[str]]:
+        """Return home-selection values from parsed args."""
         all_homes = getattr(args, "all_homes", False)
         home_type = None
         home_value = None
@@ -1443,43 +1776,83 @@ class CLIParser:
         elif getattr(args, "local", False):
             home_type = "local"
 
-        # Workspace selection
-        all_workspaces = getattr(args, "all_workspaces", False)
+        return all_homes, home_type, home_value, home_names
+
+    def _project_scope_values(self, args: argparse.Namespace) -> list[str]:
+        """Return project names implied by command flags and project verbs."""
         projects = list(getattr(args, "projects", None) or [])
-        if command == RESOURCE_PROJECT:
+        if getattr(args, "command", None) == RESOURCE_PROJECT:
             project_name = getattr(args, "name", None)
             project_command = getattr(args, "project_command", None)
             if project_command in ("show", "export", "stats") and project_name:
                 projects = [project_name]
+        return projects
 
-        # Get positional patterns (exact match)
+    def _workspace_scope_patterns(
+        self, args: argparse.Namespace
+    ) -> tuple[list[str], list[str], list[str], list[str]]:
+        """Return exact, glob, regex, and legacy name workspace patterns."""
         patterns = []
         for attr in ["workspace", "target", "workspaces"]:
             value = getattr(args, attr, None)
             if value:
                 patterns.extend(value)
+        return (
+            patterns,
+            list(getattr(args, "glob_patterns", None) or []),
+            list(getattr(args, "regex_patterns", None) or []),
+            list(getattr(args, "name_patterns", None) or []),
+        )
 
-        glob_patterns = getattr(args, "glob_patterns", None) or []
-        regex_patterns = getattr(args, "regex_patterns", None) or []
-        name_patterns = getattr(args, "name_patterns", None) or []
+    def _session_export_implies_all_workspaces(
+        self,
+        args: argparse.Namespace,
+        *,
+        projects: list[str],
+        patterns: list[str],
+        glob_patterns: list[str],
+        regex_patterns: list[str],
+        name_patterns: list[str],
+        all_workspaces: bool,
+        this_only: bool,
+    ) -> bool:
+        """Return whether session-id export should search all workspaces."""
+        session_ids = self._split_csv_list(list(getattr(args, "session_ids", None) or []))
+        has_scope = (
+            patterns
+            or glob_patterns
+            or regex_patterns
+            or name_patterns
+            or projects
+            or all_workspaces
+            or this_only
+        )
+        return (
+            getattr(args, "command", None) == RESOURCE_SESSION
+            and getattr(args, "session_verb", None) == "export"
+            and bool(session_ids)
+            and not has_scope
+        )
+
+    def _build_scope_args(self, args: argparse.Namespace, resource: str, verb: str) -> ScopeArgs:
+        """Build ScopeArgs from parsed arguments."""
+        all_homes, home_type, home_value, home_names = self._home_scope_values(args)
+        all_workspaces = getattr(args, "all_workspaces", False)
+        projects = self._project_scope_values(args)
+        patterns, glob_patterns, regex_patterns, name_patterns = self._workspace_scope_patterns(
+            args
+        )
 
         this_only = getattr(args, "this_only", False)
-
-        # Session ID selection for session export (implies all workspaces if no scope)
-        session_ids = self._split_csv_list(list(getattr(args, "session_ids", None) or []))
-        if (
-            command == RESOURCE_SESSION
-            and getattr(args, "session_verb", None) == "export"
-            and session_ids
-            and not (
-                patterns
-                or glob_patterns
-                or regex_patterns
-                or name_patterns
-                or projects
-                or all_workspaces
-                or this_only
-            )
+        if self._session_export_implies_all_workspaces(
+            args,
+            projects=projects,
+            patterns=patterns,
+            glob_patterns=glob_patterns,
+            regex_patterns=regex_patterns,
+            name_patterns=name_patterns,
+            all_workspaces=all_workspaces,
+            this_only=this_only,
         ):
             all_workspaces = True
 
@@ -1570,6 +1943,7 @@ class CLIParser:
             if verb == "add":
                 verb_args["workspaces"] = getattr(args, "workspaces", [])
                 verb_args["pick"] = getattr(args, "pick", False)
+                verb_args["dry_run"] = getattr(args, "dry_run", False)
             elif verb == "remove":
                 verb_args["workspace"] = getattr(args, "workspace", None)
                 verb_args["wsl"] = getattr(args, "wsl", False)
@@ -1639,7 +2013,9 @@ class CLIParser:
     def _build_stats_verb_args(self, args: argparse.Namespace) -> dict[str, Any]:
         """Build stats-specific arguments."""
         raw_by = getattr(args, "by", None)
-        group_by = self._split_csv_list([raw_by]) if raw_by else []
+        group_by = self._normalize_stats_dimensions(
+            self._split_csv_list([raw_by]) if raw_by else []
+        )
         alias_groups = [
             ("models", "model"),
             ("tools", "tool"),
@@ -1659,8 +2035,23 @@ class CLIParser:
             "human": getattr(args, "human", False),
             "metric": getattr(args, "metric", None),
             "top": getattr(args, "top", None),
+            "sort": self._split_csv_list([getattr(args, "sort", None)])
+            if getattr(args, "sort", None)
+            else None,
+            "sort_direction": getattr(args, "sort_direction", None) or "default",
+            "total": getattr(args, "total", False),
+            "separator": getattr(args, "separator", False),
             "stats_mode": getattr(args, "stats_verb", "summary"),
         }
+
+    def _normalize_stats_dimensions(self, dimensions: list[str]) -> list[str]:
+        """Normalize user-facing stats dimension aliases to canonical names."""
+        normalized: list[str] = []
+        for dimension in dimensions:
+            canonical = STATS_DIMENSION_ALIASES.get(dimension, dimension)
+            if canonical not in normalized:
+                normalized.append(canonical)
+        return normalized
 
     def _build_list_verb_args(self, args: argparse.Namespace, resource: str) -> dict[str, Any]:
         """Build list-specific arguments."""

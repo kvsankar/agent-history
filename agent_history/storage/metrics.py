@@ -546,7 +546,7 @@ def _parse_codex_jsonl(
                 # Extract token usage from event_msg
                 elif entry_type == "event_msg":
                     if payload.get("type") == "token_count":
-                        info = payload.get("info", {})
+                        info = payload.get("info") or {}
                         total_usage = info.get("total_token_usage", {})
                         input_tokens = total_usage.get("input_tokens", 0)
                         output_tokens = total_usage.get("output_tokens", 0) + total_usage.get(
@@ -1277,6 +1277,7 @@ def get_scoped_stats_from_db(
             "time_stats": {
                 "total_duration_seconds": total_seconds,
                 "sessions_with_time": sessions_with_time,
+                "total_sessions": row["sessions"] if row else 0,
                 "average_duration_seconds": avg_seconds,
                 "by_day": time_by_day,
             },
@@ -1313,6 +1314,45 @@ MESSAGE_ROLLUP_DIMENSIONS: Dict[str, str] = {
     "model": "m.model",
 }
 
+ROLLUP_DIMENSION_ALIASES: Dict[str, str] = {
+    "ws": "workspace",
+    "workspaces": "workspace",
+    "proj": "project",
+    "projects": "project",
+    "homes": "home",
+    "agents": "agent",
+    "days": "day",
+    "months": "month",
+    "models": "model",
+    "tools": "tool",
+}
+
+ROLLUP_SORT_ALIASES: Dict[str, str] = {
+    "metric": "metric",
+    "value": "metric",
+    "tokens": "tokens",
+    "token": "tokens",
+    "total_tokens": "tokens",
+    "time": "time_seconds",
+    "time_seconds": "time_seconds",
+    "seconds": "time_seconds",
+    "hours": "time_hours",
+    "time_hours": "time_hours",
+    "sessions": "sessions",
+    "session": "sessions",
+    "messages": "messages",
+    "message": "messages",
+    "input": "input_tokens",
+    "input_tokens": "input_tokens",
+    "output": "output_tokens",
+    "output_tokens": "output_tokens",
+    "cache_read": "cache_read_tokens",
+    "cache_read_tokens": "cache_read_tokens",
+    "cache_create": "cache_creation_tokens",
+    "cache_creation": "cache_creation_tokens",
+    "cache_creation_tokens": "cache_creation_tokens",
+}
+
 
 def get_stats_rollup_from_db(
     filters: Optional[Dict[str, Any]] = None,
@@ -1320,9 +1360,11 @@ def get_stats_rollup_from_db(
     by: Optional[List[str]] = None,
     metric: str = "all",
     top: Optional[int] = None,
+    sort_by: Optional[List[str]] = None,
+    sort_direction: str = "default",
 ) -> list[Dict[str, Any]]:
     """Return DB-backed stats rollup rows grouped by requested dimensions."""
-    dimensions = by or ["project"]
+    dimensions = _normalize_rollup_dimensions(by or ["project"])
     dimension_map = MESSAGE_ROLLUP_DIMENSIONS if "model" in dimensions else ROLLUP_DIMENSIONS
     invalid = [dimension for dimension in dimensions if dimension not in dimension_map]
     if invalid:
@@ -1333,7 +1375,9 @@ def get_stats_rollup_from_db(
     conn = init_metrics_db(db_path)
     try:
         if "model" in dimensions:
-            return _message_stats_rollup(conn, filters, dimensions, metric, top)
+            return _message_stats_rollup(
+                conn, filters, dimensions, metric, top, sort_by, sort_direction
+            )
 
         where_sql, params = _where_sql(filters, "sessions")
         select_parts = [
@@ -1355,14 +1399,11 @@ def get_stats_rollup_from_db(
             {where_sql}
             GROUP BY {", ".join(group_parts)}
         """
-        order_sql = _rollup_order_sql(dimensions, metric)
-        limit_sql = ""
-        if top:
-            limit_sql = " LIMIT ?"
-            params = [*params, top]
-        cursor = conn.execute(f"{sql} {order_sql}{limit_sql}", params)
+        cursor = conn.execute(sql, params)
         rows: list[Dict[str, Any]] = []
         for row in cursor.fetchall():
+            if _skip_rollup_row(row, dimensions, metric):
+                continue
             item: Dict[str, Any] = {
                 "sessions": row["sessions"],
                 "messages": row["messages"],
@@ -1371,14 +1412,24 @@ def get_stats_rollup_from_db(
                 "cache_read_tokens": row["cache_read_tokens"],
                 "cache_creation_tokens": row["cache_creation_tokens"],
                 "time_seconds": row["time_seconds"],
+                "time_hms": _format_seconds_hms(row["time_seconds"]),
                 "time_hours": row["time_seconds"] / 3600 if row["time_seconds"] else 0,
             }
             for index, dimension in enumerate(dimensions):
                 item[dimension] = row[f"dim_{index}"] or "(none)"
             rows.append(item)
-        return rows
+        return _sort_and_limit_rollup_rows(rows, dimensions, metric, top, sort_by, sort_direction)
     finally:
         conn.close()
+
+
+def _normalize_rollup_dimensions(dimensions: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for dimension in dimensions:
+        canonical = ROLLUP_DIMENSION_ALIASES.get(dimension, dimension)
+        if canonical not in normalized:
+            normalized.append(canonical)
+    return normalized
 
 
 def _message_stats_rollup(
@@ -1387,6 +1438,8 @@ def _message_stats_rollup(
     dimensions: list[str],
     metric: str,
     top: Optional[int],
+    sort_by: Optional[list[str]],
+    sort_direction: str,
 ) -> list[Dict[str, Any]]:
     where_sql, params = _where_sql(filters, "s")
     model_filter = "m.model IS NOT NULL AND m.model != ''"
@@ -1414,14 +1467,11 @@ def _message_stats_rollup(
         {where_sql}
         GROUP BY {", ".join(group_parts)}
     """
-    order_sql = _rollup_order_sql(dimensions, metric, message_query=True)
-    limit_sql = ""
-    if top:
-        limit_sql = " LIMIT ?"
-        params = [*params, top]
-    cursor = conn.execute(f"{sql} {order_sql}{limit_sql}", params)
+    cursor = conn.execute(sql, params)
     rows: list[Dict[str, Any]] = []
     for row in cursor.fetchall():
+        if _skip_rollup_row(row, dimensions, metric):
+            continue
         item: Dict[str, Any] = {
             "sessions": row["sessions"],
             "messages": row["messages"],
@@ -1430,12 +1480,156 @@ def _message_stats_rollup(
             "cache_read_tokens": row["cache_read_tokens"],
             "cache_creation_tokens": row["cache_creation_tokens"],
             "time_seconds": None,
+            "time_hms": None,
             "time_hours": None,
         }
         for index, dimension in enumerate(dimensions):
             item[dimension] = row[f"dim_{index}"] or "(none)"
         rows.append(item)
-    return rows
+    return _sort_and_limit_rollup_rows(rows, dimensions, metric, top, sort_by, sort_direction)
+
+
+def _skip_rollup_row(row: sqlite3.Row, dimensions: list[str], metric: str) -> bool:
+    """Return True when a rollup bucket has no useful metric value."""
+    if metric == "time" and not row["time_seconds"]:
+        return True
+    if metric == "tokens" and _rollup_metric_total(row, metric) == 0:
+        return True
+    if (
+        any(
+            dimension in {"day", "month"} and not row[f"dim_{index}"]
+            for index, dimension in enumerate(dimensions)
+        )
+        and _rollup_metric_total(row, metric) == 0
+    ):
+        return True
+    return False
+
+
+def _rollup_metric_total(row: sqlite3.Row, metric: str) -> float:
+    if metric == "time":
+        return float(row["time_seconds"] or 0)
+    if metric == "tokens":
+        return float(
+            (row["input_tokens"] or 0)
+            + (row["output_tokens"] or 0)
+            + (row["cache_read_tokens"] or 0)
+            + (row["cache_creation_tokens"] or 0)
+        )
+    return float(
+        (row["time_seconds"] or 0)
+        + (row["input_tokens"] or 0)
+        + (row["output_tokens"] or 0)
+        + (row["cache_read_tokens"] or 0)
+        + (row["cache_creation_tokens"] or 0)
+        + (row["messages"] or 0)
+        + (row["sessions"] or 0)
+    )
+
+
+def _format_seconds_hms(value: Any) -> str:
+    try:
+        seconds = int(float(value))
+    except (TypeError, ValueError):
+        return ""
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}h {minutes}m {seconds}s"
+
+
+def _sort_and_limit_rollup_rows(
+    rows: list[Dict[str, Any]],
+    dimensions: list[str],
+    metric: str,
+    top: Optional[int],
+    sort_by: Optional[list[str]],
+    sort_direction: str,
+) -> list[Dict[str, Any]]:
+    sort_fields = _normalize_rollup_sort_fields(sort_by, dimensions, metric)
+    reverse = _rollup_sort_reverse(sort_by, sort_direction, dimensions)
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: tuple(_rollup_sort_value(row, field, metric) for field in sort_fields),
+        reverse=reverse,
+    )
+    if top:
+        return sorted_rows[:top]
+    return sorted_rows
+
+
+def _normalize_rollup_sort_fields(
+    sort_by: Optional[list[str]], dimensions: list[str], metric: str
+) -> list[str]:
+    if not sort_by:
+        if dimensions and all(dimension in {"day", "month"} for dimension in dimensions):
+            return dimensions
+        return ["metric"]
+
+    fields: list[str] = []
+    valid_dimensions = set(ROLLUP_DIMENSIONS) | {"model"}
+    for raw_field in sort_by:
+        field = raw_field.strip().lower().replace("-", "_")
+        field = ROLLUP_DIMENSION_ALIASES.get(field, field)
+        field = ROLLUP_SORT_ALIASES.get(field, field)
+        if field in valid_dimensions or field in ROLLUP_SORT_ALIASES.values():
+            if field not in fields:
+                fields.append(field)
+            continue
+        raise ValueError(f"Unsupported rollup sort field: {raw_field}")
+    return fields or _normalize_rollup_sort_fields(None, dimensions, metric)
+
+
+def _rollup_sort_reverse(
+    sort_by: Optional[list[str]], sort_direction: str, dimensions: list[str]
+) -> bool:
+    if sort_direction == "asc":
+        return False
+    if sort_direction == "desc":
+        return True
+    if sort_by:
+        return False
+    return not (dimensions and all(dimension in {"day", "month"} for dimension in dimensions))
+
+
+def _rollup_sort_value(row: Dict[str, Any], field: str, metric: str) -> Any:
+    if field == "metric":
+        return _row_metric_total(row, metric)
+    if field == "tokens":
+        return _row_metric_total(row, "tokens")
+    value = row.get(field)
+    if field in {
+        "time_seconds",
+        "time_hours",
+        "sessions",
+        "messages",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+    }:
+        return float(value or 0)
+    return "" if value is None else str(value)
+
+
+def _row_metric_total(row: Dict[str, Any], metric: str) -> float:
+    if metric == "time":
+        return float(row.get("time_seconds") or 0)
+    if metric == "tokens":
+        return float(
+            (row.get("input_tokens") or 0)
+            + (row.get("output_tokens") or 0)
+            + (row.get("cache_read_tokens") or 0)
+            + (row.get("cache_creation_tokens") or 0)
+        )
+    return float(
+        (row.get("time_seconds") or 0)
+        + (row.get("input_tokens") or 0)
+        + (row.get("output_tokens") or 0)
+        + (row.get("cache_read_tokens") or 0)
+        + (row.get("cache_creation_tokens") or 0)
+        + (row.get("messages") or 0)
+        + (row.get("sessions") or 0)
+    )
 
 
 def _rollup_order_sql(dimensions: list[str], metric: str, message_query: bool = False) -> str:
@@ -1741,7 +1935,8 @@ def get_time_stats_from_db(
             f"""
             SELECT
                 COALESCE(SUM(work_period_seconds), 0) as total_seconds,
-                SUM(CASE WHEN work_period_seconds > 0 THEN 1 ELSE 0 END) as sessions_with_time
+                SUM(CASE WHEN work_period_seconds > 0 THEN 1 ELSE 0 END) as sessions_with_time,
+                COUNT(*) as total_sessions
             FROM sessions
             {scope_join}
             """
@@ -1749,6 +1944,7 @@ def get_time_stats_from_db(
         row = cursor.fetchone()
         total_seconds = row["total_seconds"] if row else 0
         sessions_with_time = row["sessions_with_time"] if row else 0
+        total_sessions = row["total_sessions"] if row else 0
         avg_seconds = total_seconds / sessions_with_time if sessions_with_time else 0
 
         day_cursor = conn.execute(
@@ -1766,6 +1962,7 @@ def get_time_stats_from_db(
         return {
             "total_duration_seconds": total_seconds,
             "sessions_with_time": sessions_with_time,
+            "total_sessions": total_sessions,
             "average_duration_seconds": avg_seconds,
             "by_day": by_day,
         }

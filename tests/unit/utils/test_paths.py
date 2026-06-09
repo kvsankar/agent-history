@@ -126,6 +126,21 @@ class TestNormalizeWorkspaceName:
             # On Linux/WSL without verify_local, dashes are converted to slashes
             assert result == "/D/Projects/myapp"
 
+    def test_decode_windows_path_preserves_hyphenated_leaf_with_verification(
+        self, tmp_path: Path
+    ) -> None:
+        """Windows Claude inventory should preserve dashed directory names."""
+        drive_root = tmp_path / "mnt" / "c"
+        (drive_root / "sankar" / "projects" / "bptrial-ble-sim-windows").mkdir(parents=True)
+
+        result = normalize_workspace_name(
+            "C--sankar-projects-bptrial-ble-sim-windows",
+            verify_local=True,
+            base_path=drive_root,
+        )
+
+        assert result == str(drive_root / "sankar" / "projects" / "bptrial-ble-sim-windows")
+
     @pytest.mark.parametrize(
         "encoded,expected",
         [
