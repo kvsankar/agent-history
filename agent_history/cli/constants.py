@@ -25,6 +25,7 @@ FLAGS_WITH_VALUES = frozenset(
         "--layout",
         "--jobs",
         "--home",
+        "--html-level",
         "--glob",
         "--regex",
         "-r",
