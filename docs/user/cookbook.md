@@ -18,16 +18,13 @@ Tip: When targeting Codex or Gemini sessions (including in WSL), pass `--agent c
 Create a project to manage workspaces that exist on Windows, WSL, and a remote VM:
 
 ```bash
-# Create the project
-cagelens project create myproject
-
-# Add workspaces interactively from all homes
-cagelens project add myproject --ah -r user@vm01 --pick
+# Preview workspaces from all homes
+cagelens project add myproject --glob "*myproject*" --ah -r user@vm01 --dry-run
 
 # Or add by pattern (non-interactive)
-cagelens project add myproject myproject                    # local
-cagelens project add myproject --windows myproject          # Windows
-cagelens project add myproject -r user@vm01 myproject       # remote
+cagelens project add myproject --glob "*myproject*"                    # local
+cagelens project add myproject --glob "*myproject*" --windows          # Windows
+cagelens project add myproject --glob "*myproject*" -r user@vm01       # remote
 
 # View the project
 cagelens project show myproject
@@ -40,18 +37,17 @@ cagelens project show myproject
 Export all sessions from all environments to a backup directory:
 
 ```bash
-# One-time: create a project for everything
-cagelens project create all-projects
-cagelens project add all-projects --ah -r vm01 -r vm02 --pick
+# One-time: create a project from all known workspaces
+cagelens project add all-projects --ah -r vm01 -r vm02 --aw
 
 # Daily backup (incremental - only exports new/changed files)
-cagelens export @all-projects -o ~/backups/cagelens/
+cagelens project export all-projects -o ~/backups/cagelens/
 
 # Force re-export everything
-cagelens export @all-projects -o ~/backups/cagelens/ --force
+cagelens project export all-projects -o ~/backups/cagelens/ --force
 
 # Faster and quieter backups (parallel workers, less console noise)
-cagelens export @all-projects -o ~/backups/cagelens/ --jobs 4 --quiet
+cagelens project export all-projects -o ~/backups/cagelens/ --jobs 4 --quiet
 ```
 
 ---
@@ -60,14 +56,14 @@ cagelens export @all-projects -o ~/backups/cagelens/ --jobs 4 --quiet
 
 ```bash
 # List sessions from all homes matching "myproject"
-cagelens ss myproject --ah -r user@vm01
-cagelens ss myproject --ah --no-wsl    # exclude WSL if it is slow
+cagelens session list --glob "*myproject*" --ah -r user@vm01
+cagelens session list --glob "*myproject*" --ah --no-wsl    # exclude WSL if it is slow
 
 # Export from all homes
-cagelens export myproject --ah -r user@vm01 -o ./exports/
+cagelens session export --glob "*myproject*" --ah -r user@vm01 -o ./exports/
 
 # Skip remote sources if a host is offline
-cagelens export myproject --ah --no-remote -o ./exports/
+cagelens session export --glob "*myproject*" --ah --no-remote -o ./exports/
 ```
 
 ---
@@ -82,8 +78,8 @@ cagelens ws --ah -r user@vm01 -r user@vm02
 cagelens ws --ah | grep django
 
 # List sessions from matching workspaces
-cagelens ss django --ah
-cagelens ss django --ah --counts       # force counts on all sources
+cagelens session list --glob "*django*" --ah
+cagelens session list --glob "*django*" --ah --counts       # force counts on all sources
 ```
 
 ---
@@ -92,10 +88,10 @@ cagelens ss django --ah --counts       # force counts on all sources
 
 ```bash
 # Fetch and cache remote sessions locally
-cagelens export myproject -r user@vm01
+cagelens fetch --glob "*myproject*" -r user@vm01
 
 # Later, work with cached data (no network needed)
-cagelens ss remote_vm01_home-user-myproject
+cagelens session list --glob "*myproject*"
 ```
 
 ---
@@ -106,10 +102,10 @@ Create clean exports without metadata for blog posts or documentation:
 
 ```bash
 # Export without UUIDs, token counts, and navigation links
-cagelens export myproject --minimal -o ./blog-posts/
+cagelens session export --glob "*myproject*" --minimal -o ./blog-posts/
 
 # Split long conversations into manageable parts
-cagelens export myproject --minimal --split 500 -o ./blog-posts/
+cagelens session export --glob "*myproject*" --minimal --split 500 -o ./blog-posts/
 ```
 
 ---
@@ -117,14 +113,12 @@ cagelens export myproject --minimal --split 500 -o ./blog-posts/
 ## Recipe 7: Move Projects Between Machines
 
 ```bash
-# On source machine: export projects
-cagelens project export projects.json
+# On source machine: inspect project membership
+cagelens project show myproject
 
-# Copy to target machine
-scp projects.json user@newmachine:~/
-
-# On target machine: import projects
-cagelens project import projects.json
+# On target machine: recreate membership from discoverable workspaces
+cagelens project add myproject --glob "*myproject*" --dry-run
+cagelens project add myproject --glob "*myproject*"
 ```
 
 ---
@@ -133,11 +127,11 @@ cagelens project import projects.json
 
 ```bash
 # Sessions from last week across all homes
-cagelens ss --ah --since 2025-11-24
-cagelens ss --ah --wsl-counts          # count WSL messages on Windows
+cagelens session list --ah --since 2025-11-24
+cagelens session list --ah --counts          # count messages where needed
 
 # Export recent sessions only
-cagelens export @myproject --since 2025-11-01 -o ./recent/
+cagelens session export --project myproject --since 2025-11-01 -o ./recent/
 ```
 
 ---
@@ -167,7 +161,7 @@ cagelens stats --time --ah     # cached stats from all homes
 
 ```bash
 # Initial sync from all homes (uses saved remotes)
-cagelens stats --sync --ah --jobs 4
+cagelens stats --sync --ah
 
 # View overall statistics (current workspace)
 cagelens stats
@@ -182,7 +176,7 @@ cagelens stats --by tool
 cagelens stats --by day
 
 # Filter to specific project
-cagelens stats myproject
+cagelens stats --project myproject
 ```
 
 ---
@@ -197,7 +191,7 @@ cagelens stats --sync --ah
 cagelens stats --since 2025-11-01 --until 2025-11-30
 
 # Per-workspace breakdown for the month
-cagelens stats --by workspace --since 2025-11-01 --until 2025-11-30
+cagelens stats rollup --metric time --by workspace,month --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -209,11 +203,11 @@ cagelens stats --by workspace --since 2025-11-01 --until 2025-11-30
 cagelens stats --by tool
 
 # Tool usage for specific project
-cagelens stats --by tool myproject
+cagelens stats --project myproject --tools
 
 # Compare by looking at different workspaces
-cagelens stats --by tool frontend-app
-cagelens stats --by tool backend-api
+cagelens stats --glob "*frontend-app*" --tools
+cagelens stats --glob "*backend-api*" --tools
 ```
 
 ---
@@ -241,11 +235,10 @@ Projects are automatically aggregated in stats output:
 
 ```bash
 # Create project for workspaces across environments
-cagelens project create myproject
-cagelens project add myproject --ah myproject
+cagelens project add myproject --glob "*myproject*" --ah
 
-# View aggregated stats (shows @myproject with combined metrics)
-cagelens stats
+# View aggregated stats
+cagelens stats --project myproject
 
 # Detailed workspace view shows projects separately
 cagelens stats --by workspace
@@ -259,19 +252,18 @@ Once a workspace is part of a project, commands automatically use the project sc
 
 ```bash
 # Set up: create project and add current workspace
-cagelens project create myproject
-cagelens project add myproject myproject
+cagelens project add myproject --this
 
 # Now running from this workspace automatically uses the project
-cagelens ss         # Using project @myproject
-cagelens ss --counts
-cagelens export     # Using project @myproject
+cagelens session list         # Using project myproject
+cagelens session list --counts
+cagelens session export -o ./exports     # Using project myproject
 cagelens stats      # Using project @myproject
 
 # Force current workspace only when needed
-cagelens ss --this
-cagelens ss --this --no-windows
-cagelens export --this
+cagelens session list --this
+cagelens session list --this --no-windows
+cagelens session export --this -o ./exports
 cagelens stats --this
 ```
 
@@ -285,10 +277,10 @@ Extract conversation history for writing blog posts:
 
 ```bash
 # Initial export
-cagelens export my-project -o ./blog-material
+cagelens session export --glob "*my-project*" -o ./blog-material
 
 # Later - only exports new/updated conversations
-cagelens export my-project -o ./blog-material
+cagelens session export --glob "*my-project*" -o ./blog-material
 ```
 
 ### Project Documentation
@@ -296,7 +288,7 @@ cagelens export my-project -o ./blog-material
 Document development decisions and iterations:
 
 ```bash
-cagelens export backend-api -o ./docs/development-log
+cagelens session export --glob "*backend-api*" -o ./docs/development-log
 ```
 
 ### Analysis & Learning
@@ -305,7 +297,7 @@ Review problem-solving approaches across sessions:
 
 ```bash
 # Export all sessions for a project
-cagelens export ml-pipeline
+cagelens session export --glob "*ml-pipeline*"
 
 # Analyze patterns
 grep -r "Error:" .cagelens/exports/
@@ -316,7 +308,7 @@ grep -r "Error:" .cagelens/exports/
 Archive conversation history by date/project:
 
 ```bash
-cagelens export project-2024 -o archives/2024-11/
+cagelens session export --glob "*project-2024*" -o archives/2024-11/
 ```
 
 ### Multi-Environment Consolidation
@@ -325,8 +317,8 @@ Consolidate conversations from multiple environments:
 
 ```bash
 # Export all homes: local + WSL + Windows + SSH remotes
-cagelens export myproject --ah -o ./backups -r user@vm01
+cagelens session export --glob "*myproject*" --ah -o ./backups -r user@vm01
 
 # Or all workspaces from all homes
-cagelens export --ah --aw -o ./backups -r user@vm01
+cagelens session export --ah --aw -o ./backups -r user@vm01
 ```

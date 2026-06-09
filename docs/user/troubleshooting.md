@@ -28,7 +28,7 @@ cagelens ws list
 
 Or try a partial match:
 ```bash
-cagelens session projects  # Match any workspace with "projects"
+cagelens session list --glob "*projects*"  # Match any workspace with "projects"
 ```
 
 ---
@@ -37,9 +37,9 @@ cagelens session projects  # Match any workspace with "projects"
 
 Yes! Use multiple patterns or the `--aw` flag:
 ```bash
-cagelens export proj1 proj2         # Multiple specific patterns
-cagelens export django              # All workspaces containing "django"
-cagelens export --aw                # All workspaces
+cagelens session export /abs/path/proj1 /abs/path/proj2 -o ./exports  # Exact workspaces
+cagelens session export --glob "*django*" -o ./exports                # Matching workspaces
+cagelens session export --aw -o ./exports                             # All workspaces
 ```
 
 ---
@@ -65,8 +65,8 @@ Both are extracted and converted.
 
 Use `--since` and `--until`:
 ```bash
-cagelens session myproject --since 2025-11-01 --until 2025-11-30
-cagelens export myproject --since 2025-11-01
+cagelens session list --glob "*myproject*" --since 2025-11-01 --until 2025-11-30
+cagelens session export --glob "*myproject*" --since 2025-11-01 -o ./exports
 ```
 
 ---
@@ -78,15 +78,15 @@ Large histories across multiple homes can take several minutes, especially with 
 Tips:
 ```bash
 # Parallelize work
-cagelens export --ah --jobs 4
-cagelens stats --sync --ah --jobs 4
+cagelens session export --ah --aw --jobs 4 -o ./exports
+cagelens stats --sync --ah
 
 # Skip sources that are slow or offline
-cagelens export --ah --no-remote
+cagelens session export --ah --aw --no-remote -o ./exports
 cagelens stats --sync --ah --no-wsl
 
 # Reduce output noise
-cagelens export --ah --quiet
+cagelens session export --ah --aw --quiet -o ./exports
 ```
 
 ---
@@ -96,8 +96,8 @@ cagelens export --ah --quiet
 Use the `--wsl` flag:
 ```powershell
 python cagelens home --wsl              # Find WSL distributions
-python cagelens session myproject --wsl    # List sessions
-python cagelens export myproject --wsl # Export
+python cagelens session list --glob "*myproject*" --wsl    # List sessions
+python cagelens session export --glob "*myproject*" --wsl -o ./exports # Export
 python cagelens session --wsl --agent codex
 python cagelens session --wsl --agent gemini
 ```
@@ -169,7 +169,7 @@ chmod 700 ~/.claude/projects/  # Fix if needed
 2. Ensure the conversation wasn't interrupted mid-session
 3. Try converting individual files for better error messages:
    ```bash
-   cagelens export path/to/file.jsonl
+   cagelens session export path/to/file.jsonl -o ./exports
    ```
 
 ---
@@ -200,7 +200,7 @@ chmod 700 ~/.claude/projects/  # Fix if needed
 
 **Solution:** Use WSL (most reliable):
 ```powershell
-wsl python cagelens export -r user@host
+wsl python cagelens session export -r user@host --aw -o ./exports
 ```
 
 Alternative options (Chocolatey, Git Bash) may have SSH integration issues.
@@ -213,7 +213,7 @@ Alternative options (Chocolatey, Git Bash) may have SSH integration issues.
 
 **Solution:** Use WSL:
 ```powershell
-wsl python cagelens export -r user@host
+wsl python cagelens session export -r user@host --aw -o ./exports
 ```
 
 ---

@@ -498,12 +498,37 @@ commands remain supported as convenience aliases:
 - Table output also starts with the same scope banner as summary stats.
 - Required dimensions are supplied with `--by`, accepting comma-separated values.
 - Supported dimensions: `project`, `workspace`, `home`, `agent`, `model`, `day`, `month`.
+- Dimension aliases are accepted for common shorthand and plurals, including
+  `ws`/`workspaces` for `workspace` and `proj`/`projects` for `project`.
 - Supported metrics:
-  - `time`: work-period seconds/hours
+  - `time`: work-period `TIME_HMS`, `TIME_HOURS`, and raw `TIME_SECONDS`
   - `tokens`: input/output/cache token totals
   - `all`: time, tokens, sessions, messages, and tool/error counts
+- Token rollups without `model` use session-level token totals. Rollups that
+  include `model` use message-level token rows because model is message-scoped.
+- Time rollups keep both machine-readable and human-readable forms. Table/TSV
+  output includes `TIME_HMS` and `TIME_SECONDS`; JSON includes `time_hms` and
+  `time_seconds`.
+- Table and TSV token rollup columns use compact K/M/B suffixes by default.
+  `-H`/`--human` is retained for explicitness. Use `--raw`/`--no-human` for
+  raw numeric values. JSON output keeps raw numeric token fields.
+- Table output right-aligns numeric columns and left-aligns dimensions.
+- Table and TSV rollup output includes a totals row by default. `-c`/`--total`
+  and `--totals` are retained for explicitness. Use `--no-total`/`--no-totals`
+  to suppress it. The first dimension column contains `TOTAL`; remaining
+  dimension columns are blank; numeric metric columns are summed.
+- `--separator` prints `--` between the scope banner and table output, giving
+  scripts and coding agents a simple record-separator marker for the tabular
+  section. JSON output is unchanged.
 - Rollup rows are sorted by the primary metric descending unless the grouping
   is time-only (`day`/`month`), which sorts chronologically.
+- `--sort <fields>` overrides default sorting. It accepts comma-separated
+  dimensions and metric fields: `metric`, `tokens`, `time`, `sessions`,
+  `messages`, `input`, `output`, `cache-read`, `cache-create`, plus active
+  dimensions such as `month`, `agent`, or `workspace`.
+- `--asc` and `--desc` set sort direction. Without an explicit direction,
+  explicit `--sort` fields sort ascending; default metric sorting remains
+  descending except time-only rollups, which remain chronological.
 - Examples:
   - `cagelens stats rollup --metric time --by project`
   - `cagelens stats rollup --metric time --by project,month`
@@ -541,9 +566,16 @@ commands remain supported as convenience aliases:
 | `--time` | Expand work-period time details, including daily time totals |
 | `--metric <name>` | Rollup metric: `time`, `tokens`, or `all` |
 | `--top <N>` | Rollup row limit |
+| `--sort <fields>` | Sort rollup rows by comma-separated fields |
+| `--asc` | Sort rollup rows ascending |
+| `--desc` | Sort rollup rows descending |
+| `-c`, `--total`, `--totals` | Explicitly include the default totals row in rollup table/TSV output |
+| `--no-total`, `--no-totals` | Suppress the default rollup totals row |
+| `--separator` | Print `--` before the rollup table |
 | `--top-ws <N>` | Show top N workspaces in table output |
 | `--top-ws all` | Show all workspace rows in table output |
-| `-H`, `--human` | Use compact human-readable numbers and durations in table output |
+| `-H`, `--human` | Explicitly use default compact human-readable numbers and durations in rollup table/TSV output |
+| `--raw`, `--no-human` | Use raw numeric values instead of compact K/M/B rollup token columns |
 
 **Notes:**
 - `--by` accepts comma-separated dimensions (e.g., `--by model,tool,day`)
@@ -554,12 +586,35 @@ commands remain supported as convenience aliases:
 ### Project Operations
 
 **`project add`** - Add workspace to project
-- Input: Project name, workspace pattern, home scope
-- Output: Confirmation of added workspaces
+- Input: Project name, exact workspace(s), `--glob`/`--regex` workspace matchers,
+  or workspace/home scope flags
+- Output: Confirmation of added workspaces; with `--dry-run`, a preview of
+  workspaces that would be added
 - Behavior:
-  1. Resolve workspaces matching pattern from specified homes
-  2. Create project if not exists
-  3. Add workspace references to project
+  1. Resolve the requested scope using the same workspace matching rules as
+     `ws list`: positional workspaces are exact, `--glob` is shell-style
+     matching, and `--regex` is Python regex search.
+  2. Treat the resolved workspace set as a snapshot. The project stores exact
+     workspace references by home; it does not store the glob/regex as a live
+     rule.
+  3. Create the project if it does not exist.
+  4. Add any new workspace references and leave existing members unchanged.
+  5. With `--dry-run`, do not write configuration; show the resolved
+     workspaces and counts.
+  6. If no workspaces match, return a non-zero error and leave configuration
+     unchanged.
+
+Examples:
+
+```bash
+cagelens project add auth --glob '/home/sankar/sankar/projects/auth*' --dry-run
+cagelens project add auth --glob '/home/sankar/sankar/projects/auth*'
+cagelens project add auth /home/sankar/sankar/projects/auth
+```
+
+Dynamic project rules are intentionally out of scope for `project add`; if
+added later, they must use a separate explicit command such as
+`project rule add`.
 
 **`project remove`** - Remove workspace or project
 - Input: Project name, optional workspace

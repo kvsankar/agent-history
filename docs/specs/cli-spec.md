@@ -363,9 +363,9 @@ Stats Options:
   --tools                         # Alias for --by tool
   --by-day                        # Alias for --by day
   --by-workspace                  # Alias for --by workspace
-  --time                          # Expand work-period time details
+  --time                          # Summary-only time details; use rollup for monthly totals
   --top-ws <n|all>                # Limit to top N workspaces, or show all
-  -H, --human                     # Compact human-readable numbers/durations
+  -H, --human                     # Human-readable numbers and h/m/s durations
 
 Output Options:
   --format <fmt>                  # Output format: table, tsv, json
@@ -383,8 +383,42 @@ stats rollup [options]             # Stable tabular rollups
 
 Rollup Options:
   --metric <time|tokens|all>        # Metric family (default: all)
-  --by <dims>                      # project, workspace, home, agent, model, day, month
+  --by <dims>                      # project/proj, workspace/ws, home, agent, model, day, month
   --top <n>                        # Limit rows
+  --sort <fields>                  # metric/tokens/time/sessions/messages/input/output/cache-read/dims
+  --asc | --desc                   # Sort direction
+  -c, --total, --totals            # Explicitly include the default totals row
+  --no-total, --no-totals          # Suppress the default totals row
+  --separator                      # Print -- before the rollup table
+
+Time rollup columns:
+  TIME_HMS                         # Human-readable total, e.g. 170h 6m 45s
+  TIME_HOURS                       # Decimal hours for quick spreadsheet math
+  TIME_SECONDS                     # Raw seconds for scripts and exact calculations
+
+Human-readable rollups:
+  -H, --human                      # Explicit default: compact token columns with K/M/B
+  --raw, --no-human                # Raw token values in table/TSV
+                                   # JSON keeps raw numeric fields
+
+Table rollups:
+  Numeric columns are right-aligned. Dimension columns are left-aligned.
+
+Discoverability examples:
+  cagelens stats --time
+      Show dashboard time coverage and daily time details.
+
+  cagelens stats rollup --metric time --by month
+      Show work-period time totals by month.
+
+  cagelens stats rollup --metric time --by project,month
+      Show monthly work-period time totals per project.
+
+  cagelens stats rollup --metric time --by workspace,month --project myproj
+      Show monthly work-period time totals per workspace in a project.
+
+  cagelens stats rollup --metric tokens --by agent,month --sort month,agent --asc
+      Sort grouped token rows chronologically, then by agent.
 ```
 
 ### project
@@ -396,6 +430,7 @@ project [list]                    # List all projects
 project show <name>               # Show project details
 project add <name> <workspace>    # Add workspace to project
 project add <name> --glob <pattern>   # Add by pattern
+project add <name> --glob <pattern> --dry-run # Preview resolved additions
 project add <name> --ah ...       # Add from all homes (local + wsl + windows + remotes + web)
 project remove <name> [workspace] # Remove workspace (or entire project)
 project export <name> [options]   # Export all sessions in project; accepts --agent
@@ -653,6 +688,9 @@ cagelens stats rollup --metric time --by project,month
 cagelens stats rollup --metric time --by workspace,day
 cagelens stats rollup --metric tokens --by project,agent,model
 cagelens stats rollup --metric all --by project
+cagelens stats rollup --metric tokens --by workspace,month --separator
+cagelens stats rollup --metric tokens --by workspace,month --raw --no-total
+cagelens stats rollup --metric tokens --by agent,month --sort month,agent --asc
 
 # Output format
 cagelens stats --format json
@@ -674,6 +712,12 @@ output. It must distinguish project scope from workspace-pattern scope:
 `cagelens stats --glob '*bptrial*'` is a workspace glob filter, while
 `cagelens stats --project bptrial` is a project filter. Bare
 `cagelens stats bptrial` is exact workspace scope.
+
+For rollup table output, `--separator` inserts a `--` line after this banner
+and before the table. Rollups include a `TOTAL` row by default; use
+`--no-total`/`--no-totals` to suppress it. Token columns use compact K/M/B
+values by default in table/TSV; use `--raw`/`--no-human` for raw values.
+Numeric table columns are right-aligned.
 
 ---
 

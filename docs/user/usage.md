@@ -372,13 +372,19 @@ cagelens stats rollup --metric METRIC --by DIMS [OPTIONS]
 - `--by DIMS`: Group by dimensions (comma-separated): home, agent, workspace, day, model, tool
 - `--metric time|tokens|all`: Rollup metric family
 - `--top N`: Limit rollup rows
+- `--sort FIELDS`: Sort rollup rows by comma-separated fields such as month, agent, tokens, time, sessions, input, output, cache-read
+- `--asc`, `--desc`: Sort direction
+- `-c`, `--total`, `--totals`: Explicitly include the default totals row
+- `--no-total`, `--no-totals`: Suppress the default totals row
+- `--separator`: Print `--` before the rollup table
 - `--models`: Shortcut for `--by model`
 - `--tools`: Shortcut for `--by tool`
 - `--by-day`: Shortcut for `--by day`
 - `--by-workspace`: Shortcut for `--by workspace`
 - `--top-ws N`: Limit workspaces shown in the summary (N must be > 0)
 - `--top-ws all`: Show every workspace row
-- `-H`, `--human`: Compact large numbers and durations
+- `-H`, `--human`: Explicit default for rollups; compact large numbers and durations
+- `--raw`, `--no-human`: Use raw numeric rollup values instead of compact K/M/B values
 
 **Filters:**
 - `--since DATE`: Filter from this date
@@ -420,6 +426,9 @@ cagelens stats rollup --metric time --by project,month
 cagelens stats rollup --metric time --by workspace,day
 cagelens stats rollup --metric tokens --by project,agent,model
 cagelens stats rollup --metric all --by project
+cagelens stats rollup --metric tokens --by workspace,month --separator
+cagelens stats rollup --metric tokens --by workspace,month --raw --no-total
+cagelens stats rollup --metric tokens --by agent,month --sort month,agent --asc
 ```
 
 **Metrics Available:**
