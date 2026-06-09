@@ -1,6 +1,6 @@
 """WorkspaceRef normalization tests."""
 
-from agent_history.utils.workspace_ref import build_workspace_ref
+from agent_history.utils.workspace_ref import build_workspace_ref, is_hash_display
 
 
 def test_encoded_workspace_ref_decodes() -> None:
@@ -23,6 +23,11 @@ def test_hash_workspace_ref_uses_raw_key() -> None:
     assert ref.key == raw
     assert ref.display == "[hash:a1b2c3d4]"
     assert ref.kind.value == "hash"
+
+
+def test_hash_display_detection_accepts_display_label() -> None:
+    assert is_hash_display("[hash:a1b2c3d4]")
+    assert not is_hash_display(r"\[hash:a1b2c3d4\]")
 
 
 def test_windows_path_workspace_ref_normalizes() -> None:

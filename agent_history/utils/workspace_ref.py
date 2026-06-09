@@ -74,7 +74,7 @@ class WorkspaceContext:
 
 
 _HASH_RE = re.compile(r"^[0-9a-f]{32,64}$", re.IGNORECASE)
-_HASH_DISPLAY_RE = re.compile(r"^\\[hash:[0-9a-f]+\\]$", re.IGNORECASE)
+_HASH_DISPLAY_RE = re.compile(r"^\[hash:[0-9a-f]+\]$", re.IGNORECASE)
 
 
 def _looks_like_path(value: str) -> bool:

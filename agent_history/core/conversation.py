@@ -3,41 +3,42 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 
 @dataclass(frozen=True)
 class ConversationGraph:
     """Represents the structure of a conversation with potential forks."""
 
-    messages: List[Dict[str, Any]]
-    uuid_to_msg: Dict[str, Dict[str, Any]]
-    uuid_to_children: Dict[str, List[str]]
-    fork_points: List[str]
-    branches: List[Dict[str, Any]]
+    messages: list[dict[str, Any]]
+    uuid_to_msg: dict[str, dict[str, Any]]
+    uuid_to_children: dict[str, list[str]]
+    fork_points: list[str]
+    branches: list[dict[str, Any]]
     is_linear: bool
 
 
-def analyze_conversation_graph(messages: List[Dict[str, Any]]) -> ConversationGraph:
+def analyze_conversation_graph(messages: list[dict[str, Any]]) -> ConversationGraph:
     """Analyze conversation structure to detect forks and branches."""
     from collections import defaultdict
 
     uuid_to_msg = {msg["uuid"]: msg for msg in messages if msg.get("uuid")}
-    uuid_to_children: Dict[str, List[str]] = defaultdict(list)
+    uuid_to_children: dict[str, list[str]] = defaultdict(list)
 
     for msg in messages:
         parent = msg.get("parentUuid")
-        if parent:
-            uuid_to_children[parent].append(msg["uuid"])
+        uuid = msg.get("uuid")
+        if parent and uuid:
+            uuid_to_children[parent].append(uuid)
 
     fork_points = [parent for parent, children in uuid_to_children.items() if len(children) > 1]
 
-    branches: List[Dict[str, Any]] = []
+    branches: list[dict[str, Any]] = []
     for fork_uuid in fork_points:
         parent_msg = uuid_to_msg.get(fork_uuid)
         children = uuid_to_children[fork_uuid]
 
-        branch_info: Dict[str, Any] = {
+        branch_info: dict[str, Any] = {
             "fork_uuid": fork_uuid,
             "fork_timestamp": parent_msg.get("timestamp") if parent_msg else None,
             "fork_type": parent_msg.get("role") if parent_msg else None,
@@ -67,7 +68,7 @@ def analyze_conversation_graph(messages: List[Dict[str, Any]]) -> ConversationGr
     )
 
 
-def generate_graph_summary(graph: ConversationGraph) -> List[str]:
+def generate_graph_summary(graph: ConversationGraph) -> list[str]:
     """Generate markdown summary of conversation graph structure."""
     if graph.is_linear:
         return []
@@ -102,7 +103,7 @@ def generate_graph_summary(graph: ConversationGraph) -> List[str]:
     return lines
 
 
-def generate_mermaid_graph(graph: ConversationGraph, max_nodes: int = 50) -> List[str]:
+def generate_mermaid_graph(graph: ConversationGraph, max_nodes: int = 50) -> list[str]:
     """Generate Mermaid diagram of conversation graph."""
     if graph.is_linear or not graph.fork_points:
         return []
