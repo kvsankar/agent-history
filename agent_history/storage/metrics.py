@@ -1371,6 +1371,12 @@ def get_stats_rollup_from_db(
         raise ValueError(f"Unsupported rollup dimension(s): {', '.join(invalid)}")
     if metric not in {"time", "tokens", "all"}:
         raise ValueError(f"Unsupported rollup metric: {metric}")
+    if metric == "time" and "model" in dimensions:
+        raise ValueError(
+            "Unsupported rollup: --metric time cannot be grouped by model because "
+            "time is tracked per session, not per message/model. Use tokens by model, "
+            "or time by project/workspace/agent/month/day."
+        )
 
     conn = init_metrics_db(db_path)
     try:

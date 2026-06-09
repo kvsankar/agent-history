@@ -236,6 +236,29 @@ def test_top_level_stats_rollup_uses_cached_db(tmp_path, monkeypatch, capsys) ->
     assert "Using cached metrics" in captured.err
 
 
+def test_time_model_rollup_fails_with_explicit_message(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
+    monkeypatch.chdir(tmp_path)
+    _seed_metrics_db()
+
+    exit_code = CommandOrchestrator().run(
+        [
+            "stats",
+            "rollup",
+            "--metric",
+            "time",
+            "--by",
+            "month,model",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "--metric time cannot be grouped by model" in captured.err
+    assert "time is tracked per session" in captured.err
+
+
 def test_time_month_rollup_omits_untimestamped_zero_time_bucket(
     tmp_path, monkeypatch, capsys
 ) -> None:
