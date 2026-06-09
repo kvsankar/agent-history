@@ -316,12 +316,15 @@ def _resolve_existing_wsl_path(parts: list, base_path: Path) -> tuple:
     return _get_fallback_from_base(base_path, parts)
 
 
-def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
+def _normalize_windows_path(
+    workspace_dir_name: str, verify_local: bool, base_path: Optional[Path] = None
+) -> str:
     """Normalize a Windows-style encoded path (e.g., 'C--Users-alice-projects').
 
     Args:
         workspace_dir_name: Encoded name starting with drive letter and '--'
         verify_local: If True, verify against /mnt/<drive>/ filesystem
+        base_path: Optional drive root to verify against
 
     Returns:
         Decoded path (e.g., 'C:\\Users\\alice\\projects' on Windows, '/mnt/c/...' on WSL)
@@ -332,7 +335,7 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
 
     # On Windows, return a native drive path
     if sys.platform == "win32":
-        drive_root = Path(f"{drive_letter}:\\")
+        drive_root = base_path or Path(f"{drive_letter}:\\")
         if verify_local:
             resolved = _resolve_path_segments(parts, drive_root)
             return str(drive_root.joinpath(*resolved))
@@ -341,13 +344,13 @@ def _normalize_windows_path(workspace_dir_name: str, verify_local: bool) -> str:
             return f"{drive_letter}:\\" + "\\".join(parts)
 
     # On WSL, prefer /mnt/<drive> if available
-    mnt_base = Path(f"/mnt/{drive_letter.lower()}")
+    mnt_base = base_path or Path(f"/mnt/{drive_letter.lower()}")
     if verify_local:
         if mnt_base.exists():
             path_segments = _resolve_path_segments(parts, mnt_base)
             if path_segments:
                 # Return a WSL-usable path: /mnt/<drive>/<segments>
-                return "/mnt/" + drive_letter.lower() + "/" + "/".join(path_segments)
+                return str(mnt_base).rstrip("/") + "/" + "/".join(path_segments)
     elif mnt_base.exists():
         return "/mnt/" + drive_letter.lower() + "/" + rest.replace("-", "/")
 
@@ -484,7 +487,7 @@ def _normalize_workspace_name_cached(
 
     # Handle Windows-style paths (e.g., 'C--Users-alice-projects-myapp')
     if _is_windows_encoded_path(workspace_dir_name):
-        return _normalize_windows_path(workspace_dir_name, verify_local)
+        return _normalize_windows_path(workspace_dir_name, verify_local, base_path)
 
     # Remove leading dash for Unix paths
     encoded = workspace_dir_name[1:] if workspace_dir_name.startswith("-") else workspace_dir_name

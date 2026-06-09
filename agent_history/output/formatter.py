@@ -195,6 +195,32 @@ def _format_scope_items(values: Any, *, max_items: int = 4) -> str:
     return f"{count} ({shown}, ...)"
 
 
+def _append_scope_items(
+    lines: list[str],
+    label: str,
+    values: Any,
+    *,
+    max_items: int = 4,
+    max_item_len: int = 72,
+) -> None:
+    if not values:
+        lines.append(f"  {label}: 0")
+        return
+
+    items = [str(value) for value in values]
+    count = len(items)
+    if count <= 2:
+        lines.append(f"  {label}: {_format_scope_items(items, max_items=max_items)}")
+        return
+
+    lines.append(f"  {label}: {count}")
+    for item in items[:max_items]:
+        lines.append(f"    - {_truncate_tail(item, max_item_len)}")
+    remaining = count - max_items
+    if remaining > 0:
+        lines.append(f"    - ... {remaining} more")
+
+
 def _append_scope_summary(
     lines: list[str],
     stats: Any,
@@ -210,7 +236,7 @@ def _append_scope_summary(
     lines.append("Scope:")
     lines.append(f"  Request: {_format_scope_request(metadata.get('scope_request'))}")
     lines.append(f"  Homes: {_format_scope_items(homes)}")
-    lines.append(f"  Workspaces: {_format_scope_items(workspaces)}")
+    _append_scope_items(lines, "Workspaces", workspaces)
     if total_sessions is not None:
         lines.append(f"  Sessions: {total_sessions}")
     lines.append("")
@@ -236,19 +262,14 @@ def _format_duration(value: Any, *, human: bool = False) -> str:
         seconds = int(float(value))
     except (TypeError, ValueError):
         return str(value)
-    if not human:
-        return f"{seconds}s"
-    days, remainder = divmod(seconds, 86_400)
-    hours, remainder = divmod(remainder, 3_600)
+    hours, remainder = divmod(seconds, 3_600)
     minutes, seconds = divmod(remainder, 60)
     parts: list[str] = []
-    if days:
-        parts.append(f"{days}d")
     if hours:
         parts.append(f"{hours}h")
     if minutes:
         parts.append(f"{minutes}m")
-    if not parts:
+    if seconds or parts:
         parts.append(f"{seconds}s")
     return " ".join(parts)
 
@@ -392,19 +413,21 @@ def _append_stats_dashboard(lines: list[str], stats: StatsDict, *, human: bool =
     by_model = stats.get("by_model", {})
     if isinstance(by_model, dict) and by_model:
         top_models = ", ".join(str(model) for model in list(by_model)[:3])
-        suffix = f" ({top_models})" if top_models else ""
+        suffix = f" (top by messages: {top_models})" if top_models else ""
         lines.append(f"Models: {len(by_model)}{suffix}")
 
     time_stats = stats.get("time_stats", {})
     if isinstance(time_stats, dict) and time_stats:
         total_time = time_stats.get("total_duration_seconds", 0)
         sessions_with_time = time_stats.get("sessions_with_time", 0)
+        total_time_sessions = time_stats.get("total_sessions") or total_sessions
         average_time = time_stats.get("average_duration_seconds", 0)
         lines.append(
             "Time: "
-            f"total {_format_duration(total_time, human=human)}, "
-            f"avg {_format_duration(average_time, human=human)}, "
-            f"sessions {_format_stat_number(sessions_with_time, human=human)}"
+            f"observed total {_format_duration(total_time, human=human)}, "
+            f"avg timed session {_format_duration(average_time, human=human)}, "
+            f"coverage {_format_stat_number(sessions_with_time, human=human)}/"
+            f"{_format_stat_number(total_time_sessions, human=human)} sessions"
         )
 
     lines.append("")
@@ -453,7 +476,7 @@ def _rollup_columns(metadata: dict[str, Any]) -> list[str]:
     metric = metadata.get("metric") or "all"
     columns = list(dimensions)
     if metric in ("time", "all"):
-        columns.extend(["TIME_HOURS", "TIME_SECONDS"])
+        columns.extend(["TIME_HMS", "TIME_HOURS", "TIME_SECONDS"])
     if metric in ("tokens", "all"):
         columns.extend(["INPUT_TOKENS", "OUTPUT_TOKENS", "CACHE_READ", "CACHE_CREATE"])
     if metric == "all":
@@ -464,8 +487,13 @@ def _rollup_columns(metadata: dict[str, Any]) -> list[str]:
 def _rollup_row_values(row: dict[str, Any], metadata: dict[str, Any]) -> list[str]:
     dimensions = [str(dimension) for dimension in metadata.get("dimensions", [])]
     metric = metadata.get("metric") or "all"
+    human = bool(metadata.get("human"))
     values = [str(row.get(dimension, "")) for dimension in dimensions]
     if metric in ("time", "all"):
+        time_hms = row.get("time_hms")
+        if time_hms is None:
+            time_hms = _format_duration(row.get("time_seconds"))
+        values.append(str(time_hms))
         time_hours = row.get("time_hours")
         values.append("" if time_hours is None else f"{float(time_hours):.2f}")
         time_seconds = row.get("time_seconds")
@@ -473,15 +501,106 @@ def _rollup_row_values(row: dict[str, Any], metadata: dict[str, Any]) -> list[st
     if metric in ("tokens", "all"):
         values.extend(
             [
-                str(row.get("input_tokens", 0)),
-                str(row.get("output_tokens", 0)),
-                str(row.get("cache_read_tokens", 0)),
-                str(row.get("cache_creation_tokens", 0)),
+                _format_stat_number(row.get("input_tokens", 0), human=human),
+                _format_stat_number(row.get("output_tokens", 0), human=human),
+                _format_stat_number(row.get("cache_read_tokens", 0), human=human),
+                _format_stat_number(row.get("cache_creation_tokens", 0), human=human),
             ]
         )
     if metric == "all":
         values.extend([str(row.get("sessions", 0)), str(row.get("messages", 0))])
     return values
+
+
+def _rollup_total_row(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[str, Any]:
+    dimensions = [str(dimension) for dimension in metadata.get("dimensions", [])]
+    total: dict[str, Any] = dict.fromkeys(dimensions, "")
+    if dimensions:
+        total[dimensions[0]] = "TOTAL"
+
+    numeric_fields = [
+        "time_seconds",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "sessions",
+        "messages",
+    ]
+    for field in numeric_fields:
+        total[field] = int(sum(_numeric_value(row.get(field)) for row in rows))
+
+    total["time_hms"] = _format_duration(total.get("time_seconds", 0))
+    total["time_hours"] = total.get("time_seconds", 0) / 3600
+    return total
+
+
+def _numeric_value(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _is_numeric_column(header: str) -> bool:
+    return header in {
+        "TIME_HMS",
+        "TIME_HOURS",
+        "TIME_SECONDS",
+        "INPUT_TOKENS",
+        "OUTPUT_TOKENS",
+        "CACHE_READ",
+        "CACHE_CREATE",
+        "SESSIONS",
+        "MESSAGES",
+    }
+
+
+def _table_widths(headers: list[str], rows: list[list[str]]) -> list[int]:
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            if index < len(widths):
+                widths[index] = max(widths[index], len(str(cell)))
+    return widths
+
+
+def _limit_table_widths(widths: list[int], max_width: int | None) -> list[int]:
+    if not max_width:
+        return widths
+    limited = list(widths)
+    total_width = sum(limited) + len(limited) * 2
+    if total_width <= max_width:
+        return limited
+    shrinkable = [index for index, width in enumerate(limited) if width > 15]
+    if not shrinkable:
+        return limited
+    per_col = (total_width - max_width) // len(shrinkable)
+    for index in shrinkable:
+        limited[index] = max(10, limited[index] - per_col)
+    return limited
+
+
+def _fit_table_cell(value: Any, width: int) -> str:
+    cell = str(value)
+    if len(cell) > width:
+        return cell[: width - 3] + "..."
+    return cell
+
+
+def _render_table_line(cells: list[Any], widths: list[int], numeric_columns: set[int]) -> str:
+    rendered = []
+    for index, cell in enumerate(cells):
+        cell_str = str(cell)
+        if index < len(widths):
+            cell_str = _fit_table_cell(cell_str, widths[index])
+            if index in numeric_columns:
+                rendered.append(cell_str.rjust(widths[index]))
+            else:
+                rendered.append(cell_str.ljust(widths[index]))
+        else:
+            rendered.append(cell_str)
+    return "  ".join(rendered)
 
 
 class DataFormatter(ABC):
@@ -523,9 +642,11 @@ class TableFormatter(DataFormatter):
             "stats_rollup": self._format_stats_rollup,
             "project_list": self._format_project_list,
             "project_details": self._format_project_details,
+            "project_update": self._format_project_update,
             "exported_files": self._format_exported_files,
             "gemini_index": self._format_gemini_index,
             "install_result": self._format_install_result,
+            "error": self._format_error,
         }
 
     def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
@@ -537,11 +658,13 @@ class TableFormatter(DataFormatter):
                 "stats",
                 "stats_rollup",
                 "project_details",
+                "project_update",
                 "exported_files",
                 "project_list",
                 "home_list",
                 "gemini_index",
                 "install_result",
+                "error",
             ):
                 return formatter(data, metadata)
             return formatter(data)
@@ -668,9 +791,14 @@ class TableFormatter(DataFormatter):
         if not rows:
             return "No cached stats matched this scope. Run with --sync to refresh."
         headers = _rollup_columns(metadata)
-        table_rows = [_rollup_row_values(row, metadata) for row in rows]
+        rollup_rows = list(rows)
+        if metadata.get("total"):
+            rollup_rows.append(_rollup_total_row(rollup_rows, metadata))
+        table_rows = [_rollup_row_values(row, metadata) for row in rollup_rows]
         lines: list[str] = []
         _append_scope_summary(lines, rows, metadata)
+        if metadata.get("separator"):
+            lines.append("--")
         lines.append(self._render_table(headers, table_rows))
         return "\n".join(lines)
 
@@ -714,6 +842,7 @@ class TableFormatter(DataFormatter):
         lines = []
         project_name = data.get("project", "")
         lines.append(f"Project: {project_name}")
+        lines.append(f"Total Workspaces: {data.get('total_workspaces', 0)}")
         lines.append(f"Total Sessions: {data.get('total_sessions', 0)}")
         lines.append("")
 
@@ -726,6 +855,41 @@ class TableFormatter(DataFormatter):
                 session_count = ws.get("session_count", 0)
                 lines.append(f"    {ws_path} ({session_count} sessions)")
 
+        return "\n".join(lines)
+
+    def _format_project_update(self, data: ProjectDict, metadata: dict[str, Any]) -> str:
+        """Format project add/remove updates."""
+        if not isinstance(data, dict):
+            return str(data)
+
+        project = data.get("project", "")
+        dry_run = bool(data.get("dry_run"))
+        added = data.get("would_add" if dry_run else "added", 0)
+        existing = data.get("existing", 0)
+        action = "Would add" if dry_run else "Added"
+        lines = [
+            f"Project: {project}",
+            f"{action}: {added} workspace(s)",
+            f"Existing: {existing} workspace(s)",
+        ]
+        if "project_workspaces" in data:
+            lines.append(f"Project Workspaces: {data.get('project_workspaces')} workspace(s)")
+        rows_data = data.get("workspaces") if dry_run else data.get("resolved_workspaces")
+        if isinstance(rows_data, list) and rows_data:
+            rows = [
+                [
+                    str(row.get("home", "")),
+                    _truncate_tail(str(row.get("workspace", "")), 72)
+                    if self.width
+                    else str(row.get("workspace", "")),
+                    str(row.get("status", "")),
+                ]
+                for row in rows_data
+                if isinstance(row, dict)
+            ]
+            if rows:
+                lines.append("")
+                lines.append(self._render_table(["HOME", "WORKSPACE", "STATUS"], rows))
         return "\n".join(lines)
 
     def _format_exported_files(self, files: list[Path], metadata: dict[str, Any]) -> str:
@@ -783,47 +947,28 @@ class TableFormatter(DataFormatter):
             [heading, "", self._render_table(["COMPONENT", "AGENT", "STATUS", "PATH"], rows)]
         )
 
+    def _format_error(self, data: dict[str, Any], metadata: dict[str, Any]) -> str:
+        """Format command errors without exposing internal dictionaries."""
+        if isinstance(data, dict):
+            error = str(data.get("error") or "error")
+            if error == "no_matching_workspaces":
+                return "No matching workspaces found."
+            if error == "missing_workspace":
+                return "At least one workspace is required."
+            return error.replace("_", " ").capitalize()
+        return str(data)
+
     def _render_table(self, headers: list[str], rows: list[list[str]]) -> str:
         """Render headers and rows as ASCII table."""
         if not rows:
             return ""
 
-        # Calculate column widths
-        widths = [len(h) for h in headers]
-        for row in rows:
-            for i, cell in enumerate(row):
-                if i < len(widths):
-                    widths[i] = max(widths[i], len(str(cell)))
-
-        # Apply width limit
-        if self.width:
-            total_width = sum(widths) + len(widths) * 2  # 2 spaces between columns
-            if total_width > self.width:
-                # Shrink wider columns proportionally
-                excess = total_width - self.width
-                shrinkable = [i for i, w in enumerate(widths) if w > 15]
-                if shrinkable:
-                    per_col = excess // len(shrinkable)
-                    for i in shrinkable:
-                        widths[i] = max(10, widths[i] - per_col)
-
-        # Format header
-        header_line = "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers))
-        lines = [header_line]
-
-        # Format rows
-        for row in rows:
-            row_cells = []
-            for i, cell in enumerate(row):
-                cell_str = str(cell)
-                if i < len(widths):
-                    if len(cell_str) > widths[i]:
-                        cell_str = cell_str[: widths[i] - 3] + "..."
-                    row_cells.append(cell_str.ljust(widths[i]))
-                else:
-                    row_cells.append(cell_str)
-            lines.append("  ".join(row_cells))
-
+        widths = _limit_table_widths(_table_widths(headers, rows), self.width)
+        numeric_columns = {
+            index for index, header in enumerate(headers) if _is_numeric_column(header)
+        }
+        lines = [_render_table_line(headers, widths, numeric_columns)]
+        lines.extend(_render_table_line(row, widths, numeric_columns) for row in rows)
         return "\n".join(lines)
 
 
@@ -867,17 +1012,26 @@ class TsvFormatter(DataFormatter):
             "workspace_list": self._format_workspace_list,
             "home_list": self._format_home_list,
             "project_list": self._format_project_list,
+            "project_update": self._format_project_update,
             "stats": self._format_stats,
             "stats_rollup": self._format_stats_rollup,
             "gemini_index": self._format_gemini_index,
             "install_result": self._format_install_result,
+            "error": self._format_error,
         }
 
     def format(self, data: Any, data_type: str, metadata: dict[str, Any]) -> str:
         """Format data as TSV."""
         formatter = self._formatters.get(data_type)
         if formatter:
-            if data_type in ("project_list", "home_list", "stats", "stats_rollup"):
+            if data_type in (
+                "project_list",
+                "project_update",
+                "home_list",
+                "stats",
+                "stats_rollup",
+                "error",
+            ):
                 return formatter(data, metadata)
             return formatter(data)
         # Fallback to JSON for complex types
@@ -971,15 +1125,22 @@ class TsvFormatter(DataFormatter):
 
         return "\n".join(lines)
 
-    def _format_stats(self, stats: StatsDict, metadata: dict[str, Any] | None = None) -> str:
-        """Format stats as machine-readable TSV records."""
-        metadata = metadata or {}
-        workspace_display_map = (
-            metadata.get("workspace_display_map") or stats.get("workspace_display_map") or {}
+    def _format_project_update(self, data: ProjectDict, metadata: dict[str, Any]) -> str:
+        """Format project updates as TSV."""
+        rows_data = (
+            data.get("workspaces") if data.get("dry_run") else data.get("resolved_workspaces")
         )
-        headers = ["SECTION", "NAME", "SESSIONS", "MESSAGES", "VALUE", "EXTRA"]
-        lines = ["\t".join(headers)]
+        if not isinstance(rows_data, list):
+            return json.dumps(data, default=str)
+        lines = ["HOME\tWORKSPACE\tSTATUS"]
+        for row in rows_data:
+            if isinstance(row, dict):
+                lines.append(
+                    f"{row.get('home', '')}\t{row.get('workspace', '')}\t{row.get('status', '')}"
+                )
+        return "\n".join(lines)
 
+    def _append_stats_summary_records(self, lines: list[str], stats: StatsDict) -> None:
         lines.append(
             "\t".join(
                 [
@@ -993,58 +1154,104 @@ class TsvFormatter(DataFormatter):
             )
         )
 
+    def _append_token_records(self, lines: list[str], stats: StatsDict) -> None:
         tokens = stats.get("tokens", {})
-        if isinstance(tokens, dict):
-            for key in ("input", "output", "cache_read", "cache_creation"):
-                lines.append("\t".join(["token", key, "", "", str(tokens.get(key, 0)), ""]))
+        if not isinstance(tokens, dict):
+            return
+        for key in ("input", "output", "cache_read", "cache_creation"):
+            lines.append("\t".join(["token", key, "", "", str(tokens.get(key, 0)), ""]))
 
-        for section, values, count_key in (
+    def _stats_section_items(
+        self, section: str, values: Any, metadata: dict[str, Any]
+    ) -> list[tuple[Any, Any]]:
+        if not isinstance(values, dict):
+            return []
+        section_items = list(values.items())
+        if section == "workspace" and isinstance(metadata.get("top_ws"), int):
+            return section_items[: metadata["top_ws"]]
+        return section_items
+
+    def _append_section_records(
+        self,
+        lines: list[str],
+        stats: StatsDict,
+        metadata: dict[str, Any],
+        workspace_display_map: dict[str, str],
+    ) -> None:
+        sections = (
             ("agent", stats.get("by_agent", {}), "sessions"),
             ("home", stats.get("by_home", {}), "sessions"),
             ("workspace", stats.get("by_workspace", {}), "sessions"),
             ("model", stats.get("by_model", {}), "messages"),
             ("tool", stats.get("by_tool", {}), "uses"),
             ("day", stats.get("by_day", {}), "sessions"),
-        ):
-            if not isinstance(values, dict):
-                continue
-            section_items = list(values.items())
-            if section == "workspace" and isinstance(metadata.get("top_ws"), int):
-                section_items = section_items[: metadata["top_ws"]]
-            for name, value in section_items:
-                display_name = str(name)
-                if section == "workspace":
-                    display_name = _workspace_display(
-                        {"workspace": str(name)}, display_map=workspace_display_map
+        )
+        for section, values, count_key in sections:
+            for name, value in self._stats_section_items(section, values, metadata):
+                lines.append(
+                    "\t".join(
+                        self._stats_section_record(
+                            section, name, value, count_key, workspace_display_map
+                        )
                     )
-                sessions = ""
-                messages = ""
-                metric = ""
-                extra = ""
-                if isinstance(value, dict):
-                    sessions = str(value.get("sessions", "")) if "sessions" in value else ""
-                    messages = str(value.get("messages", "")) if "messages" in value else ""
-                    metric = str(_stats_count(value, count_key))
-                    if section == "tool":
-                        extra = f"errors={value.get('errors', 0)}"
-                    elif section == "model":
-                        extra = f"tokens={value.get('tokens', 0)}"
-                else:
-                    metric = str(value)
-                lines.append("\t".join([section, display_name, sessions, messages, metric, extra]))
+                )
 
+    def _stats_section_record(
+        self,
+        section: str,
+        name: Any,
+        value: Any,
+        count_key: str,
+        workspace_display_map: dict[str, str],
+    ) -> list[str]:
+        display_name = str(name)
+        if section == "workspace":
+            display_name = _workspace_display(
+                {"workspace": str(name)}, display_map=workspace_display_map
+            )
+        if not isinstance(value, dict):
+            return [section, display_name, "", "", str(value), ""]
+        extra = ""
+        if section == "tool":
+            extra = f"errors={value.get('errors', 0)}"
+        elif section == "model":
+            extra = f"tokens={value.get('tokens', 0)}"
+        return [
+            section,
+            display_name,
+            str(value.get("sessions", "")) if "sessions" in value else "",
+            str(value.get("messages", "")) if "messages" in value else "",
+            str(_stats_count(value, count_key)),
+            extra,
+        ]
+
+    def _append_time_records(self, lines: list[str], stats: StatsDict) -> None:
         time_stats = stats.get("time_stats", {})
-        if isinstance(time_stats, dict) and time_stats:
-            for key in (
-                "total_duration_seconds",
-                "average_duration_seconds",
-                "sessions_with_time",
-            ):
-                lines.append("\t".join(["time", key, "", "", str(time_stats.get(key, 0)), ""]))
-            by_day = time_stats.get("by_day", {})
-            if isinstance(by_day, dict):
-                for day, seconds in by_day.items():
-                    lines.append("\t".join(["time_day", str(day), "", "", str(seconds), ""]))
+        if not isinstance(time_stats, dict) or not time_stats:
+            return
+        for key in (
+            "total_duration_seconds",
+            "average_duration_seconds",
+            "sessions_with_time",
+        ):
+            lines.append("\t".join(["time", key, "", "", str(time_stats.get(key, 0)), ""]))
+        by_day = time_stats.get("by_day", {})
+        if isinstance(by_day, dict):
+            for day, seconds in by_day.items():
+                lines.append("\t".join(["time_day", str(day), "", "", str(seconds), ""]))
+
+    def _format_stats(self, stats: StatsDict, metadata: dict[str, Any] | None = None) -> str:
+        """Format stats as machine-readable TSV records."""
+        metadata = metadata or {}
+        workspace_display_map = (
+            metadata.get("workspace_display_map") or stats.get("workspace_display_map") or {}
+        )
+        headers = ["SECTION", "NAME", "SESSIONS", "MESSAGES", "VALUE", "EXTRA"]
+        lines = ["\t".join(headers)]
+        self._append_stats_summary_records(lines, stats)
+        self._append_token_records(lines, stats)
+        self._append_section_records(lines, stats, metadata, workspace_display_map)
+        self._append_time_records(lines, stats)
         return "\n".join(lines)
 
     def _format_stats_rollup(
@@ -1054,7 +1261,10 @@ class TsvFormatter(DataFormatter):
         metadata = metadata or {}
         headers = _rollup_columns(metadata)
         lines = ["\t".join(headers)]
-        for row in rows:
+        rollup_rows = list(rows)
+        if metadata.get("total"):
+            rollup_rows.append(_rollup_total_row(rollup_rows, metadata))
+        for row in rollup_rows:
             lines.append("\t".join(_rollup_row_values(row, metadata)))
         return "\n".join(lines)
 
@@ -1093,6 +1303,17 @@ class TsvFormatter(DataFormatter):
             for item in actions
         )
         return "\n".join(lines)
+
+    def _format_error(self, data: dict[str, Any], metadata: dict[str, Any] | None = None) -> str:
+        """Format command errors without exposing internal dictionaries."""
+        if isinstance(data, dict):
+            error = str(data.get("error") or "error")
+            if error == "no_matching_workspaces":
+                return "No matching workspaces found."
+            if error == "missing_workspace":
+                return "At least one workspace is required."
+            return error.replace("_", " ").capitalize()
+        return str(data)
 
 
 class OutputFormatter:

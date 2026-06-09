@@ -27,8 +27,8 @@ def test_hash_workspace_ref_uses_raw_key() -> None:
 
 def test_windows_path_workspace_ref_normalizes() -> None:
     ref = build_workspace_ref(r"C:\\Users\\Alice\\Proj")
-    assert ref.key == "C:/Users/Alice/Proj"
-    assert ref.display == "C:/Users/Alice/Proj"
+    assert ref.key == "/mnt/c/Users/Alice/Proj"
+    assert ref.display == "/mnt/c/Users/Alice/Proj"
     assert ref.kind.value == "path"
 
 

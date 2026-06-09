@@ -358,7 +358,7 @@ def _summarize_claude_projects_dir(home: str, projects_dir: Path) -> list[dict[s
     except OSError:
         return summaries
 
-    verify_local = home == "local"
+    verify_local = home == "local" or home.startswith("windows:")
     use_directory_mtime = home.startswith("windows:")
     for entry in workspace_entries:
         name = entry.name

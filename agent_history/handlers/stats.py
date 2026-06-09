@@ -14,6 +14,7 @@ from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs, ResolutionContext, ScopeArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.utils.paths import decode_workspace_path, is_encoded_workspace_name
+from agent_history.utils.workspace_ref import build_workspace_ref
 
 
 class SessionStatsHandler(VerbHandler):
@@ -70,40 +71,12 @@ class SessionStatsHandler(VerbHandler):
         # Compute statistics
         from agent_history.core.stats import apply_top_limit, compute_stats, overlay_metrics
 
-        group_list = []
-        if isinstance(group_by, list):
-            group_list = [value for value in group_by if value]
-        elif isinstance(group_by, str):
-            group_list = [group_by]
+        group_list = self._group_list(group_by)
 
         include_day = "day" in group_list
 
         if verb_args.get("stats_mode") == "rollup":
-            from agent_history.storage.metrics import get_stats_rollup_from_db
-
-            filters = self._filters_from_scope(scope)
-            rows = get_stats_rollup_from_db(
-                filters=filters,
-                by=group_list or ["project"],
-                metric=verb_args.get("metric") or "all",
-                top=verb_args.get("top"),
-            )
-            metadata = build_scope_metadata(scope)
-            return CommandResult(
-                success=True,
-                data=rows,
-                data_type="stats_rollup",
-                metadata={
-                    "homes": metadata["homes"],
-                    "workspaces": metadata["workspaces"],
-                    "dimensions": group_list or ["project"],
-                    "metric": verb_args.get("metric") or "all",
-                    "cached": False,
-                    "scope_request": verb_args.get("scope_request"),
-                    "total_sessions": sum(len(record.sessions) for record in scope),
-                    "sync_stats": verb_args.get("sync_stats"),
-                },
-            )
+            return self._execute_rollup(scope, group_list, verb_args, human=human)
 
         stats = compute_stats(scope, "day" if include_day else None, include_time)
 
@@ -121,20 +94,9 @@ class SessionStatsHandler(VerbHandler):
                 should_overlay_db = False
 
         if should_overlay_db:
-            try:
-                from agent_history.storage.metrics import (
-                    get_session_stats_from_db,
-                    get_time_stats_from_db,
-                    get_tool_usage_stats_from_db,
-                )
-
-                file_paths = self._scope_file_paths(scope)
-                db_stats = get_session_stats_from_db(file_paths=file_paths)
-                db_stats["by_tool"] = get_tool_usage_stats_from_db(file_paths=file_paths)
-                db_stats["time_stats"] = get_time_stats_from_db(file_paths=file_paths)
+            db_stats = self._db_overlay_stats(scope)
+            if db_stats:
                 stats = overlay_metrics(stats, db_stats)
-            except Exception:
-                pass  # Fall back to scope-based stats if DB query fails
 
         # Apply top limit to breakdowns if specified
         if top_limit:
@@ -181,6 +143,63 @@ class SessionStatsHandler(VerbHandler):
             },
         )
 
+    def _execute_rollup(
+        self,
+        scope: ConcreteScope,
+        group_list: list[str],
+        verb_args: Dict[str, Any],
+        *,
+        human: bool,
+    ) -> CommandResult:
+        """Return rollup stats for an already-resolved scope."""
+        from agent_history.storage.metrics import get_stats_rollup_from_db
+
+        dimensions = group_list or ["project"]
+        rows = get_stats_rollup_from_db(
+            filters=self._filters_from_scope(scope),
+            by=dimensions,
+            metric=verb_args.get("metric") or "all",
+            top=verb_args.get("top"),
+            sort_by=verb_args.get("sort"),
+            sort_direction=verb_args.get("sort_direction") or "default",
+        )
+        metadata = build_scope_metadata(scope)
+        return CommandResult(
+            success=True,
+            data=rows,
+            data_type="stats_rollup",
+            metadata={
+                "homes": metadata["homes"],
+                "workspaces": metadata["workspaces"],
+                "dimensions": dimensions,
+                "metric": verb_args.get("metric") or "all",
+                "cached": False,
+                "scope_request": verb_args.get("scope_request"),
+                "total_sessions": sum(len(record.sessions) for record in scope),
+                "sync_stats": verb_args.get("sync_stats"),
+                "human": human,
+                "total": bool(verb_args.get("total")),
+                "separator": bool(verb_args.get("separator")),
+            },
+        )
+
+    def _db_overlay_stats(self, scope: ConcreteScope) -> dict[str, Any] | None:
+        """Return metrics DB overlays for a resolved scope, if available."""
+        try:
+            from agent_history.storage.metrics import (
+                get_session_stats_from_db,
+                get_time_stats_from_db,
+                get_tool_usage_stats_from_db,
+            )
+
+            file_paths = self._scope_file_paths(scope)
+            db_stats = get_session_stats_from_db(file_paths=file_paths)
+            db_stats["by_tool"] = get_tool_usage_stats_from_db(file_paths=file_paths)
+            db_stats["time_stats"] = get_time_stats_from_db(file_paths=file_paths)
+            return db_stats
+        except Exception:
+            return None
+
     def execute_cached(
         self,
         scope_args: ScopeArgs,
@@ -192,69 +211,20 @@ class SessionStatsHandler(VerbHandler):
         from agent_history.storage.metrics import (
             get_metrics_db_path,
             get_scoped_stats_from_db,
-            get_stats_rollup_from_db,
         )
 
-        group_by = verb_args.get("by")
-        group_list: list[str] = []
-        if isinstance(group_by, list):
-            group_list = [value for value in group_by if value]
-        elif isinstance(group_by, str):
-            group_list = [group_by]
+        group_list = self._group_list(verb_args.get("by"))
 
         filters, metadata = self._cached_filters(scope_args, context)
         metadata["scope_request"] = self._scope_request_metadata(scope_args, context)
-        if scope_args.agent:
-            filters["agent"] = scope_args.agent
-        if scope_args.since:
-            filters["since"] = scope_args.since
-        if scope_args.until:
-            filters["until"] = scope_args.until
+        self._apply_session_filters(filters, scope_args)
 
         db_path = get_metrics_db_path()
         if not db_path.exists():
-            return CommandResult(
-                success=True,
-                data=self._empty_cached_stats(),
-                data_type="stats",
-                metadata={
-                    **metadata,
-                    "group_by": group_list,
-                    "include_time": bool(verb_args.get("time")),
-                    "top_ws": verb_args.get("top_ws"),
-                    "human": bool(verb_args.get("human")),
-                    "cached": True,
-                    "cache_warning": "No cached stats found. Run with --sync to build metrics.",
-                },
-                warnings=["No cached stats found. Run `cagelens stats --sync` to refresh."],
-            )
+            return self._missing_cache_result(metadata, group_list, verb_args)
 
         if verb_args.get("stats_mode") == "rollup":
-            dimensions = group_list or ["project"]
-            rows = get_stats_rollup_from_db(
-                filters=filters,
-                by=dimensions,
-                metric=verb_args.get("metric") or "all",
-                top=verb_args.get("top"),
-            )
-            scoped_summary = get_scoped_stats_from_db(filters=filters)
-            return CommandResult(
-                success=True,
-                data=rows,
-                data_type="stats_rollup",
-                metadata={
-                    **metadata,
-                    "homes": sorted(scoped_summary.get("by_home", {}).keys())
-                    or metadata.get("homes", []),
-                    "workspaces": sorted(scoped_summary.get("by_workspace", {}).keys())
-                    or metadata.get("workspaces", []),
-                    "dimensions": dimensions,
-                    "metric": verb_args.get("metric") or "all",
-                    "cached": True,
-                    "total_sessions": scoped_summary.get("total_sessions", 0),
-                },
-                warnings=["Using cached metrics. Run with `--sync` to refresh from source files."],
-            )
+            return self._execute_cached_rollup(filters, metadata, group_list, verb_args)
 
         stats = get_scoped_stats_from_db(filters=filters, include_day="day" in group_list)
         stats["workspace_rows"] = self._workspace_rows_from_db(stats)
@@ -271,10 +241,11 @@ class SessionStatsHandler(VerbHandler):
 
         metadata.update(
             {
-                "homes": sorted(stats.get("by_home", {}).keys()) or metadata.get("homes", []),
-                "workspaces": sorted(stats.get("by_workspace", {}).keys())
-                or metadata.get("workspaces", []),
-                "workspace_display_map": stats["workspace_display_map"],
+                "homes": metadata.get("homes", []) or sorted(stats.get("by_home", {}).keys()),
+                "workspaces": metadata.get("workspaces", [])
+                or sorted(stats.get("by_workspace", {}).keys()),
+                "workspace_display_map": metadata.get("workspace_display_map")
+                or stats["workspace_display_map"],
                 "group_by": group_list,
                 "include_time": bool(verb_args.get("time")),
                 "top_ws": verb_args.get("top_ws"),
@@ -289,6 +260,79 @@ class SessionStatsHandler(VerbHandler):
             data_type="stats",
             metadata=metadata,
             warnings=warnings,
+        )
+
+    def _group_list(self, group_by: Any) -> list[str]:
+        if isinstance(group_by, list):
+            return [value for value in group_by if value]
+        if isinstance(group_by, str):
+            return [group_by]
+        return []
+
+    def _apply_session_filters(self, filters: dict[str, Any], scope_args: ScopeArgs) -> None:
+        if scope_args.agent:
+            filters["agent"] = scope_args.agent
+        if scope_args.since:
+            filters["since"] = scope_args.since
+        if scope_args.until:
+            filters["until"] = scope_args.until
+
+    def _missing_cache_result(
+        self, metadata: dict[str, Any], group_list: list[str], verb_args: Dict[str, Any]
+    ) -> CommandResult:
+        return CommandResult(
+            success=True,
+            data=self._empty_cached_stats(),
+            data_type="stats",
+            metadata={
+                **metadata,
+                "group_by": group_list,
+                "include_time": bool(verb_args.get("time")),
+                "top_ws": verb_args.get("top_ws"),
+                "human": bool(verb_args.get("human")),
+                "cached": True,
+                "cache_warning": "No cached stats found. Run with --sync to build metrics.",
+            },
+            warnings=["No cached stats found. Run `cagelens stats --sync` to refresh."],
+        )
+
+    def _execute_cached_rollup(
+        self,
+        filters: dict[str, Any],
+        metadata: dict[str, Any],
+        group_list: list[str],
+        verb_args: Dict[str, Any],
+    ) -> CommandResult:
+        from agent_history.storage.metrics import get_scoped_stats_from_db, get_stats_rollup_from_db
+
+        dimensions = group_list or ["project"]
+        rows = get_stats_rollup_from_db(
+            filters=filters,
+            by=dimensions,
+            metric=verb_args.get("metric") or "all",
+            top=verb_args.get("top"),
+            sort_by=verb_args.get("sort"),
+            sort_direction=verb_args.get("sort_direction") or "default",
+        )
+        scoped_summary = get_scoped_stats_from_db(filters=filters)
+        return CommandResult(
+            success=True,
+            data=rows,
+            data_type="stats_rollup",
+            metadata={
+                **metadata,
+                "homes": metadata.get("homes", []) or sorted(scoped_summary.get("by_home", {})),
+                "workspaces": metadata.get("workspaces", [])
+                or sorted(scoped_summary.get("by_workspace", {})),
+                "dimensions": dimensions,
+                "metric": verb_args.get("metric") or "all",
+                "cached": True,
+                "total_sessions": scoped_summary.get("total_sessions", 0),
+                "human": bool(verb_args.get("human")),
+                "total": bool(verb_args.get("total")),
+                "separator": bool(verb_args.get("separator")),
+            },
+            warnings=["Using cached metrics. Run with `--sync` to refresh from source files."],
         )
 
     def _scope_file_paths(self, scope: ConcreteScope) -> list[str]:
@@ -311,8 +355,12 @@ class SessionStatsHandler(VerbHandler):
             homes, workspaces = self._project_filter(scope_args, context)
             filters["homes"] = homes
             filters["workspaces"] = workspaces
-            metadata["homes"] = homes
-            metadata["workspaces"] = workspaces
+            project_homes, project_workspaces, display_map = self._project_metadata(
+                scope_args, context
+            )
+            metadata["homes"] = project_homes or homes
+            metadata["workspaces"] = project_workspaces
+            metadata["workspace_display_map"] = display_map
             return filters, metadata
 
         homes = self._selected_homes(scope_args, context)
@@ -397,6 +445,33 @@ class SessionStatsHandler(VerbHandler):
         if context.cwd_workspace:
             return self._workspace_candidates(context.cwd_workspace)
         return []
+
+    def _project_metadata(
+        self, scope_args: ScopeArgs, context: ResolutionContext
+    ) -> tuple[list[str], list[str], dict[str, str]]:
+        homes: list[str] = []
+        workspaces_by_key: dict[str, str] = {}
+        display_map: dict[str, str] = {}
+        selected_homes = set(self._selected_homes(scope_args, context))
+        home_filter_explicit = bool(
+            scope_args.all_homes or scope_args.home_names or scope_args.home_type
+        )
+        for project in scope_args.projects:
+            project_def = context.project_config.get(project, {})
+            for home, configured in project_def.items():
+                if home_filter_explicit and home not in selected_homes:
+                    continue
+                homes.append(home)
+                values = configured if isinstance(configured, list) else [configured]
+                for value in values:
+                    ref = build_workspace_ref(str(value))
+                    workspaces_by_key.setdefault(ref.key, ref.display)
+                    display_map.setdefault(ref.key, ref.display)
+        return (
+            list(dict.fromkeys(homes)),
+            sorted(workspaces_by_key.values()),
+            display_map,
+        )
 
     def _project_filter(
         self, scope_args: ScopeArgs, context: ResolutionContext

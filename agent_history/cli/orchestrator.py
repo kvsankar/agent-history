@@ -244,48 +244,13 @@ class CommandOrchestrator:
         """
         from agent_history.backends.ssh import check_ssh_connection
 
-        # First, check if cross-home guard would trigger
-        # If so, skip SSH check - let the resolver show the guard error instead
-        args = request.scope_args
-        needs_cross_home = (
-            args.home_type in ("wsl", "windows", "remote")
-            or args.all_homes
-            or bool(args.home_names)
-        )
-        has_explicit_scope = (
-            args.all_workspaces
-            or bool(args.projects)
-            or context.cwd_project
-            or bool(args.patterns)
-            or bool(args.glob_patterns)
-            or bool(args.regex_patterns)
-            or bool(args.name_patterns)
-        )
-        is_in_workspace = bool(context.cwd_workspace)
-
-        if needs_cross_home and not has_explicit_scope and is_in_workspace:
-            # Cross-home guard will trigger - skip SSH check
+        if self._cross_home_guard_would_trigger(request, context):
             return True
 
-        # Collect all remote hosts to check
-        remotes_to_check: list[str] = []
-
-        # Check -r/--remote flags
-        if request.scope_args.home_type == "remote" and request.scope_args.home_value:
-            remotes_to_check.append(request.scope_args.home_value)
-
-        # Check --home flags for remote: prefixed homes
-        for home in request.scope_args.home_names:
-            if home.startswith("remote:"):
-                remotes_to_check.append(home[7:])  # Remove "remote:" prefix
-            elif "@" in home and not home.startswith(("wsl:", "windows:")):
-                # Looks like user@host format
-                remotes_to_check.append(home)
-
+        remotes_to_check = self._remote_hosts_to_check(request)
         if not remotes_to_check:
             return True
 
-        # Check connectivity to each remote
         all_ok = True
         for remote_host in remotes_to_check:
             success, _error = check_ssh_connection(remote_host)
@@ -295,6 +260,55 @@ class CommandOrchestrator:
                 all_ok = False
 
         return all_ok
+
+    def _cross_home_guard_would_trigger(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> bool:
+        """Return whether resolver should report missing explicit scope first."""
+        args = request.scope_args
+        needs_cross_home = (
+            args.home_type in ("wsl", "windows", "remote")
+            or args.all_homes
+            or bool(args.home_names)
+        )
+        return (
+            needs_cross_home
+            and not self._has_explicit_workspace_scope(request, context)
+            and bool(context.cwd_workspace)
+        )
+
+    def _has_explicit_workspace_scope(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> bool:
+        args = request.scope_args
+        return bool(
+            args.all_workspaces
+            or args.projects
+            or context.cwd_project
+            or args.patterns
+            or args.glob_patterns
+            or args.regex_patterns
+            or args.name_patterns
+        )
+
+    def _remote_hosts_to_check(self, request: CommandRequest) -> list[str]:
+        """Collect SSH hosts named through remote home selectors."""
+        args = request.scope_args
+        remotes_to_check: list[str] = []
+        if args.home_type == "remote" and args.home_value:
+            remotes_to_check.append(args.home_value)
+        for home in args.home_names:
+            remote = self._remote_host_from_home_name(home)
+            if remote:
+                remotes_to_check.append(remote)
+        return remotes_to_check
+
+    def _remote_host_from_home_name(self, home: str) -> str | None:
+        if home.startswith("remote:"):
+            return home[7:]
+        if "@" in home and not home.startswith(("wsl:", "windows:")):
+            return home
+        return None
 
     def _handle_stats_sync(self, request: CommandRequest, scope) -> None:
         """Auto-sync stats scope unless --no-sync is specified."""
@@ -379,6 +393,13 @@ class CommandOrchestrator:
 
             if self._is_workspace_list(request):
                 return self._run_workspace_count_list(request, context)
+
+            if self._is_project_add(request):
+                project_add_result = self._run_project_add_from_workspace_inventory(
+                    request, context
+                )
+                if project_add_result is not None:
+                    return project_add_result
 
             # 3. Resolve scope
             resolver = ScopeResolver(context)
@@ -505,6 +526,9 @@ class CommandOrchestrator:
     def _is_workspace_list(self, request: CommandRequest) -> bool:
         return request.resource == "ws" and request.verb == "list"
 
+    def _is_project_add(self, request: CommandRequest) -> bool:
+        return request.resource == "project" and request.verb == "add"
+
     def _prepare_scope_for_project_counts(self, request: CommandRequest) -> None:
         """Expand project-list counts to all configured projects when needed."""
         if not (
@@ -568,6 +592,44 @@ class CommandOrchestrator:
         except FormatterError as e:
             return self.error_handler.handle_formatter_error(e)
         return 0
+
+    def _run_project_add_from_workspace_inventory(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> int | None:
+        """Compose project additions from the same workspace inventory as `ws list`."""
+        if not (
+            request.scope_args.patterns
+            or request.scope_args.glob_patterns
+            or request.scope_args.regex_patterns
+            or request.scope_args.all_workspaces
+            or request.scope_args.this_only
+        ):
+            return None
+
+        from agent_history.adapters.inventory import InventoryProvider
+
+        allowed = self._workspace_count_allowed_scopes(request, context)
+        if allowed is None:
+            return 1
+
+        inventory = InventoryProvider(context)
+        rows = []
+        for home, workspace_keys in allowed.items():
+            for row in inventory.list_workspace_summaries(home, agent=request.scope_args.agent):
+                key = row.get("workspace_key") or row.get("workspace")
+                if workspace_keys is None or key in workspace_keys:
+                    rows.append(row)
+
+        request.verb_args["workspace_rows"] = rows
+        try:
+            result = self.dispatcher.dispatch(request, [])
+        except DispatchError as e:
+            return self.error_handler.handle_dispatch_error(e)
+        try:
+            self.formatter.format(result, request.output_args)
+        except FormatterError as e:
+            return self.error_handler.handle_formatter_error(e)
+        return 0 if result.success else 1
 
     def _workspace_count_allowed_scopes(
         self, request: CommandRequest, context: ResolutionContext

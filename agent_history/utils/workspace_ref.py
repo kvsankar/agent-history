@@ -91,6 +91,10 @@ def _normalize_path(value: str) -> str:
     if not value:
         return value
     normalized = value.replace("\\", "/")
+    if len(normalized) > 2 and normalized[1:3] == ":/":
+        drive = normalized[0].lower()
+        rest = normalized[3:].lstrip("/")
+        normalized = f"/mnt/{drive}/{rest}" if rest else f"/mnt/{drive}"
     if normalized.startswith("//"):
         normalized = "//" + re.sub(r"/{2,}", "/", normalized[2:])
     else:
