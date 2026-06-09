@@ -984,6 +984,7 @@ class SessionExportHandler(VerbHandler):
                 minimal,
                 split_lines,
                 markdown_level=markdown_level,
+                agent_type=agent_type,
             )
             if parts:
                 self._write_split_parts(parts, output_name, ws_output_path, quiet)

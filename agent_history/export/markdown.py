@@ -320,6 +320,7 @@ def generate_part_markdown(
     end_idx: int,
     display_file: Optional[str] = None,
     markdown_level: int = MARKDOWN_DEFAULT_LEVEL,
+    agent_type: str = AGENT_CLAUDE,
 ) -> str:
     """Generate markdown for a single part of a split conversation.
 
@@ -344,12 +345,20 @@ def generate_part_markdown(
             messages=messages,
             minimal=minimal,
             display_file=f"{display_name} (Part {part_num}/{total_parts})",
-            agent_type=AGENT_CLAUDE,
+            agent_type=agent_type,
             markdown_level=markdown_level,
         )
 
+    header_title = _get_agent_header_title(agent_type)
+    backend = get_backend(agent_type)
+    part_display_name = f"{display_name} (Part {part_num}/{total_parts})"
+    if backend and not backend.markdown_header_includes_filename:
+        title_line = f"# {header_title}"
+    else:
+        title_line = f"# {header_title}: {part_display_name}"
+
     lines = [
-        f"# Claude Code Session: {display_name} (Part {part_num}/{total_parts})",
+        title_line,
         "",
         f"**Messages:** {start_idx + 1} - {end_idx} of total",
         "",

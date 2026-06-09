@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+EXPORT_SUFFIXES = {".html", ".md", ".ndjson"}
+
 
 def generate_index_manifest(
     output_dir: Path,
@@ -71,8 +73,12 @@ def scan_workspace_directories(output_dir: Path) -> Dict[str, Dict[str, Any]]:
         Dictionary mapping workspace name to info dict with 'total' and 'sources'.
     """
     workspaces: Dict[str, Dict[str, Any]] = {}
-    for session_file in output_dir.rglob("*.md"):
-        if session_file.name == "index.md":
+    for session_file in output_dir.rglob("*"):
+        if (
+            not session_file.is_file()
+            or session_file.name == "index.md"
+            or session_file.suffix not in EXPORT_SUFFIXES
+        ):
             continue
         workspace_dir = session_file.parent
         try:
