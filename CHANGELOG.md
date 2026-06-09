@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Single-session Markdown export to stdout via `cagelens session export SESSION.jsonl -o -`.
 - Clearer CLI help, docs, and validation errors for stdout exports, including the
   requirement to pass exactly one full `.jsonl`/`.json` session file path.
+- HTML export timeline index with agent-colored session bars, track assignment
+  for concurrent sessions, filtering/search controls, and linked conversation
+  detail pages.
 
 ### Changed
 

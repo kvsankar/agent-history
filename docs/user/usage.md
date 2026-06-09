@@ -242,7 +242,7 @@ cagelens session export --ah --aw
 # Specific workspace, all homes, custom output
 cagelens session export myproject --ah -o /tmp/backup
 
-# Offline HTML export
+# Offline HTML timeline export
 cagelens session export myproject --format html
 
 # Multiple workspaces (deduplicated)
@@ -262,7 +262,8 @@ cagelens session export myproject --jobs 4 --quiet
 ```
 
 **Output:**
-- Markdown/HTML files named `{timestamp}_{session-id}.md` or `{timestamp}_{session-id}.html`; NDJSON files use `.ndjson`
+- Markdown files named `{timestamp}_{session-id}.md`; NDJSON files use `.ndjson`
+- HTML exports write an `index.html` timeline entry point plus per-session `{timestamp}_{session-id}.html` detail pages
 - Source-tagged filenames: `wsl_ubuntu_`, `windows_`, `remote_hostname_`
 - Organized by workspace subdirectories (unless `--flat`)
 

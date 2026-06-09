@@ -9,7 +9,11 @@ This package provides focused modules for different aspects of session export:
 - source: Source file copying
 """
 
-from agent_history.export.html import render_html_export
+from agent_history.export.html import (
+    assign_timeline_tracks,
+    render_html_export,
+    render_html_timeline_export,
+)
 from agent_history.export.manifest import (
     classify_session_source,
     format_source_label,
@@ -41,6 +45,7 @@ from agent_history.export.splitting import (
 
 __all__ = [
     "MIN_MESSAGES_FOR_SPLIT",
+    "assign_timeline_tracks",
     "build_output_filename_ndjson",
     "calculate_split_score",
     "classify_session_source",
@@ -59,6 +64,7 @@ __all__ = [
     "normalize_message_to_unified",
     "parse_jsonl_to_markdown",
     "render_html_export",
+    "render_html_timeline_export",
     "scan_workspace_directories",
     "write_ndjson_export",
 ]

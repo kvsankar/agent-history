@@ -12,7 +12,7 @@ import json
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -35,6 +35,7 @@ from agent_history.export import (
     generate_index_manifest,
     generate_markdown_parts,
     render_html_export,
+    render_html_timeline_export,
     write_ndjson_export,
 )
 from agent_history.handlers.base import CommandResult, VerbHandler
@@ -177,6 +178,14 @@ class SessionExportHandler(VerbHandler):
             failed.append(({"filename": missing_id}, "Session not found"))
             if not quiet:
                 sys.stderr.write(f"Error exporting {missing_id}: session not found\n")
+
+        if export_format == EXPORT_FORMAT_HTML:
+            self._write_html_timeline_index(
+                tasks=tasks,
+                output_dir=output_dir,
+                flat=flat,
+                quiet=quiet,
+            )
 
         # Collect unique homes and workspaces from export tasks
         contexts = [
@@ -950,6 +959,225 @@ class SessionExportHandler(VerbHandler):
         if backend is None:
             raise ValueError(f"Unsupported agent backend: {agent_type}")
         return backend.render_markdown(jsonl_file, minimal, messages, markdown_level)
+
+    def _write_html_timeline_index(
+        self,
+        tasks: List[_ExportTask],
+        output_dir: Path,
+        flat: bool,
+        quiet: bool,
+    ) -> None:
+        """Write the HTML timeline entry point for the resolved export scope."""
+        entries: List[Dict[str, Any]] = []
+        for session, home, workspace, workspace_display in tasks:
+            try:
+                jsonl_file = self._resolve_export_session_file(
+                    session=session,
+                    home=home,
+                    workspace=workspace,
+                    force=False,
+                )
+                agent_type = str(session.get("agent", get_default_backend_id()))
+                messages = self._read_session_messages(jsonl_file, agent_type)
+                if messages is None:
+                    continue
+
+                source_tag = self._get_source_tag(home)
+                ws_output_path = self._get_workspace_output_path(
+                    output_dir, workspace_display, flat
+                )
+                output_name = self._build_output_filename(
+                    jsonl_file,
+                    source_tag,
+                    messages,
+                    extension=".html",
+                )
+                detail_file = ws_output_path / output_name
+                if not detail_file.exists():
+                    continue
+
+                entries.append(
+                    self._build_html_timeline_entry(
+                        session=session,
+                        jsonl_file=jsonl_file,
+                        detail_file=detail_file,
+                        output_dir=output_dir,
+                        agent_type=agent_type,
+                        messages=messages,
+                        home=home,
+                        workspace=workspace,
+                        workspace_display=workspace_display,
+                    )
+                )
+            except (OSError, ValueError):
+                continue
+
+        html = render_html_timeline_export(entries)
+        index_file = output_dir / "index.html"
+        index_file.write_text(html, encoding="utf-8")
+        if not quiet:
+            print(index_file)
+
+    def _build_html_timeline_entry(
+        self,
+        session: SessionDict,
+        jsonl_file: Path,
+        detail_file: Path,
+        output_dir: Path,
+        agent_type: str,
+        messages: List[MessageDict],
+        home: str,
+        workspace: str,
+        workspace_display: str,
+    ) -> Dict[str, Any]:
+        start_dt, end_dt, timestamp_quality = self._timeline_time_range(jsonl_file, messages)
+        start_ms = int(start_dt.timestamp() * 1000)
+        end_ms = max(start_ms, int(end_dt.timestamp() * 1000))
+        duration_seconds = max(0, int((end_ms - start_ms) / 1000))
+        session_id = self._timeline_session_id(session, jsonl_file, messages)
+        is_subagent = self._timeline_is_subagent(session, jsonl_file, messages)
+        parent_session_id = self._timeline_first_value(
+            messages,
+            "parent_session_id",
+            "parentSessionId",
+        )
+        if not parent_session_id and is_subagent:
+            parent_session_id = self._timeline_first_value(messages, "sessionId", "session_id")
+        parent_message_id = None
+        if parent_session_id or is_subagent:
+            parent_message_id = self._timeline_first_value(
+                messages,
+                "parent_id",
+                "parentUuid",
+                "parentId",
+            )
+        lineage_quality = "explicit" if parent_session_id or parent_message_id else "none"
+
+        try:
+            html_file = detail_file.relative_to(output_dir).as_posix()
+        except ValueError:
+            html_file = detail_file.name
+
+        return {
+            "id": session_id,
+            "title": self._timeline_title(jsonl_file, messages),
+            "agent": agent_type,
+            "is_subagent": is_subagent,
+            "parent_session_id": parent_session_id,
+            "parent_message_id": parent_message_id,
+            "lineage_quality": lineage_quality,
+            "workspace": workspace,
+            "workspace_display": workspace_display,
+            "home": home,
+            "source_file": str(jsonl_file),
+            "html_file": html_file,
+            "start": self._timeline_iso(start_dt),
+            "end": self._timeline_iso(end_dt),
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "duration_seconds": duration_seconds,
+            "duration_label": self._timeline_duration_label(duration_seconds),
+            "message_count": len(messages),
+            "turn_count": self._timeline_turn_count(messages),
+            "tool_call_count": sum(1 for message in messages if message.get("is_tool_call")),
+            "timestamp_quality": timestamp_quality,
+        }
+
+    def _timeline_time_range(
+        self, jsonl_file: Path, messages: List[MessageDict]
+    ) -> Tuple[datetime, datetime, str]:
+        timestamps = [
+            parsed
+            for message in messages
+            if (parsed := self._timeline_parse_timestamp(message.get("timestamp")))
+        ]
+        if timestamps:
+            return min(timestamps), max(timestamps), "message"
+
+        fallback = datetime.fromtimestamp(jsonl_file.stat().st_mtime, timezone.utc)
+        return fallback, fallback, "file_mtime"
+
+    def _timeline_parse_timestamp(self, value: Any) -> Optional[datetime]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(value), timezone.utc)
+            except (OSError, OverflowError, ValueError):
+                return None
+        text = str(value)
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    def _timeline_session_id(
+        self, session: SessionDict, jsonl_file: Path, messages: List[MessageDict]
+    ) -> str:
+        for value in (
+            session.get("session_id"),
+            session.get("id"),
+            self._timeline_first_value(messages, "session_id", "sessionId"),
+        ):
+            if value:
+                return str(value)
+        return jsonl_file.stem
+
+    def _timeline_title(self, jsonl_file: Path, messages: List[MessageDict]) -> str:
+        for message in messages:
+            if str(message.get("role") or "").lower() == "user" and message.get("content"):
+                content = " ".join(str(message["content"]).split())
+                if len(content) > 90:
+                    content = content[:87].rstrip() + "..."
+                return content
+        return jsonl_file.stem
+
+    def _timeline_is_subagent(
+        self, session: SessionDict, jsonl_file: Path, messages: List[MessageDict]
+    ) -> bool:
+        if session.get("is_subagent"):
+            return True
+        if jsonl_file.name.startswith("agent-"):
+            return True
+        if any(message.get("isSidechain") for message in messages):
+            return True
+        if self._timeline_first_value(messages, "parent_session_id", "parentSessionId"):
+            return True
+        return False
+
+    def _timeline_first_value(self, messages: List[MessageDict], *keys: str) -> Any:
+        for message in messages:
+            for key in keys:
+                value = message.get(key)
+                if value not in (None, ""):
+                    return value
+        return None
+
+    def _timeline_turn_count(self, messages: List[MessageDict]) -> int:
+        return sum(
+            1
+            for message in messages
+            if str(message.get("role") or "").lower() == "user"
+            and not message.get("is_tool_result")
+        )
+
+    def _timeline_iso(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _timeline_duration_label(self, seconds: int) -> str:
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes = seconds // 60
+        if minutes < 60:
+            return f"{minutes}m"
+        hours = minutes // 60
+        if hours < 48:
+            return f"{hours}h {minutes % 60}m"
+        days = hours // 24
+        return f"{days}d {hours % 24}h"
 
     def _write_html_export(
         self,
