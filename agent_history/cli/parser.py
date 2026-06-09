@@ -1793,12 +1793,18 @@ class CLIParser:
         if getattr(args, "web", False):
             home_names.append("web")
 
+        selected_home_types = []
+        if getattr(args, "local", False):
+            selected_home_types.append("local")
         if getattr(args, "wsl", False):
-            home_type = "wsl"
-        elif getattr(args, "windows", False):
-            home_type = "windows"
-        elif getattr(args, "local", False):
-            home_type = "local"
+            selected_home_types.append("wsl")
+        if getattr(args, "windows", False):
+            selected_home_types.append("windows")
+
+        if len(selected_home_types) == 1 and not home_names:
+            home_type = selected_home_types[0]
+        elif selected_home_types:
+            home_names.extend(selected_home_types)
 
         return all_homes, home_type, home_value, home_names
 

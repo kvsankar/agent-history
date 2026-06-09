@@ -83,6 +83,26 @@ def test_parent_scope_flags_survive_subcommand_defaults() -> None:
     assert request.output_args.format == "json"
 
 
+def test_combined_home_type_flags_are_preserved_as_multiple_homes() -> None:
+    """Combined category flags should not collapse to the first flag."""
+    parser = CLIParser()
+
+    request = parser.parse(["session", "list", "--wsl", "--windows", "--aw"])
+
+    assert request.scope_args.home_type is None
+    assert request.scope_args.home_names == ["wsl", "windows"]
+
+
+def test_local_can_combine_with_explicit_remote_scope() -> None:
+    """--local is documented as combinable with -r/--home."""
+    parser = CLIParser()
+
+    request = parser.parse(["session", "list", "--local", "-r", "user@host", "--aw"])
+
+    assert request.scope_args.home_type is None
+    assert request.scope_args.home_names == ["remote:user@host", "local"]
+
+
 def test_home_parent_filter_flags_survive_subcommand_defaults() -> None:
     parser = CLIParser()
 
