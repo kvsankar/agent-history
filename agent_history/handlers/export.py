@@ -143,6 +143,7 @@ class SessionExportHandler(VerbHandler):
         )
         export_format = verb_args.get("export_format", EXPORT_FORMAT_MARKDOWN)
         markdown_level = verb_args.get("markdown_level", MARKDOWN_DEFAULT_LEVEL)
+        html_level = verb_args.get("html_level", 1)
         if isinstance(output_dir, str):
             output_dir = Path(output_dir)
 
@@ -171,6 +172,7 @@ class SessionExportHandler(VerbHandler):
                 targets=targets,
                 minimal=minimal,
                 markdown_level=markdown_level,
+                html_level=html_level,
                 export_format=export_format,
                 export_json=export_json,
                 split_lines=split_lines,
@@ -207,6 +209,7 @@ class SessionExportHandler(VerbHandler):
             export_json=export_json,
             export_format=export_format,
             markdown_level=markdown_level,
+            html_level=html_level,
             quiet=quiet,
             jobs=jobs,
             exported=exported,
@@ -277,6 +280,7 @@ class SessionExportHandler(VerbHandler):
         export_json: bool,
         export_format: str,
         markdown_level: int,
+        html_level: int,
         quiet: bool,
         jobs: Optional[int],
         exported: List[SessionDict],
@@ -297,6 +301,7 @@ class SessionExportHandler(VerbHandler):
                 export_json,
                 export_format,
                 markdown_level,
+                html_level,
                 quiet,
                 jobs,
                 exported,
@@ -323,6 +328,7 @@ class SessionExportHandler(VerbHandler):
                     export_json=export_json,
                     export_format=export_format,
                     markdown_level=markdown_level,
+                    html_level=html_level,
                     quiet=quiet,
                 )
                 self._record_export_result(result, session, home, exported, skipped, sources_info)
@@ -342,6 +348,7 @@ class SessionExportHandler(VerbHandler):
         export_json: bool,
         export_format: str,
         markdown_level: int,
+        html_level: int,
         quiet: bool,
         jobs: int,
         exported: List[SessionDict],
@@ -368,6 +375,7 @@ class SessionExportHandler(VerbHandler):
                         export_json=export_json,
                         export_format=export_format,
                         markdown_level=markdown_level,
+                        html_level=html_level,
                         quiet=quiet,
                     ),
                     session,
@@ -474,6 +482,7 @@ class SessionExportHandler(VerbHandler):
         targets: List[str],
         minimal: bool,
         markdown_level: int,
+        html_level: int,
         export_format: str,
         export_json: bool,
         split_lines: Optional[int],
@@ -537,6 +546,7 @@ class SessionExportHandler(VerbHandler):
                 agent_type=agent_type,
                 messages=messages,
                 minimal=minimal,
+                html_level=html_level,
             )
         else:
             rendered = self._render_markdown(
@@ -565,6 +575,7 @@ class SessionExportHandler(VerbHandler):
         export_json: bool,
         export_format: str,
         markdown_level: int,
+        html_level: int,
         quiet: bool,
     ) -> Tuple[Optional[str], Optional[str]]:
         """Export a single session, catching exceptions for thread safety.
@@ -589,6 +600,7 @@ class SessionExportHandler(VerbHandler):
                 export_json=export_json,
                 export_format=export_format,
                 markdown_level=markdown_level,
+                html_level=html_level,
                 quiet=quiet,
             )
             return (result, None)
@@ -611,6 +623,7 @@ class SessionExportHandler(VerbHandler):
         export_json: bool,
         export_format: str,
         markdown_level: int,
+        html_level: int,
         quiet: bool,
     ) -> str:
         """Export a single session to markdown.
@@ -694,6 +707,7 @@ class SessionExportHandler(VerbHandler):
                 include_source=include_source,
                 quiet=quiet,
                 ws_output_path=ws_output_path,
+                html_level=html_level,
             )
             return EXPORT_EXPORTED
 
@@ -1019,6 +1033,7 @@ class SessionExportHandler(VerbHandler):
         include_source: bool,
         quiet: bool,
         ws_output_path: Path,
+        html_level: int,
     ) -> None:
         """Write exported session to a single HTML file."""
         html = self._render_html(
@@ -1027,6 +1042,7 @@ class SessionExportHandler(VerbHandler):
             messages=messages,
             minimal=minimal,
             display_file=output_name,
+            html_level=html_level,
         )
         output_file.write_text(html, encoding="utf-8")
         if not quiet:
@@ -1042,6 +1058,7 @@ class SessionExportHandler(VerbHandler):
         messages: List[MessageDict],
         minimal: bool,
         display_file: Optional[str] = None,
+        html_level: int = 1,
     ) -> str:
         """Render HTML for a parsed session."""
         return render_html_export(
@@ -1050,6 +1067,7 @@ class SessionExportHandler(VerbHandler):
             messages=messages,
             minimal=minimal,
             display_file=display_file,
+            html_level=html_level,
         )
 
     def _write_split_parts(

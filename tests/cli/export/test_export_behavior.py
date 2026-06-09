@@ -113,6 +113,7 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     builder.add_tool_result(
         tool["id"], "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n-old\n+new"
     )
+    builder.add_assistant_message("Done")
     builder.write_to(isolated_home["claude_dir"])
     output_dir = isolated_home["path"] / "html-export"
 
@@ -135,11 +136,30 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     output = _find_single_output_file(output_dir, ".html")
     html = output.read_text(encoding="utf-8")
     assert html.startswith("<!doctype html>")
+    assert '<html lang="en" data-theme="light" data-level="1">' in html
     assert "Turn 1" in html
     assert "Show &lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert 'class="message message-human"' in html
+    assert 'class="message message-assistant"' in html
+    assert (
+        ".message-human { background: var(--user-bg); border-color: var(--user-border); }" in html
+    )
+    assert (
+        ".message-assistant { background: var(--assistant-bg); "
+        "border-color: var(--assistant-border); }"
+    ) in html
     assert "Tool call: Bash" in html
     assert 'data-origin="tool_call"' in html
     assert 'data-origin="tool_result"' in html
+    assert 'data-level-button="1" aria-pressed="true">Conversation</button>' in html
+    assert 'data-level-button="2" aria-pressed="false">Actions</button>' in html
+    assert 'data-turn-level-button="2" aria-pressed="false">Actions</button>' in html
+    assert 'data-turn-level-button="3" aria-pressed="false">Full I/O</button>' in html
+    assert 'data-turn-level-button="4" aria-pressed="false">Trace</button>' in html
+    assert "data-turn-local-level" in html
+    assert '<details class="turn-actions" data-level="2" hidden data-open-level="2">' in html
+    assert '<details class="full-io" data-level="3" hidden data-open-level="3">' in html
+    assert '<details class="turn-trace" data-level="4" hidden data-open-level="4">' in html
     assert 'data-theme-toggle aria-pressed="false">Dark mode</button>' in html
     assert 'class="turn-nav-button"' in html
     assert 'data-view-toggle="rendered" aria-pressed="true">Formatted</button>' in html
@@ -150,6 +170,86 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     assert 'class="diff-view"' in html
     assert '<span class="diff-line diff-line-add">' in html
     assert "Raw message" in html
+
+
+def test_session_export_html_level_three_opens_actions_and_full_io(isolated_home):
+    builder = ClaudeSessionBuilder(workspace="-home-user-export-target", session_id="html-level")
+    tool = builder.make_tool_use("Bash", {"command": "echo ok"})
+    builder.add_user_message("Run the command")
+    builder.add_assistant_message("Running it", tools=[tool])
+    builder.add_tool_result(tool["id"], "ok")
+    builder.write_to(isolated_home["claude_dir"])
+    output_dir = isolated_home["path"] / "html-level-export"
+
+    result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "/home/user/export-target",
+            "--format",
+            "html",
+            "--html-level",
+            "3",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    html = _find_single_output_file(output_dir, ".html").read_text(encoding="utf-8")
+    assert '<html lang="en" data-theme="light" data-level="3">' in html
+    assert 'data-level-button="3" aria-pressed="true">Full I/O</button>' in html
+    assert '<details class="turn-actions" data-level="2" data-open-level="2" open>' in html
+    assert '<details class="full-io" data-level="3" data-open-level="3" open>' in html
+    assert '<details class="turn-trace" data-level="4" hidden data-open-level="4">' in html
+
+
+def test_session_export_html_highlights_numbered_markdown_tool_output(isolated_home):
+    builder = ClaudeSessionBuilder(
+        workspace="-home-user-export-target",
+        session_id="html-markdown-tool-output",
+    )
+    tool = builder.make_tool_use("Read", {"file_path": "TESTING.md"})
+    builder.add_user_message("Show the test doc")
+    builder.add_assistant_message("Reading it", tools=[tool])
+    builder.add_tool_result(
+        tool["id"],
+        "     1→# claude-history Regression Test Cases\n"
+        "     2→\n"
+        "     3→This document lists all test combinations.\n"
+        "     4→\n"
+        "     5→**Important Notes:**\n"
+        "     6→- Replace `<user>` with test username",
+    )
+    builder.write_to(isolated_home["claude_dir"])
+    output_dir = isolated_home["path"] / "html-markdown-output-export"
+
+    result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "/home/user/export-target",
+            "--format",
+            "html",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    html = _find_single_output_file(output_dir, ".html").read_text(encoding="utf-8")
+    assert "data-copy-button" in html
+    assert 'data-copy-content="rendered" hidden># claude-history Regression Test Cases' in html
+    assert 'data-copy-content="raw" hidden>     1→# claude-history' in html
+    assert 'class="code-text code-theme-light"' in html
+    assert 'class="code-text code-theme-dark"' in html
+    assert 'data-view-toggle="rendered" aria-pressed="true">Highlighted</button>' in html
 
 
 def test_session_export_html_skips_claude_snapshot_only_files(isolated_home):

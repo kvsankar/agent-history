@@ -16,9 +16,17 @@ HTML_LIGHT_HIGHLIGHT_STYLE = "default"
 HTML_DARK_HIGHLIGHT_STYLE = "github-dark"
 HTML_TRIM_CHARS = 3000
 HTML_TABLE_MIN_LINES = 2
+HTML_DEFAULT_LEVEL = 1
+HTML_MAX_LEVEL = 4
+HTML_ACTION_LEVEL = 2
+HTML_FULL_IO_LEVEL = 3
+HTML_TRACE_LEVEL = 4
+HTML_SNIPPET_LINES = 8
+HTML_SNIPPET_CHARS = 900
 
 _TOOL_HEADING_RE = re.compile(r"\*\*\[(?:Tool Use|Tool): ([^\]]+)\]\*\*")
 _CODE_FENCE_RE = re.compile(r"```(?P<label>[A-Za-z0-9_+.-]*)\n(?P<body>.*?)\n```", re.DOTALL)
+_TOOL_LINE_NUMBER_RE = re.compile(r"^\s*\d+\s*[→↠⇒➜]\s?(?P<body>.*)$")
 
 
 def render_html_export(
@@ -27,8 +35,10 @@ def render_html_export(
     messages: list[MessageDict],
     minimal: bool = False,
     display_file: str | None = None,
+    html_level: int = HTML_DEFAULT_LEVEL,
 ) -> str:
     """Render a session as a self-contained HTML document."""
+    initial_level = _normalize_html_level(html_level)
     backend = get_backend(agent_type)
     agent_title = (
         backend.markdown_title if backend and backend.markdown_title else agent_type.title()
@@ -39,7 +49,7 @@ def render_html_export(
 
     body = [
         "<!doctype html>",
-        '<html lang="en" data-theme="light">',
+        f'<html lang="en" data-theme="light" data-level="{initial_level}">',
         "<head>",
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -60,6 +70,7 @@ def render_html_export(
     body.extend(
         [
             '<div class="page-controls" role="group" aria-label="Disclosure controls">',
+            _render_level_controls(initial_level),
             '<button class="utility-control" type="button" data-expand-all>Expand all</button>',
             '<button class="utility-control" type="button" data-collapse-all>Collapse all</button>',
             "</div>",
@@ -69,7 +80,16 @@ def render_html_export(
     )
 
     for turn_index, turn in enumerate(turns, 1):
-        body.extend(_render_turn(turn, turn_index, len(turns), agent_type, minimal))
+        body.extend(
+            _render_turn(
+                turn,
+                turn_index,
+                len(turns),
+                agent_type,
+                minimal,
+                initial_level,
+            )
+        )
 
     body.extend(
         [
@@ -102,6 +122,41 @@ def _render_metadata(display_name: str, agent_type: str, messages: list[MessageD
     return lines
 
 
+def _normalize_html_level(value: int) -> int:
+    try:
+        level = int(value)
+    except (TypeError, ValueError):
+        level = HTML_DEFAULT_LEVEL
+    return max(1, min(HTML_MAX_LEVEL, level))
+
+
+def _html_level_attrs(min_level: int, initial_level: int) -> str:
+    attrs = [f'data-level="{min_level}"']
+    if initial_level < min_level:
+        attrs.append("hidden")
+    return " ".join(attrs)
+
+
+def _render_level_controls(initial_level: int) -> str:
+    labels = {
+        1: "Conversation",
+        2: "Actions",
+        3: "Full I/O",
+        4: "Trace",
+    }
+    buttons = []
+    for level in range(1, HTML_MAX_LEVEL + 1):
+        buttons.append(
+            f'<button class="level-control" type="button" data-level-button="{level}" '
+            f'aria-pressed="{str(initial_level == level).lower()}">{escape(labels[level])}</button>'
+        )
+    return (
+        '<div class="level-controls" role="group" aria-label="Detail level">'
+        + "\n".join(buttons)
+        + "</div>"
+    )
+
+
 def _starts_new_turn(msg: MessageDict) -> bool:
     return _semantic_origin(msg) == "human"
 
@@ -125,17 +180,16 @@ def _render_turn(
     total_turns: int,
     agent_type: str,
     minimal: bool,
+    initial_level: int,
 ) -> list[str]:
-    action_count = sum(1 for msg in turn if _semantic_origin(msg) in {"tool_call", "tool_result"})
-    assistant_count = sum(1 for msg in turn if _semantic_origin(msg) == "assistant")
-    summary = f"{len(turn)} messages"
-    if action_count or assistant_count:
-        details = []
-        if assistant_count:
-            details.append(f"{assistant_count} assistant")
-        if action_count:
-            details.append(f"{action_count} action")
-        summary = ", ".join(details)
+    conversation_messages = _conversation_messages_for_turn(turn)
+    action_messages = [
+        msg
+        for msg in turn
+        if _message_detail_level(msg, turn) == HTML_ACTION_LEVEL
+        or _semantic_origin(msg) in {"tool_call", "tool_result"}
+    ]
+    summary = _turn_action_summary(turn)
 
     lines = [
         f'<article class="turn" id="turn-{turn_index}" data-turn="{turn_index}">',
@@ -143,12 +197,78 @@ def _render_turn(
         '<div class="turn-heading">',
         f"<h2>Turn {turn_index}</h2>",
         _render_turn_nav(turn_index, total_turns),
+        _render_turn_level_controls(),
         "</div>",
         f'<div class="turn-meta"><span class="turn-summary">{escape(summary)}</span></div>',
         "</header>",
+        '<section class="turn-conversation">',
     ]
-    for message_index, msg in enumerate(turn, 1):
-        lines.extend(_render_message(msg, turn_index, message_index, agent_type, minimal))
+    for message_index, msg in enumerate(conversation_messages, 1):
+        lines.extend(
+            _render_message(
+                msg,
+                turn_index,
+                message_index,
+                agent_type,
+                minimal,
+                initial_level,
+                min_level=HTML_DEFAULT_LEVEL,
+                include_details=False,
+            )
+        )
+    if not conversation_messages:
+        lines.append(
+            f'<p class="empty" {_html_level_attrs(HTML_TRACE_LEVEL, initial_level)}>'
+            "No conversation text in this turn.</p>"
+        )
+    lines.append("</section>")
+    if action_messages:
+        open_attr = " open" if initial_level >= HTML_ACTION_LEVEL else ""
+        lines.extend(
+            [
+                f'<details class="turn-actions" {_html_level_attrs(HTML_ACTION_LEVEL, initial_level)} '
+                f'data-open-level="{HTML_ACTION_LEVEL}"{open_attr}>',
+                f"<summary>Actions: {escape(_turn_action_summary(turn))}</summary>",
+            ]
+        )
+        for message_index, msg in enumerate(action_messages, 1):
+            lines.extend(
+                _render_message(
+                    msg,
+                    turn_index,
+                    message_index,
+                    agent_type,
+                    minimal,
+                    initial_level,
+                    min_level=HTML_ACTION_LEVEL,
+                    include_details=True,
+                )
+            )
+        lines.append("</details>")
+    if turn and not minimal:
+        open_attr = " open" if initial_level >= HTML_TRACE_LEVEL else ""
+        lines.extend(
+            [
+                f'<details class="turn-trace" {_html_level_attrs(HTML_TRACE_LEVEL, initial_level)} '
+                f'data-open-level="{HTML_TRACE_LEVEL}"{open_attr}>',
+                "<summary>Full trace</summary>",
+            ]
+        )
+        for message_index, msg in enumerate(turn, 1):
+            lines.extend(
+                _render_message(
+                    msg,
+                    turn_index,
+                    message_index,
+                    agent_type,
+                    minimal,
+                    initial_level,
+                    min_level=HTML_TRACE_LEVEL,
+                    include_details=True,
+                    trace_label=True,
+                )
+            )
+        lines.append("</details>")
     lines.append("</article>")
     return lines
 
@@ -160,6 +280,24 @@ def _render_turn_nav(turn_index: int, total_turns: int) -> str:
         '<div class="turn-nav">'
         + _render_turn_nav_button(previous_turn, "<", "Previous")
         + _render_turn_nav_button(next_turn, ">", "Next")
+        + "</div>"
+    )
+
+
+def _render_turn_level_controls() -> str:
+    controls = [
+        (HTML_ACTION_LEVEL, "Actions"),
+        (HTML_FULL_IO_LEVEL, "Full I/O"),
+        (HTML_TRACE_LEVEL, "Trace"),
+    ]
+    buttons = [
+        f'<button class="turn-level-button" type="button" data-turn-level-button="{level}" '
+        f'aria-pressed="false">{escape(label)}</button>'
+        for level, label in controls
+    ]
+    return (
+        '<div class="turn-level-controls" role="group" aria-label="Turn detail level">'
+        + "\n".join(buttons)
         + "</div>"
     )
 
@@ -177,16 +315,64 @@ def _render_turn_nav_button(target_turn: Any, label: str, direction: str) -> str
     )
 
 
+def _conversation_messages_for_turn(turn: list[MessageDict]) -> list[MessageDict]:
+    final_assistant = _final_assistant_message(turn)
+    messages: list[MessageDict] = []
+    for msg in turn:
+        origin = _semantic_origin(msg)
+        if origin == "human" or msg is final_assistant:
+            messages.append(msg)
+    return messages
+
+
+def _final_assistant_message(turn: list[MessageDict]) -> MessageDict | None:
+    for msg in reversed(turn):
+        if _semantic_origin(msg) == "assistant" and str(msg.get("content") or "").strip():
+            return msg
+    return None
+
+
+def _message_detail_level(msg: MessageDict, turn: list[MessageDict]) -> int:
+    origin = _semantic_origin(msg)
+    if origin == "human" or msg is _final_assistant_message(turn):
+        return HTML_DEFAULT_LEVEL
+    if origin in {"assistant", "tool_call", "tool_result"}:
+        return HTML_ACTION_LEVEL
+    return HTML_TRACE_LEVEL
+
+
+def _turn_action_summary(turn: list[MessageDict]) -> str:
+    tool_calls = sum(1 for msg in turn if _semantic_origin(msg) == "tool_call")
+    tool_results = sum(1 for msg in turn if _semantic_origin(msg) == "tool_result")
+    assistant_notes = sum(
+        1
+        for msg in turn
+        if _semantic_origin(msg) == "assistant" and msg is not _final_assistant_message(turn)
+    )
+    parts = []
+    if tool_calls:
+        parts.append(f"{tool_calls} tool call{'s' if tool_calls != 1 else ''}")
+    if tool_results:
+        parts.append(f"{tool_results} tool result{'s' if tool_results != 1 else ''}")
+    if assistant_notes:
+        parts.append(f"{assistant_notes} assistant note{'s' if assistant_notes != 1 else ''}")
+    return ", ".join(parts) if parts else "No recorded actions"
+
+
 def _render_message(
     msg: MessageDict,
     turn_index: int,
     message_index: int,
     agent_type: str,
     minimal: bool,
+    initial_level: int,
+    min_level: int = HTML_DEFAULT_LEVEL,
+    include_details: bool = True,
+    trace_label: bool = False,
 ) -> list[str]:
     origin = _semantic_origin(msg)
     role = str(msg.get("role") or "unknown").lower()
-    label = _message_label(msg, origin)
+    label = f"Raw {_message_label(msg, origin)}" if trace_label else _message_label(msg, origin)
     classes = ["message", f"message-{origin.replace('_', '-')}"]
     if origin in {"tool_call", "tool_result"}:
         classes.append("message-action")
@@ -196,9 +382,10 @@ def _render_message(
     raw_payload = _raw_payload(msg)
 
     lines = [
-        '<section class="{}" data-agent="{}" data-role="{}" data-origin="{}" '
+        '<section class="{}" {} data-agent="{}" data-role="{}" data-origin="{}" '
         'data-turn="{}" data-message="{}">'.format(
             " ".join(classes),
+            _html_level_attrs(min_level, initial_level),
             escape(agent_type, quote=True),
             escape(role, quote=True),
             escape(origin, quote=True),
@@ -210,8 +397,12 @@ def _render_message(
     ]
     if timestamp and not minimal:
         lines.append(f'<time datetime="{escape(timestamp, quote=True)}">{escape(timestamp)}</time>')
-    lines.extend(["</header>", *_render_content_panel(msg, content, origin)])
-    if raw_payload and not minimal:
+    lines.append("</header>")
+    if include_details and min_level == HTML_ACTION_LEVEL:
+        lines.extend(_render_action_content_panel(msg, content, origin, initial_level))
+    else:
+        lines.extend(_render_content_panel(msg, content, origin))
+    if raw_payload and not minimal and trace_label:
         lines.extend(_render_raw_panel(raw_payload))
     lines.append("</section>")
     return lines
@@ -277,26 +468,135 @@ def _render_content_panel(msg: MessageDict, content: str, origin: str) -> list[s
     return ['<div class="message-body">', _render_markdown(content), "</div>"]
 
 
+def _render_action_content_panel(
+    msg: MessageDict,
+    content: str,
+    origin: str,
+    initial_level: int,
+) -> list[str]:
+    if not content and msg.get("tool_calls"):
+        content = "\n\n".join(_format_structured_tool_call(call) for call in msg["tool_calls"])
+    if not content:
+        return ['<div class="message-body empty">No visible content</div>']
+
+    if origin == "assistant":
+        return [
+            '<div class="message-body action-brief">',
+            _render_markdown(_conversation_snippet(content)),
+            "</div>",
+        ]
+
+    snippet = _conversation_snippet(content)
+    full_label = "Full output" if origin == "tool_result" else "Full input"
+    return [
+        '<div class="message-body action-brief">',
+        _render_code_or_diff(snippet, "Snippet", raw_toggle=False),
+        "</div>",
+        _render_full_io_details(content, full_label, initial_level),
+    ]
+
+
 def _render_tool_panel(content: str, origin: str) -> list[str]:
     title = "Tool input" if origin == "tool_call" else "Tool output"
     return [_render_code_or_diff(content, title)]
 
 
-def _render_code_or_diff(content: str, title: str) -> str:
+def _render_code_or_diff(content: str, title: str, raw_toggle: bool | None = None) -> str:
     fence_match = _CODE_FENCE_RE.search(content)
-    text = fence_match.group("body") if fence_match else content
-    language = _normalize_language(fence_match.group("label") if fence_match else "")
+    raw_text = fence_match.group("body") if fence_match else content
+    text = _strip_tool_line_numbers(raw_text)
+    explicit_language = _normalize_language(fence_match.group("label") if fence_match else "")
+    language = explicit_language or _infer_code_language(title, text)
 
     if _looks_like_diff(text):
-        return _render_diff_panel(title, text)
+        return _render_diff_panel(title, text, raw_text=raw_text)
 
     panel_title = "JSON" if language == "json" else title
     return _render_code_panel(
         panel_title,
         text.strip(),
         language=language,
-        raw_toggle=bool(language),
+        raw_toggle=bool(language) if raw_toggle is None else raw_toggle,
+        raw_text=raw_text.strip("\n"),
     )
+
+
+def _conversation_snippet(text: str) -> str:
+    lines = str(text or "").splitlines()
+    snippet = "\n".join(lines[:HTML_SNIPPET_LINES])
+    if len(snippet) > HTML_SNIPPET_CHARS:
+        snippet = snippet[:HTML_SNIPPET_CHARS].rstrip()
+    clipped = len(lines) > HTML_SNIPPET_LINES or len(str(text or "")) > len(snippet)
+    return f"{snippet}\n... [truncated]" if clipped else snippet
+
+
+def _render_full_io_details(content: str, label: str, initial_level: int) -> str:
+    open_attr = " open" if initial_level >= HTML_FULL_IO_LEVEL else ""
+    return "\n".join(
+        [
+            f'<details class="full-io" {_html_level_attrs(HTML_FULL_IO_LEVEL, initial_level)} '
+            f'data-open-level="{HTML_FULL_IO_LEVEL}"{open_attr}>',
+            f"<summary>{escape(label)}</summary>",
+            _render_code_or_diff(content, label),
+            "</details>",
+        ]
+    )
+
+
+def _strip_tool_line_numbers(text: str) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return str(text or "")
+    stripped_lines: list[str] = []
+    stripped_count = 0
+    for line in lines:
+        match = _TOOL_LINE_NUMBER_RE.match(line)
+        if match:
+            stripped_count += 1
+            stripped_lines.append(match.group("body"))
+        else:
+            stripped_lines.append(line)
+    return "\n".join(stripped_lines) if stripped_count else str(text or "")
+
+
+def _infer_code_language(title: str, text: str) -> str:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return ""
+    if _looks_like_json(stripped):
+        return "json"
+    if _looks_like_markdown(stripped):
+        return "markdown"
+    title_lower = str(title or "").lower()
+    if "markdown" in title_lower:
+        return "markdown"
+    return ""
+
+
+def _looks_like_json(text: str) -> bool:
+    if not text.startswith(("{", "[")):
+        return False
+    try:
+        json.loads(text)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _looks_like_markdown(text: str) -> bool:
+    lines = str(text or "").splitlines()
+    if any(re.match(r"^#{1,6}\s+\S+", line) for line in lines):
+        return True
+    if any(line.startswith("```") for line in lines):
+        return True
+    if any(re.search(r"\*\*[^*]+\*\*", line) for line in lines):
+        return True
+    if any(
+        "|" in line and index + 1 < len(lines) and _is_table_separator(lines[index + 1])
+        for index, line in enumerate(lines)
+    ):
+        return True
+    return False
 
 
 def _highlight_code(text: str, language: str = "", style: str = "") -> str:
@@ -380,18 +680,40 @@ def _render_view_toggle(rendered_label: str = "Rendered", raw_label: str = "Raw"
     )
 
 
+def _render_copy_button() -> str:
+    return '<button class="copy-button" type="button" data-copy-button>Copy</button>'
+
+
+def _render_copy_source(text: str, view: str = "rendered") -> str:
+    return (
+        f'<pre class="copy-source" data-copy-content="{escape(view, quote=True)}" hidden>'
+        f"{escape(str(text or ''))}</pre>"
+    )
+
+
 def _render_code_title(
     title: str,
     raw_toggle: bool = False,
     rendered_label: str = "Rendered",
 ) -> str:
+    controls = [_render_copy_button()]
+    if raw_toggle:
+        controls.insert(0, _render_view_toggle(rendered_label, "Raw"))
+    controls_html = '<span class="code-title-controls">' + "\n".join(controls) + "</span>"
     if not raw_toggle:
-        return f'<div class="code-title">{escape(title)}</div>'
+        return "\n".join(
+            [
+                '<div class="code-title">',
+                f'<span class="code-title-label">{escape(title)}</span>',
+                controls_html,
+                "</div>",
+            ]
+        )
     return "\n".join(
         [
             '<div class="code-title">',
             f'<span class="code-title-label">{escape(title)}</span>',
-            _render_view_toggle(rendered_label, "Raw"),
+            controls_html,
             "</div>",
         ]
     )
@@ -405,7 +727,9 @@ def _render_code_panel(
     panel_class: str = "",
     language: str = "",
     raw_toggle: bool = False,
+    raw_text: str | None = None,
 ) -> str:
+    raw_text = text if raw_text is None else raw_text
     pre_class = " ".join(part for part in ("code-text", class_name) if part)
     section_class = " ".join(part for part in ("code-panel", panel_class) if part)
     rendered_pre = _render_pre(
@@ -424,7 +748,7 @@ def _render_code_panel(
                 "</div>",
                 '<div data-view-content="raw" hidden>',
                 _render_pre(
-                    text, " ".join(part for part in (pre_class, "raw-text") if part), trim=trim
+                    raw_text, " ".join(part for part in (pre_class, "raw-text") if part), trim=trim
                 ),
                 "</div>",
             ]
@@ -434,8 +758,10 @@ def _render_code_panel(
     data_panel = " data-view-panel" if raw_toggle else ""
     return "\n".join(
         [
-            f'<section class="{escape(section_class, quote=True)}"{data_panel}>',
+            f'<section class="{escape(section_class, quote=True)}"{data_panel} data-copy-scope>',
             _render_code_title(title, raw_toggle=raw_toggle, rendered_label="Highlighted"),
+            _render_copy_source(text, "rendered"),
+            _render_copy_source(raw_text, "raw"),
             '<div class="code-body">',
             body,
             "</div>",
@@ -487,8 +813,14 @@ def _render_diff_lines(text: str) -> str:
     return '<div class="diff-view">' + "\n".join(rows) + "</div>"
 
 
-def _render_diff_panel(title: str, text: str, trim: bool = True) -> str:
+def _render_diff_panel(
+    title: str,
+    text: str,
+    trim: bool = True,
+    raw_text: str | None = None,
+) -> str:
     text = "" if text is None else str(text)
+    raw_text = text if raw_text is None else str(raw_text)
     if trim and len(text) > HTML_TRIM_CHARS:
         short_text = text[:HTML_TRIM_CHARS].rstrip() + "\n... [truncated]"
         body = "\n".join(
@@ -504,14 +836,16 @@ def _render_diff_panel(title: str, text: str, trim: bool = True) -> str:
         body = _render_diff_lines(text)
     return "\n".join(
         [
-            '<section class="code-panel diff-panel" data-view-panel>',
+            '<section class="code-panel diff-panel" data-view-panel data-copy-scope>',
             _render_code_title(title, raw_toggle=True, rendered_label="Diff"),
+            _render_copy_source(text, "rendered"),
+            _render_copy_source(raw_text, "raw"),
             '<div class="code-body">',
             '<div data-view-content="rendered">',
             body,
             "</div>",
             '<div data-view-content="raw" hidden>',
-            _render_pre(text, "code-text raw-text", trim=trim),
+            _render_pre(raw_text, "code-text raw-text", trim=trim),
             "</div>",
             "</div>",
             "</section>",
@@ -604,9 +938,12 @@ def _render_rendered_raw_panel(
 ) -> str:
     return "\n".join(
         [
-            '<div class="rendered-raw-panel markdown-raw-panel" data-view-panel>',
+            '<div class="rendered-raw-panel markdown-raw-panel" data-view-panel data-copy-scope>',
+            _render_copy_source(raw_text, "rendered"),
+            _render_copy_source(raw_text, "raw"),
             '<div class="rendered-raw-toolbar">',
             _render_view_toggle(rendered_label, "Raw"),
+            _render_copy_button(),
             "</div>",
             '<div data-view-content="rendered">',
             rendered_html,
@@ -792,8 +1129,12 @@ def _raw_payload(msg: MessageDict) -> str:
 
 def _render_raw_panel(raw_payload: str) -> list[str]:
     return [
-        '<details class="raw-payload">',
+        '<details class="raw-payload" data-copy-scope>',
         "<summary>Raw message</summary>",
+        '<div class="raw-payload-controls">',
+        _render_copy_button(),
+        "</div>",
+        _render_copy_source(raw_payload, "rendered"),
         f"<pre><code>{escape(raw_payload)}</code></pre>",
         "</details>",
     ]
@@ -810,6 +1151,12 @@ _CSS = """
   --line: #d9e0ea;
   --accent: #3158d4;
   --accent-soft: #e8edff;
+  --user-bg: #f0f7ff;
+  --user-border: #cfe4ff;
+  --user-title: #24527a;
+  --assistant-bg: #f3fbf6;
+  --assistant-border: #cfe9d9;
+  --assistant-title: #2f6548;
   --tool: #fff7e6;
   --tool-border: #f2ddb2;
   --raw-soft: #f8f9fb;
@@ -838,6 +1185,12 @@ html[data-theme="dark"] {
   --line: #30363d;
   --accent: #79c0ff;
   --accent-soft: #13233a;
+  --user-bg: #111d2b;
+  --user-border: #294866;
+  --user-title: #9cccff;
+  --assistant-bg: #11241c;
+  --assistant-border: #2b5a41;
+  --assistant-title: #a6e3ba;
   --tool: #2b2111;
   --tool-border: #7c5b1f;
   --raw-soft: #1c2128;
@@ -892,6 +1245,31 @@ html[data-theme="dark"] .theme-control {
   gap: 8px;
   margin-top: 14px;
 }
+.level-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.level-control {
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+.level-control:first-child { border-left: 0; }
+.level-control[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .utility-control {
   border: 1px dashed var(--line);
   border-radius: 6px;
@@ -921,11 +1299,49 @@ html[data-theme="dark"] .theme-control {
   gap: 16px;
   margin-bottom: 12px;
 }
-.turn-heading { display: flex; align-items: center; gap: 10px; }
+.turn-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .turn-header h2 { margin: 0; font-size: 20px; }
 .turn-meta { color: var(--muted); font-size: 12px; text-align: right; }
 .turn-summary { color: var(--muted); }
+.turn-actions, .turn-trace, .full-io {
+  margin-top: 10px;
+}
+.turn-actions > summary, .turn-trace > summary, .full-io > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+}
 .turn-nav { display: inline-flex; gap: 4px; }
+.turn-level-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.turn-level-button {
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 7px;
+}
+.turn-level-button:first-child { border-left: 0; }
+.turn-level-button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .turn-nav-button {
   width: 28px;
   height: 28px;
@@ -951,6 +1367,10 @@ html[data-theme="dark"] .theme-control {
   padding: 14px;
 }
 .message-action { background: var(--tool); border-color: var(--tool-border); }
+.message-human { background: var(--user-bg); border-color: var(--user-border); }
+.message-assistant { background: var(--assistant-bg); border-color: var(--assistant-border); }
+.message-human .message-header h3 { color: var(--user-title); }
+.message-assistant .message-header h3 { color: var(--assistant-title); }
 .message-header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .message-header h3 { font-size: 15px; margin: 0; }
 .message-header time { color: var(--muted); font-size: 12px; white-space: nowrap; }
@@ -993,6 +1413,8 @@ html[data-theme="dark"] .theme-control {
 .rendered-raw-toolbar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 8px;
 }
 .code-panel {
@@ -1018,6 +1440,13 @@ html[data-theme="dark"] .theme-control {
   color: var(--muted);
   text-transform: uppercase;
 }
+.code-title-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .view-toggle {
   display: inline-flex;
   align-items: center;
@@ -1041,6 +1470,20 @@ html[data-theme="dark"] .theme-control {
 .view-toggle button[aria-pressed="true"] {
   background: var(--accent-soft);
   color: var(--accent);
+}
+.copy-button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+}
+.copy-button:hover {
+  background: var(--accent-soft);
 }
 .code-body { padding: 10px; }
 .code-text, .message-text, pre {
@@ -1106,6 +1549,11 @@ html[data-theme="dark"] .code-theme-dark { display: block; }
 .diff-line-meta .diff-content { color: var(--diff-meta-text); font-weight: 600; }
 .raw-payload { margin-top: 10px; color: var(--muted); }
 .raw-payload summary { cursor: pointer; }
+.raw-payload-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin: 8px 0;
+}
 [hidden] { display: none !important; }
 @media (max-width: 640px) {
   .page { padding: 20px 12px 40px; }
@@ -1157,6 +1605,85 @@ _SCRIPT = """
         // Ignore storage failures; theme still applies for this page view.
       }
       applyTheme(nextTheme);
+    });
+  });
+
+  function applyLevel(level) {
+    var safeLevel = Math.max(1, Math.min(4, parseInt(level, 10) || 1));
+    document.documentElement.dataset.level = String(safeLevel);
+    document.querySelectorAll("[data-level]").forEach(function (el) {
+      applyElementLevel(el, safeLevel);
+    });
+    document.querySelectorAll("[data-level-button]").forEach(function (button) {
+      button.setAttribute(
+        "aria-pressed",
+        button.getAttribute("data-level-button") === String(safeLevel) ? "true" : "false"
+      );
+    });
+    document.querySelectorAll(".turn[data-turn-local-level]").forEach(function (turn) {
+      applyTurnLevel(turn, parseInt(turn.getAttribute("data-turn-local-level"), 10) || safeLevel);
+    });
+  }
+
+  function applyElementLevel(el, level) {
+    var minLevel = parseInt(el.getAttribute("data-level"), 10) || 1;
+    el.hidden = level < minLevel;
+    if (el.tagName === "DETAILS" && el.hasAttribute("data-open-level")) {
+      var openLevel = parseInt(el.getAttribute("data-open-level"), 10) || minLevel;
+      el.open = level >= openLevel;
+    }
+  }
+
+  function applyTurnLevel(turn, level) {
+    if (!turn) {
+      return;
+    }
+    applyTurnContentLevel(turn, level);
+    turn.querySelectorAll("[data-turn-level-button]").forEach(function (button) {
+      button.setAttribute(
+        "aria-pressed",
+        button.getAttribute("data-turn-level-button") === String(level) ? "true" : "false"
+      );
+    });
+  }
+
+  function applyTurnContentLevel(turn, level) {
+    turn.querySelectorAll("[data-level]").forEach(function (el) {
+      applyElementLevel(el, level);
+    });
+  }
+
+  function clearTurnLevel(turn) {
+    if (!turn) {
+      return;
+    }
+    turn.removeAttribute("data-turn-local-level");
+    turn.querySelectorAll("[data-turn-level-button]").forEach(function (button) {
+      button.setAttribute("aria-pressed", "false");
+    });
+    applyTurnContentLevel(turn, parseInt(document.documentElement.dataset.level, 10) || 1);
+  }
+
+  document.querySelectorAll("[data-level-button]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      applyLevel(button.getAttribute("data-level-button"));
+    });
+  });
+
+  document.querySelectorAll("[data-turn-level-button]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var turn = button.closest(".turn");
+      if (!turn) {
+        return;
+      }
+      var level = parseInt(button.getAttribute("data-turn-level-button"), 10) || 1;
+      var current = parseInt(turn.getAttribute("data-turn-local-level"), 10) || 0;
+      if (current === level) {
+        clearTurnLevel(turn);
+        return;
+      }
+      turn.setAttribute("data-turn-local-level", String(level));
+      applyTurnLevel(turn, level);
     });
   });
 
@@ -1224,6 +1751,64 @@ _SCRIPT = """
     });
   });
 
+  function activeCopyMode(scope) {
+    if (!scope) {
+      return "rendered";
+    }
+    var active = scope.querySelector("[data-view-toggle][aria-pressed='true']");
+    return active ? active.getAttribute("data-view-toggle") : "rendered";
+  }
+
+  function fallbackCopy(text) {
+    var textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+
+  function setCopied(button) {
+    var original = button.textContent;
+    button.textContent = "Copied";
+    window.setTimeout(function () {
+      button.textContent = original || "Copy";
+    }, 1200);
+  }
+
+  document.querySelectorAll("[data-copy-button]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var scope = button.closest("[data-copy-scope]");
+      var mode = activeCopyMode(scope);
+      var source = scope
+        ? scope.querySelector("[data-copy-content='" + mode + "']")
+          || scope.querySelector("[data-copy-content]")
+        : null;
+      var text = source ? source.textContent : "";
+      if (!text) {
+        return;
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          setCopied(button);
+        }, function () {
+          fallbackCopy(text);
+          setCopied(button);
+        });
+      } else {
+        fallbackCopy(text);
+        setCopied(button);
+      }
+    });
+  });
+
   applyTheme(readTheme());
+  applyLevel(document.documentElement.dataset.level || "1");
 })();
 """

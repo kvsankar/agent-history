@@ -437,6 +437,16 @@ def _validate_markdown_level(value: str) -> int:
     return level
 
 
+def _validate_html_level(value: str) -> int:
+    try:
+        level = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--html-level must be an integer") from exc
+    if not 1 <= level <= MARKDOWN_MAX_LEVEL:
+        raise argparse.ArgumentTypeError(f"--html-level must be between 1 and {MARKDOWN_MAX_LEVEL}")
+    return level
+
+
 def _validate_positive_int(value: str) -> int:
     """Validate positive integer CLI arguments."""
     try:
@@ -1447,6 +1457,12 @@ class CLIParser:
             ),
         )
         parser.add_argument(
+            "--html-level",
+            type=_validate_html_level,
+            default=1,
+            help="Initial HTML detail level 1-4 (default: 1, conversation only)",
+        )
+        parser.add_argument(
             "--split",
             metavar="LINES",
             type=_validate_split_lines,
@@ -2011,6 +2027,7 @@ class CLIParser:
             "export_json": getattr(args, "export_json", False),
             "minimal": getattr(args, "minimal", False),
             "markdown_level": getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
+            "html_level": getattr(args, "html_level", 1),
             "split": getattr(args, "split", None),
             "jobs": getattr(args, "jobs", None),
             "flat": flat,
