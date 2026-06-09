@@ -69,17 +69,17 @@ This document compares the AI coding agents supported by `cagelens` and explains
 
 ## How cagelens Works with Each Agent
 
-### Listing Sessions (`lss`)
+### Listing Sessions (`session list`)
 
 ```bash
 # All agents (auto-detect)
-cagelens lss myproject
+cagelens session list /home/user/myproject
 
 # Specific agent
-cagelens --agent claude lss myproject
-cagelens --agent codex lss myproject
-cagelens --agent gemini lss myproject
-cagelens --agent pi lss myproject
+cagelens --agent claude session list /home/user/myproject
+cagelens --agent codex session list /home/user/myproject
+cagelens --agent gemini session list /home/user/myproject
+cagelens --agent pi session list /home/user/myproject
 ```
 
 | Behavior | Claude | Codex | Gemini | Pi |
@@ -88,15 +88,15 @@ cagelens --agent pi lss myproject
 | Date filtering | File mtime | File mtime | File mtime | File mtime |
 | Message count | From JSONL | From JSONL | From JSON | From JSONL |
 
-### Exporting Sessions (`export`)
+### Exporting Sessions (`session export`)
 
 ```bash
 # Export to markdown
-cagelens export myproject -o ./output
+cagelens session export /home/user/myproject -o ./output
 
 # Agent-specific export
-cagelens --agent gemini export myproject
-cagelens --agent pi export myproject
+cagelens --agent gemini session export /home/user/myproject -o ./output
+cagelens --agent pi session export /home/user/myproject -o ./output
 ```
 
 | Feature | Claude | Codex | Gemini | Pi |
@@ -170,7 +170,7 @@ abc123def456...  →  (index lookup)  →  /home/user/myapp
 # Index updates when you run cagelens from a Gemini project directory
 
 # Bulk indexing
-cagelens gemini-index ~/projects    # Scan for .gemini/ folders
+cagelens gemini-index --add ~/projects    # Scan for .gemini/ folders
 ```
 
 ## Environment Variables
@@ -231,10 +231,10 @@ If you use multiple coding agents, `cagelens` unifies them:
 
 ```bash
 # List all sessions from all agents
-cagelens lss myproject
+cagelens session list /home/user/myproject
 
 # Export everything
-cagelens export myproject -o ./backup
+cagelens session export /home/user/myproject -o ./backup
 
 # Stats across all agents
 cagelens stats --sync
@@ -247,10 +247,10 @@ For best experience with Gemini CLI:
 
 ```bash
 # Run once to index all your Gemini projects
-cagelens gemini-index ~/projects
+cagelens gemini-index --add ~/projects
 
 # Now workspace names display as paths instead of hashes
-cagelens --agent gemini lss
+cagelens --agent gemini session list --aw
 ```
 
 ### Cross-Machine Sync
@@ -260,7 +260,7 @@ cagelens --agent gemini lss
 cagelens stats --sync --ah -r user@workstation
 
 # Export from all sources
-cagelens export myproject --ah -o ./consolidated
+cagelens session export --project myproject --ah -o ./consolidated
 ```
 
 ## See Also
