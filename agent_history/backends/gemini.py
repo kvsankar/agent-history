@@ -474,6 +474,26 @@ def gemini_get_first_timestamp(json_file: Path) -> Optional[str]:
     Returns:
         ISO 8601 timestamp string or None if not found
     """
+    if json_file.name.endswith(".jsonl"):
+        try:
+            with open(json_file, encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    start_time = record.get("startTime")
+                    if start_time:
+                        return start_time
+                    timestamp = record.get("timestamp")
+                    if timestamp:
+                        return timestamp
+        except OSError:
+            pass
+        return None
+
     try:
         with open(json_file, encoding="utf-8") as f:
             data = json.load(f)

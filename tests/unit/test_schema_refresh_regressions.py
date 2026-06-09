@@ -85,7 +85,14 @@ def test_codex_reads_plain_rollout_after_compressed_support(tmp_path: Path) -> N
     messages, meta = codex_read_jsonl_messages(rollout)
 
     assert meta["id"] == "codex-current"
-    assert messages == [{"role": "user", "content": "Hi", "timestamp": "2026-06-04T00:00:01Z"}]
+    assert messages == [
+        {
+            "role": "user",
+            "content": "Hi",
+            "timestamp": "2026-06-04T00:00:01Z",
+            "session_id": "codex-current",
+        }
+    ]
 
 
 def test_codex_scan_discovers_compressed_rollout_names(monkeypatch, tmp_path: Path) -> None:
@@ -114,7 +121,11 @@ def test_codex_scan_discovers_compressed_rollout_names(monkeypatch, tmp_path: Pa
 
 
 def test_gemini_reads_current_jsonl_append_session(tmp_path: Path) -> None:
-    from agent_history.backends.gemini import gemini_count_messages, gemini_read_json_messages
+    from agent_history.backends.gemini import (
+        gemini_count_messages,
+        gemini_get_first_timestamp,
+        gemini_read_json_messages,
+    )
 
     session_file = tmp_path / "session-current.jsonl"
     records = [
@@ -162,6 +173,7 @@ def test_gemini_reads_current_jsonl_append_session(tmp_path: Path) -> None:
     assert meta["summary"] == "short summary"
     assert [message["content"] for message in messages] == ["Hello", "After rewind."]
     assert gemini_count_messages(session_file) == 2
+    assert gemini_get_first_timestamp(session_file) == "2026-06-04T00:00:00Z"
 
 
 def test_gemini_scan_discovers_jsonl_sessions(tmp_path: Path) -> None:

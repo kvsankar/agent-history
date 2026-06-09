@@ -508,8 +508,14 @@ def _gemini_resolve_stats_workspace(
     )
 
     del session_info
-    hash_dir = session_file.parent.parent
-    project_hash = hash_dir.name if hash_dir.name else None
+    project_hash = None
+    for parent in session_file.parents:
+        if parent.name == "chats":
+            project_hash = parent.parent.name
+            break
+    if project_hash is None:
+        hash_dir = session_file.parent.parent
+        project_hash = hash_dir.name if hash_dir.name else None
     if project_hash:
         resolved = gemini_get_path_for_hash(project_hash)
         if resolved:

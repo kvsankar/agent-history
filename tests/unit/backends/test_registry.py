@@ -43,6 +43,26 @@ def test_gemini_backend_metadata_includes_current_jsonl_remote_support() -> None
     assert "*.json" in command
 
 
+def test_gemini_stats_workspace_resolution_handles_nested_jsonl(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Nested Gemini JSONL child sessions should resolve using the project hash."""
+    from agent_history.backends.registry import _gemini_resolve_stats_workspace
+
+    project_hash = "c" * 64
+    config_dir = tmp_path / ".agent-history"
+    config_dir.mkdir()
+    (config_dir / "gemini_index.json").write_text(
+        '{"version": 1, "hashes": {"' + project_hash + '": "/home/testuser/gemini-nested"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HISTORY_CONFIG_DIR", str(config_dir))
+
+    session_file = tmp_path / ".gemini" / "tmp" / project_hash / "chats" / "parent" / "agent.jsonl"
+
+    assert _gemini_resolve_stats_workspace(session_file, {}, None) == "/home/testuser/gemini-nested"
+
+
 def test_registered_backend_is_visible_to_parser_and_inventory(tmp_path: Path) -> None:
     """A backend can be added without editing parser or inventory dispatch code."""
     session_file = tmp_path / "fake-session.jsonl"
