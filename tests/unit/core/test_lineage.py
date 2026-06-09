@@ -57,6 +57,7 @@ def test_codex_lineage_joins_parent_spawn_to_child_completion(tmp_path: Path) ->
                 "type": "response_item",
                 "payload": {
                     "type": "function_call_output",
+                    "id": "output-item-1",
                     "call_id": "call-spawn",
                     "output": '{"agent_id": "child-thread", "nickname": "Confucius"}',
                 },
@@ -106,6 +107,8 @@ def test_codex_lineage_joins_parent_spawn_to_child_completion(tmp_path: Path) ->
     assert child_record["parent_session_id"] == "parent-thread"
     assert child_record["agent_name"] == "Confucius"
     assert child_record["invocation_tool_call_id"] == "call-spawn"
+    assert child_record["merge_message_id"] == "output-item-1"
+    assert child_record["join_status"] == "joined"
     assert child_record["status"] == "completed"
     assert child_record["duration_ms"] == 17000
     assert child_record["last_agent_message"] == "child done"
@@ -123,6 +126,29 @@ def test_codex_lineage_tolerates_non_dict_source_metadata(tmp_path: Path) -> Non
                     "id": "main-thread",
                     "cwd": "/tmp/workspace",
                     "source": "codex-tui",
+                },
+            }
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(session_file, AGENT_CODEX)])
+
+    assert lineage[0]["session_id"] == "main-thread"
+    assert lineage[0]["kind"] == "main"
+
+
+def test_codex_lineage_tolerates_non_dict_nested_source_metadata(tmp_path: Path) -> None:
+    session_file = tmp_path / "rollout-main.jsonl"
+    _write_jsonl(
+        session_file,
+        [
+            {
+                "timestamp": "2026-06-09T10:00:00.000Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "main-thread",
+                    "cwd": "/tmp/workspace",
+                    "source": {"subagent": "unexpected"},
                 },
             }
         ],
@@ -192,7 +218,7 @@ def test_claude_lineage_discovers_nested_subagent_and_notification(
         ],
     )
 
-    lineage = build_timeline_lineage([_session(parent, AGENT_CLAUDE)])
+    lineage = build_timeline_lineage([_session(parent, AGENT_CLAUDE)], include_related=True)
     child_record = next(record for record in lineage if record.get("agent_id") == "task123")
 
     assert child_record["kind"] == "subagent"
@@ -200,11 +226,12 @@ def test_claude_lineage_discovers_nested_subagent_and_notification(
     assert child_record["parent_session_id"] == "parent-session"
     assert child_record["invocation_tool_call_id"] == "toolu-task"
     assert child_record["status"] == "completed"
+    assert child_record["join_status"] == "joined"
     assert child_record["duration_ms"] == 12345
     assert child_record["last_agent_message"] == "nested done"
 
 
-def test_claude_scanner_includes_nested_subagent_files(tmp_path: Path) -> None:
+def test_claude_lineage_honors_explicit_scope_by_default(tmp_path: Path) -> None:
     workspace = tmp_path / "-tmp-workspace"
     parent = workspace / "parent-session.jsonl"
     child = workspace / "parent-session" / "subagents" / "agent-task123.jsonl"
@@ -231,6 +258,57 @@ def test_claude_scanner_includes_nested_subagent_files(tmp_path: Path) -> None:
                 "uuid": "cu1",
                 "timestamp": "2026-06-09T10:00:02.000Z",
                 "message": {"role": "user", "content": "Child task"},
+            }
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(parent, AGENT_CLAUDE)])
+
+    assert [record["kind"] for record in lineage] == ["main"]
+
+
+def test_claude_scanner_includes_nested_subagent_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "-tmp-workspace"
+    parent = workspace / "parent-session.jsonl"
+    child = workspace / "parent-session" / "subagents" / "agent-task123.jsonl"
+    compaction = workspace / "parent-session" / "subagents" / "agent-acompact-123.jsonl"
+    _write_jsonl(
+        parent,
+        [
+            {
+                "type": "user",
+                "sessionId": "parent-session",
+                "uuid": "u1",
+                "timestamp": "2026-06-09T10:00:00.000Z",
+                "message": {"role": "user", "content": "Start"},
+            }
+        ],
+    )
+    _write_jsonl(
+        child,
+        [
+            {
+                "type": "user",
+                "sessionId": "parent-session",
+                "agentId": "task123",
+                "isSidechain": True,
+                "uuid": "cu1",
+                "timestamp": "2026-06-09T10:00:02.000Z",
+                "message": {"role": "user", "content": "Child task"},
+            }
+        ],
+    )
+    _write_jsonl(
+        compaction,
+        [
+            {
+                "type": "user",
+                "sessionId": "parent-session",
+                "agentId": "acompact-123",
+                "isSidechain": True,
+                "uuid": "cu2",
+                "timestamp": "2026-06-09T10:00:03.000Z",
+                "message": {"role": "user", "content": "Compaction"},
             }
         ],
     )
@@ -321,7 +399,69 @@ def test_gemini_jsonl_lineage_represents_subagent_tool_call(tmp_path: Path) -> N
     assert child_record["parent_session_id"] == "gemini-jsonl-parent"
 
 
-def test_pi_lineage_marks_parent_child_messages_as_branch_not_subagent(tmp_path: Path) -> None:
+def test_gemini_jsonl_lineage_honors_rewind_and_set_metadata(tmp_path: Path) -> None:
+    gemini_file = tmp_path / "session-rewind.jsonl"
+    _write_jsonl(
+        gemini_file,
+        [
+            {
+                "sessionId": "gemini-rewind-parent",
+                "startTime": "2026-06-09T10:00:00.000Z",
+            },
+            {
+                "id": "anchor",
+                "timestamp": "2026-06-09T10:00:05.000Z",
+                "type": "user",
+                "content": "Keep this message.",
+            },
+            {
+                "id": "stale",
+                "timestamp": "2026-06-09T10:00:10.000Z",
+                "type": "gemini",
+                "toolCalls": [
+                    {
+                        "id": "codebase_investigator-stale",
+                        "name": "codebase_investigator",
+                        "displayName": "Codebase Investigator Agent",
+                        "status": "success",
+                    }
+                ],
+            },
+            {"$rewindTo": "anchor"},
+            {"$set": {"lastUpdated": "2026-06-09T10:00:30.000Z"}},
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(gemini_file, AGENT_GEMINI)])
+
+    assert len(lineage) == 1
+    assert lineage[0]["session_id"] == "gemini-rewind-parent"
+    assert lineage[0]["end_ts"] == "2026-06-09T10:00:30.000Z"
+
+
+def test_gemini_jsonl_lineage_recognizes_nested_child_transcript(tmp_path: Path) -> None:
+    gemini_file = tmp_path / "chats" / "parent-session" / "child-agent.jsonl"
+    _write_jsonl(
+        gemini_file,
+        [
+            {
+                "type": "session",
+                "sessionId": "child-session",
+                "agentId": "child-agent",
+                "startTime": "2026-06-09T10:00:00.000Z",
+            }
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(gemini_file, AGENT_GEMINI)])
+
+    assert lineage[0]["kind"] == "subagent"
+    assert lineage[0]["session_id"] == "child-session"
+    assert lineage[0]["parent_session_id"] == "parent-session"
+    assert lineage[0]["agent_id"] == "child-agent"
+
+
+def test_pi_lineage_keeps_linear_parent_child_messages_as_main_only(tmp_path: Path) -> None:
     pi_file = tmp_path / "pi-session.jsonl"
     _write_jsonl(
         pi_file,
@@ -345,5 +485,89 @@ def test_pi_lineage_marks_parent_child_messages_as_branch_not_subagent(tmp_path:
 
     lineage = build_timeline_lineage([_session(pi_file, AGENT_PI)])
 
-    assert {record["kind"] for record in lineage} == {"main", "branch"}
+    assert {record["kind"] for record in lineage} == {"main"}
     assert not any(record["kind"] == "subagent" for record in lineage)
+
+
+def test_pi_lineage_marks_true_branching_messages(tmp_path: Path) -> None:
+    pi_file = tmp_path / "pi-session.jsonl"
+    _write_jsonl(
+        pi_file,
+        [
+            {"type": "session", "id": "pi-session", "timestamp": "2026-06-09T10:00:00.000Z"},
+            {
+                "type": "message",
+                "id": "u1",
+                "timestamp": "2026-06-09T10:00:01.000Z",
+                "children": ["a1", "a2"],
+                "message": {"role": "user", "content": "Hello"},
+            },
+            {
+                "type": "message",
+                "id": "a1",
+                "parentId": "u1",
+                "timestamp": "2026-06-09T10:00:02.000Z",
+                "message": {"role": "assistant", "content": "Hi"},
+            },
+            {
+                "type": "message",
+                "id": "a2",
+                "parentId": "u1",
+                "timestamp": "2026-06-09T10:00:03.000Z",
+                "message": {"role": "assistant", "content": "Alternate"},
+            },
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(pi_file, AGENT_PI)])
+
+    assert {record["kind"] for record in lineage} == {"main", "branch"}
+
+
+def test_pi_lineage_captures_extension_subagent_tool_call(tmp_path: Path) -> None:
+    pi_file = tmp_path / "pi-session.jsonl"
+    _write_jsonl(
+        pi_file,
+        [
+            {"type": "session", "id": "pi-session", "timestamp": "2026-06-09T10:00:00.000Z"},
+            {
+                "type": "message",
+                "id": "a1",
+                "timestamp": "2026-06-09T10:00:01.000Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "tool-subagent",
+                            "name": "subagent",
+                            "arguments": {
+                                "sessionId": "child-session",
+                                "agentName": "reviewer",
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "message",
+                "id": "t1",
+                "timestamp": "2026-06-09T10:00:02.000Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "tool-subagent",
+                    "toolName": "subagent",
+                    "content": "done",
+                },
+            },
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(pi_file, AGENT_PI)])
+    child_record = next(record for record in lineage if record["kind"] == "subagent")
+
+    assert child_record["session_id"] == "child-session"
+    assert child_record["parent_session_id"] == "pi-session"
+    assert child_record["agent_name"] == "reviewer"
+    assert child_record["status"] == "completed"
+    assert child_record["last_agent_message"] == "done"

@@ -862,7 +862,11 @@ def get_workspace_sessions(
         )
 
         session_files = list(workspace_dir.glob("*.jsonl"))
-        session_files.extend(workspace_dir.glob("*/subagents/agent-*.jsonl"))
+        session_files.extend(
+            path
+            for path in workspace_dir.glob("*/subagents/agent-*.jsonl")
+            if not path.name.startswith("agent-acompact-")
+        )
         for jsonl_file in session_files:
             session = _get_session_from_file(
                 jsonl_file,

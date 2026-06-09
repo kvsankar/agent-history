@@ -24,7 +24,9 @@ _CLAUDE_NOTIFICATION_TAGS = (
 )
 
 
-def build_timeline_lineage(sessions: list[SessionDict]) -> list[LineageRecord]:
+def build_timeline_lineage(
+    sessions: list[SessionDict], *, include_related: bool = False
+) -> list[LineageRecord]:
     """Build normalized lineage records for an export/session scope.
 
     The returned model is intentionally backend-neutral so the HTML timeline can
@@ -51,23 +53,24 @@ def build_timeline_lineage(sessions: list[SessionDict]) -> list[LineageRecord]:
             claude_records, notifications = extract_claude_lineage(session_file)
             records.extend(_with_session_context(record, session) for record in claude_records)
             claude_notifications.update(notifications)
-            for child_file in _discover_claude_nested_subagents(session_file):
-                if child_file in seen_files:
-                    continue
-                seen_files.add(child_file)
-                child_records, _ = extract_claude_lineage(child_file)
-                records.extend(
-                    _with_session_context(
-                        record,
-                        {
-                            **session,
-                            "file": child_file,
-                            "filename": child_file.name,
-                            "modified": datetime.fromtimestamp(child_file.stat().st_mtime),
-                        },
+            if include_related:
+                for child_file in _discover_claude_nested_subagents(session_file):
+                    if child_file in seen_files:
+                        continue
+                    seen_files.add(child_file)
+                    child_records, _ = extract_claude_lineage(child_file)
+                    records.extend(
+                        _with_session_context(
+                            record,
+                            {
+                                **session,
+                                "file": child_file,
+                                "filename": child_file.name,
+                                "modified": datetime.fromtimestamp(child_file.stat().st_mtime),
+                            },
+                        )
+                        for record in child_records
                     )
-                    for record in child_records
-                )
         elif agent == AGENT_GEMINI:
             records.extend(
                 _with_session_context(record, session)
@@ -84,6 +87,7 @@ def build_timeline_lineage(sessions: list[SessionDict]) -> list[LineageRecord]:
 
     _attach_codex_invocations(records, codex_invocations)
     _attach_claude_notifications(records, claude_notifications)
+    _mark_unjoined_subagents(records)
     return sorted(records, key=_lineage_sort_key)
 
 
@@ -192,7 +196,7 @@ def _codex_completed_spawn_invocation(
         "agent_id": str(agent_id),
         "agent_name": output.get("nickname")
         or invocation.get("invocation_args", {}).get("agent_type"),
-        "merge_message_id": call_id,
+        "merge_message_id": payload.get("id") or call_id,
         "evidence": [
             *invocation["evidence"],
             _evidence(jsonl_file, "response_item.function_call_output", "agent_id"),
@@ -205,7 +209,12 @@ def _codex_lineage_record(jsonl_file: Path, parts: dict[str, Any]) -> LineageRec
     session_id = session_meta.get("id")
     task_complete = parts.get("task_complete") or {}
     source = session_meta.get("source") if isinstance(session_meta.get("source"), dict) else {}
-    spawn = (source.get("subagent") or {}).get("thread_spawn", {})
+    subagent_source = source.get("subagent")
+    if not isinstance(subagent_source, dict):
+        subagent_source = {}
+    spawn = subagent_source.get("thread_spawn")
+    if not isinstance(spawn, dict):
+        spawn = {}
     parent_session_id = (
         session_meta.get("parent_thread_id")
         or spawn.get("parent_thread_id")
@@ -374,12 +383,21 @@ def _extract_gemini_jsonl_lineage(jsonl_file: Path) -> list[LineageRecord]:
         return []
 
     session_id = session_meta.get("sessionId") or session_meta.get("id") or jsonl_file.stem
+    nested_parent_id = _gemini_nested_jsonl_parent_session_id(jsonl_file)
+    is_nested_child = nested_parent_id is not None
     records = [
         _drop_none(
             {
                 "agent": AGENT_GEMINI,
-                "kind": "main",
+                "kind": "subagent" if is_nested_child else "main",
                 "session_id": session_id,
+                "parent_session_id": nested_parent_id,
+                "agent_id": (
+                    session_meta.get("agentId") or session_meta.get("agent_id") or jsonl_file.stem
+                    if is_nested_child
+                    else None
+                ),
+                "agent_name": session_meta.get("agentName") or session_meta.get("agent_name"),
                 "start_ts": session_meta.get("startTime") or first_ts,
                 "end_ts": session_meta.get("lastUpdated") or last_ts,
                 "confidence": "confirmed",
@@ -397,15 +415,48 @@ def _collect_gemini_jsonl_record(
     session_meta: dict[str, Any],
     messages: list[dict[str, Any]],
 ) -> None:
-    record_type = entry.get("type")
-    if record_type in ("gemini", "model", "assistant") or entry.get("toolCalls"):
+    if "$rewindTo" in entry:
+        _rewind_gemini_messages(messages, entry.get("$rewindTo"))
+        return
+    if "$set" in entry:
+        _apply_gemini_set_record(session_meta, messages, entry.get("$set"))
+        return
+
+    record_type = entry.get("type") or entry.get("role")
+    if record_type == "$set":
+        _apply_gemini_set_record(session_meta, messages, entry.get("value") or entry.get("updates"))
+    elif record_type in (
+        "user",
+        "gemini",
+        "model",
+        "assistant",
+        "info",
+        "error",
+        "warning",
+    ) or entry.get("toolCalls"):
         messages.append(entry)
     elif record_type in (None, "metadata", "session"):
         session_meta.update({key: value for key, value in entry.items() if key != "messages"})
-    elif record_type == "$set":
-        updates = entry.get("value") or entry.get("updates") or {}
-        if isinstance(updates, dict):
-            session_meta.update({key: value for key, value in updates.items() if key != "messages"})
+
+
+def _rewind_gemini_messages(messages: list[dict[str, Any]], target_id: Any) -> None:
+    for index, message in enumerate(messages):
+        if message.get("id") == target_id:
+            del messages[index + 1 :]
+            return
+
+
+def _apply_gemini_set_record(
+    session_meta: dict[str, Any],
+    messages: list[dict[str, Any]],
+    updates: Any,
+) -> None:
+    if not isinstance(updates, dict):
+        return
+    if isinstance(updates.get("messages"), list):
+        messages.clear()
+        messages.extend(updates["messages"])
+    session_meta.update({key: value for key, value in updates.items() if key != "messages"})
 
 
 def _gemini_subagent_records(
@@ -459,7 +510,10 @@ def extract_pi_lineage(jsonl_file: Path) -> list[LineageRecord]:
     first_ts = None
     last_ts = None
     session_id = None
-    has_branch_links = False
+    child_ids_by_parent: dict[str, set[str]] = {}
+    has_explicit_branch = False
+    subagent_records: list[LineageRecord] = []
+    pending_subagent_calls: dict[str, dict[str, Any]] = {}
 
     try:
         with open(jsonl_file, encoding="utf-8") as handle:
@@ -473,8 +527,23 @@ def extract_pi_lineage(jsonl_file: Path) -> list[LineageRecord]:
                 last_ts = timestamp or last_ts
                 if entry.get("type") in ("session", "tree"):
                     session_id = session_id or entry.get("id")
-                if entry.get("parentId") or entry.get("parent_id"):
-                    has_branch_links = True
+                parent_id = entry.get("parentId") or entry.get("parent_id")
+                entry_id = entry.get("id")
+                if parent_id and entry_id:
+                    child_ids_by_parent.setdefault(str(parent_id), set()).add(str(entry_id))
+                if entry.get("type") == "branch_summary":
+                    has_explicit_branch = True
+                children = entry.get("children")
+                if isinstance(children, list) and len(children) > 1:
+                    has_explicit_branch = True
+                _collect_pi_subagent_lineage(
+                    jsonl_file,
+                    entry,
+                    pending_subagent_calls,
+                    subagent_records,
+                    session_id,
+                    timestamp,
+                )
     except OSError:
         return []
 
@@ -490,7 +559,10 @@ def extract_pi_lineage(jsonl_file: Path) -> list[LineageRecord]:
             "source_file": str(jsonl_file),
         }
     )
-    records = [record]
+    records = [record, *subagent_records]
+    has_branch_links = has_explicit_branch or any(
+        len(children) > 1 for children in child_ids_by_parent.values()
+    )
     if has_branch_links:
         records.append(
             _drop_none(
@@ -529,6 +601,7 @@ def _attach_codex_invocations(
             if invocation.get(key) is not None:
                 record[key] = invocation[key]
         record["evidence"] = [*record.get("evidence", []), *invocation.get("evidence", [])]
+        record["join_status"] = "joined"
 
 
 def _attach_claude_notifications(
@@ -552,6 +625,17 @@ def _attach_claude_notifications(
         if duration_ms := notification.get("duration_ms"):
             record["duration_ms"] = duration_ms
         record["evidence"] = [*record.get("evidence", []), *notification.get("evidence", [])]
+        record["join_status"] = "joined"
+
+
+def _mark_unjoined_subagents(records: list[LineageRecord]) -> None:
+    for record in records:
+        if (
+            record.get("kind") == "subagent"
+            and record.get("parent_session_id")
+            and not record.get("join_status")
+        ):
+            record["join_status"] = "unjoined"
 
 
 def _claude_notifications_from_entry(
@@ -592,14 +676,137 @@ def _discover_claude_nested_subagents(session_file: Path) -> list[Path]:
     nested_dir = session_file.with_suffix("") / "subagents"
     if not nested_dir.is_dir():
         return []
-    return sorted(nested_dir.glob("agent-*.jsonl"))
+    return sorted(
+        path for path in nested_dir.glob("agent-*.jsonl") if _is_claude_task_subagent_file(path)
+    )
 
 
 def _is_gemini_subagent_tool(tool_call: dict[str, Any]) -> bool:
     name = str(tool_call.get("name") or "").lower()
     display = str(tool_call.get("displayName") or "").lower()
     result_display = str(tool_call.get("resultDisplay") or "").lower()
-    return "agent" in display or "subagent" in result_display or name.endswith("_investigator")
+    return (
+        display.endswith(" agent") or "subagent" in result_display or name.endswith("_investigator")
+    )
+
+
+def _gemini_nested_jsonl_parent_session_id(jsonl_file: Path) -> str | None:
+    parent = jsonl_file.parent
+    if parent.parent.name != "chats":
+        return None
+    return parent.name
+
+
+def _collect_pi_subagent_lineage(
+    jsonl_file: Path,
+    entry: dict[str, Any],
+    pending_calls: dict[str, dict[str, Any]],
+    records: list[LineageRecord],
+    session_id: str | None,
+    timestamp: Any,
+) -> None:
+    message = entry.get("message") if isinstance(entry.get("message"), dict) else entry
+    raw_role = message.get("role")
+    if raw_role == "assistant":
+        content = message.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "toolCall":
+                    continue
+                if invocation := _pi_subagent_invocation(jsonl_file, block, session_id, timestamp):
+                    pending_calls[str(invocation["invocation_tool_call_id"])] = invocation
+    elif raw_role == "toolResult":
+        call_id = message.get("toolCallId")
+        invocation = pending_calls.pop(str(call_id), None)
+        if invocation:
+            records.append(
+                _pi_completed_subagent_record(jsonl_file, message, invocation, timestamp)
+            )
+
+
+def _pi_subagent_invocation(
+    jsonl_file: Path,
+    tool_call: dict[str, Any],
+    session_id: str | None,
+    timestamp: Any,
+) -> dict[str, Any] | None:
+    name = str(tool_call.get("name") or "")
+    if name not in {"subagent", "sub_agent", "pi-subagent", "pi_subagent"}:
+        return None
+    args = tool_call.get("arguments") or tool_call.get("input") or {}
+    if not isinstance(args, dict):
+        return None
+    child_id = _pi_child_identity(args)
+    if not child_id:
+        return None
+    call_id = tool_call.get("id")
+    if not call_id:
+        return None
+    return {
+        "agent": AGENT_PI,
+        "kind": "subagent",
+        "session_id": child_id,
+        "parent_session_id": session_id,
+        "agent_id": child_id,
+        "agent_name": args.get("agent_name") or args.get("agentName") or args.get("name") or name,
+        "invocation_tool_call_id": call_id,
+        "invocation_name": name,
+        "invocation_args": args,
+        "start_ts": timestamp,
+        "confidence": "confirmed",
+        "evidence": [_evidence(jsonl_file, "message.toolCall", name)],
+        "source_file": str(jsonl_file),
+        "join_status": "joined",
+    }
+
+
+def _pi_completed_subagent_record(
+    jsonl_file: Path,
+    message: dict[str, Any],
+    invocation: dict[str, Any],
+    timestamp: Any,
+) -> LineageRecord:
+    return _drop_none(
+        {
+            **invocation,
+            "end_ts": timestamp or invocation.get("start_ts"),
+            "status": "error" if message.get("isError") else "completed",
+            "last_agent_message": _pi_result_content(message.get("content")),
+            "merge_message_id": message.get("id") or message.get("toolCallId"),
+            "evidence": [
+                *invocation.get("evidence", []),
+                _evidence(jsonl_file, "message.toolResult", "toolCallId"),
+            ],
+        }
+    )
+
+
+def _pi_child_identity(args: dict[str, Any]) -> str | None:
+    for key in (
+        "session_id",
+        "sessionId",
+        "child_session_id",
+        "childSessionId",
+        "thread_id",
+        "threadId",
+        "agent_id",
+        "agentId",
+    ):
+        if args.get(key):
+            return str(args[key])
+    return None
+
+
+def _pi_result_content(content: Any) -> str | None:
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False)
+
+
+def _is_claude_task_subagent_file(path: Path) -> bool:
+    return path.name.startswith("agent-") and not path.name.startswith("agent-acompact-")
 
 
 def _main_record_for_session(jsonl_file: Path, agent: str) -> LineageRecord:
