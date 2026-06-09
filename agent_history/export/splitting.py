@@ -44,6 +44,7 @@ def generate_markdown_parts(
     split_lines: int,
     display_file: Optional[str] = None,
     markdown_level: int = 4,
+    agent_type: str = "claude",
 ) -> Optional[List[Tuple[int, int, str, int, int]]]:
     """Generate multiple markdown parts from messages, split at smart break points.
 
@@ -101,6 +102,7 @@ def generate_markdown_parts(
             end_idx,
             display_file,
             markdown_level,
+            agent_type,
         )
 
         parts.append((part_num + 1, total_parts, part_md, start_idx, end_idx))

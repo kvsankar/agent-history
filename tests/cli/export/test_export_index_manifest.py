@@ -6,6 +6,7 @@ from typing import Any, Dict
 import pytest
 
 from tests.helpers.cli import assert_cli_success, run_cli_subprocess
+from tests.helpers.session_builders import ClaudeSessionBuilder
 
 pytestmark = pytest.mark.v1
 
@@ -68,3 +69,51 @@ def test_export_all_homes_generates_manifest(
         assert (
             f"### {workspace} ({count} sessions)" in content
         ), f"Workspace {workspace} should be summarized in index.md"
+
+
+@pytest.mark.parametrize(
+    ("format_args", "suffix"),
+    [
+        (["--format", "html"], ".html"),
+        (["--json"], ".ndjson"),
+    ],
+)
+def test_export_manifest_counts_non_markdown_sessions(
+    isolated_home: Dict[str, Any],
+    format_args: list[str],
+    suffix: str,
+) -> None:
+    for workspace, session_id in [
+        ("-home-user-html-manifest-one", "html-manifest-one"),
+        ("-home-user-html-manifest-two", "html-manifest-two"),
+    ]:
+        builder = ClaudeSessionBuilder(workspace=workspace, session_id=session_id)
+        builder.add_user_message(f"Hello {session_id}")
+        builder.add_assistant_message("Done")
+        builder.write_to(isolated_home["claude_dir"])
+
+    output_dir = isolated_home["path"] / "exports_html_index"
+
+    result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "--aw",
+            *format_args,
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "All-workspace export should succeed")
+
+    exported_files = list(output_dir.rglob(f"*{suffix}"))
+    assert len(exported_files) == 2
+
+    content = (output_dir / "index.md").read_text(encoding="utf-8")
+    assert "**Total Workspaces:** 2" in content
+    assert "**Total Sessions:** 2" in content
+    assert "### -home-user-html-manifest-one (1 sessions)" in content
+    assert "### -home-user-html-manifest-two (1 sessions)" in content

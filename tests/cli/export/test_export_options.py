@@ -10,7 +10,7 @@ from typing import Any, Dict
 import pytest
 
 from tests.helpers.cli import assert_cli_success, run_cli_subprocess
-from tests.helpers.session_builders import ClaudeSessionBuilder
+from tests.helpers.session_builders import ClaudeSessionBuilder, CodexSessionBuilder
 
 pytestmark = pytest.mark.v1
 
@@ -241,3 +241,36 @@ def test_session_export_split_creates_parts(isolated_home: Dict[str, Any]) -> No
 
     part_files = list(output_dir.rglob("*_part*.md"))
     assert part_files, "Split export should create part files"
+
+
+def test_codex_split_export_uses_codex_header(isolated_home: Dict[str, Any]) -> None:
+    builder = CodexSessionBuilder(session_id="codex-split", cwd="/home/user/codex-split")
+    for i in range(8):
+        builder.add_user_message(f"Codex split step {i}\nMore text")
+        builder.add_assistant_message(f"Codex split reply {i}\nwith extra lines\nand more")
+    builder.write_to(isolated_home["codex_dir"])
+    output_dir = isolated_home["path"] / "exports_codex_split"
+
+    result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "--agent",
+            "codex",
+            "/home/user/codex-split",
+            "--split",
+            "10",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "Codex split export should succeed")
+
+    part_files = list(output_dir.rglob("*_part*.md"))
+    assert part_files, "Split export should create part files"
+    contents = part_files[0].read_text(encoding="utf-8")
+    assert contents.startswith("# Codex Conversation")
+    assert "# Claude Code Session" not in contents
