@@ -352,7 +352,8 @@ chooses an explicit operation such as `cagelens session list`.
 | `--session <id>` | Export specific session IDs or filenames (repeatable) |
 | `--minimal` | Omit metadata sections |
 | `--split <n>` | Split conversations exceeding n lines |
-| `--flat` | No workspace subdirectories |
+| `--layout tree\|squashed\|flat` | Choose workspace directory layout (default: `squashed`) |
+| `--flat` | Alias for `--layout flat` |
 | `--source` | Copy raw source files alongside markdown |
 | `--json` | Export as NDJSON (unified schema) |
 | `--force` | Re-export even if up-to-date |
@@ -374,11 +375,15 @@ chooses an explicit operation such as `cagelens session list`.
 │   ├── 20250103181500_<uuid>.md     # Local session (no prefix)
 │   ├── wsl_Ubuntu_20250103174500_<uuid>.md
 │   └── remote_vm01_20250102103000_<uuid>.md
+├── -home-user-project/               # With --layout squashed
+│   └── 20250103181500_<uuid>.md
 └── <workspace-id>/                   # Hash/encoded name when path cannot be decoded
     └── ...
 ```
 
-Use `--flat` to disable workspace subdirectories.
+Use `--layout squashed` for one Claude-style workspace folder, `--layout tree`
+for workspace path segments, or `--layout flat`/`--flat` to disable workspace
+subdirectories.
 
 **Index manifest (`index.md`):**
 - Generated when multiple homes or multiple workspaces are exported

@@ -21,6 +21,8 @@ from agent_history.cli.constants import (
     DEFAULT_VERB_RUN,
     EXPORT_FORMAT_CHOICES,
     EXPORT_FORMAT_MARKDOWN,
+    EXPORT_LAYOUT_CHOICES,
+    EXPORT_LAYOUT_DEFAULT,
     FLAGS_WITH_VALUES,
     GLOBAL_FLAGS_WITH_VALUES,
     MARKDOWN_DEFAULT_LEVEL,
@@ -1464,7 +1466,13 @@ class CLIParser:
         parser.add_argument(
             "--flat",
             action="store_true",
-            help="Use flat directory structure",
+            help="Use flat directory structure (alias for --layout flat)",
+        )
+        parser.add_argument(
+            "--layout",
+            choices=EXPORT_LAYOUT_CHOICES,
+            default=EXPORT_LAYOUT_DEFAULT,
+            help=("Export directory layout: tree, squashed, or flat (default: squashed)"),
         )
         parser.add_argument(
             "--source",
@@ -1988,6 +1996,10 @@ class CLIParser:
 
     def _build_export_verb_args(self, args: argparse.Namespace, resource: str) -> dict[str, Any]:
         """Build export-specific arguments."""
+        layout = getattr(args, "layout", EXPORT_LAYOUT_DEFAULT)
+        flat = getattr(args, "flat", False)
+        if flat:
+            layout = "flat"
         verb_args = {
             "output_dir": (
                 getattr(args, "output_override", None)
@@ -2001,7 +2013,8 @@ class CLIParser:
             "markdown_level": getattr(args, "markdown_level", MARKDOWN_DEFAULT_LEVEL),
             "split": getattr(args, "split", None),
             "jobs": getattr(args, "jobs", None),
-            "flat": getattr(args, "flat", False),
+            "flat": flat,
+            "layout": layout,
             "include_source": getattr(args, "include_source", False),
         }
         if resource == RESOURCE_SESSION:

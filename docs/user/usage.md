@@ -212,7 +212,8 @@ cagelens session export [WORKSPACE...] [OPTIONS]
 - `--until DATE`: Only include sessions modified on or before this date
 - `--minimal`: Export conversation content only, no metadata
 - `--split LINES`: Split long conversations into parts
-- `--flat`: Use flat directory structure (default: organized by workspace)
+- `--layout tree|squashed|flat`: Directory layout (default: `squashed`)
+- `--flat`: Use flat directory structure (alias for `--layout flat`)
 - `--jobs N`: Parallel export workers (default: 1)
 - `--quiet`: Suppress per-file output (keeps summary/progress)
 
@@ -257,6 +258,9 @@ cagelens session export myproject --windows
 # With splitting and minimal mode
 cagelens session export myproject --minimal --split 500
 
+# Claude-style single workspace folder
+cagelens session export myproject --layout squashed
+
 # Faster export with less output
 cagelens session export myproject --jobs 4 --quiet
 ```
@@ -264,7 +268,7 @@ cagelens session export myproject --jobs 4 --quiet
 **Output:**
 - Markdown/HTML files named `{timestamp}_{session-id}.md` or `{timestamp}_{session-id}.html`; NDJSON files use `.ndjson`
 - Source-tagged filenames: `wsl_ubuntu_`, `windows_`, `remote_hostname_`
-- Organized by workspace subdirectories (unless `--flat`)
+- Layouts: `squashed` uses one Claude-style workspace folder, `tree` recreates workspace path segments, `flat` writes directly to the output directory
 
 ---
 

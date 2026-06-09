@@ -26,7 +26,7 @@ See docs/design-v2/scope-resolution-v2.md for the underlying architecture.
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from agent_history.cli.constants import DEFAULT_OUTPUT_DIR
+from agent_history.cli.constants import DEFAULT_OUTPUT_DIR, EXPORT_LAYOUT_DEFAULT
 from agent_history.core.workspaces import build_scope_metadata
 from agent_history.handlers.base import CommandResult
 from agent_history.handlers.export import SessionExportHandler
@@ -535,6 +535,7 @@ def export(
     format: str = "markdown",
     minimal: bool = False,
     split: Optional[int] = None,
+    layout: str = EXPORT_LAYOUT_DEFAULT,
     flat: bool = False,
     force: bool = False,
     include_source: bool = False,
@@ -558,6 +559,7 @@ def export(
         format: Export format ("markdown" or "json").
         minimal: Omit metadata in markdown output.
         split: Split files at this many lines.
+        layout: Directory layout ("tree", "squashed", or "flat").
         flat: Use flat directory structure.
         force: Overwrite existing files.
         include_source: Copy raw source files.
@@ -591,6 +593,7 @@ def export(
         "output_dir": Path(output_dir) if output_dir else Path(DEFAULT_OUTPUT_DIR),
         "minimal": minimal,
         "split": split,
+        "layout": layout,
         "flat": flat,
         "force": force,
         "include_source": include_source,

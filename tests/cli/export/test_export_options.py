@@ -104,6 +104,81 @@ def test_session_export_flat_writes_to_root(
     assert not nested, f"--flat should place files in {output_dir}, found nested files: {nested}"
 
 
+def test_session_export_layout_flat_writes_to_root(
+    isolated_home: Dict[str, Any],
+    setup_golden_fixtures: Dict[str, Path],
+) -> None:
+    """--layout flat should avoid creating workspace subdirectories."""
+    output_dir = isolated_home["path"] / "exports_layout_flat"
+    output_dir.mkdir()
+
+    result = run_cli_subprocess(
+        ["session", "export", "--aw", "--layout", "flat", "--force", "-o", str(output_dir)],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "--layout flat export should succeed")
+
+    md_files = list(output_dir.rglob("*.md"))
+    assert md_files, "Markdown output should exist"
+    nested = [f for f in md_files if f.parent != output_dir]
+    assert not nested, f"--layout flat should place files in {output_dir}, found: {nested}"
+
+
+def test_ws_export_layout_squashed_uses_single_workspace_folder(
+    isolated_home: Dict[str, Any],
+) -> None:
+    """--layout squashed should create one encoded workspace directory."""
+    _write_named_claude_session(isolated_home["claude_dir"], "-home-user-squashed-layout")
+    output_dir = isolated_home["path"] / "exports_squashed"
+
+    result = run_cli_subprocess(
+        [
+            "ws",
+            "export",
+            "/home/user/squashed-layout",
+            "--layout",
+            "squashed",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "--layout squashed export should succeed")
+
+    expected_dir = output_dir / "-home-user-squashed-layout"
+    assert list(expected_dir.glob("*.md")), "Markdown output should exist in squashed folder"
+    assert not (output_dir / "home" / "user" / "squashed-layout").exists()
+
+
+def test_ws_export_defaults_to_squashed_layout(
+    isolated_home: Dict[str, Any],
+) -> None:
+    """Default export layout should create one encoded workspace directory."""
+    _write_named_claude_session(isolated_home["claude_dir"], "-home-user-default-layout")
+    output_dir = isolated_home["path"] / "exports_default_layout"
+
+    result = run_cli_subprocess(
+        [
+            "ws",
+            "export",
+            "/home/user/default-layout",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "default layout export should succeed")
+
+    expected_dir = output_dir / "-home-user-default-layout"
+    assert list(expected_dir.glob("*.md")), "Markdown output should exist in squashed folder"
+    assert not (output_dir / "home" / "user" / "default-layout").exists()
+
+
 def test_session_export_split_creates_parts(isolated_home: Dict[str, Any]) -> None:
     """--split should produce multiple part files for long conversations."""
     # Create a Claude workspace with enough messages to trigger splitting

@@ -3,7 +3,7 @@
 This module provides the SessionExportHandler class that handles 'session export'
 commands using the new resolution pipeline architecture. It exports sessions
 to markdown files, supporting options like minimal output, split files, and
-flat directory structure.
+workspace directory layout.
 
 See docs/design-v2/pipeline-architecture.md for the complete specification.
 """
@@ -25,6 +25,10 @@ from agent_history.cli.constants import (
     DEFAULT_OUTPUT_DIR,
     EXPORT_FORMAT_HTML,
     EXPORT_FORMAT_MARKDOWN,
+    EXPORT_LAYOUT_DEFAULT,
+    EXPORT_LAYOUT_FLAT,
+    EXPORT_LAYOUT_SQUASHED,
+    EXPORT_LAYOUT_TREE,
     MARKDOWN_DEFAULT_LEVEL,
 )
 from agent_history.core.workspaces import build_workspace_metadata
@@ -41,11 +45,46 @@ from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
-from agent_history.utils.paths import decode_workspace_path
+from agent_history.utils.paths import decode_workspace_path, encode_workspace_path
 from agent_history.utils.workspace_ref import WorkspaceContext
 
 _INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
 _ExportTask = Tuple[SessionDict, str, str, str]
+
+
+def _sanitize_path_segment(segment: str) -> str:
+    cleaned = _INVALID_PATH_CHARS_RE.sub("_", segment)
+    cleaned = cleaned.rstrip(" .")
+    if not cleaned:
+        cleaned = "_"
+    upper = cleaned.upper()
+    if upper in {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
+    }:
+        cleaned = f"_{cleaned}"
+    return cleaned
+
 
 # =============================================================================
 # Export Result Type
@@ -66,12 +105,13 @@ class SessionExportHandler(VerbHandler):
 
     This handler exports sessions from a resolved ConcreteScope to markdown
     files. It supports various output options including minimal mode (no metadata),
-    file splitting for long conversations, and flat vs organized directory
+    file splitting for long conversations, and configurable directory
     structures.
 
     The handler iterates through all records in the scope, exporting each
     session to a markdown file. Sessions can be organized by workspace
-    (default) or placed in a flat directory structure.
+    path tree, squashed workspace folders, or placed in a flat directory
+    structure.
     """
 
     def execute(
@@ -86,6 +126,7 @@ class SessionExportHandler(VerbHandler):
                 - minimal: bool - omit metadata in output
                 - split: int - split at N lines (None to disable)
                 - flat: bool - no workspace subdirs (default: False)
+                - layout: str - tree, squashed, or flat (default: squashed)
                 - force: bool - overwrite existing files (default: False)
             output_args: Output formatting options.
 
@@ -108,6 +149,7 @@ class SessionExportHandler(VerbHandler):
         minimal = verb_args.get("minimal", False)
         split_lines = verb_args.get("split")
         flat = verb_args.get("flat", False)
+        layout = self._resolve_export_layout(verb_args)
         force = verb_args.get("force", False)
         include_source = verb_args.get("include_source", False)
         export_json = verb_args.get("export_json", False)
@@ -159,6 +201,7 @@ class SessionExportHandler(VerbHandler):
             minimal=minimal,
             split_lines=split_lines,
             flat=flat,
+            layout=layout,
             force=force,
             include_source=include_source,
             export_json=export_json,
@@ -228,6 +271,7 @@ class SessionExportHandler(VerbHandler):
         minimal: bool,
         split_lines: Optional[int],
         flat: bool,
+        layout: str,
         force: bool,
         include_source: bool,
         export_json: bool,
@@ -247,6 +291,7 @@ class SessionExportHandler(VerbHandler):
                 minimal,
                 split_lines,
                 flat,
+                layout,
                 force,
                 include_source,
                 export_json,
@@ -272,6 +317,7 @@ class SessionExportHandler(VerbHandler):
                     minimal=minimal,
                     split_lines=split_lines,
                     flat=flat,
+                    layout=layout,
                     force=force,
                     include_source=include_source,
                     export_json=export_json,
@@ -290,6 +336,7 @@ class SessionExportHandler(VerbHandler):
         minimal: bool,
         split_lines: Optional[int],
         flat: bool,
+        layout: str,
         force: bool,
         include_source: bool,
         export_json: bool,
@@ -315,6 +362,7 @@ class SessionExportHandler(VerbHandler):
                         minimal=minimal,
                         split_lines=split_lines,
                         flat=flat,
+                        layout=layout,
                         force=force,
                         include_source=include_source,
                         export_json=export_json,
@@ -511,6 +559,7 @@ class SessionExportHandler(VerbHandler):
         minimal: bool,
         split_lines: Optional[int],
         flat: bool,
+        layout: str,
         force: bool,
         include_source: bool,
         export_json: bool,
@@ -534,6 +583,7 @@ class SessionExportHandler(VerbHandler):
                 minimal=minimal,
                 split_lines=split_lines,
                 flat=flat,
+                layout=layout,
                 force=force,
                 include_source=include_source,
                 export_json=export_json,
@@ -555,6 +605,7 @@ class SessionExportHandler(VerbHandler):
         minimal: bool,
         split_lines: Optional[int],
         flat: bool,
+        layout: str,
         force: bool,
         include_source: bool,
         export_json: bool,
@@ -572,6 +623,7 @@ class SessionExportHandler(VerbHandler):
             minimal: If True, omit metadata.
             split_lines: Line threshold for splitting (None to disable).
             flat: If True, use flat directory structure.
+            layout: Directory layout to use when flat is not forcing flat output.
             force: If True, overwrite existing files.
             include_source: If True, copy raw source file alongside markdown.
             export_json: If True, export as JSON instead of markdown.
@@ -589,12 +641,19 @@ class SessionExportHandler(VerbHandler):
         messages = self._read_session_messages(jsonl_file, agent_type)
         if messages is None:
             raise ValueError(f"Could not read messages from {jsonl_file}")
+        if not messages:
+            return EXPORT_SKIPPED
 
         # Generate source tag from home
         source_tag = self._get_source_tag(home)
 
         # Build output path
-        ws_output_path = self._get_workspace_output_path(output_dir, workspace_display, flat)
+        ws_output_path = self._get_workspace_output_path(
+            output_dir,
+            workspace_display,
+            flat=flat,
+            layout=layout,
+        )
 
         if export_json:
             return self._write_ndjson_session_export(
@@ -773,52 +832,42 @@ class SessionExportHandler(VerbHandler):
         # Convert "wsl:Ubuntu" to "wsl_Ubuntu_"
         return home.replace(":", "_") + "_"
 
-    def _get_workspace_output_path(self, output_dir: Path, workspace: str, flat: bool) -> Path:
+    def _resolve_export_layout(self, verb_args: Dict[str, Any]) -> str:
+        if verb_args.get("flat", False):
+            return EXPORT_LAYOUT_FLAT
+        layout = verb_args.get("layout", EXPORT_LAYOUT_DEFAULT)
+        if layout in {EXPORT_LAYOUT_TREE, EXPORT_LAYOUT_SQUASHED, EXPORT_LAYOUT_FLAT}:
+            return layout
+        raise ValueError(f"Unsupported export layout: {layout}")
+
+    def _get_workspace_output_path(
+        self,
+        output_dir: Path,
+        workspace: str,
+        flat: bool = False,
+        layout: str = EXPORT_LAYOUT_DEFAULT,
+    ) -> Path:
         """Get output path for workspace, creating directory if needed.
 
         Args:
             output_dir: Base output directory.
             workspace: Workspace path or encoded name.
             flat: If True, use flat structure (no subdirs).
+            layout: Export layout: tree, squashed, or flat.
 
         Returns:
             Directory path for workspace output.
         """
         if flat:
+            layout = EXPORT_LAYOUT_FLAT
+        if layout == EXPORT_LAYOUT_FLAT:
             return output_dir
-
-        def _sanitize_segment(segment: str) -> str:
-            cleaned = _INVALID_PATH_CHARS_RE.sub("_", segment)
-            cleaned = cleaned.rstrip(" .")
-            if not cleaned:
-                cleaned = "_"
-            upper = cleaned.upper()
-            if upper in {
-                "CON",
-                "PRN",
-                "AUX",
-                "NUL",
-                "COM1",
-                "COM2",
-                "COM3",
-                "COM4",
-                "COM5",
-                "COM6",
-                "COM7",
-                "COM8",
-                "COM9",
-                "LPT1",
-                "LPT2",
-                "LPT3",
-                "LPT4",
-                "LPT5",
-                "LPT6",
-                "LPT7",
-                "LPT8",
-                "LPT9",
-            }:
-                cleaned = f"_{cleaned}"
-            return cleaned
+        if layout == EXPORT_LAYOUT_SQUASHED:
+            ws_path = output_dir / self._get_squashed_workspace_name(workspace)
+            ws_path.mkdir(parents=True, exist_ok=True)
+            return ws_path
+        if layout != EXPORT_LAYOUT_TREE:
+            raise ValueError(f"Unsupported export layout: {layout}")
 
         decoded = decode_workspace_path(workspace, verify_local=False)
         normalized = decoded.replace("\\", "/")
@@ -826,12 +875,20 @@ class SessionExportHandler(VerbHandler):
             parts_raw = [part for part in normalized.split("/") if part]
             if parts_raw and parts_raw[0].endswith(":"):
                 parts_raw[0] = parts_raw[0].rstrip(":")
-            parts = [_sanitize_segment(part) for part in parts_raw]
+            parts = [_sanitize_path_segment(part) for part in parts_raw]
             ws_path = output_dir.joinpath(*parts)
         else:
-            ws_path = output_dir / _sanitize_segment(normalized)
+            ws_path = output_dir / _sanitize_path_segment(normalized)
         ws_path.mkdir(parents=True, exist_ok=True)
         return ws_path
+
+    def _get_squashed_workspace_name(self, workspace: str) -> str:
+        decoded = decode_workspace_path(workspace, verify_local=False)
+        normalized = decoded.replace("\\", "/")
+        is_windows_drive = len(normalized) >= 2 and normalized[1:2] == ":"
+        if "/" in normalized or is_windows_drive:
+            return _sanitize_path_segment(encode_workspace_path(normalized))
+        return _sanitize_path_segment(normalized)
 
     def _build_output_filename(
         self,

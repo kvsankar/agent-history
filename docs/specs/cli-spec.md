@@ -344,7 +344,8 @@ Export Options:
   --json                          # Export NDJSON (unified schema) instead of Markdown
   --minimal                       # No metadata
   --split <lines>                 # Split long conversations
-  --flat                          # No workspace subdirectories
+  --layout <tree|squashed|flat>   # Workspace directory layout (default: squashed)
+  --flat                          # Alias for --layout flat
   --source                        # Include raw source files
   --jobs <n>                      # Parallel export
   --quiet                         # Suppress per-file output
@@ -632,6 +633,9 @@ cagelens session export --split 500
 
 # Flat structure (no workspace subdirectories)
 cagelens session export --flat
+
+# Claude-style single workspace folder
+cagelens session export --layout squashed
 
 # Include raw source files
 cagelens session export --source

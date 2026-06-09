@@ -28,7 +28,7 @@ Claude Code, Codex CLI, Gemini CLI, and Pi leave conversation data fragmented ac
 
 ## Features
 
-- **Markdown and offline HTML export** – Export whole workspaces or single sessions; Markdown minimal/flat/split modes; HTML renders turn-centered conversations with progressive detail controls.
+- **Markdown and offline HTML export** – Export whole workspaces or single sessions; Markdown minimal/layout/split modes; HTML renders turn-centered conversations with progressive detail controls.
 - **Workspace-aware filtering** – Target workspaces by name or path (slashes ok); matches encoded names automatically.
 - **Multi-environment reach** – Local, WSL (UNC or Linux paths), Windows from WSL, and SSH remotes; `[missing]` marker shows closest match for renamed workspaces.
 - **Projects** – Group related workspaces across homes/sources; apply projects to `session`, `ws`, and `project` commands.
