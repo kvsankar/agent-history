@@ -1373,6 +1373,8 @@ class OutputFormatter:
         formatter.width = width if width > 0 else None
 
     def _handle_empty_result(self, result: CommandResult) -> bool:
+        if result.data_type == "stats_rollup":
+            return False
         is_empty = (isinstance(result.data, list) and len(result.data) == 0) or (
             result.data is None
         )

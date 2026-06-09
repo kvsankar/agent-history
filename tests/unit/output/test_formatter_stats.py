@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from agent_history.output.formatter import TableFormatter, TsvFormatter
+from agent_history.handlers.base import CommandResult
+from agent_history.output.formatter import OutputFormatter, TableFormatter, TsvFormatter
+from agent_history.scope.context import OutputArgs
 
 
 def test_stats_workspace_display_map_used_in_table() -> None:
@@ -285,6 +287,30 @@ def test_stats_rollup_table_formats_dimensions_and_metric_columns() -> None:
     assert "1h 30m 0s" in output
     assert "1.50" in output
     assert "5400" in output
+
+
+def test_stats_rollup_table_empty_rows_shows_message() -> None:
+    formatter = TableFormatter(width=120)
+
+    output = formatter.format([], "stats_rollup", {"dimensions": ["month"], "metric": "time"})
+
+    assert output == "No cached stats matched this scope. Run with --sync to refresh."
+
+
+def test_output_formatter_does_not_suppress_empty_stats_rollup(capsys) -> None:
+    result = CommandResult(
+        success=True,
+        data=[],
+        data_type="stats_rollup",
+        metadata={"dimensions": ["month"], "metric": "time"},
+        warnings=["Using cached metrics. Run with `--sync` to refresh from source files."],
+    )
+
+    OutputFormatter().format(result, OutputArgs(format="table"))
+
+    captured = capsys.readouterr()
+    assert "No cached stats matched this scope" in captured.out
+    assert "Using cached metrics" in captured.err
 
 
 def test_stats_rollup_scope_workspaces_use_multiline_summary() -> None:
