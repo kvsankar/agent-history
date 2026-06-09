@@ -9,7 +9,11 @@ from tests.helpers.session_builders import ClaudeSessionBuilder, CodexSessionBui
 
 
 def _find_single_output_file(output_dir: Path, suffix: str) -> Path:
-    matches = [path for path in output_dir.glob(f"**/*{suffix}") if path.name != "index.md"]
+    matches = [
+        path
+        for path in output_dir.glob(f"**/*{suffix}")
+        if path.name not in {"index.md", "index.html"}
+    ]
     assert matches, f"Expected export output with suffix {suffix}"
     return matches[0]
 
@@ -132,6 +136,13 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     )
 
     assert result.returncode == 0, f"stderr: {result.stderr}"
+    index_file = output_dir / "index.html"
+    assert index_file.exists(), "HTML export should write timeline index.html"
+    index_html = index_file.read_text(encoding="utf-8")
+    assert 'id="timeline-data"' in index_html
+    assert 'data-session-id="html-session"' in index_html
+    assert "Show \\u003cscript" in index_html
+
     output = _find_single_output_file(output_dir, ".html")
     html = output.read_text(encoding="utf-8")
     assert html.startswith("<!doctype html>")
