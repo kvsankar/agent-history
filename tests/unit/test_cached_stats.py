@@ -123,6 +123,45 @@ def _seed_untimestamped_zero_time_session() -> None:
         conn.close()
 
 
+def _seed_second_workspace_session() -> None:
+    conn = init_metrics_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO sessions (
+                file_path, session_id, workspace, home, source, agent, file_mtime,
+                is_agent, message_count, user_messages, assistant_messages,
+                input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+                first_timestamp, last_timestamp, start_time, work_period_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "/tmp/session-two.jsonl",
+                "session-2",
+                "/tmp/second-project",
+                "local",
+                "local",
+                "claude",
+                125.0,
+                0,
+                1,
+                1,
+                0,
+                1,
+                0,
+                0,
+                0,
+                "2026-06-02T00:00:00Z",
+                "2026-06-02T00:00:00Z",
+                "2026-06-02T00:00:00Z",
+                0,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_default_stats_uses_cached_db_without_scope_resolution(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -152,6 +191,22 @@ def test_default_stats_uses_cached_db_without_scope_resolution(
     assert stats["tokens"]["input"] == 10
     assert stats["by_tool"]["Read"]["uses"] == 1
     assert "Using cached metrics" in captured.err
+
+
+def test_cached_stats_top_ws_limits_workspace_rows_json(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
+    monkeypatch.chdir(tmp_path)
+    _seed_metrics_db()
+    _seed_second_workspace_session()
+
+    exit_code = CommandOrchestrator().run(["stats", "--top-ws", "1", "--format", "json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    stats = json.loads(captured.out)
+    assert stats["total_sessions"] == 2
+    assert len(stats["workspace_rows"]) == 1
+    assert len(stats["by_workspace"]) == 2
 
 
 def test_top_level_stats_uses_cached_db_without_scope_resolution(

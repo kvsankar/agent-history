@@ -227,7 +227,14 @@ class SessionStatsHandler(VerbHandler):
             return self._execute_cached_rollup(filters, metadata, group_list, verb_args)
 
         stats = get_scoped_stats_from_db(filters=filters, include_day="day" in group_list)
-        stats["workspace_rows"] = self._workspace_rows_from_db(stats)
+        workspace_rows = self._workspace_rows_from_db(stats)
+        if verb_args.get("top"):
+            from agent_history.core.stats import apply_top_limit
+
+            stats = apply_top_limit(stats, verb_args["top"])
+        stats["workspace_rows"] = workspace_rows
+        if isinstance(verb_args.get("top_ws"), int):
+            stats["workspace_rows"] = stats["workspace_rows"][: verb_args["top_ws"]]
         stats["workspace_display_map"] = {
             workspace: workspace for workspace in stats.get("by_workspace", {})
         }
