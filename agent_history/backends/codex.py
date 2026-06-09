@@ -221,6 +221,59 @@ def codex_format_function_result(payload: dict) -> str:
     return f"**[Tool Result]**\nCall ID: `{call_id}`\n```\n{output}\n```"
 
 
+def _codex_get_present(mapping: dict[str, Any], *keys: str) -> Any:
+    """Return the first value for a key present in mapping, including None."""
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
+
+
+def _codex_has_any(mapping: dict[str, Any], *keys: str) -> bool:
+    """Return whether any key is present in mapping."""
+    return any(key in mapping for key in keys)
+
+
+def _codex_record_linkage(
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    session_meta: dict[str, Any] | None,
+    current_turn_id: str | None,
+) -> dict[str, Any]:
+    """Extract optional Codex linkage metadata from a rollout record."""
+    linkage: dict[str, Any] = {}
+
+    if session_meta:
+        if session_id := session_meta.get("id"):
+            linkage["session_id"] = session_id
+        if parent_session_id := session_meta.get("parent_thread_id"):
+            linkage["parent_session_id"] = parent_session_id
+        if forked_from_id := session_meta.get("forked_from_id"):
+            linkage["forked_from_id"] = forked_from_id
+        if thread_source := session_meta.get("thread_source"):
+            linkage["thread_source"] = thread_source
+
+    if _codex_has_any(payload, "id"):
+        linkage["id"] = payload.get("id")
+    elif _codex_has_any(entry, "id"):
+        linkage["id"] = entry.get("id")
+
+    if _codex_has_any(payload, "parent_id", "parentId"):
+        linkage["parent_id"] = _codex_get_present(payload, "parent_id", "parentId")
+    elif _codex_has_any(entry, "parent_id", "parentId"):
+        linkage["parent_id"] = _codex_get_present(entry, "parent_id", "parentId")
+
+    turn_id = (
+        _codex_get_present(payload, "turn_id", "turnId")
+        if _codex_has_any(payload, "turn_id", "turnId")
+        else current_turn_id
+    )
+    if turn_id:
+        linkage["turn_id"] = turn_id
+
+    return linkage
+
+
 def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
     """Read messages from Codex rollout JSONL file.
 
@@ -238,6 +291,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
     """
     messages = []
     session_meta = None
+    current_turn_id = None
 
     try:
         with _codex_open_text(jsonl_file) as f:
@@ -250,14 +304,29 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
 
                     if entry_type == "session_meta":
                         session_meta = payload
+                    elif entry_type == "turn_context":
+                        if turn_id := payload.get("turn_id"):
+                            current_turn_id = turn_id
+                    elif entry_type == "event_msg":
+                        payload_type = payload.get("type")
+                        if payload_type in ("task_started", "turn_started"):
+                            if turn_id := payload.get("turn_id"):
+                                current_turn_id = turn_id
                     elif entry_type == "response_item":
                         payload_type = payload.get("type")
+                        linkage = _codex_record_linkage(
+                            entry,
+                            payload,
+                            session_meta,
+                            current_turn_id,
+                        )
                         if payload_type == "message":
                             messages.append(
                                 {
                                     "role": payload.get("role"),
                                     "content": codex_extract_content(payload),
                                     "timestamp": timestamp,
+                                    **linkage,
                                 }
                             )
                         elif payload_type in ("function_call", "custom_tool_call"):
@@ -267,6 +336,8 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                                     "content": codex_format_function_call(payload),
                                     "timestamp": timestamp,
                                     "is_tool_call": True,
+                                    "tool_call_id": payload.get("call_id"),
+                                    **linkage,
                                 }
                             )
                         elif payload_type in ("function_call_output", "custom_tool_call_output"):
@@ -276,6 +347,8 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                                     "content": codex_format_function_result(payload),
                                     "timestamp": timestamp,
                                     "is_tool_result": True,
+                                    "tool_call_id": payload.get("call_id"),
+                                    **linkage,
                                 }
                             )
                 except json.JSONDecodeError:
@@ -1093,7 +1166,23 @@ def codex_message_to_unified(msg: dict) -> dict:
     if msg.get("is_tool_call"):
         # Parse the formatted tool call content for structured data
         unified["role"] = "assistant"
+        if msg.get("tool_call_id"):
+            unified["tool_call_id"] = msg["tool_call_id"]
     elif msg.get("is_tool_result"):
         unified["role"] = "system"
+        if msg.get("tool_call_id"):
+            unified["tool_result"] = {"tool_call_id": msg["tool_call_id"]}
+
+    for field in (
+        "id",
+        "parent_id",
+        "turn_id",
+        "session_id",
+        "parent_session_id",
+        "forked_from_id",
+        "thread_source",
+    ):
+        if field in msg:
+            unified[field] = msg[field]
 
     return unified
