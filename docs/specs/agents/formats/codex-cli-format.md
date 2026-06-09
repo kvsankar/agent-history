@@ -53,6 +53,37 @@ Archived/current upstream rollouts may also be compressed as `.jsonl.zst`.
 
 The session identifier typically includes a timestamp and unique ID.
 
+### Subagent Rollouts
+
+Current Codex subagent runs are stored as their own rollout files in the same
+date-based hierarchy. The child rollout's `session_meta.payload` can identify
+it as a subagent with:
+
+```json
+{
+  "id": "child-thread-id",
+  "forked_from_id": "parent-thread-id",
+  "thread_source": "subagent",
+  "agent_nickname": "Confucius",
+  "agent_role": "explorer",
+  "source": {
+    "subagent": {
+      "thread_spawn": {
+        "parent_thread_id": "parent-thread-id",
+        "depth": 1,
+        "agent_nickname": "Confucius",
+        "agent_role": "explorer"
+      }
+    }
+  }
+}
+```
+
+The parent rollout records a `spawn_agent` function call and a matching
+function-call output containing the child `agent_id`. The reliable lineage
+join is parent `spawn_agent` call -> returned `agent_id` -> child
+`session_meta.payload.id` -> child `event_msg.task_complete`.
+
 ### Environment Variable Override
 
 Upstream Codex uses `CODEX_HOME`; session files live under
@@ -434,7 +465,7 @@ Content can also be a simple string in some cases:
 | **Model Info** | In assistant message | In `turn_context.payload.model` |
 | **Tool Calls** | `tool_use` in content array | `function_call` as payload type |
 | **Tool Results** | `tool_result` in content array | `function_call_output` as payload type |
-| **Agent Files** | `agent-*.jsonl` for subagents | Single file per session |
+| **Agent Files** | `agent-*.jsonl` / nested `subagents/` files | Child rollout with `thread_source: "subagent"` |
 
 ### Key Differences
 
@@ -449,6 +480,11 @@ Content can also be a simple string in some cases:
 4. **Metadata Location**:
    - Claude: Metadata in each record (uuid, parentUuid, sessionId, etc.)
    - Codex: Session metadata in dedicated `session_meta` record
+
+5. **Subagent Lineage**:
+   - Claude: Parent task notification plus child `agent-*.jsonl` transcript
+   - Codex: Parent `spawn_agent` call plus child rollout
+     `source.subagent.thread_spawn.parent_thread_id`
 
 ---
 

@@ -50,6 +50,7 @@ How agents handle specific features.
 | [clearing.md](agents/features/clearing.md) | Session clearing |
 | [interruptions.md](agents/features/interruptions.md) | Interruption handling |
 | [rejections.md](agents/features/rejections.md) | Request rejections |
+| [subagents.md](agents/features/subagents.md) | Subagent and lineage detection |
 
 ## Export Schema
 

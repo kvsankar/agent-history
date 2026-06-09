@@ -238,17 +238,14 @@ A session is a single conversation file containing messages.
 **Session file patterns by agent:**
 | Agent | Main Session | Agent/Sub-session | Format |
 |-------|--------------|-------------------|--------|
-| Claude Code | `<uuid>.jsonl` | `agent-<id>.jsonl` or nested subagent paths | JSONL |
-| Codex CLI | `rollout-<id>.jsonl` / `.jsonl.zst` | N/A (single file) | JSONL |
-| Gemini CLI | `session-<date>-<id>.jsonl` | nested `chats/<parent>/<agent>.jsonl` | JSONL |
+| Claude Code | `<uuid>.jsonl` | `agent-<id>.jsonl` or `<sessionId>/subagents/agent-<task-id>.jsonl` | JSONL |
+| Codex CLI | `rollout-<id>.jsonl` / `.jsonl.zst` | Child rollout with `thread_source: "subagent"` | JSONL |
+| Gemini CLI | `session-<date>-<id>.jsonl` | Parent-side subagent tool calls; nested child JSONL when present | JSONL |
 | Gemini CLI (legacy) | `session-<date>-<id>.json` | N/A (single file) | JSON |
-| Pi | `<timestamp>_<uuid>.jsonl` | branch tree entries in same file | JSONL |
+| Pi | `<timestamp>_<uuid>.jsonl` | branch tree entries in same file; extension-dependent subagent tool results | JSONL |
 
-**Session types (Claude Code only):**
-| Type | Pattern | Description |
-|------|---------|-------------|
-| Main | `<uuid>.jsonl` | Primary user conversation |
-| Agent | `agent-<id>.jsonl` | Task spawned by main session via Task tool |
+See [subagents.md](agents/features/subagents.md) for cross-agent lineage
+signals and the normalized fields required by timeline export.
 
 ### Message
 

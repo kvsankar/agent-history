@@ -291,6 +291,19 @@ Tool calls are embedded in Gemini messages as a `toolCalls` array:
 | `resultDisplay` | string | Formatted result for display |
 | `renderOutputAsMarkdown` | boolean | Whether to render output as markdown |
 
+### Subagent Tool Calls
+
+Gemini CLI exposes subagents as tool-style delegation from the parent session.
+Observed local records include tool calls such as `codebase_investigator` with
+`displayName: "Codebase Investigator Agent"`, `status: "success"`, and
+`resultDisplay` containing a completion banner, termination reason, and final
+result.
+
+This parent-side record is enough to represent a subagent action span and
+returned result in timeline export. When a current JSONL session also stores a
+nested child transcript under a parent chat directory, `cagelens` should link
+that child transcript by parent session path and child agent/session id.
+
 ### Tool Result Structure
 
 ```json

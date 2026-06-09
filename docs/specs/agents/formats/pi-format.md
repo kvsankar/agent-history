@@ -61,6 +61,27 @@ Claude Code, Codex CLI, and Gemini CLI:
 - thinking blocks are retained in normalized detail data when present;
 - token, model, and version metadata are captured when Pi provides them.
 
+## Subagents and Branch Lineage
+
+Pi core session files expose tree relationships with message `id` and
+`parentId`, which `cagelens` treats as conversation branch lineage. These
+records are not enough by themselves to identify a true child-agent invocation.
+
+Public Pi docs describe extension tools and packages as the mechanism for
+custom behavior. Published Pi subagent packages such as `pi-subagents` and
+`pi-sub-agent` add delegation by installing an extension that registers a
+`subagent` tool. Those packages can run child Pi sessions or subprocesses and
+return progress, usage, final Markdown output, failure diagnostics, and
+structured details, but the exact persisted shape is package-dependent.
+
+For `cagelens`:
+
+- Treat `id` / `parentId` as branch lineage, not subagent lineage.
+- Treat normal Pi tool calls/results as timeline action spans.
+- Detect Pi subagent tracks only when an extension-provided `subagent` tool
+  call/result exposes enough structured child identity and completion data.
+- Do not infer native Pi subagent support from branch tree entries alone.
+
 ## Workspace Matching
 
 Pi workspaces are matched by readable path when `cwd` is present. Otherwise,
