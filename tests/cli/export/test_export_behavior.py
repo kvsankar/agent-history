@@ -1,8 +1,10 @@
 """Behavior tests for export output across agents and NDJSON schema."""
 
 import json
+import os
 from pathlib import Path
 
+from agent_history.export.html import render_html_export
 from tests.helpers.cli import run_cli_subprocess
 from tests.helpers.gap_helpers import load_json_output
 from tests.helpers.session_builders import ClaudeSessionBuilder, CodexSessionBuilder
@@ -108,10 +110,22 @@ def test_session_export_markdown_level_1_writes_compact_turns(isolated_home):
 def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     builder = ClaudeSessionBuilder(workspace="-home-user-export-target", session_id="html-session")
     tool = builder.make_tool_use("Bash", {"command": "printf '<b>unsafe</b>'"})
+    task_tool = builder.make_tool_use(
+        "Task",
+        {
+            "description": "Review HTML export behavior",
+            "prompt": "Inspect graph controls",
+            "subagent_type": "reviewer",
+        },
+    )
     builder.add_user_message("Show <script>alert(1)</script>")
-    builder.add_assistant_message("Running it", tools=[tool])
+    builder.add_assistant_message("Running it", tools=[tool, task_tool])
     builder.add_tool_result(
         tool["id"], "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n-old\n+new"
+    )
+    builder.add_tool_result(
+        task_tool["id"],
+        "Sub-agent found the graph should expose invocation and merge details.",
     )
     builder.add_assistant_message("Done")
     builder.write_to(isolated_home["claude_dir"])
@@ -137,6 +151,7 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     html = output.read_text(encoding="utf-8")
     assert html.startswith("<!doctype html>")
     assert '<html lang="en" data-theme="light" data-level="1">' in html
+    assert '<body data-agent-graph="visible">' in html
     assert "Turn 1" in html
     assert "Show &lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert 'class="message message-human"' in html
@@ -161,6 +176,22 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     assert '<details class="full-io" data-level="3" hidden data-open-level="3">' in html
     assert '<details class="turn-trace" data-level="4" hidden data-open-level="4">' in html
     assert 'data-theme-toggle aria-pressed="false">Dark mode</button>' in html
+    assert 'data-agent-graph-toggle aria-pressed="false">Hide graph</button>' in html
+    assert 'class="export-layout"' in html
+    assert '<aside class="agent-graph" data-agent-graph aria-label="Agent graph">' in html
+    assert 'class="agent-graph-svg"' in html
+    assert 'class="agent-graph-main-track"' in html
+    assert 'class="agent-graph-sub-track"' in html
+    assert 'class="agent-graph-subagent-link" href="#turn-1" data-scroll-turn="1"' in html
+    assert "data-open-turn-actions" in html
+    assert "Review HTML export behavior" in html
+    assert "Sub-agent found the graph should expose invocation and merge details." in html
+    assert '.agent-graph-subagent-link[aria-current="true"]' in html
+    assert 'target.setAttribute("data-graph-selected", "true")' in html
+    assert 'target.setAttribute("data-turn-local-level", "2")' in html
+    assert 'target.scrollIntoView({ behavior: "auto", block: "start" })' in html
+    assert 'body[data-agent-graph="hidden"] .agent-graph' in html
+    assert 'localStorage.setItem("cagelensAgentGraph", nextState)' in html
     assert 'class="turn-nav-button"' in html
     assert 'data-view-toggle="rendered" aria-pressed="true">Formatted</button>' in html
     assert 'data-view-toggle="raw" aria-pressed="false"' in html
@@ -205,6 +236,181 @@ def test_session_export_html_level_three_opens_actions_and_full_io(isolated_home
     assert '<details class="turn-actions" data-level="2" data-open-level="2" open>' in html
     assert '<details class="full-io" data-level="3" data-open-level="3" open>' in html
     assert '<details class="turn-trace" data-level="4" hidden data-open-level="4">' in html
+
+
+def test_html_export_agent_graph_links_lineage_subagent_tracks(tmp_path: Path):
+    parent = tmp_path / "rollout-parent.jsonl"
+    child = tmp_path / "rollout-child.jsonl"
+    messages = [
+        {
+            "role": "user",
+            "content": "Review the export graph.",
+            "timestamp": "2026-06-09T10:00:00Z",
+            "session_id": "parent-thread",
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "**[Tool Use: spawn_agent]**\n\n"
+                "Call ID: `call-child`\n\n"
+                'Input:\n```json\n{"agent_type":"approvals_reviewer"}\n```'
+            ),
+            "timestamp": "2026-06-09T10:00:01Z",
+            "is_tool_call": True,
+            "tool_name": "spawn_agent",
+            "tool_call_id": "call-child",
+            "session_id": "parent-thread",
+        },
+        {
+            "role": "system",
+            "content": "Call ID: `call-child`\n\nChild completed.",
+            "timestamp": "2026-06-09T10:00:02Z",
+            "is_tool_result": True,
+            "tool_call_id": "call-child",
+            "session_id": "parent-thread",
+        },
+        {
+            "role": "assistant",
+            "content": "Done.",
+            "timestamp": "2026-06-09T10:00:03Z",
+            "session_id": "parent-thread",
+        },
+    ]
+
+    html = render_html_export(
+        parent,
+        "codex",
+        messages,
+        lineage_records=[
+            {
+                "kind": "main",
+                "session_id": "parent-thread",
+                "source_file": str(parent),
+            },
+            {
+                "kind": "subagent",
+                "session_id": "child-thread",
+                "parent_session_id": "parent-thread",
+                "invocation_tool_call_id": "call-child",
+                "agent_name": "approvals_reviewer",
+                "status": "completed",
+                "source_file": str(child),
+            },
+        ],
+        lineage_hrefs={str(child): "rollout-child.html"},
+    )
+
+    assert 'class="agent-graph-subagent-link" href="rollout-child.html">' in html
+    assert "<title>approvals_reviewer - completed - Open sub-agent transcript</title>" in html
+    assert 'class="agent-graph-subagent-label"' not in html
+    assert 'class="agent-graph-turn-label"' not in html
+    child_link = html.split('class="agent-graph-subagent-link" href="rollout-child.html"', 1)[1]
+    child_link = child_link.split("</a>", 1)[0]
+    assert "data-open-turn-actions" not in child_link
+
+
+def test_html_export_includes_codex_related_subagent_page(isolated_home, tmp_path: Path):
+    workspace = "/home/testuser/codex-project"
+    parent = CodexSessionBuilder(session_id="parent-thread", cwd=workspace)
+    parent.add_user_message("Review this change.")
+    parent.add_function_call("spawn_agent", {"agent_type": "approvals_reviewer"})
+    parent.add_function_output(
+        "call_001",
+        json.dumps({"agent_id": "child-thread", "nickname": "approvals_reviewer"}),
+    )
+    parent.add_assistant_message("The child reviewer is done.")
+    parent_file = parent.write_to(isolated_home["codex_dir"], date_str="2026-01-02")
+
+    child = CodexSessionBuilder(session_id="child-thread", cwd=workspace)
+    child.records[0]["payload"].update(
+        {
+            "thread_source": "subagent",
+            "forked_from_id": "parent-thread",
+            "agent_nickname": "approvals_reviewer",
+            "source": {
+                "subagent": {
+                    "thread_spawn": {
+                        "parent_thread_id": "parent-thread",
+                        "instruction": "Review this change.",
+                    }
+                }
+            },
+        }
+    )
+    child.add_user_message("Review this change.")
+    child.add_assistant_message("No issues found.")
+    child_file = child.write_to(isolated_home["codex_dir"], date_str="2026-01-02")
+
+    os.utime(parent_file, (1767312000, 1767312000))
+    os.utime(child_file, (1735689600, 1735689600))
+
+    output_dir = tmp_path / "html-export"
+    result = run_cli_subprocess(
+        [
+            "--agent",
+            "codex",
+            "session",
+            "export",
+            workspace,
+            "--format",
+            "html",
+            "--since",
+            "2026-01-01",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    html_files = sorted(output_dir.rglob("*.html"))
+    assert len(html_files) == 2
+    parent_html_file = next(path for path in html_files if "parent-thread" in path.name)
+    child_html_file = next(path for path in html_files if "child-thread" in path.name)
+    parent_html = parent_html_file.read_text(encoding="utf-8")
+    assert child_html_file.name in parent_html
+    assert "Open sub-agent transcript" in parent_html
+    assert (
+        "data-open-turn-actions"
+        not in parent_html.split(child_html_file.name, 1)[1].split("</a>", 1)[0]
+    )
+
+
+def test_html_export_labels_subagent_events_and_parent_agent_prompts(tmp_path: Path):
+    html = render_html_export(
+        tmp_path / "rollout-child.jsonl",
+        "codex",
+        [
+            {
+                "role": "user",
+                "content": "Inspect this area.",
+                "timestamp": "2026-06-09T10:00:00Z",
+                "is_parent_agent_message": True,
+            },
+            {
+                "role": "system",
+                "content": "**Sub-agent completed**\nAgent path: `agent-1`\n\nReviewed it.",
+                "timestamp": "2026-06-09T10:00:01Z",
+                "is_subagent_notification": True,
+                "subagent_status": "completed",
+            },
+            {
+                "role": "assistant",
+                "content": "I reviewed the area.",
+                "timestamp": "2026-06-09T10:00:02Z",
+            },
+        ],
+    )
+
+    assert "<h3>Parent agent</h3>" in html
+    assert "<h3>Sub-agent completed</h3>" in html
+    assert "1 sub-agent event" in html
+    assert 'class="message message-parent-agent"' in html
+    assert 'class="message message-subagent-event message-action"' in html
+    assert "<h3>User</h3>" not in html
+    assert "&lt;subagent_notification&gt;" not in html
 
 
 def test_session_export_html_highlights_numbered_markdown_tool_output(isolated_home):
