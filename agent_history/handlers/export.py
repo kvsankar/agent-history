@@ -9,6 +9,7 @@ See docs/design-v2/pipeline-architecture.md for the complete specification.
 """
 
 import json
+import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +32,7 @@ from agent_history.cli.constants import (
     EXPORT_LAYOUT_TREE,
     MARKDOWN_DEFAULT_LEVEL,
 )
+from agent_history.core.lineage import build_timeline_lineage
 from agent_history.core.workspaces import build_workspace_metadata
 from agent_history.export import (
     MIN_MESSAGES_FOR_SPLIT,
@@ -46,10 +48,12 @@ from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
 from agent_history.utils.paths import decode_workspace_path, encode_workspace_path
+from agent_history.utils.platform import AGENT_CODEX
 from agent_history.utils.workspace_ref import WorkspaceContext
 
 _INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
 _ExportTask = Tuple[SessionDict, str, str, str]
+_HtmlOutputPathMap = Dict[str, Path]
 
 
 def _sanitize_path_segment(segment: str) -> str:
@@ -197,6 +201,23 @@ class SessionExportHandler(VerbHandler):
         if session_ids:
             tasks, missing_ids = self._filter_tasks_by_session_ids(tasks, session_ids)
 
+        if export_format == EXPORT_FORMAT_HTML:
+            tasks = self._include_related_html_tasks(tasks)
+
+        html_lineage_records = None
+        html_output_paths = None
+        if export_format == EXPORT_FORMAT_HTML:
+            html_lineage_records = build_timeline_lineage(
+                [session for session, _, _, _ in tasks],
+                include_related=True,
+            )
+            html_output_paths = self._build_html_output_path_map(
+                tasks=tasks,
+                output_dir=output_dir,
+                flat=flat,
+                layout=layout,
+            )
+
         self._process_export_tasks(
             tasks=tasks,
             output_dir=output_dir,
@@ -216,6 +237,8 @@ class SessionExportHandler(VerbHandler):
             skipped=skipped,
             failed=failed,
             sources_info=sources_info,
+            html_lineage_records=html_lineage_records,
+            html_output_paths=html_output_paths,
         )
 
         # Add missing session IDs as failures
@@ -267,6 +290,178 @@ class SessionExportHandler(VerbHandler):
                 tasks.append((session, context.home, context.workspace, context.workspace_display))
         return tasks
 
+    def _include_related_html_tasks(self, tasks: List[_ExportTask]) -> List[_ExportTask]:
+        """Include child Codex sub-agent sessions needed by parent graph links."""
+        expanded = list(tasks)
+        tasks_by_file = {}
+        for task in expanded:
+            session, _home, _workspace, _workspace_display = task
+            if session.get("file") is not None:
+                tasks_by_file[str(Path(session["file"]))] = task
+        task_context_by_session_id: dict[str, _ExportTask] = {}
+        roots: set[Path] = set()
+
+        for task in expanded:
+            session, _home, _workspace, _workspace_display = task
+            if session.get("agent") != AGENT_CODEX or session.get("file") is None:
+                continue
+            session_file = Path(session["file"])
+            record = self._read_codex_lineage_header(session_file)
+            if not record or not record.get("session_id"):
+                continue
+            task_context_by_session_id[str(record["session_id"])] = task
+            roots.add(self._codex_sessions_root_for_file(session_file))
+
+        if not task_context_by_session_id:
+            return expanded
+
+        child_records_by_parent: dict[str, list[dict[str, Any]]] = {}
+        for root in roots:
+            for candidate in self._iter_codex_session_files(root):
+                record = self._read_codex_lineage_header(candidate)
+                if (
+                    not record
+                    or record.get("kind") != "subagent"
+                    or not record.get("parent_session_id")
+                ):
+                    continue
+                child_records_by_parent.setdefault(str(record["parent_session_id"]), []).append(
+                    record
+                )
+
+        queue = list(task_context_by_session_id)
+        seen_session_ids = set(task_context_by_session_id)
+        while queue:
+            parent_session_id = queue.pop(0)
+            parent_task = task_context_by_session_id[parent_session_id]
+            for child_record in child_records_by_parent.get(parent_session_id, []):
+                child_session_id = str(child_record.get("session_id") or "")
+                if not child_session_id or child_session_id in seen_session_ids:
+                    continue
+                child_file = Path(child_record["source_file"])
+                child_task = tasks_by_file.get(str(child_file))
+                if child_task is None:
+                    child_task = self._build_related_codex_task(child_file, parent_task)
+                    expanded.append(child_task)
+                    tasks_by_file[str(child_file)] = child_task
+                task_context_by_session_id[child_session_id] = child_task
+                seen_session_ids.add(child_session_id)
+                queue.append(child_session_id)
+
+        return expanded
+
+    def _build_related_codex_task(self, child_file: Path, parent_task: _ExportTask) -> _ExportTask:
+        parent_session, home, workspace, workspace_display = parent_task
+        modified = datetime.fromtimestamp(child_file.stat().st_mtime)
+        child_session: SessionDict = {
+            "agent": AGENT_CODEX,
+            "workspace": parent_session.get("workspace", workspace),
+            "workspace_readable": parent_session.get("workspace_readable", workspace_display),
+            "file": child_file,
+            "filename": child_file.name,
+            "message_count": 0,
+            "message_count_skipped": True,
+            "modified": modified,
+            "source": parent_session.get("source", "local"),
+        }
+        return (child_session, home, workspace, workspace_display)
+
+    def _codex_sessions_root_for_file(self, session_file: Path) -> Path:
+        if (
+            len(session_file.parents) >= 4
+            and session_file.parent.name.isdigit()
+            and session_file.parent.parent.name.isdigit()
+            and session_file.parent.parent.parent.name.isdigit()
+        ):
+            return session_file.parents[3]
+        return session_file.parent
+
+    def _iter_codex_session_files(self, sessions_root: Path) -> list[Path]:
+        try:
+            return sorted(sessions_root.glob("*/*/*/rollout-*.jsonl")) + sorted(
+                sessions_root.glob("*/*/*/rollout-*.jsonl.zst")
+            )
+        except (OSError, PermissionError):
+            return []
+
+    def _read_codex_lineage_header(self, session_file: Path) -> dict[str, Any] | None:
+        from agent_history.backends.codex import _codex_open_text
+
+        session_meta: dict[str, Any] = {}
+        try:
+            with _codex_open_text(session_file) as handle:
+                for raw_line in handle:
+                    try:
+                        entry = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    if entry.get("type") == "session_meta":
+                        payload = entry.get("payload")
+                        if isinstance(payload, dict):
+                            session_meta = payload
+                        break
+        except OSError:
+            return None
+
+        session_id = session_meta.get("id")
+        if not session_id:
+            return None
+
+        source = session_meta.get("source") if isinstance(session_meta.get("source"), dict) else {}
+        subagent_source = source.get("subagent")
+        if not isinstance(subagent_source, dict):
+            subagent_source = {}
+        spawn = subagent_source.get("thread_spawn")
+        if not isinstance(spawn, dict):
+            spawn = {}
+        parent_session_id = (
+            session_meta.get("parent_thread_id")
+            or spawn.get("parent_thread_id")
+            or session_meta.get("forked_from_id")
+        )
+        is_subagent = session_meta.get("thread_source") == "subagent" or bool(spawn)
+        return {
+            "kind": "subagent" if is_subagent else "main",
+            "session_id": str(session_id),
+            "parent_session_id": str(parent_session_id) if parent_session_id else None,
+            "source_file": str(session_file),
+        }
+
+    def _build_html_output_path_map(
+        self,
+        tasks: List[_ExportTask],
+        output_dir: Path,
+        flat: bool,
+        layout: str,
+    ) -> _HtmlOutputPathMap:
+        output_paths: _HtmlOutputPathMap = {}
+        for session, home, _workspace, workspace_display in tasks:
+            jsonl_file = session.get("file")
+            if jsonl_file is None:
+                continue
+            source_file = Path(jsonl_file)
+            if not source_file.exists():
+                continue
+            agent_type = session.get("agent", get_default_backend_id())
+            messages = self._read_session_messages(source_file, agent_type)
+            if not messages:
+                continue
+            source_tag = self._get_source_tag(home)
+            ws_output_path = self._get_workspace_output_path(
+                output_dir,
+                workspace_display,
+                flat=flat,
+                layout=layout,
+            )
+            output_name = self._build_output_filename(
+                source_file,
+                source_tag,
+                messages,
+                extension=".html",
+            )
+            output_paths[str(source_file)] = ws_output_path / output_name
+        return output_paths
+
     def _process_export_tasks(
         self,
         tasks: List[_ExportTask],
@@ -287,6 +482,8 @@ class SessionExportHandler(VerbHandler):
         skipped: List[SessionDict],
         failed: List[Tuple[SessionDict, str]],
         sources_info: Dict[str, int],
+        html_lineage_records: Optional[List[Dict[str, Any]]] = None,
+        html_output_paths: Optional[_HtmlOutputPathMap] = None,
     ) -> None:
         if jobs is not None and jobs > 1:
             self._process_export_tasks_parallel(
@@ -308,6 +505,8 @@ class SessionExportHandler(VerbHandler):
                 skipped,
                 failed,
                 sources_info,
+                html_lineage_records,
+                html_output_paths,
             )
             return
 
@@ -330,6 +529,8 @@ class SessionExportHandler(VerbHandler):
                     markdown_level=markdown_level,
                     html_level=html_level,
                     quiet=quiet,
+                    html_lineage_records=html_lineage_records,
+                    html_output_paths=html_output_paths,
                 )
                 self._record_export_result(result, session, home, exported, skipped, sources_info)
             except Exception as e:
@@ -355,6 +556,8 @@ class SessionExportHandler(VerbHandler):
         skipped: List[SessionDict],
         failed: List[Tuple[SessionDict, str]],
         sources_info: Dict[str, int],
+        html_lineage_records: Optional[List[Dict[str, Any]]] = None,
+        html_output_paths: Optional[_HtmlOutputPathMap] = None,
     ) -> None:
         with ThreadPoolExecutor(max_workers=jobs) as executor:
             futures = [
@@ -377,6 +580,8 @@ class SessionExportHandler(VerbHandler):
                         markdown_level=markdown_level,
                         html_level=html_level,
                         quiet=quiet,
+                        html_lineage_records=html_lineage_records,
+                        html_output_paths=html_output_paths,
                     ),
                     session,
                     home,
@@ -577,6 +782,8 @@ class SessionExportHandler(VerbHandler):
         markdown_level: int,
         html_level: int,
         quiet: bool,
+        html_lineage_records: Optional[List[Dict[str, Any]]] = None,
+        html_output_paths: Optional[_HtmlOutputPathMap] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """Export a single session, catching exceptions for thread safety.
 
@@ -602,6 +809,8 @@ class SessionExportHandler(VerbHandler):
                 markdown_level=markdown_level,
                 html_level=html_level,
                 quiet=quiet,
+                html_lineage_records=html_lineage_records,
+                html_output_paths=html_output_paths,
             )
             return (result, None)
         except Exception as e:
@@ -625,6 +834,8 @@ class SessionExportHandler(VerbHandler):
         markdown_level: int,
         html_level: int,
         quiet: bool,
+        html_lineage_records: Optional[List[Dict[str, Any]]] = None,
+        html_output_paths: Optional[_HtmlOutputPathMap] = None,
     ) -> str:
         """Export a single session to markdown.
 
@@ -708,6 +919,8 @@ class SessionExportHandler(VerbHandler):
                 quiet=quiet,
                 ws_output_path=ws_output_path,
                 html_level=html_level,
+                lineage_records=html_lineage_records,
+                html_output_paths=html_output_paths,
             )
             return EXPORT_EXPORTED
 
@@ -1035,8 +1248,11 @@ class SessionExportHandler(VerbHandler):
         quiet: bool,
         ws_output_path: Path,
         html_level: int,
+        lineage_records: Optional[List[Dict[str, Any]]] = None,
+        html_output_paths: Optional[_HtmlOutputPathMap] = None,
     ) -> None:
         """Write exported session to a single HTML file."""
+        lineage_hrefs = self._build_lineage_hrefs(output_file, html_output_paths or {})
         html = self._render_html(
             jsonl_file=jsonl_file,
             agent_type=agent_type,
@@ -1044,6 +1260,8 @@ class SessionExportHandler(VerbHandler):
             minimal=minimal,
             display_file=output_name,
             html_level=html_level,
+            lineage_records=lineage_records,
+            lineage_hrefs=lineage_hrefs,
         )
         output_file.write_text(html, encoding="utf-8")
         if not quiet:
@@ -1060,6 +1278,8 @@ class SessionExportHandler(VerbHandler):
         minimal: bool,
         display_file: Optional[str] = None,
         html_level: int = 1,
+        lineage_records: Optional[List[Dict[str, Any]]] = None,
+        lineage_hrefs: Optional[Dict[str, str]] = None,
     ) -> str:
         """Render HTML for a parsed session."""
         return render_html_export(
@@ -1069,7 +1289,19 @@ class SessionExportHandler(VerbHandler):
             minimal=minimal,
             display_file=display_file,
             html_level=html_level,
+            lineage_records=lineage_records,
+            lineage_hrefs=lineage_hrefs,
         )
+
+    def _build_lineage_hrefs(
+        self,
+        current_output_file: Path,
+        html_output_paths: _HtmlOutputPathMap,
+    ) -> Dict[str, str]:
+        hrefs: Dict[str, str] = {}
+        for source_file, output_path in html_output_paths.items():
+            hrefs[source_file] = os.path.relpath(output_path, start=current_output_file.parent)
+        return hrefs
 
     def _write_split_parts(
         self,

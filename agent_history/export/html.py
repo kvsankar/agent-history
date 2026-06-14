@@ -23,6 +23,11 @@ HTML_FULL_IO_LEVEL = 3
 HTML_TRACE_LEVEL = 4
 HTML_SNIPPET_LINES = 8
 HTML_SNIPPET_CHARS = 900
+AGENT_GRAPH_ROW_HEIGHT = 32
+AGENT_GRAPH_TOP = 18
+AGENT_GRAPH_TRACK_GAP = 18
+AGENT_GRAPH_MAIN_X = 18
+AGENT_GRAPH_SUBAGENT_SPAN = 24
 
 _TOOL_HEADING_RE = re.compile(r"\*\*\[(?:Tool Use|Tool): ([^\]]+)\]\*\*")
 _CODE_FENCE_RE = re.compile(r"```(?P<label>[A-Za-z0-9_+.-]*)\n(?P<body>.*?)\n```", re.DOTALL)
@@ -36,6 +41,8 @@ def render_html_export(
     minimal: bool = False,
     display_file: str | None = None,
     html_level: int = HTML_DEFAULT_LEVEL,
+    lineage_records: list[dict[str, Any]] | None = None,
+    lineage_hrefs: dict[str, str] | None = None,
 ) -> str:
     """Render a session as a self-contained HTML document."""
     initial_level = _normalize_html_level(html_level)
@@ -57,7 +64,7 @@ def render_html_export(
         f'<meta name="cagelens-renderer" content="{HTML_RENDERER_VERSION}">',
         f"<style>{_CSS}</style>",
         "</head>",
-        "<body>",
+        '<body data-agent-graph="visible">',
         '<button class="theme-control" type="button" data-theme-toggle '
         'aria-pressed="false">Dark mode</button>',
         '<main class="page">',
@@ -73,8 +80,18 @@ def render_html_export(
             _render_level_controls(initial_level),
             '<button class="utility-control" type="button" data-expand-all>Expand all</button>',
             '<button class="utility-control" type="button" data-collapse-all>Collapse all</button>',
+            '<button class="graph-toggle-pill" type="button" data-agent-graph-toggle '
+            'aria-pressed="false">Hide graph</button>',
             "</div>",
             "</header>",
+            '<div class="export-layout">',
+            _render_agent_graph(
+                turns,
+                agent_title,
+                jsonl_file=jsonl_file,
+                lineage_records=lineage_records,
+                lineage_hrefs=lineage_hrefs,
+            ),
             '<section class="turns" aria-label="Conversation turns">',
         ]
     )
@@ -94,6 +111,7 @@ def render_html_export(
     body.extend(
         [
             "</section>",
+            "</div>",
             "</main>",
             f"<script>{_SCRIPT}</script>",
             "</body>",
@@ -157,8 +175,386 @@ def _render_level_controls(initial_level: int) -> str:
     )
 
 
+def _render_agent_graph(
+    turns: list[list[MessageDict]],
+    agent_title: str,
+    *,
+    jsonl_file: Path,
+    lineage_records: list[dict[str, Any]] | None = None,
+    lineage_hrefs: dict[str, str] | None = None,
+) -> str:
+    graph = _build_agent_graph_model(turns, jsonl_file, lineage_records or [], lineage_hrefs or {})
+    width = graph["width"]
+    height = graph["height"]
+    lines = [
+        '<aside class="agent-graph" data-agent-graph aria-label="Agent graph">',
+        '<div class="agent-graph-header">',
+        "<h2>Agent Graph</h2>",
+        f'<span class="agent-graph-agent">{escape(agent_title)}</span>',
+        "</div>",
+        (
+            f'<svg class="agent-graph-svg" viewBox="0 0 {width} {height}" '
+            f'width="{width}" height="{height}" '
+            'role="img" aria-label="Agent turn graph">'
+        ),
+    ]
+    lines.extend(_render_agent_graph_tracks(graph))
+    lines.extend(_render_agent_graph_main_nodes(graph))
+    lines.extend(_render_agent_graph_subagent_nodes(graph))
+    lines.extend(["</svg>", "</aside>"])
+    return "\n".join(lines)
+
+
+def _build_agent_graph_model(
+    turns: list[list[MessageDict]],
+    jsonl_file: Path,
+    lineage_records: list[dict[str, Any]],
+    lineage_hrefs: dict[str, str],
+) -> dict[str, Any]:
+    source_file = str(jsonl_file)
+    current_record = _lineage_record_for_source(lineage_records, source_file)
+    current_session_id = (
+        str(current_record.get("session_id"))
+        if current_record and current_record.get("session_id")
+        else _session_id_from_messages(turns)
+    )
+    lineage_children = [
+        record
+        for record in lineage_records
+        if record.get("kind") == "subagent"
+        and current_session_id
+        and str(record.get("parent_session_id") or "") == current_session_id
+    ]
+    children_by_call_id = {
+        str(record["invocation_tool_call_id"]): record
+        for record in lineage_children
+        if record.get("invocation_tool_call_id")
+    }
+    lanes = _agent_graph_lanes_for_turn_events(turns, children_by_call_id, lineage_hrefs)
+    matched_ids = {lane["record"].get("session_id") for lane in lanes if lane.get("record")}
+    for child in lineage_children:
+        if child.get("session_id") in matched_ids:
+            continue
+        lanes.append(
+            {
+                "turn_index": 1,
+                "tool_id": str(child.get("invocation_tool_call_id") or ""),
+                "title": _lineage_title(child, "Sub-agent"),
+                "result": _lineage_result(child),
+                "record": child,
+                "href": _lineage_href(child, lineage_hrefs),
+            }
+        )
+    track_count = max(1, len(lanes) + 1)
+    width = AGENT_GRAPH_MAIN_X + (track_count - 1) * AGENT_GRAPH_TRACK_GAP + 18
+    height = max(128, AGENT_GRAPH_TOP + max(1, len(turns)) * AGENT_GRAPH_ROW_HEIGHT + 24)
+    return {
+        "turns": turns,
+        "lanes": lanes,
+        "track_count": track_count,
+        "width": width,
+        "height": height,
+    }
+
+
+def _agent_graph_lanes_for_turn_events(
+    turns: list[list[MessageDict]],
+    children_by_call_id: dict[str, dict[str, Any]],
+    lineage_hrefs: dict[str, str],
+) -> list[dict[str, Any]]:
+    lanes: list[dict[str, Any]] = []
+    for turn_index, turn in enumerate(turns, 1):
+        for event in _subagent_events_for_turn(turn):
+            child = children_by_call_id.get(event.get("tool_id", ""))
+            if not _should_render_subagent_graph_event(event, child):
+                continue
+            lane = {
+                **event,
+                "turn_index": turn_index,
+                "record": child,
+                "href": _lineage_href(child, lineage_hrefs) if child else "",
+            }
+            if child:
+                lane["title"] = _lineage_title(child, event.get("title", "Sub-agent"))
+                lane["result"] = _lineage_result(child) or event.get("result", "")
+            lanes.append(lane)
+    return lanes
+
+
+def _should_render_subagent_graph_event(
+    event: dict[str, str], child: dict[str, Any] | None
+) -> bool:
+    if child:
+        return True
+    if str(event.get("title") or "").strip().lower() != "spawn_agent":
+        return True
+    result = str(event.get("result") or "").lower()
+    return "agent_id" in result or "failed" in result or "error" in result
+
+
+def _render_agent_graph_tracks(graph: dict[str, Any]) -> list[str]:
+    lines = ['<g class="agent-graph-tracks" aria-hidden="true">']
+    bottom = graph["height"] - 18
+    for track_index in range(graph["track_count"]):
+        x = _agent_graph_track_x(track_index)
+        track_class = "agent-graph-main-track" if track_index == 0 else "agent-graph-sub-track"
+        lines.append(f'<line class="{track_class}" x1="{x}" y1="24" x2="{x}" y2="{bottom}" />')
+    lines.append("</g>")
+    return lines
+
+
+def _render_agent_graph_main_nodes(graph: dict[str, Any]) -> list[str]:
+    lines = ['<g class="agent-graph-main-nodes">']
+    for turn_index, turn in enumerate(graph["turns"], 1):
+        y = _agent_graph_turn_y(turn_index)
+        lines.extend(
+            [
+                f'<a class="agent-graph-turn-link" href="#turn-{turn_index}" '
+                f'data-scroll-turn="{turn_index}">',
+                f"<title>Turn {turn_index}: {escape(_turn_action_summary(turn))}</title>",
+                f'<circle class="agent-graph-main-node" cx="{AGENT_GRAPH_MAIN_X}" cy="{y}" r="6" />',
+                "</a>",
+            ]
+        )
+    lines.append("</g>")
+    return lines
+
+
+def _render_agent_graph_subagent_nodes(graph: dict[str, Any]) -> list[str]:
+    lines = ['<g class="agent-graph-subagent-nodes">']
+    for lane_index, lane in enumerate(graph["lanes"], 1):
+        parent_x = AGENT_GRAPH_MAIN_X
+        x = _agent_graph_track_x(lane_index)
+        start_y = _agent_graph_turn_y(int(lane.get("turn_index") or 1))
+        end_y = min(graph["height"] - 28, start_y + AGENT_GRAPH_SUBAGENT_SPAN)
+        turn_index = int(lane.get("turn_index") or 1)
+        href = str(lane.get("href") or f"#turn-{turn_index}")
+        click_attrs = (
+            "" if lane.get("href") else f' data-scroll-turn="{turn_index}" data-open-turn-actions'
+        )
+        tooltip = _agent_graph_lane_tooltip(lane)
+        lines.extend(
+            [
+                '<g class="agent-graph-branch-edge" aria-hidden="true">',
+                (
+                    f'<path d="M {parent_x + 7} {start_y} C {parent_x + 10} {start_y}, '
+                    f'{x - 10} {start_y}, {x - 5} {start_y}" />'
+                ),
+                f'<line x1="{x}" y1="{start_y}" x2="{x}" y2="{end_y}" />',
+                "</g>",
+                f'<a class="agent-graph-subagent-link" href="{escape(href, quote=True)}"{click_attrs}>',
+                f"<title>{escape(tooltip)}</title>",
+                f'<circle class="agent-graph-subagent-node" cx="{x}" cy="{start_y}" r="6" />',
+                f'<circle class="agent-graph-merge-node" cx="{x}" cy="{end_y}" r="4" />',
+                "</a>",
+            ]
+        )
+    lines.append("</g>")
+    return lines
+
+
+def _agent_graph_track_x(track_index: int) -> int:
+    return AGENT_GRAPH_MAIN_X + track_index * AGENT_GRAPH_TRACK_GAP
+
+
+def _agent_graph_turn_y(turn_index: int) -> int:
+    return AGENT_GRAPH_TOP + (turn_index - 1) * AGENT_GRAPH_ROW_HEIGHT
+
+
+def _agent_graph_lane_tooltip(lane: dict[str, Any]) -> str:
+    parts = [str(lane.get("title") or "Sub-agent")]
+    if lane.get("result"):
+        parts.append(str(lane["result"]))
+    parts.append("Open sub-agent transcript" if lane.get("href") else "Open parent turn actions")
+    return " - ".join(parts)
+
+
+def _lineage_record_for_source(
+    lineage_records: list[dict[str, Any]], source_file: str
+) -> dict[str, Any] | None:
+    for record in lineage_records:
+        if str(record.get("source_file") or "") == source_file:
+            return record
+    return None
+
+
+def _session_id_from_messages(turns: list[list[MessageDict]]) -> str:
+    for turn in turns:
+        for msg in turn:
+            if msg.get("session_id"):
+                return str(msg["session_id"])
+    return ""
+
+
+def _lineage_href(record: dict[str, Any] | None, lineage_hrefs: dict[str, str]) -> str:
+    if not record:
+        return ""
+    source_file = str(record.get("source_file") or "")
+    return lineage_hrefs.get(source_file, "")
+
+
+def _lineage_title(record: dict[str, Any], fallback: str) -> str:
+    for key in ("agent_name", "agent_role", "agent_id", "session_id"):
+        if record.get(key):
+            return str(record[key])
+    return fallback
+
+
+def _lineage_result(record: dict[str, Any]) -> str:
+    if record.get("status"):
+        return str(record["status"])
+    if record.get("last_agent_message"):
+        return str(record["last_agent_message"])
+    return ""
+
+
+def _subagent_events_for_turn(turn: list[MessageDict]) -> list[dict[str, str]]:
+    results_by_tool_id = {
+        tool_id: result
+        for msg in turn
+        if _semantic_origin(msg) == "tool_result"
+        for tool_id, result in [_tool_result_summary(msg)]
+        if tool_id
+    }
+    events: list[dict[str, str]] = []
+    for msg in turn:
+        structured_events = _subagent_events_from_structured_calls(msg, results_by_tool_id)
+        if structured_events:
+            events.extend(structured_events)
+            continue
+        content = str(msg.get("content") or "")
+        block_events = _subagent_events_from_tool_blocks(content, results_by_tool_id)
+        if block_events:
+            events.extend(block_events)
+            continue
+        if _semantic_origin(msg) != "tool_call":
+            continue
+        tool_name = _tool_name(msg) or ""
+        if not _is_subagent_tool_name(tool_name):
+            continue
+        tool_id = _tool_id_from_content(content)
+        title = _subagent_title_from_content(content) or tool_name or "Sub-agent"
+        events.append(_subagent_event(tool_id, title, results_by_tool_id.get(tool_id, "")))
+    return events
+
+
+def _subagent_events_from_structured_calls(
+    msg: MessageDict, results_by_tool_id: dict[str, str]
+) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
+    for call in msg.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("name") or call.get("displayName") or "")
+        if not _is_subagent_tool_name(tool_name):
+            continue
+        tool_id = str(call.get("id") or call.get("call_id") or call.get("callId") or "")
+        title = _subagent_title_from_tool_call(call) or tool_name or "Sub-agent"
+        events.append(_subagent_event(tool_id, title, results_by_tool_id.get(tool_id, "")))
+    return events
+
+
+def _subagent_events_from_tool_blocks(
+    content: str, results_by_tool_id: dict[str, str]
+) -> list[dict[str, str]]:
+    matches = list(_TOOL_HEADING_RE.finditer(content))
+    if len(matches) < 2:
+        return []
+    events: list[dict[str, str]] = []
+    for index, match in enumerate(matches):
+        tool_name = match.group(1)
+        if not _is_subagent_tool_name(tool_name):
+            continue
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        block = content[start:end]
+        tool_id = _tool_id_from_content(block)
+        title = _subagent_title_from_content(block) or tool_name or "Sub-agent"
+        events.append(_subagent_event(tool_id, title, results_by_tool_id.get(tool_id, "")))
+    return events
+
+
+def _subagent_event(tool_id: str, title: str, result: str) -> dict[str, str]:
+    return {
+        "tool_id": tool_id,
+        "title": title,
+        "result": result,
+    }
+
+
+def _subagent_title_from_tool_call(call: dict[str, Any]) -> str | None:
+    args = call.get("input") or call.get("arguments") or {}
+    if isinstance(args, str):
+        try:
+            loaded = json.loads(args)
+        except json.JSONDecodeError:
+            loaded = {}
+        args = loaded if isinstance(loaded, dict) else {}
+    if not isinstance(args, dict):
+        return None
+    for key in ("description", "subagent_type", "agent_type", "prompt"):
+        value = args.get(key)
+        if value:
+            return _truncate_graph_text(str(value))
+    return None
+
+
+def _tool_result_summary(msg: MessageDict) -> tuple[str, str]:
+    content = str(msg.get("content") or "")
+    tool_id = _tool_id_from_content(content)
+    body = content
+    fence_match = re.search(r"```\n(?P<body>.*?)\n```", content, re.DOTALL)
+    if fence_match:
+        body = fence_match.group("body")
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    summary = next(
+        (
+            line
+            for line in lines
+            if not line.startswith("**[Tool Result") and not line.startswith("Tool Use ID:")
+        ),
+        "",
+    )
+    return tool_id, _truncate_graph_text(summary)
+
+
+def _subagent_title_from_content(content: str) -> str | None:
+    data = _json_input_from_tool_content(content)
+    for key in ("description", "subagent_type", "agent_type", "prompt"):
+        value = data.get(key)
+        if value:
+            return _truncate_graph_text(str(value))
+    return None
+
+
+def _json_input_from_tool_content(content: str) -> dict[str, Any]:
+    match = re.search(r"Input:\s*```json\n(?P<body>.*?)\n```", content, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        data = json.loads(match.group("body"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _tool_id_from_content(content: str) -> str:
+    match = re.search(r"(?:Tool (?:ID|Use ID)|Call ID): `([^`]+)`", content)
+    return match.group(1) if match else ""
+
+
+def _is_subagent_tool_name(tool_name: str) -> bool:
+    normalized = tool_name.strip().lower()
+    return normalized in {"task", "subagent", "sub_agent", "spawn_agent"}
+
+
+def _truncate_graph_text(value: str, limit: int = 96) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 def _starts_new_turn(msg: MessageDict) -> bool:
-    return _semantic_origin(msg) == "human"
+    return _semantic_origin(msg) in {"human", "parent_agent"}
 
 
 def _group_messages_into_turns(messages: list[MessageDict]) -> list[list[MessageDict]]:
@@ -187,7 +583,7 @@ def _render_turn(
         msg
         for msg in turn
         if _message_detail_level(msg, turn) == HTML_ACTION_LEVEL
-        or _semantic_origin(msg) in {"tool_call", "tool_result"}
+        or _semantic_origin(msg) in {"subagent_event", "tool_call", "tool_result"}
     ]
     summary = _turn_action_summary(turn)
 
@@ -320,7 +716,7 @@ def _conversation_messages_for_turn(turn: list[MessageDict]) -> list[MessageDict
     messages: list[MessageDict] = []
     for msg in turn:
         origin = _semantic_origin(msg)
-        if origin == "human" or msg is final_assistant:
+        if origin in {"human", "parent_agent"} or msg is final_assistant:
             messages.append(msg)
     return messages
 
@@ -334,14 +730,15 @@ def _final_assistant_message(turn: list[MessageDict]) -> MessageDict | None:
 
 def _message_detail_level(msg: MessageDict, turn: list[MessageDict]) -> int:
     origin = _semantic_origin(msg)
-    if origin == "human" or msg is _final_assistant_message(turn):
+    if origin in {"human", "parent_agent"} or msg is _final_assistant_message(turn):
         return HTML_DEFAULT_LEVEL
-    if origin in {"assistant", "tool_call", "tool_result"}:
+    if origin in {"assistant", "subagent_event", "tool_call", "tool_result"}:
         return HTML_ACTION_LEVEL
     return HTML_TRACE_LEVEL
 
 
 def _turn_action_summary(turn: list[MessageDict]) -> str:
+    subagent_events = sum(1 for msg in turn if _semantic_origin(msg) == "subagent_event")
     tool_calls = sum(1 for msg in turn if _semantic_origin(msg) == "tool_call")
     tool_results = sum(1 for msg in turn if _semantic_origin(msg) == "tool_result")
     assistant_notes = sum(
@@ -350,6 +747,8 @@ def _turn_action_summary(turn: list[MessageDict]) -> str:
         if _semantic_origin(msg) == "assistant" and msg is not _final_assistant_message(turn)
     )
     parts = []
+    if subagent_events:
+        parts.append(f"{subagent_events} sub-agent event{'s' if subagent_events != 1 else ''}")
     if tool_calls:
         parts.append(f"{tool_calls} tool call{'s' if tool_calls != 1 else ''}")
     if tool_results:
@@ -374,7 +773,7 @@ def _render_message(
     role = str(msg.get("role") or "unknown").lower()
     label = f"Raw {_message_label(msg, origin)}" if trace_label else _message_label(msg, origin)
     classes = ["message", f"message-{origin.replace('_', '-')}"]
-    if origin in {"tool_call", "tool_result"}:
+    if origin in {"subagent_event", "tool_call", "tool_result"}:
         classes.append("message-action")
 
     timestamp = str(msg.get("timestamp") or "")
@@ -409,6 +808,11 @@ def _render_message(
 
 
 def _message_label(msg: MessageDict, origin: str) -> str:
+    if origin == "parent_agent":
+        return "Parent agent"
+    if origin == "subagent_event":
+        status = str(msg.get("subagent_status") or "notification").replace("_", " ")
+        return f"Sub-agent {status}"
     if origin == "tool_call":
         tool_name = _tool_name(msg)
         return f"Tool call: {tool_name}" if tool_name else "Tool call"
@@ -422,6 +826,10 @@ def _message_label(msg: MessageDict, origin: str) -> str:
 
 
 def _semantic_origin(msg: MessageDict) -> str:
+    if msg.get("is_subagent_notification"):
+        return "subagent_event"
+    if msg.get("is_parent_agent_message"):
+        return "parent_agent"
     if msg.get("is_tool_call"):
         return "tool_call"
     if msg.get("is_tool_result"):
@@ -1157,6 +1565,12 @@ _CSS = """
   --assistant-bg: #f3fbf6;
   --assistant-border: #cfe9d9;
   --assistant-title: #2f6548;
+  --parent-agent-bg: #f7f2ff;
+  --parent-agent-border: #ddd0f3;
+  --parent-agent-title: #6b4ca4;
+  --subagent-event-bg: #fff7ed;
+  --subagent-event-border: #fed7aa;
+  --subagent-event-title: #9a4c00;
   --tool: #fff7e6;
   --tool-border: #f2ddb2;
   --raw-soft: #f8f9fb;
@@ -1191,6 +1605,12 @@ html[data-theme="dark"] {
   --assistant-bg: #11241c;
   --assistant-border: #2b5a41;
   --assistant-title: #a6e3ba;
+  --parent-agent-bg: #20172f;
+  --parent-agent-border: #4b3b6f;
+  --parent-agent-title: #d7c4ff;
+  --subagent-event-bg: #2a1d10;
+  --subagent-event-border: #7a4d1f;
+  --subagent-event-title: #ffd7a3;
   --tool: #2b2111;
   --tool-border: #7c5b1f;
   --raw-soft: #1c2128;
@@ -1283,14 +1703,117 @@ html[data-theme="dark"] .theme-control {
   border-color: var(--accent);
   color: var(--accent);
 }
+.graph-toggle-pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+.graph-toggle-pill[aria-pressed="true"] {
+  background: var(--accent-soft);
+}
 .metadata { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; color: var(--muted); }
 .metadata dt { font-weight: 700; color: var(--ink); }
 .metadata dd { margin: 0; overflow-wrap: anywhere; }
+.export-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+body[data-agent-graph="hidden"] .export-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+body[data-agent-graph="hidden"] .agent-graph {
+  display: none;
+}
+.agent-graph {
+  position: sticky;
+  top: 18px;
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px;
+}
+.agent-graph-header {
+  margin-bottom: 12px;
+}
+.agent-graph-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.agent-graph-agent {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.agent-graph-svg {
+  display: block;
+  width: auto;
+  max-width: none;
+  min-width: 260px;
+  height: auto;
+  overflow: visible;
+}
+.agent-graph-svg a {
+  cursor: pointer;
+  text-decoration: none;
+}
+.agent-graph-main-track,
+.agent-graph-sub-track {
+  stroke: var(--line);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.agent-graph-sub-track {
+  stroke-dasharray: 3 6;
+}
+.agent-graph-branch-edge path,
+.agent-graph-branch-edge line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.agent-graph-main-node,
+.agent-graph-subagent-node,
+.agent-graph-merge-node {
+  fill: var(--panel);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.agent-graph-subagent-node {
+  fill: var(--accent-soft);
+}
+.agent-graph-merge-node {
+  stroke: var(--muted);
+}
+.agent-graph-turn-link:hover .agent-graph-main-node,
+.agent-graph-subagent-link:hover .agent-graph-subagent-node,
+.agent-graph-subagent-link[aria-current="true"] .agent-graph-subagent-node {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
 .turn {
   margin: 0 0 28px;
   border-top: 1px solid var(--line);
   padding-top: 20px;
   scroll-margin-top: 84px;
+}
+.turn[data-graph-selected="true"] {
+  animation: cagelens-turn-highlight 1200ms ease-out;
+}
+@keyframes cagelens-turn-highlight {
+  0% { background: var(--accent-soft); }
+  100% { background: transparent; }
 }
 .turn-header {
   display: flex;
@@ -1369,8 +1892,12 @@ html[data-theme="dark"] .theme-control {
 .message-action { background: var(--tool); border-color: var(--tool-border); }
 .message-human { background: var(--user-bg); border-color: var(--user-border); }
 .message-assistant { background: var(--assistant-bg); border-color: var(--assistant-border); }
+.message-parent-agent { background: var(--parent-agent-bg); border-color: var(--parent-agent-border); }
+.message-subagent-event { background: var(--subagent-event-bg); border-color: var(--subagent-event-border); }
 .message-human .message-header h3 { color: var(--user-title); }
 .message-assistant .message-header h3 { color: var(--assistant-title); }
+.message-parent-agent .message-header h3 { color: var(--parent-agent-title); }
+.message-subagent-event .message-header h3 { color: var(--subagent-event-title); }
 .message-header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .message-header h3 { font-size: 15px; margin: 0; }
 .message-header time { color: var(--muted); font-size: 12px; white-space: nowrap; }
@@ -1557,6 +2084,12 @@ html[data-theme="dark"] .code-theme-dark { display: block; }
 [hidden] { display: none !important; }
 @media (max-width: 640px) {
   .page { padding: 20px 12px 40px; }
+  .export-layout { display: block; }
+  .agent-graph {
+    position: static;
+    max-height: 220px;
+    margin-bottom: 18px;
+  }
   .turn-header, .message-header { display: block; }
   .turn-heading { margin-bottom: 6px; }
   .turn-meta { text-align: left; }
@@ -1605,6 +2138,45 @@ _SCRIPT = """
         // Ignore storage failures; theme still applies for this page view.
       }
       applyTheme(nextTheme);
+    });
+  });
+
+  function readAgentGraphState() {
+    var stored = "";
+    try {
+      stored = window.localStorage ? window.localStorage.getItem("cagelensAgentGraph") : "";
+    } catch (error) {
+      stored = "";
+    }
+    return stored === "hidden" ? "hidden" : "visible";
+  }
+
+  function applyAgentGraphState(state) {
+    var safeState = state === "hidden" ? "hidden" : "visible";
+    if (document.body) {
+      document.body.setAttribute("data-agent-graph", safeState);
+    }
+    document.querySelectorAll("[data-agent-graph-toggle]").forEach(function (button) {
+      var hidden = safeState === "hidden";
+      button.textContent = hidden ? "Show graph" : "Hide graph";
+      button.setAttribute("aria-pressed", hidden ? "true" : "false");
+    });
+  }
+
+  document.querySelectorAll("[data-agent-graph-toggle]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var current = document.body
+        ? document.body.getAttribute("data-agent-graph")
+        : "visible";
+      var nextState = current === "hidden" ? "visible" : "hidden";
+      try {
+        if (window.localStorage) {
+          window.localStorage.setItem("cagelensAgentGraph", nextState);
+        }
+      } catch (error) {
+        // Ignore storage failures; graph visibility still applies for this page view.
+      }
+      applyAgentGraphState(nextState);
     });
   });
 
@@ -1688,10 +2260,36 @@ _SCRIPT = """
   });
 
   document.querySelectorAll("[data-scroll-turn]").forEach(function (button) {
-    button.addEventListener("click", function () {
+    button.addEventListener("click", function (event) {
       var target = document.getElementById("turn-" + button.getAttribute("data-scroll-turn"));
       if (target) {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        var isAnchor = button.tagName && button.tagName.toUpperCase() === "A";
+        if (button.hasAttribute("data-open-turn-actions")) {
+          document.querySelectorAll(".agent-graph-subagent-link[aria-current]").forEach(function (branch) {
+            branch.removeAttribute("aria-current");
+          });
+          button.setAttribute("aria-current", "true");
+          document.querySelectorAll(".turn[data-graph-selected]").forEach(function (turn) {
+            turn.removeAttribute("data-graph-selected");
+          });
+          target.setAttribute("data-graph-selected", "true");
+          setTimeout(function () {
+            target.removeAttribute("data-graph-selected");
+          }, 1400);
+          target.setAttribute("data-turn-local-level", "2");
+          applyTurnLevel(target, 2);
+          var actions = target.querySelector(".turn-actions");
+          if (actions) {
+            actions.open = true;
+          }
+        }
+        if (isAnchor) {
+          event.preventDefault();
+        }
+        target.scrollIntoView({ behavior: "auto", block: "start" });
+        if (window.history && isAnchor) {
+          window.history.replaceState(null, "", button.getAttribute("href"));
+        }
       }
     });
   });
@@ -1809,6 +2407,7 @@ _SCRIPT = """
   });
 
   applyTheme(readTheme());
+  applyAgentGraphState(readAgentGraphState());
   applyLevel(document.documentElement.dataset.level || "1");
 })();
 """

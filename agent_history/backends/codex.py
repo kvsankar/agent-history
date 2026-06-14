@@ -85,6 +85,10 @@ CODEX_INDEX_VERSION = 3  # Raw cwd paths (not encoded)
 
 # Regex for tool name extraction
 _TOOL_NAME_PATTERN = re.compile(r"\*\*\[Tool:\s*([^\]]+)\]\*\*")
+_SUBAGENT_NOTIFICATION_RE = re.compile(
+    r"<subagent_notification>\s*(?P<body>.*?)\s*</subagent_notification>",
+    re.DOTALL,
+)
 
 
 # =============================================================================
@@ -221,6 +225,48 @@ def codex_format_function_result(payload: dict) -> str:
     return f"**[Tool Result]**\nCall ID: `{call_id}`\n```\n{output}\n```"
 
 
+def _codex_parse_subagent_notification(content: str) -> dict[str, Any] | None:
+    match = _SUBAGENT_NOTIFICATION_RE.search(str(content or ""))
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group("body"))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _codex_format_subagent_notification(data: dict[str, Any]) -> str:
+    agent_path = str(data.get("agent_path") or data.get("agent_id") or "unknown")
+    status = data.get("status") if isinstance(data.get("status"), dict) else {}
+    state = next((key for key in ("completed", "failed", "cancelled") if key in status), "updated")
+    details = status.get(state)
+    if isinstance(details, (dict, list)):
+        details = json.dumps(details, indent=2, ensure_ascii=False)
+    lines = [
+        f"**Sub-agent {state}**",
+        f"Agent path: `{agent_path}`",
+    ]
+    if details:
+        lines.extend(["", str(details)])
+    return "\n".join(lines)
+
+
+def _codex_subagent_notification_fields(content: str) -> dict[str, Any]:
+    notification = _codex_parse_subagent_notification(content)
+    if not notification:
+        return {}
+    status = notification.get("status") if isinstance(notification.get("status"), dict) else {}
+    state = next((key for key in ("completed", "failed", "cancelled") if key in status), "updated")
+    return {
+        "role": "system",
+        "content": _codex_format_subagent_notification(notification),
+        "is_subagent_notification": True,
+        "subagent_agent_path": notification.get("agent_path"),
+        "subagent_status": state,
+    }
+
+
 def _codex_get_present(mapping: dict[str, Any], *keys: str) -> Any:
     """Return the first value for a key present in mapping, including None."""
     for key in keys:
@@ -321,12 +367,24 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                             current_turn_id,
                         )
                         if payload_type == "message":
+                            content = codex_extract_content(payload)
+                            role = payload.get("role")
+                            notification_fields = _codex_subagent_notification_fields(content)
+                            parent_agent_fields = (
+                                {"is_parent_agent_message": True}
+                                if role == "user"
+                                and session_meta
+                                and session_meta.get("thread_source") == "subagent"
+                                else {}
+                            )
                             messages.append(
                                 {
-                                    "role": payload.get("role"),
-                                    "content": codex_extract_content(payload),
+                                    "role": role,
+                                    "content": content,
                                     "timestamp": timestamp,
                                     **linkage,
+                                    **parent_agent_fields,
+                                    **notification_fields,
                                 }
                             )
                         elif payload_type in ("function_call", "custom_tool_call"):
