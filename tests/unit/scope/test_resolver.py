@@ -141,6 +141,20 @@ class TestBuildTemplate:
         assert isinstance(template[0], ScopeRecord)
         assert isinstance(template[0].workspace, WorkspaceSpecAll)
 
+    def test_all_workspaces_flag_overrides_implicit_cwd_project(
+        self, mock_context: ResolutionContext
+    ) -> None:
+        """--aw should not be narrowed by implicit current-project detection."""
+        mock_context.cwd_project = "testproj"
+        mock_context.cwd_workspace = "/home/user/auth"
+        resolver = ScopeResolver(mock_context)
+
+        template = resolver._build_template(ScopeArgs(all_workspaces=True))
+
+        assert len(template) == 1
+        assert isinstance(template[0], ScopeRecord)
+        assert isinstance(template[0].workspace, WorkspaceSpecAll)
+
     def test_full_path_patterns_create_direct_path_specs(self, resolver: ScopeResolver) -> None:
         """Full-path positional patterns should create WorkspaceSpec.Path.
 
