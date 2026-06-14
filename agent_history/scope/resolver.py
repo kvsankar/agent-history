@@ -224,6 +224,17 @@ class ScopeResolver:
         if args.patterns or args.glob_patterns or args.regex_patterns or args.name_patterns:
             return self._build_pattern_records(args, home_spec, session_spec)
 
+        # Check for --aw (all workspaces). Explicit all-workspaces scope must
+        # override implicit current-project/current-workspace defaults.
+        if args.all_workspaces:
+            return [
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=WorkspaceSpecFactory.All,
+                    sessions=session_spec,
+                )
+            ]
+
         # Workspace listing defaults to discovery across selected homes.
         # Session/export/stats commands keep current workspace/project defaults.
         if args.resource == "ws" and args.verb == "list":
@@ -238,24 +249,6 @@ class ScopeResolver:
         # Check for implicit project detection (CWD in project)
         if self.context.cwd_project:
             return [ProjectRecord(project=self.context.cwd_project, sessions=session_spec)]
-
-        # Check for --aw (all workspaces) - but patterns can still filter
-        # If --aw is used without patterns, show all workspaces
-        # If --aw is used with patterns, patterns will filter (handled above)
-        if (
-            args.all_workspaces
-            and not args.patterns
-            and not args.glob_patterns
-            and not args.regex_patterns
-            and not args.name_patterns
-        ):
-            return [
-                ScopeRecord(
-                    home=home_spec,
-                    workspace=WorkspaceSpecFactory.All,
-                    sessions=session_spec,
-                )
-            ]
 
         # Check if CWD is in a workspace (use it as current)
         if self.context.cwd_workspace:
@@ -714,9 +707,6 @@ class ScopeResolver:
         Returns:
             List of matching workspace paths.
         """
-        import fnmatch
-        import re
-
         all_workspaces = self._enumerate_workspaces(home, agent=agent)
         normalized_pattern = pattern
         if match_type in (MatchType.EXACT, MatchType.PREFIX):
@@ -724,14 +714,28 @@ class ScopeResolver:
 
             normalized_pattern = build_workspace_ref(pattern).key
 
+        return self._filter_workspaces_by_match_type(
+            all_workspaces, pattern, normalized_pattern, match_type
+        )
+
+    def _filter_workspaces_by_match_type(
+        self,
+        workspaces: list[str],
+        pattern: str,
+        normalized_pattern: str,
+        match_type: MatchType,
+    ) -> list[str]:
+        import fnmatch
+        import re
+
         if match_type == MatchType.EXACT:
-            return [ws for ws in all_workspaces if ws == normalized_pattern]
+            return [ws for ws in workspaces if ws == normalized_pattern]
         elif match_type == MatchType.PREFIX:
-            return [ws for ws in all_workspaces if ws.startswith(normalized_pattern)]
+            return [ws for ws in workspaces if ws.startswith(normalized_pattern)]
         elif match_type == MatchType.CONTAINS:
             pattern_lower = pattern.lower()
             result = []
-            for ws in all_workspaces:
+            for ws in workspaces:
                 ws_lower = ws.lower()
                 if pattern_lower in ws_lower:
                     result.append(ws)
@@ -739,15 +743,15 @@ class ScopeResolver:
                     result.append(ws)
             return result
         elif match_type == MatchType.GLOB:
-            return [ws for ws in all_workspaces if fnmatch.fnmatch(ws, pattern)]
+            return [ws for ws in workspaces if fnmatch.fnmatch(ws, pattern)]
         elif match_type == MatchType.REGEX:
             try:
                 regex = re.compile(pattern)
             except re.error as exc:
                 raise ValueError(f"Invalid workspace regex {pattern!r}: {exc}") from exc
-            return [ws for ws in all_workspaces if regex.search(ws)]
+            return [ws for ws in workspaces if regex.search(ws)]
         else:
-            return [ws for ws in all_workspaces if ws == pattern]
+            return [ws for ws in workspaces if ws == pattern]
 
     def _expand_home_spec(self, spec: HomeSpec) -> tuple[list[str], ResolutionError | None]:
         """
