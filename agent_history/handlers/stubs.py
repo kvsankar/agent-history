@@ -34,6 +34,30 @@ def _read_messages_from_file(path: Path) -> list[dict[str, Any]]:
     return read_jsonl_messages(path)
 
 
+def _session_matches_target(session: dict[str, Any], target: str) -> bool:
+    """Return True when target names the session by id, file name, or stem."""
+    candidates: set[str] = set()
+    for key in ("filename", "id", "session_id"):
+        value = session.get(key)
+        if value:
+            candidates.add(str(value))
+    file_value = session.get("file")
+    if file_value:
+        path = Path(str(file_value))
+        candidates.add(str(file_value))
+        candidates.add(path.name)
+        candidates.add(path.stem)
+    filename = session.get("filename")
+    if filename:
+        path = Path(str(filename))
+        candidates.add(path.name)
+        candidates.add(path.stem)
+
+    if target in candidates:
+        return True
+    return len(target) >= 8 and any(candidate.startswith(target) for candidate in candidates)
+
+
 class SessionShowHandler(VerbHandler):
     """Handler for 'session show' command."""
 
@@ -74,11 +98,7 @@ class SessionShowHandler(VerbHandler):
         # Fall back to searching the resolved scope
         for record in scope:
             for session in record.sessions:
-                if target in (
-                    session.get("filename"),
-                    session.get("id"),
-                    session.get("session_id"),
-                ):
+                if _session_matches_target(session, target):
                     payload = dict(session)
                     payload.setdefault("workspace_raw", payload.get("workspace"))
                     context = WorkspaceContext.from_record(record)

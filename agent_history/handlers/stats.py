@@ -11,10 +11,13 @@ from typing import Any, Dict
 
 from agent_history.core.workspaces import build_scope_metadata, build_workspace_rows
 from agent_history.handlers.base import CommandResult, VerbHandler
+from agent_history.handlers.dispatcher import DispatchError
 from agent_history.scope.context import OutputArgs, ResolutionContext, ScopeArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.utils.paths import decode_workspace_path, is_encoded_workspace_name
 from agent_history.utils.workspace_ref import build_workspace_ref
+
+SUMMARY_DIMENSIONS = {"agent", "home", "workspace", "model", "tool", "day"}
 
 
 class SessionStatsHandler(VerbHandler):
@@ -78,6 +81,7 @@ class SessionStatsHandler(VerbHandler):
         if verb_args.get("stats_mode") == "rollup":
             return self._execute_rollup(scope, group_list, verb_args, human=human)
 
+        self._validate_summary_dimensions(group_list)
         stats = compute_stats(scope, "day" if include_day else None, include_time)
 
         # Overlay parsed metrics from the database for the already-resolved scope.
@@ -152,17 +156,25 @@ class SessionStatsHandler(VerbHandler):
         human: bool,
     ) -> CommandResult:
         """Return rollup stats for an already-resolved scope."""
-        from agent_history.storage.metrics import get_stats_rollup_from_db
+        from agent_history.storage.metrics import get_scoped_stats_from_db, get_stats_rollup_from_db
 
         dimensions = group_list or ["project"]
+        filters = self._filters_from_scope(scope)
+        project_map = verb_args.get("project_map")
+        storage_dimensions = self._storage_rollup_dimensions(dimensions, project_map)
+        storage_top = None if storage_dimensions != dimensions else verb_args.get("top")
         rows = get_stats_rollup_from_db(
-            filters=self._filters_from_scope(scope),
-            by=dimensions,
+            filters=filters,
+            by=storage_dimensions,
             metric=verb_args.get("metric") or "all",
-            top=verb_args.get("top"),
+            top=storage_top,
             sort_by=verb_args.get("sort"),
             sort_direction=verb_args.get("sort_direction") or "default",
         )
+        rows = self._apply_project_rollup(rows, dimensions, project_map)
+        if storage_dimensions != dimensions and verb_args.get("top"):
+            rows = rows[: verb_args["top"]]
+        scoped_summary = get_scoped_stats_from_db(filters=filters)
         metadata = build_scope_metadata(scope)
         return CommandResult(
             success=True,
@@ -176,6 +188,9 @@ class SessionStatsHandler(VerbHandler):
                 "cached": False,
                 "scope_request": verb_args.get("scope_request"),
                 "total_sessions": sum(len(record.sessions) for record in scope),
+                "total_time_seconds": scoped_summary.get("time_stats", {}).get(
+                    "total_duration_seconds", 0
+                ),
                 "sync_stats": verb_args.get("sync_stats"),
                 "human": human,
                 "total": bool(verb_args.get("total")),
@@ -218,13 +233,19 @@ class SessionStatsHandler(VerbHandler):
         filters, metadata = self._cached_filters(scope_args, context)
         metadata["scope_request"] = self._scope_request_metadata(scope_args, context)
         self._apply_session_filters(filters, scope_args)
+        project_map = self._project_membership_map(context, scope_args)
+
+        if verb_args.get("stats_mode") != "rollup":
+            self._validate_summary_dimensions(group_list)
 
         db_path = get_metrics_db_path()
         if not db_path.exists():
             return self._missing_cache_result(metadata, group_list, verb_args)
 
         if verb_args.get("stats_mode") == "rollup":
-            return self._execute_cached_rollup(filters, metadata, group_list, verb_args)
+            return self._execute_cached_rollup(
+                filters, metadata, group_list, verb_args, project_map=project_map
+            )
 
         stats = get_scoped_stats_from_db(filters=filters, include_day="day" in group_list)
         workspace_rows = self._workspace_rows_from_db(stats)
@@ -309,18 +330,25 @@ class SessionStatsHandler(VerbHandler):
         metadata: dict[str, Any],
         group_list: list[str],
         verb_args: Dict[str, Any],
+        *,
+        project_map: dict[str, str] | None = None,
     ) -> CommandResult:
         from agent_history.storage.metrics import get_scoped_stats_from_db, get_stats_rollup_from_db
 
         dimensions = group_list or ["project"]
+        storage_dimensions = self._storage_rollup_dimensions(dimensions, project_map)
+        storage_top = None if storage_dimensions != dimensions else verb_args.get("top")
         rows = get_stats_rollup_from_db(
             filters=filters,
-            by=dimensions,
+            by=storage_dimensions,
             metric=verb_args.get("metric") or "all",
-            top=verb_args.get("top"),
+            top=storage_top,
             sort_by=verb_args.get("sort"),
             sort_direction=verb_args.get("sort_direction") or "default",
         )
+        rows = self._apply_project_rollup(rows, dimensions, project_map)
+        if storage_dimensions != dimensions and verb_args.get("top"):
+            rows = rows[: verb_args["top"]]
         scoped_summary = get_scoped_stats_from_db(filters=filters)
         return CommandResult(
             success=True,
@@ -335,6 +363,9 @@ class SessionStatsHandler(VerbHandler):
                 "metric": verb_args.get("metric") or "all",
                 "cached": True,
                 "total_sessions": scoped_summary.get("total_sessions", 0),
+                "total_time_seconds": scoped_summary.get("time_stats", {}).get(
+                    "total_duration_seconds", 0
+                ),
                 "human": bool(verb_args.get("human")),
                 "total": bool(verb_args.get("total")),
                 "separator": bool(verb_args.get("separator")),
@@ -387,6 +418,99 @@ class SessionStatsHandler(VerbHandler):
             filters["workspace_patterns"] = list(scope_args.name_patterns)
 
         return filters, metadata
+
+    def _validate_summary_dimensions(self, group_list: list[str]) -> None:
+        invalid = [dimension for dimension in group_list if dimension not in SUMMARY_DIMENSIONS]
+        if invalid:
+            raise DispatchError(f"Unsupported stats dimension(s): {', '.join(invalid)}")
+
+    def _project_membership_map(
+        self, context: ResolutionContext, scope_args: ScopeArgs
+    ) -> dict[str, str]:
+        projects: list[str]
+        if scope_args.projects:
+            projects = list(scope_args.projects)
+        elif context.cwd_project:
+            projects = [context.cwd_project]
+        else:
+            projects = list(context.project_config.keys())
+
+        selected_homes = set(self._selected_homes(scope_args, context))
+        home_filter_explicit = bool(
+            scope_args.all_homes or scope_args.home_names or scope_args.home_type
+        )
+        mapping: dict[str, str] = {}
+        for project in projects:
+            project_def = context.project_config.get(project, {})
+            for home, configured in project_def.items():
+                if home_filter_explicit and home not in selected_homes:
+                    continue
+                values = configured if isinstance(configured, list) else [configured]
+                for value in values:
+                    for candidate in self._workspace_candidates(str(value)):
+                        mapping.setdefault(candidate, project)
+        return mapping
+
+    def _storage_rollup_dimensions(
+        self, dimensions: list[str], project_map: dict[str, str] | None
+    ) -> list[str]:
+        if not project_map or "project" not in dimensions:
+            return dimensions
+        storage_dimensions = [
+            "workspace" if dimension == "project" else dimension for dimension in dimensions
+        ]
+        normalized: list[str] = []
+        for dimension in storage_dimensions:
+            if dimension not in normalized:
+                normalized.append(dimension)
+        return normalized
+
+    def _apply_project_rollup(
+        self,
+        rows: list[dict[str, Any]],
+        dimensions: list[str],
+        project_map: dict[str, str] | None,
+    ) -> list[dict[str, Any]]:
+        if not project_map or "project" not in dimensions:
+            return rows
+        grouped: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for row in rows:
+            item = dict(row)
+            workspace = str(item.get("workspace", ""))
+            item["project"] = project_map.get(
+                workspace, item.get("project") or workspace or "(none)"
+            )
+            if "workspace" not in dimensions:
+                item.pop("workspace", None)
+            key = tuple(item.get(dimension) for dimension in dimensions)
+            if key not in grouped:
+                grouped[key] = item
+                continue
+            existing = grouped[key]
+            for field in (
+                "sessions",
+                "messages",
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_creation_tokens",
+                "time_seconds",
+            ):
+                existing[field] = (existing.get(field) or 0) + (item.get(field) or 0)
+            existing["time_hms"] = self._format_rollup_seconds(existing.get("time_seconds") or 0)
+            existing["time_hours"] = (
+                existing.get("time_seconds", 0) / 3600 if existing.get("time_seconds") else 0
+            )
+        return list(grouped.values())
+
+    def _format_rollup_seconds(self, value: Any) -> str:
+        try:
+            seconds = int(float(value))
+        except (TypeError, ValueError):
+            return ""
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours}h {minutes}m {seconds}s"
 
     def _scope_request_metadata(
         self, scope_args: ScopeArgs, context: ResolutionContext

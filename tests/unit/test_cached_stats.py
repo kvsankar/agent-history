@@ -5,8 +5,10 @@ import json
 from agent_history.adapters.inventory import InventoryProvider
 from agent_history.cli import orchestrator as orchestrator_module
 from agent_history.cli.orchestrator import CommandOrchestrator
-from agent_history.scope.context import ResolutionContext
+from agent_history.handlers.stats import SessionStatsHandler
+from agent_history.scope.context import OutputArgs, ResolutionContext
 from agent_history.scope.resolver import ScopeResolver
+from agent_history.scope.types import ConcreteRecord
 from agent_history.storage.metrics import init_metrics_db
 
 
@@ -155,6 +157,58 @@ def _seed_second_workspace_session() -> None:
                 "2026-06-02T00:00:00Z",
                 "2026-06-02T00:00:00Z",
                 0,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _insert_cached_session(
+    *,
+    file_path: str,
+    session_id: str,
+    workspace: str,
+    agent: str = "claude",
+    start: str = "2026-06-01T00:00:00Z",
+    end: str = "2026-06-01T00:05:00Z",
+    work_seconds: int = 300,
+    messages: int = 1,
+    input_tokens: int = 1,
+    output_tokens: int = 0,
+) -> None:
+    conn = init_metrics_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO sessions (
+                file_path, session_id, workspace, home, source, agent, file_mtime,
+                is_agent, message_count, user_messages, assistant_messages,
+                input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+                first_timestamp, last_timestamp, start_time, end_time, work_period_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                file_path,
+                session_id,
+                workspace,
+                "local",
+                "local",
+                agent,
+                200.0,
+                0,
+                messages,
+                1 if messages else 0,
+                max(messages - 1, 0),
+                input_tokens,
+                output_tokens,
+                0,
+                0,
+                start,
+                end,
+                start,
+                end,
+                work_seconds,
             ),
         )
         conn.commit()
@@ -403,6 +457,142 @@ def test_time_rollup_accepts_workspace_month_aliases(tmp_path, monkeypatch, caps
     assert rows[0]["workspace"] == "/tmp/project"
     assert rows[0]["month"] == "2026-06"
     assert rows[0]["time_hms"] == "0h 5m 0s"
+
+
+def test_time_rollup_total_uses_scope_wall_clock_not_group_sum(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
+    monkeypatch.chdir(tmp_path)
+    _insert_cached_session(
+        file_path="/tmp/claude-overlap.jsonl",
+        session_id="claude-overlap",
+        workspace="/tmp/project",
+        agent="claude",
+        start="2026-06-01T00:00:00Z",
+        end="2026-06-01T01:00:00Z",
+        work_seconds=3600,
+    )
+    _insert_cached_session(
+        file_path="/tmp/codex-overlap.jsonl",
+        session_id="codex-overlap",
+        workspace="/tmp/project",
+        agent="codex",
+        start="2026-06-01T00:30:00Z",
+        end="2026-06-01T01:30:00Z",
+        work_seconds=3600,
+    )
+
+    exit_code = CommandOrchestrator().run(
+        ["stats", "rollup", "--metric", "time", "--by", "agent", "--format", "tsv", "--raw"]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    rows = [line.split("\t") for line in captured.out.splitlines()]
+    total = next(row for row in rows if row[0] == "TOTAL")
+    assert total[3] == "5400"
+
+
+def test_project_rollup_uses_configured_project_membership(tmp_path, monkeypatch, capsys) -> None:
+    config_dir = tmp_path / ".cagelens"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "homes": [],
+                "sources": [],
+                "projects": {
+                    "sample": {
+                        "local": [
+                            "/tmp/project",
+                            "/tmp/second-project",
+                        ]
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(config_dir))
+    monkeypatch.chdir(tmp_path)
+    _seed_metrics_db()
+    _seed_second_workspace_session()
+
+    exit_code = CommandOrchestrator().run(
+        [
+            "stats",
+            "rollup",
+            "--metric",
+            "all",
+            "--by",
+            "project",
+            "--project",
+            "sample",
+            "--format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    rows = json.loads(captured.out)
+    assert rows == [
+        {
+            "sessions": 2,
+            "messages": 3,
+            "input_tokens": 11,
+            "output_tokens": 5,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 2,
+            "time_seconds": 300,
+            "time_hms": "0h 5m 0s",
+            "time_hours": 300 / 3600,
+            "project": "sample",
+        }
+    ]
+
+
+def test_synced_project_rollup_uses_passed_project_membership(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
+    monkeypatch.chdir(tmp_path)
+    _seed_metrics_db()
+    _seed_second_workspace_session()
+    scope = [
+        ConcreteRecord(home="local", workspace="/tmp/project", sessions=[{}]),
+        ConcreteRecord(home="local", workspace="/tmp/second-project", sessions=[{}]),
+    ]
+
+    result = SessionStatsHandler().execute(
+        scope,
+        {
+            "stats_mode": "rollup",
+            "metric": "all",
+            "by": ["project"],
+            "project_map": {
+                "/tmp/project": "sample",
+                "/tmp/second-project": "sample",
+            },
+        },
+        OutputArgs(format="json"),
+    )
+
+    assert result.success
+    assert result.data == [
+        {
+            "sessions": 2,
+            "messages": 3,
+            "input_tokens": 11,
+            "output_tokens": 5,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 2,
+            "time_seconds": 300,
+            "time_hms": "0h 5m 0s",
+            "time_hours": 300 / 3600,
+            "project": "sample",
+        }
+    ]
 
 
 def test_token_month_rollup_omits_untimestamped_zero_token_bucket(

@@ -12,16 +12,20 @@ from agent_history.adapters.inventory import (
     _summarize_codex_sessions_dir,
 )
 from agent_history.adapters.remote import SSHRemoteClient
+from agent_history.backends.claude import read_jsonl_messages
+from agent_history.backends.gemini import gemini_get_workspace_readable
 from agent_history.cli.orchestrator import CommandOrchestrator
 from agent_history.cli.parser import CLIParser
 from agent_history.handlers.base import CommandResult
-from agent_history.output.formatter import OutputFormatter
+from agent_history.handlers.stubs import SessionShowHandler
+from agent_history.output.formatter import OutputFormatter, TsvFormatter
 from agent_history.scope.context import OutputArgs, ResolutionContext
 from agent_history.scope.resolver import ScopeResolver
-from agent_history.scope.types import WorkspaceSpecCurrent
+from agent_history.scope.types import ConcreteRecord, WorkspaceSpecCurrent
 from agent_history.storage.config import load_config, save_config
+from agent_history.storage.metrics import init_metrics_db, sync_file_to_db
 from tests.helpers.session_builders import ClaudeSessionBuilder
-from tests.helpers.workspace_paths import encode_workspace_path
+from tests.helpers.workspace_paths import create_workspace_fixture, encode_workspace_path
 
 
 def _context(tmp_path: Path) -> ResolutionContext:
@@ -293,6 +297,112 @@ def test_reset_target_flags_are_not_supported() -> None:
         CLIParser().parse(["reset", "--db"])
 
 
+def test_reset_all_removes_codex_workspace_index(monkeypatch, tmp_path: Path) -> None:
+    """Reset all should clear every cagelens-managed index file."""
+    config_dir = tmp_path / ".cagelens"
+    config_dir.mkdir()
+    codex_index = config_dir / "codex_index.json"
+    codex_index.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(config_dir))
+
+    assert CommandOrchestrator().run(["reset", "all", "-y"]) == 0
+
+    assert not codex_index.exists()
+
+
+def test_claude_workspace_with_space_is_listed_by_session_scope(tmp_path: Path) -> None:
+    """Claude session scanning should not drop encoded workspaces containing spaces."""
+    workspace = "/tmp/sp ace/proj"
+    create_workspace_fixture(tmp_path, workspace, num_sessions=1)
+    context = _context(tmp_path)
+    request = CLIParser().parse(["session", "list", "--aw", "--agent", "claude"])
+
+    result = ScopeResolver(context).resolve(request.scope_args)
+    sessions = [session for record in result.scope for session in record.sessions]
+
+    assert result.success
+    assert len(sessions) == 1
+    assert sessions[0]["workspace_display"] == workspace
+
+
+def test_tsv_formatter_escapes_control_characters_in_cells() -> None:
+    """Tabs/newlines inside data cells must not create extra TSV columns or rows."""
+    output = TsvFormatter().format(
+        [
+            {
+                "home": "local",
+                "workspace": "/tmp/ta\tb/ws\nnext",
+                "session_count": 1,
+                "status": "missing",
+                "last_modified": "2026-06-15T00:00:00",
+            }
+        ],
+        "workspace_list",
+        {},
+    )
+
+    lines = output.splitlines()
+    assert len(lines) == 2
+    cells = lines[1].split("\t")
+    assert len(cells) == 5
+    assert cells[1] == r"/tmp/ta\tb/ws\nnext"
+
+
+def test_multi_remote_preflight_keeps_reachable_hosts(monkeypatch, tmp_path: Path, capsys) -> None:
+    """One failed explicit remote should not discard successful remotes."""
+    context = _context(tmp_path)
+    context.available_homes["remote"] = []
+    orchestrator = CommandOrchestrator()
+    orchestrator.context_builder.build = lambda: context
+
+    def fake_check(remote_host: str):
+        return (remote_host == "goodhost", "" if remote_host == "goodhost" else "not found")
+
+    def fake_summaries(self, home: str, agent: str | None = None):
+        assert home == "remote:goodhost"
+        assert agent == "claude"
+        return [
+            {
+                "home": home,
+                "workspace": "/home/test/project",
+                "workspace_key": "/home/test/project",
+                "workspace_display": "/home/test/project",
+                "session_count": 1,
+                "sessions": 1,
+                "status": "ok",
+                "last_modified": "2026-06-15T00:00:00",
+                "agents": ["claude"],
+            }
+        ]
+
+    monkeypatch.setattr("agent_history.backends.ssh.check_ssh_connection", fake_check)
+    monkeypatch.setattr(InventoryProvider, "list_workspace_summaries", fake_summaries)
+
+    exit_code = orchestrator.run(
+        [
+            "ws",
+            "list",
+            "--aw",
+            "-r",
+            "goodhost",
+            "-r",
+            "badhost.invalid",
+            "--agent",
+            "claude",
+            "--format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out)
+    assert exit_code == 0
+    assert len(rows) == 1
+    assert rows[0]["home"] == "remote:goodhost"
+    assert rows[0]["session_count"] == 1
+    assert "badhost.invalid" in captured.err
+
+
 def test_gemini_index_does_not_build_resolution_context(monkeypatch, tmp_path: Path) -> None:
     """gemini-index should read the local index without resolving workspaces."""
     monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
@@ -380,6 +490,125 @@ def test_remote_gemini_all_workspaces_preserves_hash_workspace_key(tmp_path: Pat
     assert remote_client.list_sessions_calls == [("vm01", project_hash, "gemini")]
     assert sessions[0]["workspace"] == project_hash
     assert sessions[0]["workspace_key"] == project_hash
+
+
+def test_gemini_readable_does_not_label_plain_workspace_slug_as_hash() -> None:
+    """Resolved Gemini names that are not hashes must remain readable names."""
+    assert gemini_get_workspace_readable("swdev-with-ai") == "swdev-with-ai"
+
+
+def test_session_show_matches_bare_filename_stem() -> None:
+    """session show <id> should match a session whose filename is <id>.jsonl."""
+    session_id = "019e8bf0-6c1a-75d1-9381-d2a787a1fd94"
+    scope = [
+        ConcreteRecord(
+            home="local",
+            workspace="/tmp/project",
+            workspace_key="/tmp/project",
+            workspace_display="/tmp/project",
+            sessions=[
+                {
+                    "filename": f"{session_id}.jsonl",
+                    "file": f"/tmp/project/{session_id}.jsonl",
+                    "workspace": "/tmp/project",
+                }
+            ],
+        )
+    ]
+
+    result = SessionShowHandler().execute(
+        scope,
+        {"session_id": session_id},
+        OutputArgs(format="json"),
+    )
+
+    assert result.success
+    assert result.data["filename"] == f"{session_id}.jsonl"
+
+
+def test_claude_jsonl_utf8_bom_does_not_drop_first_message(tmp_path: Path) -> None:
+    """A UTF-8 BOM at the start of a JSONL file should not hide the first record."""
+    session_file = tmp_path / "bom.jsonl"
+    lines = [
+        {
+            "type": "user",
+            "sessionId": "bom-session",
+            "uuid": "user-1",
+            "timestamp": "2026-06-01T00:00:00Z",
+            "message": {"role": "user", "content": "hello"},
+        },
+        {
+            "type": "assistant",
+            "sessionId": "bom-session",
+            "uuid": "assistant-1",
+            "timestamp": "2026-06-01T00:01:00Z",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+        },
+    ]
+    session_file.write_text(
+        "\ufeff" + "\n".join(json.dumps(line) for line in lines) + "\n",
+        encoding="utf-8",
+    )
+
+    messages = read_jsonl_messages(session_file)
+
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+
+
+def test_metrics_sync_utf8_bom_counts_first_claude_message(monkeypatch, tmp_path: Path) -> None:
+    """Metrics sync should parse BOM-prefixed Claude JSONL instead of silently losing it."""
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
+    session_file = tmp_path / "bom-metrics.jsonl"
+    first = {
+        "type": "user",
+        "sessionId": "bom-metrics",
+        "uuid": "user-1",
+        "timestamp": "2026-06-01T00:00:00Z",
+        "cwd": "/tmp/project",
+        "message": {"role": "user", "content": "hello"},
+    }
+    second = {
+        "type": "assistant",
+        "sessionId": "bom-metrics",
+        "uuid": "assistant-1",
+        "timestamp": "2026-06-01T00:01:00Z",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+    }
+    session_file.write_text(
+        "\ufeff" + json.dumps(first) + "\n" + json.dumps(second) + "\n",
+        encoding="utf-8",
+    )
+    conn = init_metrics_db()
+    try:
+        assert sync_file_to_db(conn, session_file, workspace="/tmp/project", force=True)
+        row = conn.execute(
+            "SELECT message_count, user_messages, assistant_messages FROM sessions"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert dict(row) == {"message_count": 2, "user_messages": 1, "assistant_messages": 1}
+
+
+def test_stats_rejects_unknown_summary_grouping(monkeypatch, tmp_path: Path, capsys) -> None:
+    """stats --by should reject unsupported dimensions like rollup already does."""
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = CommandOrchestrator().run(["stats", "--by", "bogusdim"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Unsupported stats dimension" in captured.err
+
+
+def test_home_add_accepts_bare_ssh_alias(monkeypatch, tmp_path: Path) -> None:
+    """home add should accept the same bare SSH alias shape accepted by -r."""
+    monkeypatch.setenv("AGENT_HISTORY_CONFIG_DIR", str(tmp_path / ".agent-history"))
+
+    assert CommandOrchestrator().run(["home", "add", "ubuntuvm01"]) == 0
+
+    assert "ubuntuvm01" in load_config()["homes"]
 
 
 def test_codex_workspace_summary_ignores_stale_and_out_of_root_index_entries(

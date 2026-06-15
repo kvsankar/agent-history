@@ -43,6 +43,34 @@ def test_gemini_backend_metadata_includes_current_jsonl_remote_support() -> None
     assert "*.json" in command
 
 
+def test_claude_remote_session_command_uses_python_enumerator() -> None:
+    """Remote Claude session listing should use a scalable Python enumerator."""
+    backend = get_backend("claude")
+
+    assert backend is not None
+    assert backend.remote_list_sessions_command is not None
+
+    command = backend.remote_list_sessions_command("/home/test/project")
+
+    assert "iter_session_files" in command
+    assert "for f in *.jsonl" not in command
+
+
+def test_ssh_command_nonzero_reports_error(monkeypatch) -> None:
+    """Remote command failures must not look like empty successful listings."""
+
+    def fake_run(cmd, **kwargs):
+        return SimpleNamespace(returncode=2, stdout="", stderr="remote failed")
+
+    monkeypatch.setattr(ssh_backend.subprocess, "run", fake_run)
+
+    stdout, error = ssh_backend._run_remote_command("user@example", "false")
+
+    assert stdout == ""
+    assert error is not None
+    assert "remote failed" in error
+
+
 def test_gemini_stats_workspace_resolution_handles_nested_jsonl(
     monkeypatch, tmp_path: Path
 ) -> None:

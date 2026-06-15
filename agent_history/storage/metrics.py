@@ -339,7 +339,7 @@ def _parse_claude_jsonl(
     timestamps: List[str] = []
 
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with open(jsonl_file, encoding="utf-8-sig") as f:
             for raw_line in f:
                 line = raw_line.strip()
                 if not line:
@@ -478,7 +478,7 @@ def _parse_codex_jsonl(
     timestamps: List[str] = []
 
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with open(jsonl_file, encoding="utf-8-sig") as f:
             for raw_line in f:
                 line = raw_line.strip()
                 if not line:
@@ -646,7 +646,7 @@ def _parse_gemini_json(
     timestamps: List[str] = []
 
     try:
-        with open(json_file, encoding="utf-8") as f:
+        with open(json_file, encoding="utf-8-sig") as f:
             data = json.load(f)
 
         session_info["session_id"] = data.get("sessionId")
@@ -1415,6 +1415,64 @@ def _date_time_rollup_seconds(
     return rollup
 
 
+def _rollup_time_seconds(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    params: list[Any],
+    dimensions: list[str],
+    metric: str,
+) -> dict[tuple[str, ...], float] | None:
+    """Return merged wall-clock seconds for each requested rollup bucket."""
+    if metric not in {"time", "all"}:
+        return None
+    if all(dimension in {"day", "month"} for dimension in dimensions):
+        return _date_time_rollup_seconds(conn, where_sql, params, dimensions)
+
+    day_filter = "COALESCE(start_time, first_timestamp) IS NOT NULL AND work_period_seconds > 0"
+    scoped_where = where_sql
+    if scoped_where:
+        scoped_where += f" AND {day_filter}"
+    else:
+        scoped_where = f" WHERE {day_filter}"
+    dimension_sql = "".join(
+        f",\n            {ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
+        for index, dimension in enumerate(dimensions)
+    )
+    cursor = conn.execute(
+        f"""
+        SELECT
+            COALESCE(start_time, first_timestamp) as start_timestamp,
+            COALESCE(end_time, last_timestamp, start_time, first_timestamp) as end_timestamp,
+            work_period_seconds
+            {dimension_sql}
+        FROM sessions
+        {scoped_where}
+        """,
+        params,
+    )
+    intervals_by_key: dict[tuple[str, ...], list[tuple[datetime, datetime]]] = {}
+    for row in cursor.fetchall():
+        interval = _row_work_interval(row)
+        if not interval:
+            continue
+        start, end = interval
+        for day, day_start, day_end in _split_interval_by_day(start, end):
+            key_parts: list[str] = []
+            for index, dimension in enumerate(dimensions):
+                if dimension == "day":
+                    value = day
+                elif dimension == "month":
+                    value = day[:7]
+                else:
+                    value = row[f"dim_{index}"] or "(none)"
+                key_parts.append(str(value))
+            intervals_by_key.setdefault(tuple(key_parts), []).append((day_start, day_end))
+    return {
+        key: _merged_interval_seconds(intervals)
+        for key, intervals in sorted(intervals_by_key.items())
+    }
+
+
 def _session_stats_rollup(
     conn: sqlite3.Connection,
     filters: Optional[Dict[str, Any]],
@@ -1425,7 +1483,7 @@ def _session_stats_rollup(
     sort_direction: str,
 ) -> list[Dict[str, Any]]:
     where_sql, params = _where_sql(filters, "sessions")
-    date_time_seconds = _rollup_date_time_seconds(conn, where_sql, params, dimensions, metric)
+    date_time_seconds = _rollup_time_seconds(conn, where_sql, params, dimensions, metric)
     select_parts = [
         f"{ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
         for index, dimension in enumerate(dimensions)
@@ -1454,18 +1512,6 @@ def _session_stats_rollup(
     return _sort_and_limit_rollup_rows(rows, dimensions, metric, top, sort_by, sort_direction)
 
 
-def _rollup_date_time_seconds(
-    conn: sqlite3.Connection,
-    where_sql: str,
-    params: list[Any],
-    dimensions: list[str],
-    metric: str,
-) -> dict[tuple[str, ...], float] | None:
-    if metric == "time" and all(dimension in {"day", "month"} for dimension in dimensions):
-        return _date_time_rollup_seconds(conn, where_sql, params, dimensions)
-    return None
-
-
 def _rollup_item_from_session_row(
     row: sqlite3.Row,
     dimensions: list[str],
@@ -1492,7 +1538,7 @@ def _rollup_item_from_session_row(
         item["time_seconds"] = date_time_seconds.get(key, 0)
         item["time_hms"] = _format_seconds_hms(item["time_seconds"])
         item["time_hours"] = item["time_seconds"] / 3600 if item["time_seconds"] else 0
-        if not item["time_seconds"]:
+        if metric == "time" and not item["time_seconds"]:
             return None
     return item
 

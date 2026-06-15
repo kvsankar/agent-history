@@ -239,7 +239,7 @@ class ResetHandler(VerbHandler):
             if config_file.exists():
                 config_file.unlink()
                 removed.append(str(config_file))
-            for extra in ("gemini_index.json", "gemini_hash_index.json"):
+            for extra in ("gemini_index.json", "gemini_hash_index.json", "codex_index.json"):
                 extra_path = config_dir / extra
                 if extra_path.exists():
                     extra_path.unlink()

@@ -57,19 +57,8 @@ class HomeAddHandler(VerbHandler):
                 data_type="message",
                 errors=["Specify a source (user@host), --windows, --wsl, or --web"],
             )
-        elif (
-            "@" not in source and source not in ("windows", "web") and not source.startswith("wsl:")
-        ):
-            # Validate SSH remote format
-            return CommandResult(
-                success=False,
-                data=None,
-                data_type="message",
-                errors=[
-                    f"Invalid source format: {source}",
-                    "Expected: user@hostname, --windows, --web, or --wsl",
-                ],
-            )
+        elif source.startswith(("local:", "windows:", "wsl:", "remote:")):
+            pass
 
         config = load_config()
         homes = config.get("homes", [])
