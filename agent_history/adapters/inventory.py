@@ -294,8 +294,6 @@ def _normalize_summary_workspace(home: str, workspace: str) -> str:
 def _workspace_status(home: str, workspace_display: str) -> str:
     if home.startswith("remote:") or home == "web":
         return "ok"
-    if home.startswith("windows:"):
-        return "unknown"
     if workspace_display.startswith("[hash:"):
         return "unknown"
     if not workspace_display:

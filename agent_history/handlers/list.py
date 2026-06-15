@@ -458,9 +458,27 @@ class HomeListHandler(VerbHandler):
             return
 
         for home_spec in saved_homes:
+            category_key = self._category_home_key(home_spec)
+            if category_key and category_key not in homes:
+                homes[category_key] = self._empty_home(
+                    category_key, category_key, status="configured"
+                )
+                continue
             home_key = self._remote_home_key(home_spec)
             if home_key and home_key not in homes:
                 homes[home_key] = self._empty_home(home_key, "remote", status="configured")
+
+    def _category_home_key(self, home_spec: Any) -> str | None:
+        """Return configured category home key for bare WSL/Windows entries."""
+        name = None
+        if isinstance(home_spec, str):
+            name = home_spec
+        elif isinstance(home_spec, dict):
+            name = home_spec.get("name")
+
+        if name in {"wsl", "windows"}:
+            return name
+        return None
 
     def _remote_home_key(self, home_spec: Any) -> str | None:
         """Return the remote home key for a saved home spec."""
@@ -470,7 +488,11 @@ class HomeListHandler(VerbHandler):
         elif isinstance(home_spec, dict):
             name = home_spec.get("name")
 
-        if not name or name == "web" or name.startswith(("wsl:", "windows:", "local")):
+        if (
+            not name
+            or name in {"web", "wsl", "windows"}
+            or name.startswith(("wsl:", "windows:", "local"))
+        ):
             return None
         if name.startswith("remote:"):
             return name

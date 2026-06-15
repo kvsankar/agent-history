@@ -597,7 +597,7 @@ class ContextBuilder:
         """Normalize a configured home entry to a remote host name."""
         if isinstance(home_spec, dict):
             home_spec = home_spec.get("name")
-        if not isinstance(home_spec, str) or home_spec == "web":
+        if not isinstance(home_spec, str) or home_spec in {"web", "wsl", "windows", "local"}:
             return None
         if home_spec.startswith("remote:"):
             return home_spec[7:]

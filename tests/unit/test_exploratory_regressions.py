@@ -14,9 +14,12 @@ from agent_history.adapters.inventory import (
 from agent_history.adapters.remote import SSHRemoteClient
 from agent_history.cli.orchestrator import CommandOrchestrator
 from agent_history.cli.parser import CLIParser
-from agent_history.scope.context import ResolutionContext
+from agent_history.handlers.base import CommandResult
+from agent_history.output.formatter import OutputFormatter
+from agent_history.scope.context import OutputArgs, ResolutionContext
 from agent_history.scope.resolver import ScopeResolver
-from agent_history.storage.config import load_config
+from agent_history.scope.types import WorkspaceSpecCurrent
+from agent_history.storage.config import load_config, save_config
 from tests.helpers.session_builders import ClaudeSessionBuilder
 from tests.helpers.workspace_paths import encode_workspace_path
 
@@ -50,6 +53,58 @@ def test_home_add_windows_dispatches_without_scope_resolution(monkeypatch, tmp_p
 
     assert orchestrator.run(["home", "add", "--windows"]) == 0
     assert "windows" in load_config()["homes"]
+
+
+def test_home_show_local_dispatches_without_workspace_scope(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    """home show <name> should show configured homes, not resolve workspace scope."""
+    context = _context(tmp_path)
+    context.cwd_workspace = "/home/user/current-project"
+    orchestrator = CommandOrchestrator()
+    orchestrator.context_builder.build = lambda: context
+
+    def fail_resolve(*_args, **_kwargs):
+        raise AssertionError("home show should not resolve workspaces")
+
+    monkeypatch.setattr("agent_history.cli.orchestrator.ScopeResolver.resolve", fail_resolve)
+
+    assert orchestrator.run(["home", "show", "local", "--format", "json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["home"] == "local"
+
+
+def test_home_remove_unknown_prints_each_error_once(capsys) -> None:
+    """Empty error results should not write the same errors twice."""
+    result = CommandResult(
+        success=False,
+        data=None,
+        data_type="message",
+        errors=["Home 'missing' not found.", "Configured homes: local"],
+    )
+
+    OutputFormatter().format(result, OutputArgs(format="table"))
+
+    err_lines = capsys.readouterr().err.splitlines()
+    assert err_lines == [
+        "Error: Home 'missing' not found.",
+        "Error: Configured homes: local",
+    ]
+
+
+def test_home_add_bare_wsl_is_not_reported_as_remote(monkeypatch, tmp_path: Path, capsys) -> None:
+    """A saved bare WSL category home must not become remote:wsl in home list."""
+    context = _context(tmp_path)
+    monkeypatch.setenv("AGENT_HISTORY_CONFIG_DIR", str(tmp_path / ".agent-history"))
+    save_config({"version": 1, "homes": ["wsl"], "sources": ["wsl"], "projects": {}})
+    orchestrator = CommandOrchestrator()
+    orchestrator.context_builder.build = lambda: context
+
+    assert orchestrator.run(["home", "list", "--format", "json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    homes = {row["home"]: row for row in rows}
+    assert "remote:wsl" not in homes
+    assert homes["wsl"]["type"] == "wsl"
 
 
 def test_workspace_list_all_windows_uses_summaries_without_scope_resolution(
@@ -119,6 +174,85 @@ def test_workspace_list_counts_flag_remains_compatible(monkeypatch, tmp_path: Pa
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]["session_count"] == 2
     assert rows[0]["last_modified"] == "2026-06-06T00:00:00"
+
+
+def test_at_project_shorthand_maps_to_project_scope() -> None:
+    """@name should be equivalent to --project name, not a workspace literal."""
+    request = CLIParser().parse(["session", "list", "@tp"])
+
+    assert request.scope_args.projects == ["tp"]
+    assert request.scope_args.patterns == []
+
+
+def test_at_project_shorthand_works_for_session_export() -> None:
+    request = CLIParser().parse(["session", "export", "@tp", "-o", "/tmp/out"])
+
+    assert request.scope_args.projects == ["tp"]
+    assert request.scope_args.patterns == []
+    assert request.verb_args["targets"] == []
+
+
+def test_session_list_without_explicit_scope_uses_current_workspace_intent(
+    tmp_path: Path,
+) -> None:
+    """Outside a workspace, session list should not silently expand to all workspaces."""
+    request = CLIParser().parse(["session", "list"])
+    template = ScopeResolver(_context(tmp_path))._build_template(request.scope_args)
+
+    assert isinstance(template[0].workspace, WorkspaceSpecCurrent)
+
+
+def test_session_export_without_explicit_scope_uses_current_workspace_intent(
+    tmp_path: Path,
+) -> None:
+    """Bare session export must not become an accidental all-workspaces export."""
+    request = CLIParser().parse(["session", "export", "-o", "/tmp/out"])
+    template = ScopeResolver(_context(tmp_path))._build_template(request.scope_args)
+
+    assert isinstance(template[0].workspace, WorkspaceSpecCurrent)
+
+
+def test_all_workspaces_and_this_are_mutually_exclusive() -> None:
+    with pytest.raises(ValueError, match=r"--aw.*--this"):
+        CLIParser().parse(["session", "list", "--aw", "--this"])
+
+
+def test_inverted_date_range_is_rejected() -> None:
+    with pytest.raises(ValueError, match=r"--since.*after --until"):
+        CLIParser().parse(
+            ["session", "list", "--aw", "--since", "2026-06-01", "--until", "2026-01-01"]
+        )
+
+
+def test_jobs_must_be_positive() -> None:
+    with pytest.raises(SystemExit):
+        CLIParser().parse(["session", "export", "/tmp/ws", "-o", "/tmp/out", "--jobs", "0"])
+
+
+def test_output_width_must_not_be_negative() -> None:
+    with pytest.raises(SystemExit):
+        CLIParser().parse(["session", "list", "--aw", "-w", "-5"])
+
+
+def test_project_show_accepts_output_format() -> None:
+    request = CLIParser().parse(["project", "show", "tp", "--format", "table"])
+
+    assert request.output_args.format == "table"
+
+
+def test_broken_pipe_is_quiet_success(monkeypatch, tmp_path: Path, capsys) -> None:
+    """Closed downstream pipes should behave like normal CLI termination."""
+    context = _context(tmp_path)
+    orchestrator = CommandOrchestrator()
+    orchestrator.context_builder.build = lambda: context
+
+    def raise_broken_pipe(*_args, **_kwargs):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    monkeypatch.setattr(orchestrator.formatter, "format", raise_broken_pipe)
+
+    assert orchestrator.run(["home", "list"]) == 0
+    assert "Broken pipe" not in capsys.readouterr().err
 
 
 def test_exact_path_scope_does_not_enumerate_workspaces(tmp_path: Path) -> None:

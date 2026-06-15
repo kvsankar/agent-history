@@ -1012,6 +1012,7 @@ class TsvFormatter(DataFormatter):
             "workspace_list": self._format_workspace_list,
             "home_list": self._format_home_list,
             "project_list": self._format_project_list,
+            "project_details": self._format_project_details,
             "project_update": self._format_project_update,
             "stats": self._format_stats,
             "stats_rollup": self._format_stats_rollup,
@@ -1026,6 +1027,7 @@ class TsvFormatter(DataFormatter):
         if formatter:
             if data_type in (
                 "project_list",
+                "project_details",
                 "project_update",
                 "home_list",
                 "stats",
@@ -1123,6 +1125,35 @@ class TsvFormatter(DataFormatter):
                 row.append(str(p.get("session_count", "")))
             lines.append("\t".join(row))
 
+        return "\n".join(lines)
+
+    def _format_project_details(
+        self, data: ProjectDict, metadata: dict[str, Any] | None = None
+    ) -> str:
+        """Format project details as TSV rows."""
+        workspace_display_map = (metadata or {}).get("workspace_display_map", {})
+        lines = ["PROJECT\tHOME\tWORKSPACE\tSESSIONS"]
+        project_name = str(data.get("project", ""))
+        workspaces_by_home = data.get("workspaces_by_home", {})
+        if not isinstance(workspaces_by_home, dict):
+            return "\n".join(lines)
+        for home, workspaces in workspaces_by_home.items():
+            if not isinstance(workspaces, list):
+                continue
+            for workspace in workspaces:
+                if not isinstance(workspace, dict):
+                    continue
+                ws_path = _workspace_display(workspace, display_map=workspace_display_map)
+                lines.append(
+                    "\t".join(
+                        [
+                            project_name,
+                            str(home),
+                            ws_path,
+                            str(workspace.get("session_count", 0)),
+                        ]
+                    )
+                )
         return "\n".join(lines)
 
     def _format_project_update(self, data: ProjectDict, metadata: dict[str, Any]) -> str:
@@ -1388,7 +1419,7 @@ class OutputFormatter:
     def _write_errors_and_warnings(self, result: CommandResult) -> None:
         for error in result.errors:
             sys.stderr.write(f"Error: {error}\n")
-        self._write_warnings(result)
+        self._write_warnings_only(result)
 
     def _write_empty_message(self, data_type: str) -> None:
         messages = {
@@ -1408,12 +1439,15 @@ class OutputFormatter:
             print(output)
 
     def _write_warnings(self, result: CommandResult) -> None:
-        for warning in result.warnings:
-            sys.stderr.write(f"Warning: {warning}\n")
+        self._write_warnings_only(result)
 
         # Write errors to stderr (for partial results)
         for error in result.errors:
             sys.stderr.write(f"Error: {error}\n")
+
+    def _write_warnings_only(self, result: CommandResult) -> None:
+        for warning in result.warnings:
+            sys.stderr.write(f"Warning: {warning}\n")
 
     def get_formatter(self, format_name: str) -> DataFormatter | None:
         """Get a specific formatter by name.

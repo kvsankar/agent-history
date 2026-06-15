@@ -341,7 +341,9 @@ class TestProjectScope:
         )
 
         assert_cli_success(result, "project show should succeed")
-        assert '"total_workspaces": 2' in result.stdout
+        assert result.stdout.splitlines()[0] == "PROJECT\tHOME\tWORKSPACE\tSESSIONS"
+        assert "myproject\tlocal\t/home/user/project/alpha\t3" in result.stdout
+        assert "myproject\twsl\t/home/user/project/alpha\t3" in result.stdout
 
 
 # ---------------------------------------------------------------------------
