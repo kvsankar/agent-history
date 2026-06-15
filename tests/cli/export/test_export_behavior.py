@@ -181,7 +181,8 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     assert '<aside class="agent-graph" data-agent-graph aria-label="Agent graph">' in html
     assert 'class="agent-graph-svg"' in html
     assert 'class="agent-graph-main-track"' in html
-    assert 'class="agent-graph-sub-track"' in html
+    assert 'class="agent-graph-sub-track"' not in html
+    assert 'class="agent-graph-merge-edge"' in html
     assert 'class="agent-graph-subagent-link" href="#turn-1" data-scroll-turn="1"' in html
     assert "data-open-turn-actions" in html
     assert "Review HTML export behavior" in html
@@ -238,7 +239,7 @@ def test_session_export_html_level_three_opens_actions_and_full_io(isolated_home
     assert '<details class="turn-trace" data-level="4" hidden data-open-level="4">' in html
 
 
-def test_html_export_agent_graph_links_lineage_subagent_tracks(tmp_path: Path):
+def test_html_export_agent_graph_links_lineage_subagent_branches(tmp_path: Path):
     parent = tmp_path / "rollout-parent.jsonl"
     child = tmp_path / "rollout-child.jsonl"
     messages = [
@@ -307,6 +308,78 @@ def test_html_export_agent_graph_links_lineage_subagent_tracks(tmp_path: Path):
     child_link = html.split('class="agent-graph-subagent-link" href="rollout-child.html"', 1)[1]
     child_link = child_link.split("</a>", 1)[0]
     assert "data-open-turn-actions" not in child_link
+
+
+def test_html_export_agent_graph_reuses_non_overlapping_subagent_lanes(tmp_path: Path):
+    parent = tmp_path / "rollout-parent.jsonl"
+    messages = []
+    lineage_records = [
+        {
+            "kind": "main",
+            "session_id": "parent-thread",
+            "source_file": str(parent),
+        }
+    ]
+    lineage_hrefs = {}
+    for turn_index in range(1, 6):
+        messages.append(
+            {
+                "role": "user",
+                "content": f"User turn {turn_index}.",
+                "timestamp": f"2026-06-09T10:0{turn_index}:00Z",
+                "session_id": "parent-thread",
+            }
+        )
+        if turn_index % 2:
+            tool_id = f"call-child-{turn_index}"
+            child = tmp_path / f"rollout-child-{turn_index}.jsonl"
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "**[Tool Use: spawn_agent]**\n\n"
+                        f"Call ID: `{tool_id}`\n\n"
+                        f'Spawn child {turn_index} with {{"agent_type":"reviewer-{turn_index}"}}.'
+                    ),
+                    "timestamp": f"2026-06-09T10:0{turn_index}:01Z",
+                    "is_tool_call": True,
+                    "tool_name": "spawn_agent",
+                    "tool_call_id": tool_id,
+                    "session_id": "parent-thread",
+                }
+            )
+            lineage_records.append(
+                {
+                    "kind": "subagent",
+                    "session_id": f"child-thread-{turn_index}",
+                    "parent_session_id": "parent-thread",
+                    "invocation_tool_call_id": tool_id,
+                    "agent_name": f"reviewer-{turn_index}",
+                    "status": "completed",
+                    "source_file": str(child),
+                }
+            )
+            lineage_hrefs[str(child)] = f"rollout-child-{turn_index}.html"
+        else:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": f"Assistant turn {turn_index}.",
+                    "timestamp": f"2026-06-09T10:0{turn_index}:01Z",
+                    "session_id": "parent-thread",
+                }
+            )
+
+    html = render_html_export(
+        parent,
+        "codex",
+        messages,
+        lineage_records=lineage_records,
+        lineage_hrefs=lineage_hrefs,
+    )
+
+    assert html.count('class="agent-graph-subagent-link"') == 3
+    assert 'viewBox="0 0 88 ' in html
 
 
 def test_html_export_includes_codex_related_subagent_page(isolated_home, tmp_path: Path):

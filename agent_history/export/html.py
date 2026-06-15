@@ -11,7 +11,7 @@ from typing import Any
 from agent_history.backends.registry import get_backend
 from agent_history.types import MessageDict
 
-HTML_RENDERER_VERSION = 2
+HTML_RENDERER_VERSION = 3
 HTML_LIGHT_HIGHLIGHT_STYLE = "default"
 HTML_DARK_HIGHLIGHT_STYLE = "github-dark"
 HTML_TRIM_CHARS = 3000
@@ -23,11 +23,11 @@ HTML_FULL_IO_LEVEL = 3
 HTML_TRACE_LEVEL = 4
 HTML_SNIPPET_LINES = 8
 HTML_SNIPPET_CHARS = 900
-AGENT_GRAPH_ROW_HEIGHT = 32
-AGENT_GRAPH_TOP = 18
-AGENT_GRAPH_TRACK_GAP = 18
-AGENT_GRAPH_MAIN_X = 18
-AGENT_GRAPH_SUBAGENT_SPAN = 24
+AGENT_GRAPH_ROW_HEIGHT = 38
+AGENT_GRAPH_TOP = 26
+AGENT_GRAPH_TRACK_GAP = 30
+AGENT_GRAPH_MAIN_X = 28
+AGENT_GRAPH_SUBAGENT_SPAN = 54
 
 _TOOL_HEADING_RE = re.compile(r"\*\*\[(?:Tool Use|Tool): ([^\]]+)\]\*\*")
 _CODE_FENCE_RE = re.compile(r"```(?P<label>[A-Za-z0-9_+.-]*)\n(?P<body>.*?)\n```", re.DOTALL)
@@ -245,9 +245,9 @@ def _build_agent_graph_model(
                 "href": _lineage_href(child, lineage_hrefs),
             }
         )
-    track_count = max(1, len(lanes) + 1)
-    width = AGENT_GRAPH_MAIN_X + (track_count - 1) * AGENT_GRAPH_TRACK_GAP + 18
-    height = max(128, AGENT_GRAPH_TOP + max(1, len(turns)) * AGENT_GRAPH_ROW_HEIGHT + 24)
+    height = max(128, AGENT_GRAPH_TOP + max(1, len(turns)) * AGENT_GRAPH_ROW_HEIGHT + 28)
+    track_count = _assign_agent_graph_lane_tracks(lanes, height)
+    width = AGENT_GRAPH_MAIN_X + (track_count - 1) * AGENT_GRAPH_TRACK_GAP + 30
     return {
         "turns": turns,
         "lanes": lanes,
@@ -294,11 +294,12 @@ def _should_render_subagent_graph_event(
 
 def _render_agent_graph_tracks(graph: dict[str, Any]) -> list[str]:
     lines = ['<g class="agent-graph-tracks" aria-hidden="true">']
-    bottom = graph["height"] - 18
-    for track_index in range(graph["track_count"]):
-        x = _agent_graph_track_x(track_index)
-        track_class = "agent-graph-main-track" if track_index == 0 else "agent-graph-sub-track"
-        lines.append(f'<line class="{track_class}" x1="{x}" y1="24" x2="{x}" y2="{bottom}" />')
+    bottom = graph["height"] - 26
+    top = _agent_graph_turn_y(1) if graph["turns"] else AGENT_GRAPH_TOP
+    lines.append(
+        f'<line class="agent-graph-main-track" x1="{AGENT_GRAPH_MAIN_X}" '
+        f'y1="{top}" x2="{AGENT_GRAPH_MAIN_X}" y2="{bottom}" />'
+    )
     lines.append("</g>")
     return lines
 
@@ -322,25 +323,34 @@ def _render_agent_graph_main_nodes(graph: dict[str, Any]) -> list[str]:
 
 def _render_agent_graph_subagent_nodes(graph: dict[str, Any]) -> list[str]:
     lines = ['<g class="agent-graph-subagent-nodes">']
-    for lane_index, lane in enumerate(graph["lanes"], 1):
+    for lane in graph["lanes"]:
         parent_x = AGENT_GRAPH_MAIN_X
+        lane_index = int(lane.get("track_index") or 1)
         x = _agent_graph_track_x(lane_index)
         start_y = _agent_graph_turn_y(int(lane.get("turn_index") or 1))
-        end_y = min(graph["height"] - 28, start_y + AGENT_GRAPH_SUBAGENT_SPAN)
+        end_y = _agent_graph_lane_end_y(start_y, graph)
         turn_index = int(lane.get("turn_index") or 1)
         href = str(lane.get("href") or f"#turn-{turn_index}")
         click_attrs = (
             "" if lane.get("href") else f' data-scroll-turn="{turn_index}" data-open-turn-actions'
         )
         tooltip = _agent_graph_lane_tooltip(lane)
+        branch_mid_x = parent_x + max(10, (x - parent_x) // 2)
         lines.extend(
             [
                 '<g class="agent-graph-branch-edge" aria-hidden="true">',
                 (
-                    f'<path d="M {parent_x + 7} {start_y} C {parent_x + 10} {start_y}, '
-                    f'{x - 10} {start_y}, {x - 5} {start_y}" />'
+                    f'<path class="agent-graph-branch-out" d="M {parent_x + 7} {start_y} '
+                    f"C {branch_mid_x} {start_y}, {branch_mid_x} {start_y}, "
+                    f'{x - 7} {start_y}" />'
                 ),
-                f'<line x1="{x}" y1="{start_y}" x2="{x}" y2="{end_y}" />',
+                f'<line class="agent-graph-branch-stem" x1="{x}" y1="{start_y}" x2="{x}" y2="{end_y}" />',
+                (
+                    f'<path class="agent-graph-merge-edge" d="M {x} {end_y} '
+                    f"C {branch_mid_x} {end_y}, {branch_mid_x} {end_y}, "
+                    f'{parent_x + 4} {end_y}" />'
+                ),
+                f'<circle class="agent-graph-main-merge-node" cx="{parent_x}" cy="{end_y}" r="3" />',
                 "</g>",
                 f'<a class="agent-graph-subagent-link" href="{escape(href, quote=True)}"{click_attrs}>',
                 f"<title>{escape(tooltip)}</title>",
@@ -351,6 +361,37 @@ def _render_agent_graph_subagent_nodes(graph: dict[str, Any]) -> list[str]:
         )
     lines.append("</g>")
     return lines
+
+
+def _assign_agent_graph_lane_tracks(lanes: list[dict[str, Any]], height: int) -> int:
+    if not lanes:
+        return 1
+    lane_ends: list[int] = []
+    graph = {"height": height}
+    ordered_lanes = sorted(
+        enumerate(lanes),
+        key=lambda item: (int(item[1].get("turn_index") or 1), item[0]),
+    )
+    for _, lane in ordered_lanes:
+        start_y = _agent_graph_turn_y(int(lane.get("turn_index") or 1))
+        end_y = _agent_graph_lane_end_y(start_y, graph)
+        for index, active_until in enumerate(lane_ends):
+            if active_until < start_y:
+                lane["track_index"] = index + 1
+                lane_ends[index] = end_y
+                break
+        else:
+            lane_ends.append(end_y)
+            lane["track_index"] = len(lane_ends)
+    return len(lane_ends) + 1
+
+
+def _agent_graph_lane_end_y(start_y: int, graph: dict[str, Any]) -> int:
+    bottom = graph["height"] - 32
+    end_y = min(bottom, start_y + AGENT_GRAPH_SUBAGENT_SPAN)
+    if end_y <= start_y + 18:
+        end_y = min(graph["height"] - 20, start_y + 24)
+    return end_y
 
 
 def _agent_graph_track_x(track_index: int) -> int:
@@ -1722,8 +1763,8 @@ html[data-theme="dark"] .theme-control {
 .metadata dd { margin: 0; overflow-wrap: anywhere; }
 .export-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 28px;
+  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
+  gap: 26px;
   align-items: start;
 }
 body[data-agent-graph="hidden"] .export-layout {
@@ -1737,17 +1778,23 @@ body[data-agent-graph="hidden"] .agent-graph {
   top: 18px;
   max-height: calc(100vh - 36px);
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  padding: 14px;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  padding: 4px 0 12px 18px;
 }
 .agent-graph-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   margin-bottom: 12px;
+  padding-bottom: 10px;
+  background: var(--bg);
 }
 .agent-graph-header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 .agent-graph-agent {
   display: block;
@@ -1759,7 +1806,7 @@ body[data-agent-graph="hidden"] .agent-graph {
   display: block;
   width: auto;
   max-width: none;
-  min-width: 260px;
+  min-width: 0;
   height: auto;
   overflow: visible;
 }
@@ -1768,13 +1815,10 @@ body[data-agent-graph="hidden"] .agent-graph {
   text-decoration: none;
 }
 .agent-graph-main-track,
-.agent-graph-sub-track {
+.agent-graph-branch-stem {
   stroke: var(--line);
   stroke-width: 2;
   stroke-linecap: round;
-}
-.agent-graph-sub-track {
-  stroke-dasharray: 3 6;
 }
 .agent-graph-branch-edge path,
 .agent-graph-branch-edge line {
@@ -1783,22 +1827,30 @@ body[data-agent-graph="hidden"] .agent-graph {
   stroke-width: 2;
   stroke-linecap: round;
 }
+.agent-graph-merge-edge {
+  stroke: var(--muted);
+  stroke-width: 1.75;
+}
 .agent-graph-main-node,
 .agent-graph-subagent-node,
-.agent-graph-merge-node {
-  fill: var(--panel);
+.agent-graph-merge-node,
+.agent-graph-main-merge-node {
+  fill: var(--bg);
   stroke: var(--accent);
   stroke-width: 2;
 }
 .agent-graph-subagent-node {
   fill: var(--accent-soft);
 }
-.agent-graph-merge-node {
+.agent-graph-merge-node,
+.agent-graph-main-merge-node {
   stroke: var(--muted);
 }
 .agent-graph-turn-link:hover .agent-graph-main-node,
 .agent-graph-subagent-link:hover .agent-graph-subagent-node,
-.agent-graph-subagent-link[aria-current="true"] .agent-graph-subagent-node {
+.agent-graph-subagent-link[aria-current="true"] .agent-graph-subagent-node,
+.agent-graph-turn-link:focus-visible .agent-graph-main-node,
+.agent-graph-subagent-link:focus-visible .agent-graph-subagent-node {
   fill: var(--accent);
   stroke: var(--accent);
 }
@@ -1901,6 +1953,7 @@ body[data-agent-graph="hidden"] .agent-graph {
 .message-header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .message-header h3 { font-size: 15px; margin: 0; }
 .message-header time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.message-body { max-width: 100%; overflow-x: auto; }
 .message-body.empty { color: var(--muted); font-style: italic; }
 .markdown-body { font-size: 14px; }
 .markdown-body > *:first-child { margin-top: 0; }
@@ -1916,6 +1969,7 @@ body[data-agent-graph="hidden"] .agent-graph {
 .markdown-body ul, .markdown-body ol { margin: 8px 0 8px 22px; padding: 0; }
 .markdown-body table {
   width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
   margin: 10px 0;
   font-size: 13px;
@@ -2087,9 +2141,14 @@ html[data-theme="dark"] .code-theme-dark { display: block; }
   .export-layout { display: block; }
   .agent-graph {
     position: static;
-    max-height: 220px;
+    max-height: 190px;
     margin-bottom: 18px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    background: var(--panel);
   }
+  .agent-graph-header { background: var(--panel); }
   .turn-header, .message-header { display: block; }
   .turn-heading { margin-bottom: 6px; }
   .turn-meta { text-align: left; }
