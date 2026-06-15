@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any
 
 
 def encode_workspace_path(path: str) -> str:
@@ -42,7 +42,7 @@ def create_workspace_fixture(base_path: Path, workspace_path: str, num_sessions:
 
     for i in range(num_sessions):
         session_file = claude_dir / f"session-{i:03d}.jsonl"
-        session_data: List[Dict[str, Any]] = [
+        session_data: list[dict[str, Any]] = [
             {
                 "type": "user",
                 "message": {"role": "user", "content": "test"},

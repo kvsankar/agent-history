@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable
 
 from agent_history.scope.types import ConcreteRecord
 from agent_history.types import WorkspaceDict
-from agent_history.utils.workspace_ref import WorkspaceContext
 from agent_history.utils.dates import modified_key
+from agent_history.utils.workspace_ref import WorkspaceContext
 
 StatusLookup = Callable[[WorkspaceContext], str]
 
 
 def aggregate_workspaces(
     records: Iterable[ConcreteRecord],
-    status_lookup: Optional[StatusLookup] = None,
-) -> Dict[str, WorkspaceDict]:
+    status_lookup: StatusLookup | None = None,
+) -> dict[str, WorkspaceDict]:
     """Aggregate sessions by workspace across records."""
-    workspaces: Dict[str, WorkspaceDict] = OrderedDict()
+    workspaces: dict[str, WorkspaceDict] = OrderedDict()
 
     for record in records:
         context = WorkspaceContext.from_record(record)
@@ -62,10 +62,10 @@ def aggregate_workspaces(
 
 def build_workspace_rows(
     records: Iterable[ConcreteRecord],
-) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Build workspace rows and a display map for stats output."""
-    rows: List[Dict[str, Any]] = []
-    display_map: Dict[str, str] = {}
+    rows: list[dict[str, Any]] = []
+    display_map: dict[str, str] = {}
 
     for record in records:
         context = WorkspaceContext.from_record(record)
@@ -89,11 +89,11 @@ def build_workspace_rows(
 
 def build_workspace_metadata(
     contexts: Iterable[WorkspaceContext],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build homes/workspaces metadata from workspace contexts."""
     homes: set[str] = set()
     workspaces: set[str] = set()
-    display_map: Dict[str, str] = {}
+    display_map: dict[str, str] = {}
 
     for context in contexts:
         homes.add(context.home)
@@ -109,7 +109,7 @@ def build_workspace_metadata(
 
 def build_workspace_display_map(
     records: Iterable[ConcreteRecord],
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Build a mapping of workspace key to display name."""
     contexts = (WorkspaceContext.from_record(record) for record in records)
     return build_workspace_metadata(contexts)["workspace_display_map"]
@@ -117,7 +117,7 @@ def build_workspace_display_map(
 
 def build_scope_metadata(
     records: Iterable[ConcreteRecord],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build homes/workspaces metadata with display mapping."""
     contexts = (WorkspaceContext.from_record(record) for record in records)
     return build_workspace_metadata(contexts)

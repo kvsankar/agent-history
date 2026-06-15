@@ -746,7 +746,7 @@ def setup_multi_model_fixtures(stats_test_home: Dict[str, Any]) -> List[Path]:
         ]
 
         # Add extra message pair for sonnet
-        if session_spec["messages"] == 4:  # noqa: PLR2004
+        if session_spec["messages"] == 4:
             messages.extend(
                 [
                     {"role": "user", "content": "Another message"},

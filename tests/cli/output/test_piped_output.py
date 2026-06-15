@@ -1,8 +1,8 @@
 """Tests for piped output auto-detection."""
 
+import shlex
 import subprocess
 import sys
-import shlex
 
 from tests.helpers.cli import get_script_path
 

@@ -53,6 +53,7 @@ from tests.helpers.session_builders import (
 )
 from tests.helpers.workspace_paths import encode_workspace_path
 
+
 def compute_gemini_hash(path: str) -> str:
     """Compute Gemini project hash (SHA-256 of path)."""
     return hashlib.sha256(path.encode()).hexdigest()
@@ -261,7 +262,7 @@ def create_gemini_sessions(
 
 
 @pytest.fixture
-def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:  # noqa: PLR0915,C901
+def multi_workspace_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
     """Create a single home with multiple workspaces for workspace scope testing.
 
     Creates workspaces:
@@ -690,7 +691,7 @@ def agent_filter_sessions(tmp_path: Path) -> Generator[Dict[str, Any], None, Non
 
 
 @pytest.fixture
-def scope_combo_setup(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:  # noqa: C901
+def scope_combo_setup(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
     """Comprehensive setup for testing scope combinations.
 
     Creates a realistic multi-home, multi-workspace, multi-agent setup

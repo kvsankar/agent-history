@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
 from tests.helpers.cli import assert_cli_success, run_cli_subprocess
 from tests.helpers.gap_helpers import assert_exported_to_dir, ensure_config_env
-
 
 pytestmark = pytest.mark.scope
 
@@ -19,7 +18,7 @@ class TestExportMetadataRequirements:
     """Exports should include agent metadata and unified schema headers."""
 
     def test_codex_export_includes_session_metadata(
-        self, agent_filter_sessions: Dict[str, Any], tmp_path: Path
+        self, agent_filter_sessions: dict[str, Any], tmp_path: Path
     ) -> None:
         output_dir = tmp_path / "codex-export"
         env = ensure_config_env(agent_filter_sessions["env"], tmp_path / ".agent-history")
@@ -37,7 +36,7 @@ class TestExportMetadataRequirements:
         assert "## Session Metadata" in content, "Expected Codex session metadata section"
 
     def test_gemini_export_includes_session_metadata(
-        self, agent_filter_sessions: Dict[str, Any], tmp_path: Path
+        self, agent_filter_sessions: dict[str, Any], tmp_path: Path
     ) -> None:
         output_dir = tmp_path / "gemini-export"
         env = ensure_config_env(agent_filter_sessions["env"], tmp_path / ".agent-history")
@@ -55,7 +54,7 @@ class TestExportMetadataRequirements:
         assert "## Session Metadata" in content, "Expected Gemini session metadata section"
 
     def test_ndjson_header_schema_version(
-        self, agent_filter_sessions: Dict[str, Any], tmp_path: Path
+        self, agent_filter_sessions: dict[str, Any], tmp_path: Path
     ) -> None:
         output_dir = tmp_path / "ndjson-export"
         env = ensure_config_env(agent_filter_sessions["env"], tmp_path / ".agent-history")
@@ -73,7 +72,7 @@ class TestExportMetadataRequirements:
         assert "schema_version" in header, "Expected unified schema_version in NDJSON header"
 
     def test_ndjson_source_copy(
-        self, agent_filter_sessions: Dict[str, Any], tmp_path: Path
+        self, agent_filter_sessions: dict[str, Any], tmp_path: Path
     ) -> None:
         output_dir = tmp_path / "ndjson-source"
         env = ensure_config_env(agent_filter_sessions["env"], tmp_path / ".agent-history")

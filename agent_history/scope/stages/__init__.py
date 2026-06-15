@@ -14,8 +14,8 @@ from agent_history.scope.stages.session import SessionStage
 from agent_history.scope.stages.workspace import WorkspaceStage
 
 __all__ = [
-    "ProjectStage",
     "HomeStage",
-    "WorkspaceStage",
+    "ProjectStage",
     "SessionStage",
+    "WorkspaceStage",
 ]

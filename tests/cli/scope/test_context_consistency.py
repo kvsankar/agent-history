@@ -40,7 +40,7 @@ TEST STATUS:
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -51,7 +51,7 @@ pytestmark = pytest.mark.v1
 
 
 @pytest.fixture
-def project_context_setup(isolated_home: Dict[str, Any]) -> Dict[str, Any]:
+def project_context_setup(isolated_home: dict[str, Any]) -> dict[str, Any]:
     """Create a project with multiple similar-named workspaces for context testing.
 
     Creates:
@@ -161,7 +161,7 @@ def project_context_setup(isolated_home: Dict[str, Any]) -> Dict[str, Any]:
 class TestSessionListContext:
     """Test session list command with explicit vs implicit context."""
 
-    def test_session_list_explicit_project(self, project_context_setup: Dict[str, Any]):
+    def test_session_list_explicit_project(self, project_context_setup: dict[str, Any]):
         """session list --project testproj should show only project sessions."""
         result = run_cli_subprocess(
             ["session", "list", "--project", "testproj"],
@@ -180,7 +180,7 @@ class TestSessionListContext:
         assert "auth-infra-session" not in output, "Should not match auth-infra sessions"
         assert "auth-api-session" not in output, "Should not match auth-api sessions"
 
-    def test_session_list_implicit_project(self, project_context_setup: Dict[str, Any]):
+    def test_session_list_implicit_project(self, project_context_setup: dict[str, Any]):
         """session list with workspace pattern should show only matching sessions.
 
         NOTE: True implicit detection (CWD-based) requires being in an actual Claude
@@ -204,7 +204,7 @@ class TestSessionListContext:
         assert "auth-infra-session" not in output, "Should not match auth-infra sessions"
         assert "auth-api-session" not in output, "Should not match auth-api sessions"
 
-    def test_session_list_consistency(self, project_context_setup: Dict[str, Any]):
+    def test_session_list_consistency(self, project_context_setup: dict[str, Any]):
         """Explicit project and workspace pattern should return identical session lists."""
         # Get explicit results via project
         explicit_result = run_cli_subprocess(
@@ -229,8 +229,8 @@ class TestSessionListContext:
 
         # Both should reference the same sessions
         # Count lines with session references (basic check)
-        explicit_lines = [l for l in explicit_output.split("\n") if l.strip()]
-        implicit_lines = [l for l in implicit_output.split("\n") if l.strip()]
+        explicit_lines = [line for line in explicit_output.split("\n") if line.strip()]
+        implicit_lines = [line for line in implicit_output.split("\n") if line.strip()]
 
         # Should have similar output length (allowing for formatting differences)
         assert (
@@ -241,7 +241,7 @@ class TestSessionListContext:
 class TestSessionExportContext:
     """Test session export command with explicit vs implicit context."""
 
-    def test_session_export_explicit_project(self, project_context_setup: Dict[str, Any]):
+    def test_session_export_explicit_project(self, project_context_setup: dict[str, Any]):
         """session export @testproj should export only project sessions."""
         output_dir = project_context_setup["home"] / "export_explicit"
         output_dir.mkdir()
@@ -270,7 +270,7 @@ class TestSessionExportContext:
             "api" not in file_names or "auth-session" in file_names
         ), "Should not export auth-api sessions"
 
-    def test_session_export_implicit_project(self, project_context_setup: Dict[str, Any]):
+    def test_session_export_implicit_project(self, project_context_setup: dict[str, Any]):
         """session export with workspace pattern should export only matching sessions."""
         output_dir = project_context_setup["home"] / "export_implicit"
         output_dir.mkdir()
@@ -299,7 +299,7 @@ class TestSessionExportContext:
             "api" not in file_names or "auth-session" in file_names
         ), "Should not export auth-api sessions"
 
-    def test_session_export_consistency(self, project_context_setup: Dict[str, Any]):
+    def test_session_export_consistency(self, project_context_setup: dict[str, Any]):
         """Explicit and implicit context should export the same sessions."""
         explicit_dir = project_context_setup["home"] / "export_explicit_compare"
         implicit_dir = project_context_setup["home"] / "export_implicit_compare"
@@ -343,7 +343,7 @@ class TestSessionExportContext:
 class TestSessionStatsContext:
     """Test session stats command with explicit vs implicit context."""
 
-    def test_session_stats_explicit_project(self, project_context_setup: Dict[str, Any]):
+    def test_session_stats_explicit_project(self, project_context_setup: dict[str, Any]):
         """session stats @testproj should show only project session stats."""
         result = run_cli_subprocess(
             ["session", "stats", "--project", "testproj"],
@@ -359,7 +359,7 @@ class TestSessionStatsContext:
         # Look for session count in output
         assert "session" in output.lower() or "total" in output.lower()
 
-    def test_session_stats_implicit_project(self, project_context_setup: Dict[str, Any]):
+    def test_session_stats_implicit_project(self, project_context_setup: dict[str, Any]):
         """session stats with workspace pattern should show only matching session stats."""
         result = run_cli_subprocess(
             ["session", "stats", "/home/user/projects/auth"],
@@ -374,7 +374,7 @@ class TestSessionStatsContext:
         # Should show the correct session count
         assert "session" in output.lower() or "total" in output.lower()
 
-    def test_session_stats_consistency(self, project_context_setup: Dict[str, Any]):
+    def test_session_stats_consistency(self, project_context_setup: dict[str, Any]):
         """Explicit and implicit context should show identical stats."""
         # Get explicit stats
         explicit_result = run_cli_subprocess(
@@ -410,7 +410,7 @@ class TestSessionStatsContext:
 class TestProjectShowContext:
     """Test project show command with explicit vs implicit context."""
 
-    def test_project_show_explicit(self, project_context_setup: Dict[str, Any]):
+    def test_project_show_explicit(self, project_context_setup: dict[str, Any]):
         """project show testproj should display project information."""
         result = run_cli_subprocess(
             ["project", "show", "testproj"],
@@ -428,7 +428,7 @@ class TestProjectShowContext:
         # Should show session count
         assert "session" in output.lower()
 
-    def test_project_show_implicit(self, project_context_setup: Dict[str, Any]):
+    def test_project_show_implicit(self, project_context_setup: dict[str, Any]):
         """project show from project workspace should auto-detect and show project."""
         result = run_cli_subprocess(
             ["project", "show"],
@@ -446,7 +446,7 @@ class TestProjectShowContext:
         # Should show session count
         assert "session" in output.lower()
 
-    def test_project_show_consistency(self, project_context_setup: Dict[str, Any]):
+    def test_project_show_consistency(self, project_context_setup: dict[str, Any]):
         """Explicit and implicit project show should display same information."""
         # Get explicit output
         explicit_result = run_cli_subprocess(
@@ -476,7 +476,7 @@ class TestProjectShowContext:
 class TestProjectStatsContext:
     """Test project stats command with explicit vs implicit context."""
 
-    def test_project_stats_explicit(self, project_context_setup: Dict[str, Any]):
+    def test_project_stats_explicit(self, project_context_setup: dict[str, Any]):
         """project stats testproj should show only project stats."""
         result = run_cli_subprocess(
             ["project", "stats", "testproj"],
@@ -491,7 +491,7 @@ class TestProjectStatsContext:
         # Should show project stats
         assert "testproj" in output.lower() or "session" in output.lower()
 
-    def test_project_stats_implicit(self, project_context_setup: Dict[str, Any]):
+    def test_project_stats_implicit(self, project_context_setup: dict[str, Any]):
         """project stats from project workspace should auto-detect and show stats."""
         result = run_cli_subprocess(
             ["project", "stats", "testproj"],
@@ -506,7 +506,7 @@ class TestProjectStatsContext:
         # Should show project stats
         assert "testproj" in output.lower() or "session" in output.lower()
 
-    def test_project_stats_consistency(self, project_context_setup: Dict[str, Any]):
+    def test_project_stats_consistency(self, project_context_setup: dict[str, Any]):
         """Explicit and implicit project stats should show identical statistics."""
         # Get explicit stats
         explicit_result = run_cli_subprocess(
@@ -536,7 +536,7 @@ class TestProjectStatsContext:
 class TestWorkspaceFilteringPrecision:
     """Test that workspace filtering uses exact matches, not substring matching."""
 
-    def test_substring_bleed_prevention(self, project_context_setup: Dict[str, Any]):
+    def test_substring_bleed_prevention(self, project_context_setup: dict[str, Any]):
         """Verify that sessions from similar-named workspaces are NOT included.
 
         This is the core bug: some commands incorrectly use substring matching,
@@ -563,7 +563,7 @@ class TestWorkspaceFilteringPrecision:
         assert not infra_appears, "BUG: auth-infra sessions incorrectly included (substring bleed)"
         assert not api_appears, "BUG: auth-api sessions incorrectly included (substring bleed)"
 
-    def test_exact_workspace_match_count(self, project_context_setup: Dict[str, Any]):
+    def test_exact_workspace_match_count(self, project_context_setup: dict[str, Any]):
         """Verify session count matches exact workspace, not similar workspaces."""
         # Export to count files accurately
         output_dir = project_context_setup["home"] / "export_count_test"

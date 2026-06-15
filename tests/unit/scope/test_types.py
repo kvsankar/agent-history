@@ -15,6 +15,7 @@ Each type is tested for:
 - Factory methods where available
 """
 
+from dataclasses import FrozenInstanceError
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -150,7 +151,7 @@ class TestHomeSpecAll:
     def test_homespecall_is_frozen(self) -> None:
         """HomeSpecAll should be immutable (frozen dataclass)."""
         spec = HomeSpecAll()
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.some_attr = "value"  # type: ignore
 
 
@@ -175,7 +176,7 @@ class TestHomeSpecLocal:
     def test_homespeclocal_is_frozen(self) -> None:
         """HomeSpecLocal should be immutable (frozen dataclass)."""
         spec = HomeSpecLocal()
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.some_attr = "value"  # type: ignore
 
 
@@ -200,7 +201,7 @@ class TestHomeSpecCurrent:
     def test_homespeccurrent_is_frozen(self) -> None:
         """HomeSpecCurrent should be immutable (frozen dataclass)."""
         spec = HomeSpecCurrent()
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.some_attr = "value"  # type: ignore
 
 
@@ -235,7 +236,7 @@ class TestHomeSpecCategory:
     def test_homespeccategory_is_frozen(self) -> None:
         """HomeSpecCategory should be immutable (frozen dataclass)."""
         spec = HomeSpecCategory(category="wsl")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.category = "windows"
 
 
@@ -273,7 +274,7 @@ class TestHomeSpecCategoryItem:
     def test_homespeccategoryitem_is_frozen(self) -> None:
         """HomeSpecCategoryItem should be immutable (frozen dataclass)."""
         spec = HomeSpecCategoryItem(category="wsl", item="Ubuntu")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.item = "Debian"
 
 
@@ -308,7 +309,7 @@ class TestHomeSpecConcrete:
     def test_homespecconcrete_is_frozen(self) -> None:
         """HomeSpecConcrete should be immutable (frozen dataclass)."""
         spec = HomeSpecConcrete(home="local")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.home = "wsl:Ubuntu"
 
 
@@ -376,7 +377,7 @@ class TestWorkspaceSpecAll:
     def test_workspacespecall_is_frozen(self) -> None:
         """WorkspaceSpecAll should be immutable (frozen dataclass)."""
         spec = WorkspaceSpecAll()
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.some_attr = "value"  # type: ignore
 
 
@@ -401,7 +402,7 @@ class TestWorkspaceSpecCurrent:
     def test_workspacespeccurrent_is_frozen(self) -> None:
         """WorkspaceSpecCurrent should be immutable (frozen dataclass)."""
         spec = WorkspaceSpecCurrent()
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.some_attr = "value"  # type: ignore
 
 
@@ -426,7 +427,7 @@ class TestWorkspaceSpecProject:
     def test_workspacespecproject_is_frozen(self) -> None:
         """WorkspaceSpecProject should be immutable (frozen dataclass)."""
         spec = WorkspaceSpecProject(name="myapp")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.name = "other"
 
 
@@ -451,7 +452,7 @@ class TestWorkspaceSpecPath:
     def test_workspacespecpath_is_frozen(self) -> None:
         """WorkspaceSpecPath should be immutable (frozen dataclass)."""
         spec = WorkspaceSpecPath(path="/home/user/projects/auth")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.path = "/other/path"
 
 
@@ -476,7 +477,7 @@ class TestWorkspaceSpecEncoded:
     def test_workspacespecencoded_is_frozen(self) -> None:
         """WorkspaceSpecEncoded should be immutable (frozen dataclass)."""
         spec = WorkspaceSpecEncoded(encoded="home-user-projects-auth")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.encoded = "other-path"
 
 
@@ -531,7 +532,7 @@ class TestWorkspaceSpecPattern:
     def test_workspacespecpattern_is_frozen(self) -> None:
         """WorkspaceSpecPattern should be immutable (frozen dataclass)."""
         spec = WorkspaceSpecPattern(pattern="/home/user/projects/auth", match_type=MatchType.EXACT)
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.pattern = "other"
 
 
@@ -556,7 +557,7 @@ class TestWorkspaceSpecHash:
     def test_workspacespechash_is_frozen(self) -> None:
         """WorkspaceSpecHash should be immutable (frozen dataclass)."""
         spec = WorkspaceSpecHash(hash="abc123def")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.hash = "other"
 
 
@@ -581,7 +582,7 @@ class TestWorkspaceSpecConcrete:
     def test_workspacespecconcrete_is_frozen(self) -> None:
         """WorkspaceSpecConcrete should be immutable (frozen dataclass)."""
         spec = WorkspaceSpecConcrete(path="/home/user/projects/auth")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.path = "/other/path"
 
 
@@ -762,7 +763,7 @@ class TestSessionSpecAll:
     def test_sessionspecall_is_frozen(self) -> None:
         """SessionSpecAll should be immutable (frozen dataclass)."""
         spec = SessionSpecAll()
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.some_attr = "value"  # type: ignore
 
 
@@ -822,8 +823,8 @@ class TestSessionSpecList:
 
     def test_sessionspeclist_creation_with_empty_list(self) -> None:
         """SessionSpecList should be creatable with empty list."""
-        spec = SessionSpecList(sessions=tuple())
-        assert spec.sessions == tuple()
+        spec = SessionSpecList(sessions=())
+        assert spec.sessions == ()
 
     def test_sessionspeclist_creation_with_sessions(self) -> None:
         """SessionSpecList should be creatable with session data."""
@@ -839,14 +840,14 @@ class TestSessionSpecList:
 
     def test_sessionspeclist_is_sessionspec_subclass(self) -> None:
         """SessionSpecList should be a subclass of SessionSpec."""
-        spec = SessionSpecList(sessions=tuple())
+        spec = SessionSpecList(sessions=())
         assert isinstance(spec, SessionSpec)
 
     def test_sessionspeclist_is_frozen(self) -> None:
         """SessionSpecList should be immutable (frozen dataclass)."""
-        spec = SessionSpecList(sessions=tuple())
-        with pytest.raises(Exception):  # FrozenInstanceError
-            spec.sessions = tuple([{"id": "new"}])
+        spec = SessionSpecList(sessions=())
+        with pytest.raises(FrozenInstanceError):
+            spec.sessions = ({"id": "new"},)
 
 
 class TestSessionSpecByFile:
@@ -870,7 +871,7 @@ class TestSessionSpecByFile:
     def test_sessionspecbyfile_is_frozen(self) -> None:
         """SessionSpecByFile should be immutable (frozen dataclass)."""
         spec = SessionSpecByFile(filename="session-001.jsonl")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.filename = "other.jsonl"
 
 
@@ -895,7 +896,7 @@ class TestSessionSpecById:
     def test_sessionspecbyid_is_frozen(self) -> None:
         """SessionSpecById should be immutable (frozen dataclass)."""
         spec = SessionSpecById(session_id="abc123")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             spec.session_id = "other"
 
 
@@ -979,7 +980,7 @@ class TestScopeRecord:
             workspace=WorkspaceSpecFactory.Current,
             sessions=SessionSpecFactory.All,
         )
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             record.home = HomeSpecFactory.All  # type: ignore
 
     def test_scoperecord_with_concrete_specs(self) -> None:
@@ -1036,7 +1037,7 @@ class TestProjectRecord:
     def test_projectrecord_is_frozen(self) -> None:
         """ProjectRecord should be immutable (frozen dataclass)."""
         record = ProjectRecord(project="myapp")
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             record.project = "other"
 
 
