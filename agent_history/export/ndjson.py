@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 
 from agent_history.core.ndjson import build_ndjson_records
 
+
 def build_output_filename_ndjson(
     jsonl_file: Path, source_tag: str, messages: List[Dict[str, Any]]
 ) -> str:

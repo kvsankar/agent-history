@@ -1,9 +1,7 @@
 """Advanced web session credential and workspace tests."""
 
-import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,7 +16,9 @@ def _patch_home(module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(module.Path, "home", lambda: tmp_path)
 
 
-def test_resolve_web_credentials_missing_token_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_resolve_web_credentials_missing_token_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """If no token is available, resolve_web_credentials should error."""
     module = load_agent_history()
     _patch_home(module, tmp_path, monkeypatch)
@@ -27,7 +27,9 @@ def test_resolve_web_credentials_missing_token_raises(tmp_path: Path, monkeypatc
         module.resolve_web_credentials(token=None, org_uuid="some-uuid")
 
 
-def test_resolve_web_credentials_missing_org_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_resolve_web_credentials_missing_org_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """If org UUID is missing, resolve_web_credentials should error."""
     module = load_agent_history()
     _patch_home(module, tmp_path, monkeypatch)
@@ -41,7 +43,9 @@ def test_get_access_token_from_keychain_success(monkeypatch: pytest.MonkeyPatch)
     """Keychain lookup on macOS should return token when JSON is valid."""
     module = load_agent_history()
     monkeypatch.setattr(sys, "platform", "darwin")
-    mock_result = MagicMock(returncode=0, stdout='{"claudeAiOauth": {"accessToken": "keychain-token"}}')
+    mock_result = MagicMock(
+        returncode=0, stdout='{"claudeAiOauth": {"accessToken": "keychain-token"}}'
+    )
     with patch("subprocess.run", return_value=mock_result):
         assert module.get_access_token_from_keychain() == "keychain-token"
 

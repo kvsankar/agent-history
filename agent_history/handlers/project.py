@@ -11,12 +11,12 @@ See docs/design-v2/pipeline-architecture.md for the complete specification.
 from collections import defaultdict
 from typing import Any, Dict, List
 
+from agent_history.core.workspaces import build_scope_metadata
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.storage.config import load_config
 from agent_history.utils.workspace_ref import WorkspaceContext, build_workspace_ref
-from agent_history.core.workspaces import build_scope_metadata
 
 
 class ProjectListHandler(VerbHandler):
@@ -161,9 +161,7 @@ class ProjectShowHandler(VerbHandler):
         workspaces_by_home: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         total_sessions = 0
         metadata = build_scope_metadata(scope) if scope else {"homes": []}
-        workspace_display_map: Dict[str, str] = dict(
-            metadata.get("workspace_display_map", {})
-        )
+        workspace_display_map: Dict[str, str] = dict(metadata.get("workspace_display_map", {}))
 
         for record in scope:
             context = WorkspaceContext.from_record(record)
@@ -175,9 +173,7 @@ class ProjectShowHandler(VerbHandler):
             }
             workspaces_by_home[context.home].append(workspace_info)
             total_sessions += len(record.sessions)
-            workspace_display_map.setdefault(
-                context.workspace_key, context.workspace_display
-            )
+            workspace_display_map.setdefault(context.workspace_key, context.workspace_display)
 
         # If scope is empty, use project definition
         if not workspaces_by_home:

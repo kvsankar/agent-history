@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, List, Union
 
 # =============================================================================
 # Match Types
@@ -181,19 +181,19 @@ class HomeSpecFactory:
     Current: HomeSpec = HomeSpecCurrent()
 
     @staticmethod
-    def Category(category: str) -> HomeSpec:
+    def Category(category: str) -> HomeSpec:  # noqa: N802
         return HomeSpecCategory(category)
 
     @staticmethod
-    def CategoryItem(category: str, item: str) -> HomeSpec:
+    def CategoryItem(category: str, item: str) -> HomeSpec:  # noqa: N802
         return HomeSpecCategoryItem(category, item)
 
     @staticmethod
-    def Concrete(home: str) -> HomeSpec:
+    def Concrete(home: str) -> HomeSpec:  # noqa: N802
         return HomeSpecConcrete(home)
 
     @staticmethod
-    def Multiple(homes: List[str]) -> HomeSpec:
+    def Multiple(homes: list[str]) -> HomeSpec:  # noqa: N802
         return HomeSpecMultiple(tuple(homes))
 
 
@@ -353,27 +353,27 @@ class WorkspaceSpecFactory:
     Current: WorkspaceSpec = WorkspaceSpecCurrent()
 
     @staticmethod
-    def Project(name: str) -> WorkspaceSpec:
+    def Project(name: str) -> WorkspaceSpec:  # noqa: N802
         return WorkspaceSpecProject(name)
 
     @staticmethod
-    def Path(path: str) -> WorkspaceSpec:
+    def Path(path: str) -> WorkspaceSpec:  # noqa: N802
         return WorkspaceSpecPath(path)
 
     @staticmethod
-    def Encoded(encoded: str) -> WorkspaceSpec:
+    def Encoded(encoded: str) -> WorkspaceSpec:  # noqa: N802
         return WorkspaceSpecEncoded(encoded)
 
     @staticmethod
-    def Pattern(pattern: str, match_type: MatchType) -> WorkspaceSpec:
+    def Pattern(pattern: str, match_type: MatchType) -> WorkspaceSpec:  # noqa: N802
         return WorkspaceSpecPattern(pattern, match_type)
 
     @staticmethod
-    def Hash(hash: str) -> WorkspaceSpec:
+    def Hash(hash: str) -> WorkspaceSpec:  # noqa: N802
         return WorkspaceSpecHash(hash)
 
     @staticmethod
-    def Concrete(path: str) -> WorkspaceSpec:
+    def Concrete(path: str) -> WorkspaceSpec:  # noqa: N802
         return WorkspaceSpecConcrete(path)
 
 
@@ -391,16 +391,16 @@ class SessionFilters:
     All filters are optional; None means no filtering on that attribute.
     """
 
-    agent: Optional[str] = None
+    agent: str | None = None
     """Agent type: "claude", "codex", "gemini", or None for all agents."""
 
-    since: Optional[datetime] = None
+    since: datetime | None = None
     """Include only sessions after this datetime."""
 
-    until: Optional[datetime] = None
+    until: datetime | None = None
     """Include only sessions before this datetime."""
 
-    min_messages: Optional[int] = None
+    min_messages: int | None = None
     """Include only sessions with at least this many messages."""
 
     def __str__(self) -> str:
@@ -537,19 +537,19 @@ class SessionSpecFactory:
     All: SessionSpec = SessionSpecAll()
 
     @staticmethod
-    def Filtered(filters: SessionFilters) -> SessionSpec:
+    def Filtered(filters: SessionFilters) -> SessionSpec:  # noqa: N802
         return SessionSpecFiltered(filters)
 
     @staticmethod
-    def List(sessions: List[Any]) -> SessionSpec:
+    def List(sessions: list[Any]) -> SessionSpec:  # noqa: N802
         return SessionSpecList(tuple(sessions))
 
     @staticmethod
-    def ByFile(filename: str) -> SessionSpec:
+    def ByFile(filename: str) -> SessionSpec:  # noqa: N802
         return SessionSpecByFile(filename)
 
     @staticmethod
-    def ById(session_id: str) -> SessionSpec:
+    def ById(session_id: str) -> SessionSpec:  # noqa: N802
         return SessionSpecById(session_id)
 
 
@@ -621,9 +621,9 @@ class ConcreteRecord:
 
     home: str
     workspace: str
-    sessions: List[Dict[str, Any]]
-    workspace_key: Optional[str] = None
-    workspace_display: Optional[str] = None
+    sessions: list[dict[str, Any]]
+    workspace_key: str | None = None
+    workspace_display: str | None = None
 
     def __str__(self) -> str:
         return f"ConcreteRecord(home={self.home!r}, workspace={self.workspace!r}, sessions=[{len(self.sessions)} sessions])"

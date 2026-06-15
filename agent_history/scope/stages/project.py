@@ -8,7 +8,7 @@ defined in the project configuration.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING
 
 from agent_history.scope.context import ResolutionError
 from agent_history.scope.types import (
@@ -38,7 +38,7 @@ class ProjectStage:
         """
         self.context = context
 
-    def resolve(self, scope: TemplateScope) -> Tuple[TemplateScope, List[ResolutionError]]:
+    def resolve(self, scope: TemplateScope) -> tuple[TemplateScope, list[ResolutionError]]:
         """
         Expand ProjectRecords to ScopeRecords using project configuration.
 
@@ -55,7 +55,7 @@ class ProjectStage:
             - List of errors (e.g., project not found)
         """
         result: TemplateScope = []
-        errors: List[ResolutionError] = []
+        errors: list[ResolutionError] = []
 
         for record in scope:
             if isinstance(record, ProjectRecord):

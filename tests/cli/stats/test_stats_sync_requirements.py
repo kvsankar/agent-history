@@ -7,7 +7,6 @@ import pytest
 
 from tests.helpers.cli import assert_cli_success, run_cli_subprocess
 
-
 pytestmark = pytest.mark.stats
 
 

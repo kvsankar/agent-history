@@ -15,36 +15,36 @@ skip_unless_wsl = pytest.mark.skipif(not is_wsl, reason="WSL-only test")
 
 
 def test_looks_like_windows_drive_basic():
-    assert module._looks_like_windows_drive("C:/Users/test")  # noqa: SLF001
-    assert module._looks_like_windows_drive("D:\\Projects")  # noqa: SLF001
-    assert not module._looks_like_windows_drive("/home/user")  # noqa: SLF001
+    assert module._looks_like_windows_drive("C:/Users/test")
+    assert module._looks_like_windows_drive("D:\\Projects")
+    assert not module._looks_like_windows_drive("/home/user")
 
 
 def test_strip_wsl_unc_prefix_variants():
-    assert module._strip_wsl_unc_prefix("//wsl.localhost/Ubuntu/home/user") == "/home/user"  # noqa: SLF001
-    assert module._strip_wsl_unc_prefix("//wsl$/Ubuntu/home/user") == "/home/user"  # noqa: SLF001
-    assert module._strip_wsl_unc_prefix("/home/user") == "/home/user"  # noqa: SLF001
+    assert module._strip_wsl_unc_prefix("//wsl.localhost/Ubuntu/home/user") == "/home/user"
+    assert module._strip_wsl_unc_prefix("//wsl$/Ubuntu/home/user") == "/home/user"
+    assert module._strip_wsl_unc_prefix("/home/user") == "/home/user"
 
 
 def test_is_windows_encoded_path_detection():
-    assert module._is_windows_encoded_path("C--Users-test-project")  # noqa: SLF001
-    assert not module._is_windows_encoded_path("-home-user-project")  # noqa: SLF001
+    assert module._is_windows_encoded_path("C--Users-test-project")
+    assert not module._is_windows_encoded_path("-home-user-project")
 
 
 def test_is_wsl_unc_path_detection():
-    assert module._is_wsl_unc_path(Path("//wsl.localhost/Ubuntu/home"))  # noqa: SLF001
-    assert not module._is_wsl_unc_path(Path("/home/user"))  # noqa: SLF001
+    assert module._is_wsl_unc_path(Path("//wsl.localhost/Ubuntu/home"))
+    assert not module._is_wsl_unc_path(Path("/home/user"))
 
 
 def test_projects_dir_from_wsl_unc():
     unc_path = "//wsl.localhost/Ubuntu/home/user/.claude/projects"
-    result = module._projects_dir_from_wsl_unc(unc_path)  # noqa: SLF001
+    result = module._projects_dir_from_wsl_unc(unc_path)
     assert isinstance(result, Path)
 
 
 def test_normalize_windows_path_formatting():
     # Should normalize without raising; content depends on host
-    normalized = module._normalize_windows_path("C--Users-test-project", verify_local=False)  # noqa: SLF001
+    normalized = module._normalize_windows_path("C--Users-test-project", verify_local=False)
     assert "Users" in normalized or "users" in normalized
 
 

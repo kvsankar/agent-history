@@ -11,7 +11,6 @@ from tests.helpers.gap_helpers import ensure_config_env, load_json_output
 from tests.helpers.session_builders import ClaudeSessionBuilder
 from tests.helpers.workspace_paths import encode_workspace_path
 
-
 pytestmark = pytest.mark.scope
 
 
