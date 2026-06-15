@@ -61,10 +61,11 @@ __all__ = [
 # Maximum workspace name length (reasonable limit for encoded paths)
 MAX_WORKSPACE_NAME_LENGTH = 1000
 
-# Workspace name validation pattern (alphanumeric, dashes, underscores, dots, unicode)
+# Workspace name validation pattern (alphanumeric, spaces, dashes, underscores,
+# dots, unicode). Control whitespace remains invalid.
 import re
 
-WORKSPACE_NAME_PATTERN = re.compile(r"^[-a-zA-Z0-9_.\u0080-\uFFFF]+$")
+WORKSPACE_NAME_PATTERN = re.compile(r"^[- a-zA-Z0-9_.\u0080-\uFFFF]+$")
 
 
 # ============================================================================
@@ -407,7 +408,7 @@ def read_jsonl_messages(jsonl_file: Path, quiet: bool = False):
 
             messages.append(_build_message_dict(entry, message_obj, role, content, timestamp))
 
-    with open(jsonl_file, encoding="utf-8") as f:
+    with open(jsonl_file, encoding="utf-8-sig") as f:
         for line in f:
             try:
                 handle_entry(json.loads(line))
@@ -443,7 +444,7 @@ def get_first_timestamp(jsonl_file: Path) -> Optional[str]:
         ISO 8601 timestamp string or None if not found or file cannot be read.
     """
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with open(jsonl_file, encoding="utf-8-sig") as f:
             for line_num, line in enumerate(f, 1):
                 try:
                     entry = json.loads(line)
@@ -666,7 +667,7 @@ def _count_file_messages(
             return cached
     count = 0
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with open(jsonl_file, encoding="utf-8-sig") as f:
             for line in f:
                 stripped = line.strip()
                 if not stripped:

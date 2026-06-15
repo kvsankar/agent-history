@@ -121,7 +121,10 @@ def _run_remote_command(remote_host: str, cmd: str) -> tuple[str, str | None]:
         return "", f"SSH error: {e}"
 
     if result.returncode != 0:
-        return "", None
+        detail = result.stderr.strip() or result.stdout.strip()
+        if not detail:
+            detail = f"SSH command failed for {remote_host} with exit code {result.returncode}"
+        return "", detail
     return result.stdout, None
 
 

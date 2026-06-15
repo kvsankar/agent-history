@@ -247,19 +247,35 @@ class CommandOrchestrator:
         if self._cross_home_guard_would_trigger(request, context):
             return True
 
-        remotes_to_check = self._remote_hosts_to_check(request)
+        remotes_to_check = self._remote_hosts_to_check(request, context)
         if not remotes_to_check:
             return True
 
-        all_ok = True
+        reachable: set[str] = set()
+        failed: set[str] = set()
         for remote_host in remotes_to_check:
             success, _error = check_ssh_connection(remote_host)
-            if not success:
+            if success:
+                reachable.add(remote_host)
+            else:
+                failed.add(remote_host)
+
+        if not failed:
+            return True
+
+        if not reachable and self._remote_scope_is_exclusive(request):
+            for remote_host in sorted(failed):
                 sys.stderr.write(f"Error: Cannot connect to {remote_host} via passwordless SSH\n")
                 sys.stderr.write(f"Setup: ssh-copy-id {remote_host}\n")
-                all_ok = False
+            return False
 
-        return all_ok
+        for remote_host in sorted(failed):
+            sys.stderr.write(
+                f"Warning: Skipping unreachable remote {remote_host} "
+                "(passwordless SSH unavailable)\n"
+            )
+        self._drop_unreachable_remotes(request, context, failed)
+        return True
 
     def _cross_home_guard_would_trigger(
         self, request: CommandRequest, context: ResolutionContext
@@ -291,17 +307,49 @@ class CommandOrchestrator:
             or args.name_patterns
         )
 
-    def _remote_hosts_to_check(self, request: CommandRequest) -> list[str]:
+    def _remote_hosts_to_check(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> list[str]:
         """Collect SSH hosts named through remote home selectors."""
         args = request.scope_args
         remotes_to_check: list[str] = []
         if args.home_type == "remote" and args.home_value:
             remotes_to_check.append(args.home_value)
+        if args.all_homes and not args.no_remote:
+            remotes_to_check.extend(context.available_homes.get("remote", []))
         for home in args.home_names:
             remote = self._remote_host_from_home_name(home)
             if remote:
                 remotes_to_check.append(remote)
-        return remotes_to_check
+        return list(dict.fromkeys(remotes_to_check))
+
+    def _remote_scope_is_exclusive(self, request: CommandRequest) -> bool:
+        """Return whether no non-remote selected source remains as fallback."""
+        args = request.scope_args
+        if args.all_homes:
+            return False
+        if args.home_type in ("local", "wsl", "windows"):
+            return False
+        non_remote_homes = [
+            home for home in args.home_names if self._remote_host_from_home_name(home) is None
+        ]
+        return not non_remote_homes
+
+    def _drop_unreachable_remotes(
+        self,
+        request: CommandRequest,
+        context: ResolutionContext,
+        failed: set[str],
+    ) -> None:
+        args = request.scope_args
+        args.home_names = [
+            home
+            for home in args.home_names
+            if (remote := self._remote_host_from_home_name(home)) is None or remote not in failed
+        ]
+        context.available_homes["remote"] = [
+            remote for remote in context.available_homes.get("remote", []) if remote not in failed
+        ]
 
     def _remote_host_from_home_name(self, home: str) -> str | None:
         if home.startswith("remote:"):
@@ -310,7 +358,9 @@ class CommandOrchestrator:
             return home
         return None
 
-    def _handle_stats_sync(self, request: CommandRequest, scope) -> None:
+    def _handle_stats_sync(
+        self, request: CommandRequest, scope, context: ResolutionContext | None = None
+    ) -> None:
         """Auto-sync stats scope unless --no-sync is specified."""
         if not self._is_stats_request(request):
             return
@@ -331,6 +381,10 @@ class CommandOrchestrator:
             conn.commit()
             request.verb_args["sync"] = True
             request.verb_args["sync_stats"] = sync_stats
+            if context is not None:
+                request.verb_args["project_map"] = SessionStatsHandler()._project_membership_map(
+                    context, request.scope_args
+                )
             if show_progress:
                 sys.stderr.write(
                     "Stats cache synced: "
@@ -419,7 +473,7 @@ class CommandOrchestrator:
                 return 1
 
             # 3.5. Auto-sync stats after scope resolution (unless --no-sync)
-            self._handle_stats_sync(request, resolution.scope)
+            self._handle_stats_sync(request, resolution.scope, context)
 
             # 4. Dispatch to handler
             try:
@@ -725,7 +779,7 @@ class CommandOrchestrator:
         )
 
         # Auto-sync stats after scope resolution (unless --no-sync)
-        self._handle_stats_sync(request, resolution.scope)
+        self._handle_stats_sync(request, resolution.scope, context)
 
         # 4. Dispatch to handler
         return self.dispatcher.dispatch(request, resolution.scope)

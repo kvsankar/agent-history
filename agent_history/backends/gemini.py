@@ -14,6 +14,7 @@ Gemini CLI stores sessions differently from Claude:
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TypedDict
@@ -61,6 +62,7 @@ GEMINI_HASH_INDEX_VERSION = 1
 
 # Display constants
 HASH_DISPLAY_LEN = 8  # Characters to show for truncated hash display
+HASH_IDENTIFIER_RE = re.compile(r"^[0-9a-f]{32,64}$", re.IGNORECASE)
 MAX_THOUGHT_LEN = 200  # Max length for thought descriptions before truncating
 MAX_TOOL_OUTPUT_LEN = 2000  # Max length for tool output before truncating
 
@@ -807,8 +809,8 @@ def gemini_get_workspace_readable(workspace: str) -> str:
         # Return the path directly - it's already readable
         return real_path
 
-    # Fall back to truncated hash display
-    if len(workspace) > HASH_DISPLAY_LEN:
+    # Fall back to truncated hash display only for actual hash identifiers.
+    if HASH_IDENTIFIER_RE.fullmatch(workspace):
         return f"[hash:{workspace[:HASH_DISPLAY_LEN]}]"
     return workspace
 

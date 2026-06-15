@@ -265,24 +265,21 @@ def _claude_remote_parse_workspaces(output: str) -> list[str]:
 
 def _claude_remote_list_sessions_command(workspace: str) -> str:
     safe_workspace = shlex.quote(workspace)
-    return f"""ws={safe_workspace}
-case "$ws" in
-    -*) encoded="$ws" ;;
-    *) encoded=$(python3 - "$ws" <<'PY'
-import sys
-value = sys.argv[1].replace('\\\\', '/').rstrip('/')
-if len(value) > 1 and value[1] == ':':
-    print(value[0].upper() + "--" + value[3:].replace('/', '-'))
-else:
-    print("-" + value.lstrip('/').replace('/', '-'))
-PY
-) ;;
-esac
-readable=$(python3 - "$encoded" <<'PY'
+    return f"""python3 - {safe_workspace} <<'PY'
 from pathlib import Path
 import sys
 
-name = sys.argv[1]
+workspace = sys.argv[1]
+
+
+def encode_workspace(value):
+    value = value.replace('\\\\', '/').rstrip('/')
+    if len(value) > 1 and value[1] == ':':
+        return value[0].upper() + "--" + value[2:].lstrip('/').replace('/', '-')
+    if value.startswith("-"):
+        return value
+    return "-" + value.lstrip('/').replace('/', '-')
+
 
 def resolve_parts(parts, base):
     resolved = []
@@ -305,19 +302,32 @@ def resolve_parts(parts, base):
         i = match_end
     return str(base.joinpath(*resolved))
 
-if name.startswith("-"):
-    print(resolve_parts(name[1:].split("-"), Path("/")))
-else:
-    print(name)
-PY
-)
-cd ~/.claude/projects/"$encoded" 2>/dev/null && \
-for f in *.jsonl; do
-    [ -f "$f" ] || continue
-    size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
-    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
-    echo "$PWD/$f|$size|$mtime|0|$encoded|$readable"
-done"""
+
+def decode_workspace(name):
+    if name.startswith("-"):
+        return resolve_parts(name[1:].split("-"), Path("/"))
+    return name
+
+
+def iter_session_files(workspace_dir):
+    yield from workspace_dir.glob("*.jsonl")
+    for path in workspace_dir.glob("*/subagents/agent-*.jsonl"):
+        if not path.name.startswith("agent-acompact-"):
+            yield path
+
+
+encoded = encode_workspace(workspace)
+root = Path.home() / ".claude" / "projects" / encoded
+readable = decode_workspace(encoded)
+
+if root.is_dir():
+    for path in sorted(iter_session_files(root)):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        print(f"{{path}}|{{stat.st_size}}|{{int(stat.st_mtime)}}|0|{{encoded}}|{{readable}}")
+PY"""
 
 
 def _claude_remote_workspace_readable(workspace: str) -> str:

@@ -66,6 +66,21 @@ def _format_modified_iso(modified: Any) -> str:
     return str(modified) if modified else ""
 
 
+def _tsv_cell(value: Any) -> str:
+    """Escape control characters that would otherwise change TSV shape."""
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("\t", "\\t")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+
+
+def _tsv_row(values: list[Any] | tuple[Any, ...]) -> str:
+    return "\t".join(_tsv_cell(value) for value in values)
+
+
 def _build_session_rows(
     sessions: list[SessionDict],
     *,
@@ -545,6 +560,9 @@ def _rollup_total_row(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> d
     for field in numeric_fields:
         total[field] = int(sum(_numeric_value(row.get(field)) for row in rows))
 
+    total_time = metadata.get("total_time_seconds")
+    if (metadata.get("metric") or "all") in {"time", "all"} and total_time is not None:
+        total["time_seconds"] = int(_numeric_value(total_time))
     total["time_hms"] = _format_duration(total.get("time_seconds", 0))
     total["time_hours"] = total.get("time_seconds", 0) / 3600
     return total
@@ -1062,14 +1080,14 @@ class TsvFormatter(DataFormatter):
             return ""
 
         headers = ["AGENT", "HOME", "WORKSPACE", "FILE", "MESSAGES", "MODIFIED"]
-        lines = ["\t".join(headers)]
+        lines = [_tsv_row(headers)]
         rows = _build_session_rows(
             sessions,
             workspace_formatter=lambda ws: ws,
             modified_formatter=_format_modified_iso,
         )
         for row in rows:
-            lines.append("\t".join(row))
+            lines.append(_tsv_row(row))
 
         return "\n".join(lines)
 
@@ -1079,14 +1097,14 @@ class TsvFormatter(DataFormatter):
             return ""
 
         headers = ["HOME", "WORKSPACE", "SESSIONS", "STATUS", "MODIFIED"]
-        lines = ["\t".join(headers)]
+        lines = [_tsv_row(headers)]
         rows = _build_workspace_rows(
             workspaces,
             workspace_formatter=lambda ws: ws,
             modified_formatter=_format_modified_iso,
         )
         for row in rows:
-            lines.append("\t".join(row))
+            lines.append(_tsv_row(row))
 
         return "\n".join(lines)
 
@@ -1098,7 +1116,7 @@ class TsvFormatter(DataFormatter):
         headers = ["HOME", "TYPE", "STATUS"]
         if show_counts:
             headers.append("SESSIONS")
-        lines = ["\t".join(headers)]
+        lines = [_tsv_row(headers)]
 
         for h in homes:
             row = [
@@ -1108,7 +1126,7 @@ class TsvFormatter(DataFormatter):
             ]
             if show_counts:
                 row.append(str(h.get("session_count", "")))
-            lines.append("\t".join(row))
+            lines.append(_tsv_row(row))
 
         return "\n".join(lines)
 
@@ -1120,7 +1138,7 @@ class TsvFormatter(DataFormatter):
         headers = ["PROJECT", "SOURCE", "WORKSPACE"]
         if show_counts:
             headers.append("SESSIONS")
-        lines = ["\t".join(headers)]
+        lines = [_tsv_row(headers)]
         workspace_display_map = (metadata or {}).get("workspace_display_map", {})
 
         for p in projects:
@@ -1140,7 +1158,7 @@ class TsvFormatter(DataFormatter):
             ]
             if show_counts:
                 row.append(str(p.get("session_count", "")))
-            lines.append("\t".join(row))
+            lines.append(_tsv_row(row))
 
         return "\n".join(lines)
 
@@ -1149,7 +1167,7 @@ class TsvFormatter(DataFormatter):
     ) -> str:
         """Format project details as TSV rows."""
         workspace_display_map = (metadata or {}).get("workspace_display_map", {})
-        lines = ["PROJECT\tHOME\tWORKSPACE\tSESSIONS"]
+        lines = [_tsv_row(["PROJECT", "HOME", "WORKSPACE", "SESSIONS"])]
         project_name = str(data.get("project", ""))
         workspaces_by_home = data.get("workspaces_by_home", {})
         if not isinstance(workspaces_by_home, dict):
@@ -1162,7 +1180,7 @@ class TsvFormatter(DataFormatter):
                     continue
                 ws_path = _workspace_display(workspace, display_map=workspace_display_map)
                 lines.append(
-                    "\t".join(
+                    _tsv_row(
                         [
                             project_name,
                             str(home),
@@ -1180,17 +1198,23 @@ class TsvFormatter(DataFormatter):
         )
         if not isinstance(rows_data, list):
             return json.dumps(data, default=str)
-        lines = ["HOME\tWORKSPACE\tSTATUS"]
+        lines = [_tsv_row(["HOME", "WORKSPACE", "STATUS"])]
         for row in rows_data:
             if isinstance(row, dict):
                 lines.append(
-                    f"{row.get('home', '')}\t{row.get('workspace', '')}\t{row.get('status', '')}"
+                    _tsv_row(
+                        [
+                            row.get("home", ""),
+                            row.get("workspace", ""),
+                            row.get("status", ""),
+                        ]
+                    )
                 )
         return "\n".join(lines)
 
     def _append_stats_summary_records(self, lines: list[str], stats: StatsDict) -> None:
         lines.append(
-            "\t".join(
+            _tsv_row(
                 [
                     "summary",
                     "total",
@@ -1207,7 +1231,7 @@ class TsvFormatter(DataFormatter):
         if not isinstance(tokens, dict):
             return
         for key in ("input", "output", "cache_read", "cache_creation"):
-            lines.append("\t".join(["token", key, "", "", str(tokens.get(key, 0)), ""]))
+            lines.append(_tsv_row(["token", key, "", "", str(tokens.get(key, 0)), ""]))
 
     def _stats_section_items(
         self, section: str, values: Any, metadata: dict[str, Any]
@@ -1240,7 +1264,7 @@ class TsvFormatter(DataFormatter):
                 continue
             for name, value in self._stats_section_items(section, values, metadata):
                 lines.append(
-                    "\t".join(
+                    _tsv_row(
                         self._stats_section_record(
                             section, name, value, count_key, workspace_display_map
                         )
@@ -1285,11 +1309,11 @@ class TsvFormatter(DataFormatter):
             "average_duration_seconds",
             "sessions_with_time",
         ):
-            lines.append("\t".join(["time", key, "", "", str(time_stats.get(key, 0)), ""]))
+            lines.append(_tsv_row(["time", key, "", "", str(time_stats.get(key, 0)), ""]))
         by_day = time_stats.get("by_day", {})
         if isinstance(by_day, dict):
             for day, seconds in by_day.items():
-                lines.append("\t".join(["time_day", str(day), "", "", str(seconds), ""]))
+                lines.append(_tsv_row(["time_day", str(day), "", "", str(seconds), ""]))
 
     def _format_stats(self, stats: StatsDict, metadata: dict[str, Any] | None = None) -> str:
         """Format stats as machine-readable TSV records."""
@@ -1298,7 +1322,7 @@ class TsvFormatter(DataFormatter):
             metadata.get("workspace_display_map") or stats.get("workspace_display_map") or {}
         )
         headers = ["SECTION", "NAME", "SESSIONS", "MESSAGES", "VALUE", "EXTRA"]
-        lines = ["\t".join(headers)]
+        lines = [_tsv_row(headers)]
         self._append_stats_summary_records(lines, stats)
         self._append_token_records(lines, stats)
         self._append_section_records(lines, stats, metadata, workspace_display_map)
@@ -1311,12 +1335,12 @@ class TsvFormatter(DataFormatter):
         """Format stats rollup rows as TSV."""
         metadata = metadata or {}
         headers = _rollup_columns(metadata)
-        lines = ["\t".join(headers)]
+        lines = [_tsv_row(headers)]
         rollup_rows = list(rows)
         if metadata.get("total"):
             rollup_rows.append(_rollup_total_row(rollup_rows, metadata))
         for row in rollup_rows:
-            lines.append("\t".join(_rollup_row_values(row, metadata)))
+            lines.append(_tsv_row(_rollup_row_values(row, metadata)))
         return "\n".join(lines)
 
     def _format_gemini_index(self, data: dict[str, Any]) -> str:
@@ -1325,13 +1349,15 @@ class TsvFormatter(DataFormatter):
         if not mappings:
             return ""
         if data.get("action") == "list":
-            lines = ["HASH\tPATH"]
-            lines.extend(f"{item.get('hash', '')}\t{item.get('path', '')}" for item in mappings)
+            lines = [_tsv_row(["HASH", "PATH"])]
+            lines.extend(
+                _tsv_row([item.get("hash", ""), item.get("path", "")]) for item in mappings
+            )
             return "\n".join(lines)
 
-        lines = ["STATUS\tHASH\tPATH"]
+        lines = [_tsv_row(["STATUS", "HASH", "PATH"])]
         lines.extend(
-            f"{item.get('status', '')}\t{item.get('hash', '')}\t{item.get('path', '')}"
+            _tsv_row([item.get("status", ""), item.get("hash", ""), item.get("path", "")])
             for item in mappings
         )
         return "\n".join(lines)
@@ -1341,9 +1367,9 @@ class TsvFormatter(DataFormatter):
         actions = data.get("installed", [])
         if not actions:
             return ""
-        lines = ["COMPONENT\tAGENT\tSTATUS\tPATH"]
+        lines = [_tsv_row(["COMPONENT", "AGENT", "STATUS", "PATH"])]
         lines.extend(
-            "\t".join(
+            _tsv_row(
                 [
                     str(item.get("component", "")),
                     str(item.get("agent", "")),
