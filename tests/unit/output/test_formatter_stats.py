@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import json
+
 from agent_history.handlers.base import CommandResult
-from agent_history.output.formatter import OutputFormatter, TableFormatter, TsvFormatter
+from agent_history.output.formatter import (
+    JsonFormatter,
+    OutputFormatter,
+    TableFormatter,
+    TsvFormatter,
+)
 from agent_history.scope.context import OutputArgs
 
 
@@ -235,6 +242,62 @@ def test_stats_tsv_includes_summary_tokens_and_breakdowns() -> None:
     assert "workspace\t/tmp/project\t1\t2\t1\t" in output
 
 
+def test_stats_json_gates_optional_breakdowns_by_requested_group() -> None:
+    formatter = JsonFormatter()
+    stats = {
+        "sessions": 1,
+        "messages": 2,
+        "total_sessions": 1,
+        "total_messages": 2,
+        "by_agent": {"claude": {"sessions": 1, "messages": 2}},
+        "by_home": {"local": {"sessions": 1, "messages": 2}},
+        "by_workspace": {"/tmp/project": {"sessions": 1, "messages": 2}},
+        "by_model": {"claude-sonnet": {"messages": 2, "tokens": 5}},
+        "by_tool": {"Read": {"uses": 1, "errors": 0}},
+        "by_day": {"2026-06-01": {"sessions": 1, "messages": 2}},
+    }
+
+    plain = json.loads(formatter.format(stats, "stats", {}))
+    assert "by_agent" in plain
+    assert "by_home" in plain
+    assert "by_workspace" in plain
+    assert "by_model" not in plain
+    assert "by_tool" not in plain
+    assert "by_day" not in plain
+
+    grouped = json.loads(formatter.format(stats, "stats", {"group_by": ["tool", "model"]}))
+    assert grouped["by_tool"]["Read"]["uses"] == 1
+    assert grouped["by_model"]["claude-sonnet"]["messages"] == 2
+    assert "by_day" not in grouped
+
+
+def test_stats_tsv_gates_optional_breakdowns_by_requested_group() -> None:
+    formatter = TsvFormatter()
+    stats = {
+        "sessions": 1,
+        "messages": 2,
+        "total_sessions": 1,
+        "total_messages": 2,
+        "by_agent": {"claude": {"sessions": 1, "messages": 2}},
+        "by_home": {"local": {"sessions": 1, "messages": 2}},
+        "by_workspace": {"/tmp/project": {"sessions": 1, "messages": 2}},
+        "by_model": {"claude-sonnet": {"messages": 2, "tokens": 5}},
+        "by_tool": {"Read": {"uses": 1, "errors": 0}},
+        "by_day": {"2026-06-01": {"sessions": 1, "messages": 2}},
+    }
+
+    plain = formatter.format(stats, "stats", {})
+    assert "\nagent\tclaude\t1\t2\t1\t" in plain
+    assert "\ntool\tRead" not in plain
+    assert "\nmodel\tclaude-sonnet" not in plain
+    assert "\nday\t2026-06-01" not in plain
+
+    grouped = formatter.format(stats, "stats", {"group_by": ["tool", "model", "day"]})
+    assert "\ntool\tRead\t\t\t1\terrors=0" in grouped
+    assert "\nmodel\tclaude-sonnet\t\t2\t2\ttokens=5" in grouped
+    assert "\nday\t2026-06-01\t1\t2\t1\t" in grouped
+
+
 def test_stats_guidance_handles_missing_sync_stats() -> None:
     formatter = TableFormatter(width=120)
     stats = {
@@ -250,7 +313,7 @@ def test_stats_guidance_handles_missing_sync_stats() -> None:
     output = formatter.format(stats, "stats", {"sync_stats": None})
 
     assert "Metric Coverage:" in output
-    assert "--format json for the full metrics payload" in output
+    assert "--format json for machine-readable stats output" in output
 
 
 def test_stats_rollup_table_formats_dimensions_and_metric_columns() -> None:
