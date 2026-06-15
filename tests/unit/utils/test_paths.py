@@ -93,6 +93,11 @@ class TestNormalizeWorkspaceName:
         result = normalize_workspace_name("-home-user-project", verify_local=False)
         assert result == "/home/user/project"
 
+    def test_decode_double_dash_unix_path_has_single_root(self) -> None:
+        """Legacy double-dash Unix encodings should not render as //home."""
+        result = normalize_workspace_name("--home-user-cy3-orbit-corrupt", verify_local=False)
+        assert result == "/home/user/cy3/orbit/corrupt"
+
     def test_decode_without_leading_dash(self) -> None:
         """Test decoding path without leading dash."""
         result = normalize_workspace_name("home-user-project", verify_local=False)
