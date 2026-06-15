@@ -151,7 +151,7 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     html = output.read_text(encoding="utf-8")
     assert html.startswith("<!doctype html>")
     assert '<html lang="en" data-theme="light" data-level="1">' in html
-    assert '<body data-agent-graph="visible">' in html
+    assert '<body data-agent-graph="hidden">' in html
     assert "Turn 1" in html
     assert "Show &lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert 'class="message message-human"' in html
@@ -176,22 +176,18 @@ def test_session_export_html_writes_turns_actions_and_raw_view(isolated_home):
     assert '<details class="full-io" data-level="3" hidden data-open-level="3">' in html
     assert '<details class="turn-trace" data-level="4" hidden data-open-level="4">' in html
     assert 'data-theme-toggle aria-pressed="false">Dark mode</button>' in html
-    assert 'data-agent-graph-toggle aria-pressed="false">Hide graph</button>' in html
+    assert 'data-agent-graph-toggle aria-pressed="false">Hide graph</button>' not in html
     assert 'class="export-layout"' in html
-    assert '<aside class="agent-graph" data-agent-graph aria-label="Agent graph">' in html
-    assert 'class="agent-graph-svg"' in html
-    assert 'class="agent-graph-main-track"' in html
-    assert 'class="agent-graph-sub-track"' in html
-    assert 'class="agent-graph-subagent-link" href="#turn-1" data-scroll-turn="1"' in html
-    assert "data-open-turn-actions" in html
+    assert '<aside class="agent-graph" data-agent-graph aria-label="Agent graph">' not in html
+    assert 'class="agent-graph-svg"' not in html
+    assert 'class="agent-graph-main-track"' not in html
+    assert 'class="agent-graph-sub-track"' not in html
+    assert 'class="agent-graph-subagent-link"' not in html
+    assert "data-open-turn-actions>" not in html
     assert "Review HTML export behavior" in html
     assert "Sub-agent found the graph should expose invocation and merge details." in html
-    assert '.agent-graph-subagent-link[aria-current="true"]' in html
-    assert 'target.setAttribute("data-graph-selected", "true")' in html
-    assert 'target.setAttribute("data-turn-local-level", "2")' in html
     assert 'target.scrollIntoView({ behavior: "auto", block: "start" })' in html
     assert 'body[data-agent-graph="hidden"] .agent-graph' in html
-    assert 'localStorage.setItem("cagelensAgentGraph", nextState)' in html
     assert 'class="turn-nav-button"' in html
     assert 'data-view-toggle="rendered" aria-pressed="true">Formatted</button>' in html
     assert 'data-view-toggle="raw" aria-pressed="false"' in html
@@ -238,7 +234,7 @@ def test_session_export_html_level_three_opens_actions_and_full_io(isolated_home
     assert '<details class="turn-trace" data-level="4" hidden data-open-level="4">' in html
 
 
-def test_html_export_agent_graph_links_lineage_subagent_tracks(tmp_path: Path):
+def test_html_export_omits_agent_graph_when_lineage_is_available(tmp_path: Path):
     parent = tmp_path / "rollout-parent.jsonl"
     child = tmp_path / "rollout-child.jsonl"
     messages = [
@@ -300,13 +296,12 @@ def test_html_export_agent_graph_links_lineage_subagent_tracks(tmp_path: Path):
         lineage_hrefs={str(child): "rollout-child.html"},
     )
 
-    assert 'class="agent-graph-subagent-link" href="rollout-child.html">' in html
-    assert "<title>approvals_reviewer - completed - Open sub-agent transcript</title>" in html
+    assert '<body data-agent-graph="hidden">' in html
+    assert 'data-agent-graph-toggle aria-pressed="false">Hide graph</button>' not in html
+    assert 'class="agent-graph-subagent-link" href="rollout-child.html">' not in html
+    assert "Open sub-agent transcript" not in html
     assert 'class="agent-graph-subagent-label"' not in html
     assert 'class="agent-graph-turn-label"' not in html
-    child_link = html.split('class="agent-graph-subagent-link" href="rollout-child.html"', 1)[1]
-    child_link = child_link.split("</a>", 1)[0]
-    assert "data-open-turn-actions" not in child_link
 
 
 def test_html_export_includes_codex_related_subagent_page(isolated_home, tmp_path: Path):
@@ -370,12 +365,10 @@ def test_html_export_includes_codex_related_subagent_page(isolated_home, tmp_pat
     parent_html_file = next(path for path in html_files if "parent-thread" in path.name)
     child_html_file = next(path for path in html_files if "child-thread" in path.name)
     parent_html = parent_html_file.read_text(encoding="utf-8")
-    assert child_html_file.name in parent_html
-    assert "Open sub-agent transcript" in parent_html
-    assert (
-        "data-open-turn-actions"
-        not in parent_html.split(child_html_file.name, 1)[1].split("</a>", 1)[0]
-    )
+    assert '<body data-agent-graph="hidden">' in parent_html
+    assert child_html_file.name not in parent_html
+    assert "Open sub-agent transcript" not in parent_html
+    assert "data-open-turn-actions>" not in parent_html
 
 
 def test_html_export_labels_subagent_events_and_parent_agent_prompts(tmp_path: Path):
