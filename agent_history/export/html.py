@@ -11,7 +11,8 @@ from typing import Any
 from agent_history.backends.registry import get_backend
 from agent_history.types import MessageDict
 
-HTML_RENDERER_VERSION = 2
+HTML_RENDERER_VERSION = 3
+HTML_AGENT_GRAPH_ENABLED = False
 HTML_LIGHT_HIGHLIGHT_STYLE = "default"
 HTML_DARK_HIGHLIGHT_STYLE = "github-dark"
 HTML_TRIM_CHARS = 3000
@@ -53,6 +54,7 @@ def render_html_export(
     title = f"{agent_title} Conversation"
     display_name = display_file or jsonl_file.name
     turns = _group_messages_into_turns(messages)
+    agent_graph_state = "visible" if HTML_AGENT_GRAPH_ENABLED else "hidden"
 
     body = [
         "<!doctype html>",
@@ -64,7 +66,7 @@ def render_html_export(
         f'<meta name="cagelens-renderer" content="{HTML_RENDERER_VERSION}">',
         f"<style>{_CSS}</style>",
         "</head>",
-        '<body data-agent-graph="visible">',
+        f'<body data-agent-graph="{agent_graph_state}">',
         '<button class="theme-control" type="button" data-theme-toggle '
         'aria-pressed="false">Dark mode</button>',
         '<main class="page">',
@@ -80,21 +82,31 @@ def render_html_export(
             _render_level_controls(initial_level),
             '<button class="utility-control" type="button" data-expand-all>Expand all</button>',
             '<button class="utility-control" type="button" data-collapse-all>Collapse all</button>',
+        ]
+    )
+    if HTML_AGENT_GRAPH_ENABLED:
+        body.append(
             '<button class="graph-toggle-pill" type="button" data-agent-graph-toggle '
-            'aria-pressed="false">Hide graph</button>',
+            'aria-pressed="false">Hide graph</button>'
+        )
+    body.extend(
+        [
             "</div>",
             "</header>",
             '<div class="export-layout">',
+        ]
+    )
+    if HTML_AGENT_GRAPH_ENABLED:
+        body.append(
             _render_agent_graph(
                 turns,
                 agent_title,
                 jsonl_file=jsonl_file,
                 lineage_records=lineage_records,
                 lineage_hrefs=lineage_hrefs,
-            ),
-            '<section class="turns" aria-label="Conversation turns">',
-        ]
-    )
+            )
+        )
+    body.append('<section class="turns" aria-label="Conversation turns">')
 
     for turn_index, turn in enumerate(turns, 1):
         body.extend(
@@ -2152,6 +2164,9 @@ _SCRIPT = """
   }
 
   function applyAgentGraphState(state) {
+    if (!document.querySelector(".agent-graph") && !document.querySelector("[data-agent-graph-toggle]")) {
+      return;
+    }
     var safeState = state === "hidden" ? "hidden" : "visible";
     if (document.body) {
       document.body.setAttribute("data-agent-graph", safeState);
