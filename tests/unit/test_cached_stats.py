@@ -189,8 +189,33 @@ def test_default_stats_uses_cached_db_without_scope_resolution(
     stats = json.loads(captured.out)
     assert stats["total_sessions"] == 1
     assert stats["tokens"]["input"] == 10
-    assert stats["by_tool"]["Read"]["uses"] == 1
+    assert "by_tool" not in stats
     assert "Using cached metrics" in captured.err
+
+
+def test_cached_stats_json_grouping_flags_control_optional_breakdowns(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
+    monkeypatch.chdir(tmp_path)
+    _seed_metrics_db()
+
+    exit_code = CommandOrchestrator().run(["stats", "--format", "json"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    plain_stats = json.loads(captured.out)
+    assert "by_tool" not in plain_stats
+    assert "by_model" not in plain_stats
+    assert "by_day" not in plain_stats
+
+    exit_code = CommandOrchestrator().run(["stats", "--by", "tool,model,day", "--format", "json"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    grouped_stats = json.loads(captured.out)
+    assert grouped_stats != plain_stats
+    assert grouped_stats["by_tool"]["Read"]["uses"] == 1
+    assert grouped_stats["by_model"]["claude-test"]["messages"] == 1
+    assert grouped_stats["by_day"]["2026-06-01"]["sessions"] == 1
 
 
 def test_cached_stats_top_ws_limits_workspace_rows_json(tmp_path, monkeypatch, capsys) -> None:

@@ -144,6 +144,21 @@ def _stats_group_list(metadata: dict[str, Any]) -> list[str]:
     return result
 
 
+def _visible_stats(stats: StatsDict, metadata: dict[str, Any]) -> StatsDict:
+    """Return stats with optional breakdowns filtered to requested groups."""
+    visible = dict(stats)
+    group_list = set(_stats_group_list(metadata))
+    optional_breakdowns = {
+        "by_model": "model",
+        "by_tool": "tool",
+        "by_day": "day",
+    }
+    for key, group in optional_breakdowns.items():
+        if group not in group_list:
+            visible.pop(key, None)
+    return visible
+
+
 def _stats_count(value: Any, key: str) -> Any:
     if not isinstance(value, dict):
         return value
@@ -460,7 +475,7 @@ def _append_stats_guidance(
         "--time for time by day",
         "--by-day for session/message counts by day",
         "--top-ws all for all workspace rows",
-        "--format json for the full metrics payload",
+        "--format json for machine-readable stats output",
     ]
     sync_stats = metadata.get("sync_stats")
     if isinstance(sync_stats, dict) and sync_stats.get("errors"):
@@ -985,6 +1000,8 @@ class JsonFormatter(DataFormatter):
         Returns plain array for list data types to match legacy behavior.
         """
         # Return plain array for list-type data (legacy compatibility)
+        if data_type == "stats" and isinstance(data, dict):
+            data = _visible_stats(data, metadata)
         output = self._serialize(data)
         return json.dumps(output, indent=self.indent, default=str)
 
@@ -1217,7 +1234,10 @@ class TsvFormatter(DataFormatter):
             ("tool", stats.get("by_tool", {}), "uses"),
             ("day", stats.get("by_day", {}), "sessions"),
         )
+        group_list = set(_stats_group_list(metadata))
         for section, values, count_key in sections:
+            if section not in group_list:
+                continue
             for name, value in self._stats_section_items(section, values, metadata):
                 lines.append(
                     "\t".join(
