@@ -489,8 +489,12 @@ def _normalize_workspace_name_cached(
     if _is_windows_encoded_path(workspace_dir_name):
         return _normalize_windows_path(workspace_dir_name, verify_local, base_path)
 
-    # Remove leading dash for Unix paths
-    encoded = workspace_dir_name[1:] if workspace_dir_name.startswith("-") else workspace_dir_name
+    # Remove leading dash markers for Unix paths. Some historical/imported
+    # records may carry more than one leading marker; they still represent one
+    # absolute root and should not render as paths like //home.
+    encoded = (
+        workspace_dir_name.lstrip("-") if workspace_dir_name.startswith("-") else workspace_dir_name
+    )
 
     return _normalize_unix_path(encoded, verify_local, base_path)
 
