@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from agent_history.adapters.inventory import _workspace_status
 from agent_history.handlers.list import SessionListHandler, WorkspaceListHandler
 from agent_history.scope.types import ConcreteRecord
 
@@ -43,3 +44,13 @@ def test_session_list_blanks_skipped_message_count() -> None:
     sessions = handler._flatten_sessions([record])
 
     assert sessions[0]["message_count"] == ""
+
+
+def test_windows_workspace_status_checks_reachable_paths(tmp_path) -> None:
+    """Windows homes accessed through a local mount should report ok/missing."""
+    existing = tmp_path / "Users" / "alice" / "project"
+    existing.mkdir(parents=True)
+    missing = tmp_path / "Users" / "alice" / "missing"
+
+    assert _workspace_status("windows:alice", str(existing)) == "ok"
+    assert _workspace_status("windows:alice", str(missing)) == "missing"

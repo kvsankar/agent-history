@@ -62,6 +62,21 @@ def generate_markdown_parts(
     if not split_lines or len(messages) == 0:
         return None
 
+    full_markdown = generate_part_markdown(
+        messages,
+        jsonl_file,
+        minimal,
+        1,
+        1,
+        0,
+        len(messages),
+        display_file,
+        markdown_level,
+        agent_type,
+    )
+    if len(full_markdown.splitlines()) <= split_lines:
+        return None
+
     # Find all split points
     split_points = [0]  # Start with message 0
     remaining_messages = messages

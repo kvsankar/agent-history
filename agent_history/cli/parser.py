@@ -9,6 +9,7 @@ See docs/design-v2/pipeline-architecture.md for the complete specification.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -458,6 +459,17 @@ def _validate_positive_int(value: str) -> int:
     return parsed
 
 
+def _validate_non_negative_int(value: str) -> int:
+    """Validate integer CLI arguments where 0 is allowed."""
+    try:
+        parsed = int(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"Invalid number: {value}") from err
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be zero or greater")
+    return parsed
+
+
 class CLIParser:
     """Parse command line into structured CommandRequest.
 
@@ -848,6 +860,7 @@ class CLIParser:
         proj_show = proj_sub.add_parser("show", help="Show project details")
         proj_show.set_defaults(command=RESOURCE_PROJECT, project_command="show")
         proj_show.add_argument("name", nargs="?", help="Project name (defaults to current project)")
+        self._add_output_format(proj_show)
 
         # project add
         proj_add = proj_sub.add_parser(
@@ -1003,6 +1016,7 @@ class CLIParser:
         home_show = home_sub.add_parser("show", help="Show home details")
         home_show.set_defaults(command=RESOURCE_HOME, home_verb="show")
         home_show.add_argument("name", help="Home name")
+        self._add_output_format(home_show)
 
         # home add
         home_add = home_sub.add_parser(
@@ -1411,7 +1425,7 @@ class CLIParser:
         parser.add_argument(
             "-w",
             "--width",
-            type=int,
+            type=_validate_non_negative_int,
             default=argparse.SUPPRESS,
             metavar="COLS",
             help="Table width in columns (default: 120, 0=no limit)",
@@ -1470,7 +1484,7 @@ class CLIParser:
         )
         parser.add_argument(
             "--jobs",
-            type=int,
+            type=_validate_positive_int,
             default=None,
             help="Parallelism for exports (default: auto, up to 2)",
         )
@@ -1811,11 +1825,22 @@ class CLIParser:
     def _project_scope_values(self, args: argparse.Namespace) -> list[str]:
         """Return project names implied by command flags and project verbs."""
         projects = list(getattr(args, "projects", None) or [])
+        projects.extend(self._project_shorthand_values(args))
         if getattr(args, "command", None) == RESOURCE_PROJECT:
             project_name = getattr(args, "name", None)
             project_command = getattr(args, "project_command", None)
             if project_command in ("show", "export", "stats") and project_name:
                 projects = [project_name]
+        return list(dict.fromkeys(projects))
+
+    def _project_shorthand_values(self, args: argparse.Namespace) -> list[str]:
+        """Return project names supplied as @name positional shorthand."""
+        projects: list[str] = []
+        for attr in ["workspace", "target", "workspaces"]:
+            for value in getattr(args, attr, None) or []:
+                text = str(value)
+                if text.startswith("@") and len(text) > 1:
+                    projects.append(text[1:])
         return projects
 
     def _workspace_scope_patterns(
@@ -1826,7 +1851,9 @@ class CLIParser:
         for attr in ["workspace", "target", "workspaces"]:
             value = getattr(args, attr, None)
             if value:
-                patterns.extend(value)
+                patterns.extend(
+                    v for v in value if not (str(v).startswith("@") and len(str(v)) > 1)
+                )
         return (
             patterns,
             list(getattr(args, "glob_patterns", None) or []),
@@ -1874,6 +1901,8 @@ class CLIParser:
         )
 
         this_only = getattr(args, "this_only", False)
+        if all_workspaces and this_only:
+            raise ValueError("Use either --aw or --this, not both")
         if self._session_export_implies_all_workspaces(
             args,
             projects=projects,
@@ -1892,6 +1921,7 @@ class CLIParser:
             agent = None
         since = getattr(args, "since", None)
         until = getattr(args, "until", None)
+        self._validate_date_range(since, until)
 
         # Exclusions
         no_wsl = getattr(args, "no_wsl", False)
@@ -1921,6 +1951,18 @@ class CLIParser:
             no_remote=no_remote,
             no_web=no_web,
         )
+
+    def _validate_date_range(self, since: str | None, until: str | None) -> None:
+        """Reject impossible date ranges before scope resolution."""
+        if not since or not until:
+            return
+        try:
+            since_dt = datetime.strptime(since, "%Y-%m-%d")
+            until_dt = datetime.strptime(until, "%Y-%m-%d")
+        except ValueError:
+            return
+        if since_dt > until_dt:
+            raise ValueError("--since cannot be after --until")
 
     def _build_output_args(self, args: argparse.Namespace, verb: str = "") -> OutputArgs:
         """Build OutputArgs from parsed arguments.
@@ -2043,7 +2085,11 @@ class CLIParser:
         if resource == RESOURCE_SESSION:
             raw_ids = list(getattr(args, "session_ids", None) or [])
             verb_args["session_ids"] = self._split_csv_list(raw_ids)
-            verb_args["targets"] = list(getattr(args, "target", None) or [])
+            verb_args["targets"] = [
+                target
+                for target in list(getattr(args, "target", None) or [])
+                if not (str(target).startswith("@") and len(str(target)) > 1)
+            ]
         return verb_args
 
     def _build_stats_verb_args(self, args: argparse.Namespace) -> dict[str, Any]:

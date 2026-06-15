@@ -15,7 +15,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
@@ -1243,7 +1243,8 @@ def get_scoped_stats_from_db(
             params,
         )
         row = cursor.fetchone()
-        total_seconds = row["total_seconds"] if row else 0
+        time_by_day = _time_by_day_query(conn, where_sql, params)
+        total_seconds = sum(time_by_day.values())
         sessions_with_time = row["sessions_with_time"] if row else 0
         avg_seconds = total_seconds / sessions_with_time if sessions_with_time else 0
 
@@ -1252,7 +1253,6 @@ def get_scoped_stats_from_db(
         by_workspace = _stats_group_query(conn, "workspace", where_sql, params)
         by_model = _model_stats_query(conn, filters)
         by_tool = _tool_stats_query(conn, filters)
-        time_by_day = _time_by_day_query(conn, where_sql, params)
 
         stats: Dict[str, Any] = {
             "sessions": row["sessions"] if row else 0,
@@ -1384,47 +1384,9 @@ def get_stats_rollup_from_db(
             return _message_stats_rollup(
                 conn, filters, dimensions, metric, top, sort_by, sort_direction
             )
-
-        where_sql, params = _where_sql(filters, "sessions")
-        select_parts = [
-            f"{ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
-            for index, dimension in enumerate(dimensions)
-        ]
-        group_parts = [f"dim_{index}" for index in range(len(dimensions))]
-        sql = f"""
-            SELECT
-                {", ".join(select_parts)},
-                COUNT(*) as sessions,
-                COALESCE(SUM(message_count), 0) as messages,
-                COALESCE(SUM(input_tokens), 0) as input_tokens,
-                COALESCE(SUM(output_tokens), 0) as output_tokens,
-                COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
-                COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
-                COALESCE(SUM(work_period_seconds), 0) as time_seconds
-            FROM sessions
-            {where_sql}
-            GROUP BY {", ".join(group_parts)}
-        """
-        cursor = conn.execute(sql, params)
-        rows: list[Dict[str, Any]] = []
-        for row in cursor.fetchall():
-            if _skip_rollup_row(row, dimensions, metric):
-                continue
-            item: Dict[str, Any] = {
-                "sessions": row["sessions"],
-                "messages": row["messages"],
-                "input_tokens": row["input_tokens"],
-                "output_tokens": row["output_tokens"],
-                "cache_read_tokens": row["cache_read_tokens"],
-                "cache_creation_tokens": row["cache_creation_tokens"],
-                "time_seconds": row["time_seconds"],
-                "time_hms": _format_seconds_hms(row["time_seconds"]),
-                "time_hours": row["time_seconds"] / 3600 if row["time_seconds"] else 0,
-            }
-            for index, dimension in enumerate(dimensions):
-                item[dimension] = row[f"dim_{index}"] or "(none)"
-            rows.append(item)
-        return _sort_and_limit_rollup_rows(rows, dimensions, metric, top, sort_by, sort_direction)
+        return _session_stats_rollup(
+            conn, filters, dimensions, metric, top, sort_by, sort_direction
+        )
     finally:
         conn.close()
 
@@ -1436,6 +1398,103 @@ def _normalize_rollup_dimensions(dimensions: list[str]) -> list[str]:
         if canonical not in normalized:
             normalized.append(canonical)
     return normalized
+
+
+def _date_time_rollup_seconds(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    params: list[Any],
+    dimensions: list[str],
+) -> dict[tuple[str, ...], float]:
+    """Return merged wall-clock seconds for day/month-only rollup buckets."""
+    by_day = _time_by_day_query(conn, where_sql, params)
+    rollup: dict[tuple[str, ...], float] = {}
+    for day, seconds in by_day.items():
+        key = tuple(day if dimension == "day" else day[:7] for dimension in dimensions)
+        rollup[key] = rollup.get(key, 0) + seconds
+    return rollup
+
+
+def _session_stats_rollup(
+    conn: sqlite3.Connection,
+    filters: Optional[Dict[str, Any]],
+    dimensions: list[str],
+    metric: str,
+    top: Optional[int],
+    sort_by: Optional[list[str]],
+    sort_direction: str,
+) -> list[Dict[str, Any]]:
+    where_sql, params = _where_sql(filters, "sessions")
+    date_time_seconds = _rollup_date_time_seconds(conn, where_sql, params, dimensions, metric)
+    select_parts = [
+        f"{ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
+        for index, dimension in enumerate(dimensions)
+    ]
+    group_parts = [f"dim_{index}" for index in range(len(dimensions))]
+    sql = f"""
+        SELECT
+            {", ".join(select_parts)},
+            COUNT(*) as sessions,
+            COALESCE(SUM(message_count), 0) as messages,
+            COALESCE(SUM(input_tokens), 0) as input_tokens,
+            COALESCE(SUM(output_tokens), 0) as output_tokens,
+            COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+            COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+            COALESCE(SUM(work_period_seconds), 0) as time_seconds
+        FROM sessions
+        {where_sql}
+        GROUP BY {", ".join(group_parts)}
+    """
+    cursor = conn.execute(sql, params)
+    rows = [
+        item
+        for row in cursor.fetchall()
+        if (item := _rollup_item_from_session_row(row, dimensions, metric, date_time_seconds))
+    ]
+    return _sort_and_limit_rollup_rows(rows, dimensions, metric, top, sort_by, sort_direction)
+
+
+def _rollup_date_time_seconds(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    params: list[Any],
+    dimensions: list[str],
+    metric: str,
+) -> dict[tuple[str, ...], float] | None:
+    if metric == "time" and all(dimension in {"day", "month"} for dimension in dimensions):
+        return _date_time_rollup_seconds(conn, where_sql, params, dimensions)
+    return None
+
+
+def _rollup_item_from_session_row(
+    row: sqlite3.Row,
+    dimensions: list[str],
+    metric: str,
+    date_time_seconds: dict[tuple[str, ...], float] | None,
+) -> Dict[str, Any] | None:
+    if date_time_seconds is None and _skip_rollup_row(row, dimensions, metric):
+        return None
+    item: Dict[str, Any] = {
+        "sessions": row["sessions"],
+        "messages": row["messages"],
+        "input_tokens": row["input_tokens"],
+        "output_tokens": row["output_tokens"],
+        "cache_read_tokens": row["cache_read_tokens"],
+        "cache_creation_tokens": row["cache_creation_tokens"],
+        "time_seconds": row["time_seconds"],
+        "time_hms": _format_seconds_hms(row["time_seconds"]),
+        "time_hours": row["time_seconds"] / 3600 if row["time_seconds"] else 0,
+    }
+    for index, dimension in enumerate(dimensions):
+        item[dimension] = row[f"dim_{index}"] or "(none)"
+    if date_time_seconds is not None:
+        key = tuple(str(item[dimension]) for dimension in dimensions)
+        item["time_seconds"] = date_time_seconds.get(key, 0)
+        item["time_hms"] = _format_seconds_hms(item["time_seconds"])
+        item["time_hours"] = item["time_seconds"] / 3600 if item["time_seconds"] else 0
+        if not item["time_seconds"]:
+            return None
+    return item
 
 
 def _message_stats_rollup(
@@ -1737,7 +1796,19 @@ def _tool_stats_query(
 def _time_by_day_query(
     conn: sqlite3.Connection, where_sql: str, params: list[Any]
 ) -> Dict[str, float]:
-    day_filter = "first_timestamp IS NOT NULL AND work_period_seconds > 0"
+    rows = _time_interval_rows(conn, where_sql=where_sql, params=params)
+    return _merge_work_intervals_by_day(rows)
+
+
+def _time_interval_rows(
+    conn: sqlite3.Connection,
+    *,
+    from_suffix: str = "",
+    where_sql: str = "",
+    params: list[Any] | None = None,
+) -> list[sqlite3.Row]:
+    """Return candidate session intervals for wall-clock time merging."""
+    day_filter = "COALESCE(start_time, first_timestamp) IS NOT NULL AND work_period_seconds > 0"
     scoped_where = where_sql
     if scoped_where:
         scoped_where += f" AND {day_filter}"
@@ -1745,16 +1816,96 @@ def _time_by_day_query(
         scoped_where = f" WHERE {day_filter}"
     cursor = conn.execute(
         f"""
-        SELECT SUBSTR(first_timestamp, 1, 10) as day,
-               COALESCE(SUM(work_period_seconds), 0) as total_seconds
+        SELECT
+            COALESCE(start_time, first_timestamp) as start_timestamp,
+            COALESCE(end_time, last_timestamp, start_time, first_timestamp) as end_timestamp,
+            work_period_seconds
         FROM sessions
+        {from_suffix}
         {scoped_where}
-        GROUP BY day
-        ORDER BY day
         """,
-        params,
+        params or [],
     )
-    return {row["day"]: row["total_seconds"] for row in cursor.fetchall() if row["day"]}
+    return list(cursor.fetchall())
+
+
+def _merge_work_intervals_by_day(rows: list[sqlite3.Row]) -> Dict[str, float]:
+    """Merge overlapping session intervals into per-day wall-clock seconds."""
+    intervals_by_day: dict[str, list[tuple[datetime, datetime]]] = {}
+    for row in rows:
+        interval = _row_work_interval(row)
+        if not interval:
+            continue
+        start, end = interval
+        for day, day_start, day_end in _split_interval_by_day(start, end):
+            intervals_by_day.setdefault(day, []).append((day_start, day_end))
+
+    return {
+        day: _merged_interval_seconds(intervals)
+        for day, intervals in sorted(intervals_by_day.items())
+    }
+
+
+def _row_work_interval(row: sqlite3.Row) -> tuple[datetime, datetime] | None:
+    start = _parse_metric_timestamp(row["start_timestamp"])
+    if start is None:
+        return None
+    try:
+        work_seconds = float(row["work_period_seconds"] or 0)
+    except (TypeError, ValueError):
+        return None
+    if work_seconds <= 0:
+        return None
+
+    end = _parse_metric_timestamp(row["end_timestamp"])
+    if end is None or end <= start:
+        end = start + timedelta(seconds=work_seconds)
+    else:
+        elapsed = max((end - start).total_seconds(), 0)
+        end = start + timedelta(seconds=min(elapsed, work_seconds))
+    if end <= start:
+        return None
+    return start, end
+
+
+def _parse_metric_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _split_interval_by_day(start: datetime, end: datetime) -> list[tuple[str, datetime, datetime]]:
+    chunks: list[tuple[str, datetime, datetime]] = []
+    current = start
+    while current < end:
+        next_midnight = datetime.combine(current.date() + timedelta(days=1), time.min)
+        chunk_end = min(end, next_midnight)
+        chunks.append((current.strftime("%Y-%m-%d"), current, chunk_end))
+        current = chunk_end
+    return chunks
+
+
+def _merged_interval_seconds(intervals: list[tuple[datetime, datetime]]) -> float:
+    if not intervals:
+        return 0
+    sorted_intervals = sorted(intervals, key=lambda item: item[0])
+    total = 0.0
+    current_start, current_end = sorted_intervals[0]
+    for start, end in sorted_intervals[1:]:
+        if start <= current_end:
+            current_end = max(current_end, end)
+            continue
+        total += (current_end - current_start).total_seconds()
+        current_start, current_end = start, end
+    total += (current_end - current_start).total_seconds()
+    return total
 
 
 def _day_stats_query(
@@ -1948,22 +2099,11 @@ def get_time_stats_from_db(
             """
         )
         row = cursor.fetchone()
-        total_seconds = row["total_seconds"] if row else 0
+        by_day = _merge_work_intervals_by_day(_time_interval_rows(conn, from_suffix=scope_join))
+        total_seconds = sum(by_day.values())
         sessions_with_time = row["sessions_with_time"] if row else 0
         total_sessions = row["total_sessions"] if row else 0
         avg_seconds = total_seconds / sessions_with_time if sessions_with_time else 0
-
-        day_cursor = conn.execute(
-            f"""
-            SELECT SUBSTR(first_timestamp, 1, 10) as day,
-                   COALESCE(SUM(work_period_seconds), 0) as total_seconds
-            FROM sessions
-            {scope_join}
-            WHERE first_timestamp IS NOT NULL AND work_period_seconds > 0
-            GROUP BY day
-            """
-        )
-        by_day = {row["day"]: row["total_seconds"] for row in day_cursor.fetchall() if row["day"]}
 
         return {
             "total_duration_seconds": total_seconds,

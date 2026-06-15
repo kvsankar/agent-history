@@ -447,11 +447,13 @@ class CommandOrchestrator:
         except KeyboardInterrupt:
             sys.stderr.write("\nInterrupted.\n")
             return 130
+        except BrokenPipeError:
+            return 0
         except Exception as e:
             return self.error_handler.handle_execution_error(e)
 
     def _dispatch_config_home_management(self, request: CommandRequest) -> int | None:
-        if request.resource != "home" or request.verb not in ("add", "remove"):
+        if request.resource != "home" or request.verb not in ("add", "remove", "show"):
             return None
         return self._dispatch_without_scope(request)
 

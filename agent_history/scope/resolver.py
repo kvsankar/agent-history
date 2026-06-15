@@ -260,6 +260,25 @@ class ScopeResolver:
                 )
             ]
 
+        # Session list/export defaults to the current workspace/project only.
+        # Explicit home scopes such as --ah are intentionally broad; the unsafe
+        # case is a completely implicit session list/export outside a workspace.
+        has_explicit_home_scope = (
+            args.all_homes or args.home_type or args.home_value or bool(args.home_names)
+        )
+        if (
+            args.resource == "session"
+            and args.verb in ("list", "export")
+            and not has_explicit_home_scope
+        ):
+            return [
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=WorkspaceSpecFactory.Current,
+                    sessions=session_spec,
+                )
+            ]
+
         # Default: all workspaces
         return [
             ScopeRecord(
