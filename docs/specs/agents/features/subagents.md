@@ -77,6 +77,12 @@ there. They must include `kind: "event"` and `synthetic: true` when derived.
 | `confidence` | `confirmed`, `inferred`, or `weak` |
 | `evidence` | Source file, record type, and field path used for the event |
 
+`subagent.completed` is an end-of-lifecycle event, not a progress event. Emit
+it only for terminal statuses such as `completed`, `success`, `failed`,
+`error`, `cancelled`, `interrupted`, or `timeout`. Do not emit it for
+non-terminal statuses such as `pending`, `queued`, `running`, `executing`, or
+`in_progress`.
+
 Render confirmed child tracks as normal subagent tracks. Render inferred or
 extension-dependent tracks with a distinct style and explanatory detail in the
 session metadata panel.
