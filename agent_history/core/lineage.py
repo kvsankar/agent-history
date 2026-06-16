@@ -22,6 +22,24 @@ _CLAUDE_NOTIFICATION_TAGS = (
     "output-file",
     "usage",
 )
+_TERMINAL_SUBAGENT_STATUSES = {
+    "aborted",
+    "canceled",
+    "cancelled",
+    "complete",
+    "completed",
+    "done",
+    "error",
+    "errored",
+    "failed",
+    "failure",
+    "finished",
+    "interrupted",
+    "success",
+    "succeeded",
+    "timed_out",
+    "timeout",
+}
 
 
 def build_timeline_lineage(
@@ -249,15 +267,19 @@ def extract_claude_lineage(
 ) -> tuple[list[LineageRecord], dict[tuple[str, str], dict[str, Any]]]:
     """Extract Claude session/child lineage and parent task notifications."""
     state, notifications = _collect_claude_lineage_parts(jsonl_file)
-    if not state:
+    if not state or not state.get("has_records"):
         return [], notifications
-    return [_claude_lineage_record(jsonl_file, state)], notifications
+    record = _claude_lineage_record(jsonl_file, state)
+    if not record.get("session_id"):
+        return [], notifications
+    return [record], notifications
 
 
 def _collect_claude_lineage_parts(
     jsonl_file: Path,
 ) -> tuple[dict[str, Any], dict[tuple[str, str], dict[str, Any]]]:
     state: dict[str, Any] = {
+        "has_records": False,
         "first_ts": None,
         "last_ts": None,
         "session_id": None,
@@ -273,6 +295,7 @@ def _collect_claude_lineage_parts(
                     entry = json.loads(raw_line)
                 except json.JSONDecodeError:
                     continue
+                state["has_records"] = True
                 _update_claude_lineage_state(state, entry)
                 _collect_claude_notifications(state, entry, jsonl_file, notifications)
     except OSError:
@@ -314,11 +337,18 @@ def _claude_lineage_record(jsonl_file: Path, state: dict[str, Any]) -> LineageRe
     is_subagent = (
         bool(state.get("is_sidechain")) or bool(task_id) or jsonl_file.name.startswith("agent-")
     )
+    record_session_id = (
+        f"{session_id}:{agent_id}"
+        if is_subagent and session_id and agent_id
+        else session_id
+        if not is_subagent
+        else None
+    )
 
     record: LineageRecord = {
         "agent": AGENT_CLAUDE,
         "kind": "subagent" if is_subagent else "main",
-        "session_id": f"{session_id}:{agent_id}" if is_subagent and agent_id else session_id,
+        "session_id": record_session_id,
         "parent_session_id": session_id if is_subagent else None,
         "agent_id": agent_id,
         "agent_name": None,
@@ -654,6 +684,8 @@ def _subagent_completion_event(record: LineageRecord) -> LineageRecord | None:
     status = record.get("status")
     if not parent_session_id or not child_session_id or not status:
         return None
+    if not _is_terminal_subagent_status(status):
+        return None
 
     timestamp = record.get("end_ts") or record.get("start_ts")
     event: LineageRecord = {
@@ -678,6 +710,11 @@ def _subagent_completion_event(record: LineageRecord) -> LineageRecord | None:
         "evidence": record.get("evidence", []),
     }
     return _drop_none(event)
+
+
+def _is_terminal_subagent_status(status: Any) -> bool:
+    normalized = str(status).strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized in _TERMINAL_SUBAGENT_STATUSES
 
 
 def _claude_notifications_from_entry(

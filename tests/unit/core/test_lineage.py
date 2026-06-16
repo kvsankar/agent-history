@@ -41,6 +41,14 @@ def _completion_event(lineage: list[dict[str, Any]], child_session_id: str) -> d
     )
 
 
+def _completion_events(lineage: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        record
+        for record in lineage
+        if record.get("kind") == "event" and record.get("event_type") == "subagent.completed"
+    ]
+
+
 def test_codex_lineage_joins_parent_spawn_to_child_completion(tmp_path: Path) -> None:
     parent = tmp_path / "rollout-parent.jsonl"
     child = tmp_path / "rollout-child.jsonl"
@@ -267,6 +275,54 @@ def test_claude_lineage_discovers_nested_subagent_and_notification(
     assert completion_event["summary"] == "nested done"
 
 
+def test_claude_non_terminal_notification_does_not_emit_completion_event(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "-tmp-workspace"
+    parent = workspace / "parent-session.jsonl"
+    child = workspace / "parent-session" / "subagents" / "agent-task123.jsonl"
+    _write_jsonl(
+        parent,
+        [
+            {
+                "type": "queue-operation",
+                "operation": "enqueue",
+                "sessionId": "parent-session",
+                "uuid": "notif-1",
+                "timestamp": "2026-06-09T10:00:10.000Z",
+                "content": (
+                    "<task-notification>"
+                    "<task-id>task123</task-id>"
+                    "<tool-use-id>toolu-task</tool-use-id>"
+                    "<status>in_progress</status>"
+                    "<summary>Agent still running</summary>"
+                    "</task-notification>"
+                ),
+            },
+        ],
+    )
+    _write_jsonl(
+        child,
+        [
+            {
+                "type": "user",
+                "sessionId": "parent-session",
+                "agentId": "task123",
+                "isSidechain": True,
+                "uuid": "cu1",
+                "timestamp": "2026-06-09T10:00:02.000Z",
+                "message": {"role": "user", "content": "Child task"},
+            }
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(parent, AGENT_CLAUDE)], include_related=True)
+    child_record = next(record for record in lineage if record.get("agent_id") == "task123")
+
+    assert child_record["status"] == "in_progress"
+    assert _completion_events(lineage) == []
+
+
 def test_claude_lineage_honors_explicit_scope_by_default(tmp_path: Path) -> None:
     workspace = tmp_path / "-tmp-workspace"
     parent = workspace / "parent-session.jsonl"
@@ -361,6 +417,16 @@ def test_claude_scanner_includes_nested_subagent_files(tmp_path: Path) -> None:
     }
 
 
+def test_claude_malformed_agent_file_is_skipped(tmp_path: Path) -> None:
+    agent_file = tmp_path / "-tmp-workspace" / "agent-bad.jsonl"
+    agent_file.parent.mkdir(parents=True, exist_ok=True)
+    agent_file.write_text("not json\n{broken\n", encoding="utf-8")
+
+    lineage = build_timeline_lineage([_session(agent_file, AGENT_CLAUDE)])
+
+    assert lineage == []
+
+
 def test_gemini_lineage_represents_subagent_tool_call(tmp_path: Path) -> None:
     gemini_file = tmp_path / "session.json"
     gemini_file.write_text(
@@ -410,6 +476,39 @@ def test_gemini_lineage_represents_subagent_tool_call(tmp_path: Path) -> None:
     assert completion_event["timestamp"] == "2026-06-09T10:00:25.000Z"
     assert completion_event["status"] == "success"
     assert completion_event["summary"] == "Subagent codebase_investigator Finished"
+
+
+def test_gemini_non_terminal_status_does_not_emit_completion_event(tmp_path: Path) -> None:
+    gemini_file = tmp_path / "session.json"
+    gemini_file.write_text(
+        json.dumps(
+            {
+                "sessionId": "gemini-parent",
+                "messages": [
+                    {
+                        "id": "m1",
+                        "timestamp": "2026-06-09T10:00:05.000Z",
+                        "type": "gemini",
+                        "toolCalls": [
+                            {
+                                "id": "codebase_investigator-1",
+                                "name": "codebase_investigator",
+                                "displayName": "Codebase Investigator Agent",
+                                "status": "pending",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    lineage = build_timeline_lineage([_session(gemini_file, AGENT_GEMINI)])
+    child_record = next(record for record in lineage if record["kind"] == "subagent")
+
+    assert child_record["status"] == "pending"
+    assert _completion_events(lineage) == []
 
 
 def test_gemini_jsonl_lineage_represents_subagent_tool_call(tmp_path: Path) -> None:
