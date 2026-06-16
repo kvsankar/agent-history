@@ -31,6 +31,16 @@ def _session(path: Path, agent: str) -> dict[str, Any]:
     }
 
 
+def _completion_event(lineage: list[dict[str, Any]], child_session_id: str) -> dict[str, Any]:
+    return next(
+        record
+        for record in lineage
+        if record.get("kind") == "event"
+        and record.get("event_type") == "subagent.completed"
+        and record.get("child_session_id") == child_session_id
+    )
+
+
 def test_codex_lineage_joins_parent_spawn_to_child_completion(tmp_path: Path) -> None:
     parent = tmp_path / "rollout-parent.jsonl"
     child = tmp_path / "rollout-child.jsonl"
@@ -113,6 +123,19 @@ def test_codex_lineage_joins_parent_spawn_to_child_completion(tmp_path: Path) ->
     assert child_record["duration_ms"] == 17000
     assert child_record["last_agent_message"] == "child done"
 
+    completion_event = _completion_event(lineage, "child-thread")
+    assert completion_event["synthetic"] is True
+    assert completion_event["parent_session_id"] == "parent-thread"
+    assert completion_event["agent"] == AGENT_CODEX
+    assert completion_event["agent_name"] == "Confucius"
+    assert completion_event["invocation_tool_call_id"] == "call-spawn"
+    assert completion_event["merge_message_id"] == "output-item-1"
+    assert completion_event["timestamp"] == "2026-06-09T10:00:20.000Z"
+    assert completion_event["status"] == "completed"
+    assert completion_event["duration_ms"] == 17000
+    assert completion_event["summary"] == "child done"
+    assert completion_event["confidence"] == "confirmed"
+
 
 def test_codex_lineage_tolerates_non_dict_source_metadata(tmp_path: Path) -> None:
     session_file = tmp_path / "rollout-main.jsonl"
@@ -180,6 +203,7 @@ def test_claude_lineage_discovers_nested_subagent_and_notification(
                 "type": "queue-operation",
                 "operation": "enqueue",
                 "sessionId": "parent-session",
+                "uuid": "notif-1",
                 "timestamp": "2026-06-09T10:00:10.000Z",
                 "content": (
                     "<task-notification>"
@@ -229,6 +253,18 @@ def test_claude_lineage_discovers_nested_subagent_and_notification(
     assert child_record["join_status"] == "joined"
     assert child_record["duration_ms"] == 12345
     assert child_record["last_agent_message"] == "nested done"
+
+    completion_event = _completion_event(lineage, "parent-session:task123")
+    assert completion_event["synthetic"] is True
+    assert completion_event["parent_session_id"] == "parent-session"
+    assert completion_event["agent"] == AGENT_CLAUDE
+    assert completion_event["child_agent_id"] == "task123"
+    assert completion_event["invocation_tool_call_id"] == "toolu-task"
+    assert completion_event["merge_message_id"] == "notif-1"
+    assert completion_event["timestamp"] == "2026-06-09T10:00:09.000Z"
+    assert completion_event["status"] == "completed"
+    assert completion_event["duration_ms"] == 12345
+    assert completion_event["summary"] == "nested done"
 
 
 def test_claude_lineage_honors_explicit_scope_by_default(tmp_path: Path) -> None:
@@ -363,6 +399,17 @@ def test_gemini_lineage_represents_subagent_tool_call(tmp_path: Path) -> None:
     assert child_record["agent_name"] == "Codebase Investigator Agent"
     assert child_record["status"] == "success"
     assert child_record["last_agent_message"] == "Subagent codebase_investigator Finished"
+
+    completion_event = _completion_event(lineage, "gemini-parent:codebase_investigator-1")
+    assert completion_event["synthetic"] is True
+    assert completion_event["parent_session_id"] == "gemini-parent"
+    assert completion_event["agent"] == AGENT_GEMINI
+    assert completion_event["child_agent_id"] == "codebase_investigator-1"
+    assert completion_event["invocation_message_id"] == "m1"
+    assert completion_event["invocation_tool_call_id"] == "codebase_investigator-1"
+    assert completion_event["timestamp"] == "2026-06-09T10:00:25.000Z"
+    assert completion_event["status"] == "success"
+    assert completion_event["summary"] == "Subagent codebase_investigator Finished"
 
 
 def test_gemini_jsonl_lineage_represents_subagent_tool_call(tmp_path: Path) -> None:
@@ -571,3 +618,14 @@ def test_pi_lineage_captures_extension_subagent_tool_call(tmp_path: Path) -> Non
     assert child_record["agent_name"] == "reviewer"
     assert child_record["status"] == "completed"
     assert child_record["last_agent_message"] == "done"
+
+    completion_event = _completion_event(lineage, "child-session")
+    assert completion_event["synthetic"] is True
+    assert completion_event["parent_session_id"] == "pi-session"
+    assert completion_event["agent"] == AGENT_PI
+    assert completion_event["agent_name"] == "reviewer"
+    assert completion_event["invocation_tool_call_id"] == "tool-subagent"
+    assert completion_event["merge_message_id"] == "tool-subagent"
+    assert completion_event["timestamp"] == "2026-06-09T10:00:02.000Z"
+    assert completion_event["status"] == "completed"
+    assert completion_event["summary"] == "done"
