@@ -28,7 +28,10 @@ How supported coding agents record delegated child-agent work and how
 ## Normalized Lineage Target
 
 Timeline export should not rely on agent-specific field names directly. Add a
-normalized lineage layer with these fields where available:
+normalized lineage layer with session/span records and derived lifecycle event
+records.
+
+Session/span records describe work that actually exists in the source data:
 
 | Field | Meaning |
 |-------|---------|
@@ -48,6 +51,31 @@ normalized lineage layer with these fields where available:
 | `merge_message_id` | Parent message carrying the returned result |
 | `confidence` | `confirmed`, `inferred`, or `weak` |
 | `evidence` | Source file, record type, and field path used for the join |
+
+Lifecycle event records describe parent-facing events derived from those spans.
+They are not raw parent messages unless the source agent actually recorded them
+there. They must include `kind: "event"` and `synthetic: true` when derived.
+
+| Field | Meaning |
+|-------|---------|
+| `kind` | Always `event` |
+| `event_type` | Lifecycle type such as `subagent.completed` |
+| `event_id` | Stable identifier for the derived event |
+| `synthetic` | `true` when the event is derived from child/session data |
+| `parent_session_id` | Session where the event should be surfaced |
+| `child_session_id` | Subagent/session whose lifecycle changed |
+| `child_agent_id` | Child agent/task/thread identifier when distinct |
+| `agent` | Source backend: `claude`, `codex`, `gemini`, `pi` |
+| `agent_name` | Display name, nickname, role, or subagent name |
+| `invocation_message_id` | Parent message that requested the child |
+| `invocation_tool_call_id` | Parent tool call that spawned the child |
+| `merge_message_id` | Parent-side result/notification message when available |
+| `timestamp` | Time of the lifecycle event, usually child completion time |
+| `status` | Completion state such as `completed`, `success`, or `error` |
+| `duration_ms` | Agent-reported or derived duration |
+| `summary` | Final child result or completion summary when available |
+| `confidence` | `confirmed`, `inferred`, or `weak` |
+| `evidence` | Source file, record type, and field path used for the event |
 
 Render confirmed child tracks as normal subagent tracks. Render inferred or
 extension-dependent tracks with a distinct style and explanatory detail in the
@@ -86,6 +114,12 @@ parent task notification task-id
 Older top-level `agent-*.jsonl` files can still be grouped by shared
 `sessionId` and `agentId`, but the exact parent tool call may require inference
 from surrounding Task tool calls and timestamps.
+
+For parent-facing exports, `cagelens` should derive a
+`subagent.completed` lifecycle event from the joined child span and the parent
+`<task-notification>`. The event belongs to the parent session, references the
+child `session_id`, and remains marked synthetic because it is normalized from
+Claude sidechain and notification records.
 
 ## Codex CLI
 
@@ -137,10 +171,24 @@ parent session id
   -> child event_msg.task_complete
 ```
 
-Current `cagelens` parser code preserves some linkage on parsed messages, but
-stats, session listing, Markdown, and HTML export do not yet promote the child
-rollout itself into a first-class subagent session. `task_complete` is also not
-currently emitted as a normalized event.
+Current `cagelens` lineage code preserves Codex child rollouts as first-class
+subagent spans and emits derived parent-facing completion events. Stats,
+session listing, Markdown, and HTML rendering may still choose how much of that
+lineage model to expose.
+
+For parent-facing exports, `cagelens` should derive a
+`subagent.completed` lifecycle event by joining:
+
+```text
+parent spawn_agent output agent_id
+  -> child session_meta.payload.id
+  -> child event_msg.task_complete
+```
+
+The parent rollout often contains only assistant narration such as "Hume
+completed"; the authoritative closure is the child `task_complete` record, so
+the normalized event must be marked synthetic and include evidence from both
+the parent spawn output and child completion record when both are available.
 
 ## Gemini CLI
 
@@ -162,6 +210,12 @@ call timestamp and result timestamp are available, but a separate child
 transcript may not exist in older/local JSON sessions. Current JSONL paths may
 also contain nested child sessions under a parent chat directory; when present,
 those should be linked by parent session path and child agent/session id.
+
+For parent-side Gemini `toolCalls[]` records, `cagelens` should derive
+`subagent.completed` from the tool call itself when it has a terminal
+`status`/`resultDisplay`. When nested child JSONL exists, the lifecycle event
+should prefer child completion evidence, but parent-side tool call evidence is
+still sufficient for a confirmed parent-facing event.
 
 ## Pi
 
@@ -188,14 +242,19 @@ session-file relationship in the base format. Examples:
   exposes enough structured fields to identify child sessions and completion.
 
 Do not infer native Pi subagent tracks from ordinary branch tree records alone.
+When an extension-provided Pi `subagent` tool call has a matching tool result,
+derive `subagent.completed` from that tool result. Ordinary Pi `id` /
+`parentId` branch trees must not produce subagent lifecycle events.
 
 ## Implementation Notes
 
 1. Add a `lineage` extraction stage per backend.
 2. Keep raw evidence paths for explainability and debugging.
-3. Promote child sessions into stats and timeline data before HTML rendering.
-4. Keep branch lineage separate from subagent lineage.
-5. Add fixtures for:
+3. Emit derived parent-facing lifecycle events after child/session spans have
+   been joined.
+4. Promote child sessions into stats and timeline data before HTML rendering.
+5. Keep branch lineage separate from subagent lineage.
+6. Add fixtures for:
    - Codex `thread_source: "subagent"` plus `task_complete`.
    - Claude nested `subagents/agent-<task-id>.jsonl` plus parent
      `<task-notification>`.

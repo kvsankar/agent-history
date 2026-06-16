@@ -88,6 +88,7 @@ def build_timeline_lineage(
     _attach_codex_invocations(records, codex_invocations)
     _attach_claude_notifications(records, claude_notifications)
     _mark_unjoined_subagents(records)
+    _append_subagent_completion_events(records)
     return sorted(records, key=_lineage_sort_key)
 
 
@@ -636,6 +637,47 @@ def _mark_unjoined_subagents(records: list[LineageRecord]) -> None:
             and not record.get("join_status")
         ):
             record["join_status"] = "unjoined"
+
+
+def _append_subagent_completion_events(records: list[LineageRecord]) -> None:
+    events = [
+        event for record in records if (event := _subagent_completion_event(record)) is not None
+    ]
+    records.extend(events)
+
+
+def _subagent_completion_event(record: LineageRecord) -> LineageRecord | None:
+    if record.get("kind") != "subagent":
+        return None
+    parent_session_id = record.get("parent_session_id")
+    child_session_id = record.get("session_id")
+    status = record.get("status")
+    if not parent_session_id or not child_session_id or not status:
+        return None
+
+    timestamp = record.get("end_ts") or record.get("start_ts")
+    event: LineageRecord = {
+        "kind": "event",
+        "event_type": "subagent.completed",
+        "event_id": f"{parent_session_id}:subagent.completed:{child_session_id}",
+        "synthetic": True,
+        "parent_session_id": parent_session_id,
+        "child_session_id": child_session_id,
+        "child_agent_id": record.get("agent_id"),
+        "agent": record.get("agent"),
+        "agent_name": record.get("agent_name"),
+        "invocation_message_id": record.get("invocation_message_id"),
+        "invocation_tool_call_id": record.get("invocation_tool_call_id"),
+        "merge_message_id": record.get("merge_message_id"),
+        "timestamp": timestamp,
+        "start_ts": timestamp,
+        "status": status,
+        "duration_ms": record.get("duration_ms"),
+        "summary": record.get("last_agent_message"),
+        "confidence": record.get("confidence", "confirmed"),
+        "evidence": record.get("evidence", []),
+    }
+    return _drop_none(event)
 
 
 def _claude_notifications_from_entry(
