@@ -174,7 +174,13 @@ def load_config() -> dict:
         return {}
 
     if not config_file.exists():
-        return {"version": 1, "homes": [], "sources": [], "projects": _load_legacy_projects()}
+        return {
+            "version": 1,
+            "homes": [],
+            "sources": [],
+            "projects": _load_legacy_projects(),
+            "project_tags": {},
+        }
 
     try:
         with open(config_file, encoding="utf-8") as f:
@@ -183,6 +189,8 @@ def load_config() -> dict:
                 data["sources"] = []
             if "projects" not in data:
                 data["projects"] = {}
+            if "project_tags" not in data:
+                data["project_tags"] = {}
             if "version" not in data:
                 data["version"] = 1
             legacy_projects = _load_legacy_projects()
@@ -199,7 +207,13 @@ def load_config() -> dict:
             return data
     except (OSError, json.JSONDecodeError) as e:
         sys.stderr.write(f"Warning: Could not load config file: {e}\n")
-        return {"version": 1, "homes": [], "sources": [], "projects": _load_legacy_projects()}
+        return {
+            "version": 1,
+            "homes": [],
+            "sources": [],
+            "projects": _load_legacy_projects(),
+            "project_tags": {},
+        }
 
 
 def save_config(data: dict) -> bool:
@@ -224,6 +238,10 @@ def save_config(data: dict) -> bool:
         _apply_secure_permissions(config_dir, 0o700)
         if "version" not in data:
             data["version"] = 1
+        if "projects" not in data:
+            data["projects"] = {}
+        if "project_tags" not in data:
+            data["project_tags"] = {}
         homes = data.get("homes") or data.get("sources") or []
         data["homes"] = homes
         # Keep sources in sync for backward compatibility

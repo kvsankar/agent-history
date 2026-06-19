@@ -78,6 +78,10 @@ def mock_context() -> ResolutionContext:
             "local": ["/home/user/proj1", "/home/user/proj2"],
         },
     }
+    ctx.project_tags = {
+        "testproj": ["work"],
+        "multiworkspace": ["work", "client"],
+    }
 
     ctx.claude_projects_dir = None
     ctx.codex_sessions_dir = None
@@ -126,6 +130,17 @@ class TestBuildTemplate:
         assert len(template) == 1
         assert isinstance(template[0], ProjectRecord)
         assert template[0].project == "testproj"
+
+    def test_tag_flag_expands_to_tagged_project_records(self, resolver: ScopeResolver) -> None:
+        """--tag should behave as a project scope selector."""
+        args = ScopeArgs(tags=["work"])
+
+        template = resolver._build_template(args)
+
+        assert [record.project for record in template if isinstance(record, ProjectRecord)] == [
+            "testproj",
+            "multiworkspace",
+        ]
 
     def test_all_workspaces_flag_creates_workspace_all(self, resolver: ScopeResolver) -> None:
         """--aw flag should create WorkspaceSpec.All.

@@ -20,6 +20,7 @@ Detailed documentation for all `cagelens` commands and options.
 | `session` | List sessions |
 | `session export` | Export sessions to Markdown, HTML, or NDJSON |
 | `project` | Manage workspace projects |
+| `tag` | Tag projects for filtered stats and rollups |
 | `session stats` | Show usage statistics and metrics |
 | `reset` | Reset stored data (metrics/config/cache) |
 | `install` | Install CLI and agent skill packages |
@@ -134,6 +135,8 @@ cagelens session list [PATTERN] [OPTIONS]
 
 **Scope Options:**
 - `--this`: Use current workspace only, not its project (if in a project)
+- `--project NAME`: Use workspaces from a configured project
+- `--tag NAME`: Use workspaces from projects with this tag
 - `--ah`, `--all-homes`: List from all configured homes
 - `--no-wsl`: Exclude WSL sessions (useful with `--ah`)
 - `--no-windows`: Exclude Windows sessions (useful with `--ah`)
@@ -193,6 +196,8 @@ cagelens session export [WORKSPACE...] [OPTIONS]
 - `--ah`, `--all-homes`: Export from ALL sources (local + WSL + Windows + remotes)
 - `--aw`, `--all-workspaces` (also `-a`, `--all`): Export ALL workspaces
 - `--this`: Use current workspace only, not its project membership
+- `--project NAME`: Export workspaces from a configured project
+- `--tag NAME`: Export workspaces from projects with this tag
 
 **Arguments:**
 - `WORKSPACE`: One or more workspace patterns (default: current workspace or its project)
@@ -345,6 +350,29 @@ cagelens session list --this
 
 ---
 
+## `tag` - Manage Project Tags
+
+Tags are normalized labels on projects. A project can have multiple tags, and a
+tag applies to that project across all homes.
+
+```bash
+cagelens tag list
+cagelens tag list --project myproject
+cagelens tag add --project myproject work personal
+cagelens tag remove --project myproject personal
+
+cagelens session list --tag work
+cagelens session export --tag work -o ./backup
+cagelens stats --tag work
+cagelens stats rollup --metric time --by tag
+```
+
+`Work Stuff` normalizes to `work-stuff`. `stats --tag work` counts each
+matching session once. `stats rollup --by tag` counts a multi-tag project once
+per tag bucket and includes `untagged`.
+
+---
+
 ## `stats` - Usage Statistics
 
 Display usage statistics and metrics from coding-agent sessions.
@@ -374,6 +402,7 @@ cagelens stats rollup --metric METRIC --by DIMS [OPTIONS]
 **View Options:**
 - `--time`: Expand work-period time details, including daily time totals
 - `--by DIMS`: Group by dimensions (comma-separated): home, agent, workspace, day, model, tool
+  - Rollup also supports `project`, `tag`, and `month`
 - `--metric time|tokens|all`: Rollup metric family
 - `--top N`: Limit rollup rows
 - `--sort FIELDS`: Sort rollup rows by comma-separated fields such as month, agent, tokens, time, sessions, input, output, cache-read
@@ -426,6 +455,7 @@ cagelens stats --sync --aw
 
 # Rollups
 cagelens stats rollup --metric time --by project
+cagelens stats rollup --metric time --by tag
 cagelens stats rollup --metric time --by project,month
 cagelens stats rollup --metric time --by workspace,day
 cagelens stats rollup --metric tokens --by project,agent,model
@@ -595,7 +625,7 @@ cagelens fetch -r user@host --aw
 **Notes:**
 - Use `-r HOST` for explicit SSH remotes, or `--ah --aw` for all configured
   SSH remotes.
-- Use workspace filters such as `--glob "*auth*"`, `--project NAME`, or `--aw`.
+- Use workspace filters such as `--glob "*auth*"`, `--project NAME`, `--tag NAME`, or `--aw`.
 - Use `--agent` to restrict the agent backend.
 - Remote cache layout is documented in [cagelens-spec.md](../specs/cagelens-spec.md#file-locations).
 

@@ -46,6 +46,7 @@ from agent_history.handlers.stubs import (
     WorkspaceShowHandler,
     WorkspaceStatsHandler,
 )
+from agent_history.handlers.tag import TagAddHandler, TagListHandler, TagRemoveHandler
 from agent_history.handlers.utilities import FetchHandler, InstallHandler, ResetHandler
 
 __all__ = [
@@ -80,6 +81,9 @@ __all__ = [
     "SessionShowHandler",
     # Stats handlers
     "SessionStatsHandler",
+    "TagAddHandler",
+    "TagListHandler",
+    "TagRemoveHandler",
     "VerbDispatcher",
     "VerbHandler",
     "WorkspaceExportHandler",

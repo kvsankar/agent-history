@@ -48,6 +48,7 @@ from agent_history.scope.types import (
     WorkspaceSpecConcrete,
     WorkspaceSpecFactory,
 )
+from agent_history.storage.project_tags import normalize_tags
 from agent_history.types import SessionDict, WorkspaceSessionsMap
 
 
@@ -201,11 +202,11 @@ class ScopeResolver:
                 "  3. Use --project to use a project's workspaces"
             )
 
-        # Check for explicit project
-        if args.projects:
+        explicit_projects = self._project_scope_from_tags(args)
+        if explicit_projects is not None:
             return [
                 ProjectRecord(project=project, sessions=session_spec)
-                for project in dict.fromkeys(args.projects)
+                for project in explicit_projects
             ]
 
         # Check for --this (current workspace only) - must come before implicit project
@@ -296,6 +297,7 @@ class ScopeResolver:
         has_explicit_scope = (
             args.all_workspaces
             or bool(args.projects)
+            or bool(args.tags)
             or self.context.cwd_project
             or bool(args.patterns)
             or bool(args.glob_patterns)
@@ -303,6 +305,28 @@ class ScopeResolver:
             or bool(args.name_patterns)
         )
         return needs_cross_home and not has_explicit_scope and bool(self.context.cwd_workspace)
+
+    def _project_scope_from_tags(self, args: ScopeArgs) -> list[str] | None:
+        """Return explicit project scope after applying tag filters, if any."""
+        if not args.projects and not args.tags:
+            return None
+        projects = list(dict.fromkeys(args.projects))
+        if not args.tags:
+            return projects
+
+        requested = set(normalize_tags(args.tags))
+        tag_map = getattr(self.context, "project_tags", {}) or {}
+        configured_projects = list(self.context.project_config.keys())
+        tagged_projects = []
+        for project in configured_projects:
+            raw_tags = tag_map.get(project, [])
+            values = [raw_tags] if isinstance(raw_tags, str) else list(raw_tags or [])
+            if requested.intersection(normalize_tags(values)):
+                tagged_projects.append(project)
+        if projects:
+            project_set = set(projects)
+            return [project for project in tagged_projects if project in project_set]
+        return tagged_projects
 
     def _cross_home_guard_target(self, args: ScopeArgs) -> str:
         if args.home_type == "wsl":

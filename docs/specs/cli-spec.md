@@ -21,7 +21,7 @@ Command-line interface specification for `cagelens`.
 
 ## Command Aliases
 
-Command aliases have been removed. Use the canonical command names: `home`, `ws`, `session`, `project`.
+Command aliases have been removed. Use the canonical command names: `home`, `ws`, `session`, `project`, and `tag`.
 
 ## Bare Invocation
 
@@ -48,6 +48,7 @@ must choose an explicit command such as `cagelens session list`.
 | `ws` | Workspace (project directory) | Within home |
 | `session` | Conversation file | Within workspace |
 | `project` | Named group of workspaces (cross-cutting) | Alias across homes |
+| `tag` | Normalized project label | Project metadata |
 
 ### Hierarchy
 
@@ -57,6 +58,7 @@ home (local, wsl, windows, web, remote:user@host)
         └── session (conversation .jsonl file)
 
 project = cross-cutting alias that groups workspaces from any home
+tag = label on a project, applied across all homes in that project
 ```
 
 `web` homes require Claude credentials and are included by `--ah` unless excluded.
@@ -79,8 +81,8 @@ project = cross-cutting alias that groups workspaces from any home
 |------|-------------|------------|
 | `list` | Show multiple items (default) | all |
 | `show` | Show single item details | all |
-| `add` | Add to collection | home, project |
-| `remove` | Remove from collection | home, project |
+| `add` | Add to collection | home, project, tag |
+| `remove` | Remove from collection | home, project, tag |
 | `export` | Convert to markdown | ws, session, project, home |
 | `stats` | Show usage metrics | ws, session, project, home |
 
@@ -92,6 +94,7 @@ cagelens home          # = home list
 cagelens ws            # = ws list
 cagelens session       # = session list
 cagelens project       # = project list
+cagelens tag           # = tag list
 ```
 
 ---
@@ -196,8 +199,12 @@ Notes:
 | Flag | Description |
 |------|-------------|
 | `--project <name>` | Use workspaces from named project (repeatable) |
+| `--tag <name>` | Use workspaces from projects carrying a normalized tag (repeatable) |
 
 Multiple `--project` flags are combined into a single scope.
+Multiple `--tag` flags select projects with any requested tag. When both
+`--project` and `--tag` are supplied, the effective project set is the
+intersection.
 
 **Project Auto-Detection:** When running `session`, `export`, or `stats` commands without explicit workspace arguments, if the current directory belongs to a project, the command automatically scopes to that project. Use `--this` to override and target only the current workspace. `ws list` is a discovery command and defaults to all workspaces in the selected homes unless a workspace pattern/project/`--this` is provided.
 
@@ -206,13 +213,14 @@ Multiple `--project` flags are combined into a single scope.
 session list                    # Uses project myproj (implicit)
 session list --this             # Current workspace only, no project expansion
 session list --project other    # Explicit project selection
+session list --tag work         # All projects tagged work
 ```
 
 ### Cross-Home Access Guard
 
 When accessing non-local homes (`--windows`, `--wsl`, `-r user@host`, `--home <name>`, `--ah`) from within a local workspace, all session verbs (`list`, `export`, `stats`) require either:
 1. An explicit workspace scope (`<workspace>`, `--glob <pattern>`, or `--regex <regex>`)
-2. A project that ties the local workspace to remote workspaces
+2. A project or project tag that ties the local workspace to remote workspaces
 3. The `--aw` flag (explicitly requesting all workspaces)
 
 **Rationale:** The same path on different machines (e.g., `/home/user/myproject` on local vs remote) may be completely unrelated codebases. Implicit path matching across homes would show misleading results.
@@ -236,12 +244,13 @@ session list --ah                   # OK: project ties homes together
 **When guard is skipped:**
 - Not in a local workspace (no implicit path to match)
 - Using `--aw` (explicitly requesting all workspaces)
-- Project exists that ties workspaces together
+- Project or project tag exists that ties workspaces together
 
 **Allowed examples (guard skipped):**
 - Outside any workspace (e.g., in `~/`): `session list --windows --aw`
 - In a workspace but explicitly all workspaces: `session list --ah --aw`
 - With a project that links homes: `session list --wsl --project myproj`
+- With a project tag that links homes: `session list --wsl --tag work`
 - Explicit patterns without a project: `session list --windows --glob '*myproj*'`
 
 ### Agent Filter
@@ -322,6 +331,7 @@ Scope Options:
   --aw, --all-workspaces          # All workspaces
   --this                          # Current workspace only (override project)
   --project <name>                # Use workspaces from project
+  --tag <name>                    # Use workspaces from tagged projects
   --home <name>                   # Specific home (repeatable)
   --ah, --all-homes               # All homes
   --wsl                           # WSL home
@@ -357,7 +367,7 @@ Stats Options:
   --force                         # With --sync, reprocess unchanged session files
   --quiet                         # Suppress sync progress
   --by <dimension>                # Group by (comma-separated): model, tool, day, workspace, home, agent
-                                  # Rollup also supports: project, month
+                                  # Rollup also supports: project, tag, month
   --metric <metric>                # Rollup metric: time, tokens, all
   --top <n>                       # Rollup row limit
   --models                        # Alias for --by model
@@ -384,7 +394,7 @@ stats rollup [options]             # Stable tabular rollups
 
 Rollup Options:
   --metric <time|tokens|all>        # Metric family (default: all)
-  --by <dims>                      # project/proj, workspace/ws, home, agent, model, day, month
+  --by <dims>                      # project/proj, tag, workspace/ws, home, agent, model, day, month
   --top <n>                        # Limit rows
   --sort <fields>                  # metric/tokens/time/sessions/messages/input/output/cache-read/dims
   --asc | --desc                   # Sort direction
@@ -415,6 +425,9 @@ Discoverability examples:
   cagelens stats rollup --metric time --by project,month
       Show monthly work-period time totals per project.
 
+  cagelens stats rollup --metric time --by tag
+      Show work-period time totals by project tag, including untagged.
+
   cagelens stats rollup --metric time --by workspace,month --project myproj
       Show monthly work-period time totals per workspace in a project.
 
@@ -444,6 +457,34 @@ session list --project myproject      # List sessions from project workspaces
 session export --project myproject    # Export project sessions
 session stats --project myproject     # Stats for project
 ```
+
+### tag
+
+Manage normalized project tags. Tags are stored as project metadata and apply
+to the project across all homes.
+
+```
+tag [list]                         # List project tags
+tag list --project <name>           # List tags for one project
+tag add --project <name> <tag...>   # Add tags to a project
+tag remove --project <name> <tag...> # Remove tags from a project
+```
+
+Tags are normalized to lowercase shell-friendly slugs. For example,
+`Work Stuff` becomes `work-stuff`.
+
+Tagged projects can be used as a scope:
+```
+session list --tag work
+session export --tag work -o ./backup
+stats --tag work
+stats rollup --metric time --by tag
+```
+
+For filtering (`--tag work`), each matching session counts once. For rollups
+grouped by `tag`, sessions in multi-tag projects count once in each matching tag
+bucket. Projects without tags, and sessions not matched to a configured project,
+appear in the `untagged` bucket.
 
 ---
 
@@ -869,9 +910,9 @@ Lists configured projects.
 
 **Default:**
 ```
-PROJECT       SOURCE                       WORKSPACE             SESSIONS
-myproject     local, wsl:Ubuntu, remote:vm01 3 workspaces         45
-api-work      local, remote:vm01             2 workspaces         12
+PROJECT       TAGS           SOURCE                         WORKSPACE       SESSIONS
+myproject     work,client-a   local, wsl:Ubuntu, remote:vm01 3 workspaces   45
+api-work      work            local, remote:vm01             2 workspaces   12
 ```
 
 Note: `SESSIONS` is only populated with `project list --counts`.
@@ -883,7 +924,8 @@ Shows project details.
 **Default:**
 ```
 Project: myproject
-
+Tags: work,client-a
+Total Workspaces: 3
 Total Sessions: 45
 
   local:

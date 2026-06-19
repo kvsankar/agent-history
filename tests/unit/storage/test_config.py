@@ -20,6 +20,7 @@ from agent_history.storage.config import (
     save_aliases,
     save_config,
 )
+from agent_history.storage.project_tags import normalize_tag, project_tags_for
 
 # =============================================================================
 # Test Helpers
@@ -116,6 +117,7 @@ class TestConfigLoadSave:
         assert result.get("homes") == []
         assert result.get("sources") == []
         assert result.get("projects") == {}
+        assert result.get("project_tags") == {}
 
     def test_save_and_load_config(self, tmp_path, monkeypatch):
         """Config should round-trip correctly."""
@@ -136,6 +138,22 @@ class TestConfigLoadSave:
         assert loaded["homes"] == ["remote@example.com", "wsl:Ubuntu"]
         assert loaded["sources"] == ["remote@example.com", "wsl:Ubuntu"]  # Kept in sync
         assert loaded["projects"] == {"myproject": {"local": ["-home-user-myproject"]}}
+        assert loaded["project_tags"] == {}
+
+    def test_project_tag_helpers_normalize_and_dedupe(self, tmp_path, monkeypatch):
+        """Project tags should normalize to stable lowercase slugs."""
+        _set_config_dir(tmp_path, monkeypatch)
+
+        config = {
+            "version": 1,
+            "homes": [],
+            "projects": {"myproject": {"local": ["/tmp/project"]}},
+            "project_tags": {"myproject": [" Work Stuff ", "work-stuff", "CLIENT_A"]},
+        }
+
+        assert normalize_tag(" Work Stuff ") == "work-stuff"
+        assert normalize_tag("CLIENT_A") == "client_a"
+        assert project_tags_for(config, "myproject") == ["work-stuff", "client_a"]
 
     def test_config_file_permissions(self, tmp_path, monkeypatch):
         """Config file should have secure permissions (0o600)."""

@@ -23,6 +23,9 @@ def test_required_handlers_are_registered():
         ("project", "add"),
         ("project", "remove"),
         ("project", "export"),
+        ("tag", "list"),
+        ("tag", "add"),
+        ("tag", "remove"),
     ]
 
     missing = [pair for pair in required if dispatcher.get_handler(*pair) is None]

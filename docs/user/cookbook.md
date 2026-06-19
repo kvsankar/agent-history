@@ -28,6 +28,9 @@ cagelens project add myproject --glob "*myproject*" -r user@vm01       # remote
 
 # View the project
 cagelens project show myproject
+
+# Optional: tag it for later filtering and rollups
+cagelens tag add --project myproject work client-a
 ```
 
 ---
@@ -177,6 +180,9 @@ cagelens stats --by day
 
 # Filter to specific project
 cagelens stats --project myproject
+
+# Filter to all projects tagged work
+cagelens stats --tag work
 ```
 
 ---
@@ -192,6 +198,9 @@ cagelens stats --since 2025-11-01 --until 2025-11-30
 
 # Per-workspace breakdown for the month
 cagelens stats rollup --metric time --by workspace,month --since 2025-11-01 --until 2025-11-30
+
+# Per-tag breakdown for the month, including untagged
+cagelens stats rollup --metric time --by tag --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -236,9 +245,13 @@ Projects are automatically aggregated in stats output:
 ```bash
 # Create project for workspaces across environments
 cagelens project add myproject --glob "*myproject*" --ah
+cagelens tag add --project myproject work
 
 # View aggregated stats
 cagelens stats --project myproject
+
+# View all work-tagged projects together
+cagelens stats --tag work
 
 # Detailed workspace view shows projects separately
 cagelens stats --by workspace

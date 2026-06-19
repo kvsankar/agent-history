@@ -145,6 +145,14 @@ def _format_project_workspaces(
     return str(workspaces)
 
 
+def _format_tags(tags: Any) -> str:
+    if isinstance(tags, list):
+        return ", ".join(str(tag) for tag in tags)
+    if tags is None:
+        return ""
+    return str(tags)
+
+
 def _stats_group_list(metadata: dict[str, Any]) -> list[str]:
     default_groups = ["agent", "home", "workspace"]
     group_by = metadata.get("group_by") or []
@@ -191,6 +199,8 @@ def _format_scope_request(scope_request: dict[str, Any] | None) -> str:
     joined = ", ".join(values)
     if scope_type == "project":
         return f"project {joined}" if len(values) == 1 else f"projects {joined}"
+    if scope_type == "tag":
+        return f"tag {joined}" if len(values) == 1 else f"tags {joined}"
     if scope_type == "current_project":
         return f"current project {joined}"
     if scope_type == "all_workspaces":
@@ -676,6 +686,8 @@ class TableFormatter(DataFormatter):
             "project_list": self._format_project_list,
             "project_details": self._format_project_details,
             "project_update": self._format_project_update,
+            "tag_list": self._format_tag_list,
+            "tag_update": self._format_tag_update,
             "exported_files": self._format_exported_files,
             "gemini_index": self._format_gemini_index,
             "install_result": self._format_install_result,
@@ -692,6 +704,8 @@ class TableFormatter(DataFormatter):
                 "stats_rollup",
                 "project_details",
                 "project_update",
+                "tag_list",
+                "tag_update",
                 "exported_files",
                 "project_list",
                 "home_list",
@@ -844,7 +858,7 @@ class TableFormatter(DataFormatter):
 
         workspace_display_map = (metadata or {}).get("workspace_display_map", {})
         show_counts = True if metadata is None else metadata.get("show_counts", True)
-        headers = ["PROJECT", "SOURCE", "WORKSPACE"]
+        headers = ["PROJECT", "TAGS", "SOURCE", "WORKSPACE"]
         if show_counts:
             headers.append("SESSIONS")
         rows = []
@@ -861,6 +875,7 @@ class TableFormatter(DataFormatter):
 
             row = [
                 p.get("project", p.get("name", "")),
+                _format_tags(p.get("tags", [])),
                 source_str,
                 workspace_str,
             ]
@@ -875,6 +890,7 @@ class TableFormatter(DataFormatter):
         lines = []
         project_name = data.get("project", "")
         lines.append(f"Project: {project_name}")
+        lines.append(f"Tags: {_format_tags(data.get('tags', [])) or '(none)'}")
         lines.append(f"Total Workspaces: {data.get('total_workspaces', 0)}")
         lines.append(f"Total Sessions: {data.get('total_sessions', 0)}")
         lines.append("")
@@ -888,6 +904,31 @@ class TableFormatter(DataFormatter):
                 session_count = ws.get("session_count", 0)
                 lines.append(f"    {ws_path} ({session_count} sessions)")
 
+        return "\n".join(lines)
+
+    def _format_tag_list(self, rows_data: list[dict[str, Any]], metadata: dict[str, Any]) -> str:
+        if not rows_data:
+            return "No project tags configured."
+        rows = [
+            [str(row.get("project", "")), _format_tags(row.get("tags", []))] for row in rows_data
+        ]
+        return self._render_table(["PROJECT", "TAGS"], rows)
+
+    def _format_tag_update(self, data: dict[str, Any], metadata: dict[str, Any]) -> str:
+        if not isinstance(data, dict):
+            return str(data)
+        lines = [
+            f"Project: {data.get('project', '')}",
+            f"Tags: {_format_tags(data.get('tags', [])) or '(none)'}",
+        ]
+        if "added" in data:
+            lines.append(f"Added: {_format_tags(data.get('added', [])) or '0'}")
+        if "removed" in data:
+            lines.append(f"Removed: {_format_tags(data.get('removed', [])) or '0'}")
+        if data.get("existing"):
+            lines.append(f"Existing: {_format_tags(data.get('existing', []))}")
+        if data.get("missing"):
+            lines.append(f"Missing: {_format_tags(data.get('missing', []))}")
         return "\n".join(lines)
 
     def _format_project_update(self, data: ProjectDict, metadata: dict[str, Any]) -> str:
@@ -1049,6 +1090,8 @@ class TsvFormatter(DataFormatter):
             "project_list": self._format_project_list,
             "project_details": self._format_project_details,
             "project_update": self._format_project_update,
+            "tag_list": self._format_tag_list,
+            "tag_update": self._format_tag_update,
             "stats": self._format_stats,
             "stats_rollup": self._format_stats_rollup,
             "gemini_index": self._format_gemini_index,
@@ -1064,6 +1107,8 @@ class TsvFormatter(DataFormatter):
                 "project_list",
                 "project_details",
                 "project_update",
+                "tag_list",
+                "tag_update",
                 "home_list",
                 "stats",
                 "stats_rollup",
@@ -1135,7 +1180,7 @@ class TsvFormatter(DataFormatter):
     ) -> str:
         """Format project list as TSV."""
         show_counts = True if metadata is None else metadata.get("show_counts", True)
-        headers = ["PROJECT", "SOURCE", "WORKSPACE"]
+        headers = ["PROJECT", "TAGS", "SOURCE", "WORKSPACE"]
         if show_counts:
             headers.append("SESSIONS")
         lines = [_tsv_row(headers)]
@@ -1153,6 +1198,7 @@ class TsvFormatter(DataFormatter):
 
             row = [
                 p.get("project", p.get("name", "")),
+                _format_tags(p.get("tags", [])),
                 source_str,
                 workspace_str,
             ]
@@ -1167,8 +1213,9 @@ class TsvFormatter(DataFormatter):
     ) -> str:
         """Format project details as TSV rows."""
         workspace_display_map = (metadata or {}).get("workspace_display_map", {})
-        lines = [_tsv_row(["PROJECT", "HOME", "WORKSPACE", "SESSIONS"])]
+        lines = [_tsv_row(["PROJECT", "TAGS", "HOME", "WORKSPACE", "SESSIONS"])]
         project_name = str(data.get("project", ""))
+        tags = _format_tags(data.get("tags", []))
         workspaces_by_home = data.get("workspaces_by_home", {})
         if not isinstance(workspaces_by_home, dict):
             return "\n".join(lines)
@@ -1183,6 +1230,7 @@ class TsvFormatter(DataFormatter):
                     _tsv_row(
                         [
                             project_name,
+                            tags,
                             str(home),
                             ws_path,
                             str(workspace.get("session_count", 0)),
@@ -1190,6 +1238,35 @@ class TsvFormatter(DataFormatter):
                     )
                 )
         return "\n".join(lines)
+
+    def _format_tag_list(
+        self, rows_data: list[dict[str, Any]], metadata: dict[str, Any] | None = None
+    ) -> str:
+        lines = [_tsv_row(["PROJECT", "TAGS"])]
+        for row in rows_data:
+            lines.append(_tsv_row([row.get("project", ""), _format_tags(row.get("tags", []))]))
+        return "\n".join(lines)
+
+    def _format_tag_update(
+        self, data: dict[str, Any], metadata: dict[str, Any] | None = None
+    ) -> str:
+        if not isinstance(data, dict):
+            return json.dumps(data, default=str)
+        return "\n".join(
+            [
+                _tsv_row(["PROJECT", "TAGS", "ADDED", "REMOVED", "EXISTING", "MISSING"]),
+                _tsv_row(
+                    [
+                        data.get("project", ""),
+                        _format_tags(data.get("tags", [])),
+                        _format_tags(data.get("added", [])),
+                        _format_tags(data.get("removed", [])),
+                        _format_tags(data.get("existing", [])),
+                        _format_tags(data.get("missing", [])),
+                    ]
+                ),
+            ]
+        )
 
     def _format_project_update(self, data: ProjectDict, metadata: dict[str, Any]) -> str:
         """Format project updates as TSV."""

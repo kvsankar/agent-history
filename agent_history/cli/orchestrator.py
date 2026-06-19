@@ -36,6 +36,9 @@ from agent_history.handlers import (
     SessionListHandler,
     SessionShowHandler,
     SessionStatsHandler,
+    TagAddHandler,
+    TagListHandler,
+    TagRemoveHandler,
     VerbDispatcher,
     WorkspaceExportHandler,
     WorkspaceListHandler,
@@ -193,6 +196,11 @@ class CommandOrchestrator:
         dispatcher.register("project", "add", ProjectAddHandler())
         dispatcher.register("project", "remove", ProjectRemoveHandler())
         dispatcher.register("project", "export", ProjectExportHandler())
+
+        # Project tag handlers
+        dispatcher.register("tag", "list", TagListHandler())
+        dispatcher.register("tag", "add", TagAddHandler())
+        dispatcher.register("tag", "remove", TagRemoveHandler())
 
         # Top-level stats handlers
         dispatcher.register("stats", "summary", SessionStatsHandler())
@@ -382,7 +390,11 @@ class CommandOrchestrator:
             request.verb_args["sync"] = True
             request.verb_args["sync_stats"] = sync_stats
             if context is not None:
-                request.verb_args["project_map"] = SessionStatsHandler()._project_membership_map(
+                stats_handler = SessionStatsHandler()
+                request.verb_args["project_map"] = stats_handler._project_membership_map(
+                    context, request.scope_args
+                )
+                request.verb_args["tag_map"] = stats_handler._tag_membership_map(
                     context, request.scope_args
                 )
             if show_progress:
@@ -512,7 +524,7 @@ class CommandOrchestrator:
         return self._dispatch_without_scope(request)
 
     def _dispatch_scope_free_command(self, request: CommandRequest) -> int | None:
-        if request.resource not in {"gemini-index", "install", "reset"}:
+        if request.resource not in {"gemini-index", "install", "reset", "tag"}:
             return None
         return self._dispatch_without_scope(request)
 
@@ -571,6 +583,7 @@ class CommandOrchestrator:
         has_explicit_scope = (
             args.all_workspaces
             or bool(args.projects)
+            or bool(args.tags)
             or context.cwd_project
             or bool(args.patterns)
             or bool(args.glob_patterns)

@@ -341,9 +341,9 @@ class TestProjectScope:
         )
 
         assert_cli_success(result, "project show should succeed")
-        assert result.stdout.splitlines()[0] == "PROJECT\tHOME\tWORKSPACE\tSESSIONS"
-        assert "myproject\tlocal\t/home/user/project/alpha\t3" in result.stdout
-        assert "myproject\twsl\t/home/user/project/alpha\t3" in result.stdout
+        assert result.stdout.splitlines()[0] == "PROJECT\tTAGS\tHOME\tWORKSPACE\tSESSIONS"
+        assert "myproject\t\tlocal\t/home/user/project/alpha\t3" in result.stdout
+        assert "myproject\t\twsl\t/home/user/project/alpha\t3" in result.stdout
 
 
 # ---------------------------------------------------------------------------

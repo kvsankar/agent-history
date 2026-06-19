@@ -87,6 +87,12 @@ cagelens stats --by day
 
 # Per-workspace breakdown
 cagelens stats --by workspace
+
+# Filter by project tag
+cagelens stats --tag work
+
+# Roll up time by project tag, including untagged
+cagelens stats rollup --metric time --by tag
 ```
 
 ### List Workspaces
