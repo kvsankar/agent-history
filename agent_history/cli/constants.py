@@ -31,6 +31,7 @@ FLAGS_WITH_VALUES = frozenset(
         "-r",
         "--remote",
         "--project",
+        "--tag",
         "--session",
         "--session-id",
         "--by",
@@ -52,6 +53,7 @@ RESOURCE_SUBCOMMANDS = {
     "ws": frozenset({"list", "show", "export", "stats"}),
     "session": frozenset({"list", "show", "export", "stats"}),
     "project": frozenset({"list", "show", "add", "remove", "export", "stats"}),
+    "tag": frozenset({"list", "add", "remove"}),
     "home": frozenset({"list", "show", "add", "remove", "export", "stats"}),
     "stats": frozenset({"summary", "rollup"}),
     "gemini-index": frozenset({"index"}),
@@ -110,6 +112,7 @@ MIN_SPLIT_LINES = 10
 RESOURCE_SESSION = "session"
 RESOURCE_WS = "ws"
 RESOURCE_PROJECT = "project"
+RESOURCE_TAG = "tag"
 RESOURCE_HOME = "home"
 RESOURCE_STATS = "stats"
 RESOURCE_GEMINI_INDEX = "gemini-index"

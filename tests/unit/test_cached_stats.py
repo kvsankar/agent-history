@@ -554,6 +554,186 @@ def test_project_rollup_uses_configured_project_membership(tmp_path, monkeypatch
     ]
 
 
+def test_cached_stats_tag_filter_selects_matching_projects(tmp_path, monkeypatch, capsys) -> None:
+    config_dir = tmp_path / ".cagelens"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "homes": [],
+                "sources": [],
+                "projects": {
+                    "sample": {"local": ["/tmp/project"]},
+                    "personal": {"local": ["/tmp/second-project"]},
+                },
+                "project_tags": {
+                    "sample": ["work"],
+                    "personal": ["personal"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(config_dir))
+    monkeypatch.chdir(tmp_path)
+    _seed_metrics_db()
+    _seed_second_workspace_session()
+
+    exit_code = CommandOrchestrator().run(["stats", "--tag", "work", "--format", "json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    stats = json.loads(captured.out)
+    assert stats["total_sessions"] == 1
+    assert stats["by_workspace"] == {
+        "/tmp/project": {
+            "sessions": 1,
+            "messages": 2,
+        }
+    }
+
+
+def test_cached_stats_rollup_by_tag_duplicates_multi_tag_projects_and_untagged(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config_dir = tmp_path / ".cagelens"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "homes": [],
+                "sources": [],
+                "projects": {
+                    "sample": {"local": ["/tmp/project"]},
+                    "untagged-project": {"local": ["/tmp/second-project"]},
+                },
+                "project_tags": {
+                    "sample": ["work", "client"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(config_dir))
+    monkeypatch.chdir(tmp_path)
+    _seed_metrics_db()
+    _seed_second_workspace_session()
+
+    exit_code = CommandOrchestrator().run(
+        [
+            "stats",
+            "rollup",
+            "--metric",
+            "all",
+            "--by",
+            "tag",
+            "--format",
+            "json",
+            "--raw",
+            "--no-total",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    rows = sorted(json.loads(captured.out), key=lambda row: row["tag"])
+    assert rows == [
+        {
+            "sessions": 1,
+            "messages": 2,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 2,
+            "time_seconds": 300,
+            "time_hms": "0h 5m 0s",
+            "time_hours": 300 / 3600,
+            "tag": "client",
+        },
+        {
+            "sessions": 1,
+            "messages": 1,
+            "input_tokens": 1,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "time_seconds": 0,
+            "time_hms": "0h 0m 0s",
+            "time_hours": 0,
+            "tag": "untagged",
+        },
+        {
+            "sessions": 1,
+            "messages": 2,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 2,
+            "time_seconds": 300,
+            "time_hms": "0h 5m 0s",
+            "time_hours": 300 / 3600,
+            "tag": "work",
+        },
+    ]
+
+
+def test_cached_token_rollup_by_tag_model_preserves_null_time(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config_dir = tmp_path / ".cagelens"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "homes": [],
+                "sources": [],
+                "projects": {"sample": {"local": ["/tmp/project"]}},
+                "project_tags": {"sample": ["work"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(config_dir))
+    monkeypatch.chdir(tmp_path)
+    _seed_metrics_db()
+
+    exit_code = CommandOrchestrator().run(
+        [
+            "stats",
+            "rollup",
+            "--metric",
+            "tokens",
+            "--by",
+            "tag,model",
+            "--format",
+            "json",
+            "--no-total",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    rows = json.loads(captured.out)
+    assert rows == [
+        {
+            "sessions": 1,
+            "messages": 1,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 2,
+            "time_seconds": None,
+            "time_hms": None,
+            "time_hours": None,
+            "tag": "work",
+            "model": "claude-test",
+        }
+    ]
+
+
 def test_synced_project_rollup_uses_passed_project_membership(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / ".cagelens"))
     monkeypatch.chdir(tmp_path)

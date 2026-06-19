@@ -95,7 +95,7 @@ Projects/aliases share the same configuration file. Legacy `projects.json`/`alia
 
 ### Home Storage
 
-Configuration stored in `~/.cagelens/config.json` (canonical key: `homes`; legacy `sources` may exist only for backwards compatibility and is no longer used).
+Configuration stored in `~/.cagelens/config.json` (canonical key: `homes`; legacy `sources` may exist only for backwards compatibility and is no longer used). Project tags are stored separately from project workspace definitions under `project_tags`.
 
 **Simple format** (array of strings):
 ```json
@@ -109,6 +109,9 @@ Configuration stored in `~/.cagelens/config.json` (canonical key: `homes`; legac
       "local": ["/home/user/myproject"],
       "remote:vm01": ["/home/user/myproject"]
     }
+  },
+  "project_tags": {
+    "myproj": ["work", "client-a"]
   }
 }
 ```
@@ -134,6 +137,9 @@ Configuration stored in `~/.cagelens/config.json` (canonical key: `homes`; legac
       "local": ["/home/user/myproject"],
       "remote:vm01": ["/home/user/myproject"]
     }
+  },
+  "project_tags": {
+    "myproj": ["work", "client-a"]
   }
 }
 ```
@@ -499,9 +505,9 @@ commands remain supported as convenience aliases:
   coding-agent consumption.
 - Table output also starts with the same scope banner as summary stats.
 - Required dimensions are supplied with `--by`, accepting comma-separated values.
-- Supported dimensions: `project`, `workspace`, `home`, `agent`, `model`, `day`, `month`.
+- Supported dimensions: `project`, `tag`, `workspace`, `home`, `agent`, `model`, `day`, `month`.
 - Dimension aliases are accepted for common shorthand and plurals, including
-  `ws`/`workspaces` for `workspace` and `proj`/`projects` for `project`.
+  `ws`/`workspaces` for `workspace`, `proj`/`projects` for `project`, and `tags` for `tag`.
 - Supported metrics:
   - `time`: work-period `TIME_HMS`, `TIME_HOURS`, and raw `TIME_SECONDS`
   - `tokens`: input/output/cache token totals
@@ -515,6 +521,9 @@ commands remain supported as convenience aliases:
   `-H`/`--human` is retained for explicitness. Use `--raw`/`--no-human` for
   raw numeric values. JSON output keeps raw numeric token fields.
 - Table output right-aligns numeric columns and left-aligns dimensions.
+- Tag rollups include an `untagged` bucket. A multi-tag project contributes
+  once to each tag bucket; filtering with `--tag <name>` scopes sessions once
+  to matching projects.
 - Table and TSV rollup output includes a totals row by default. `-c`/`--total`
   and `--totals` are retained for explicitness. Use `--no-total`/`--no-totals`
   to suppress it. The first dimension column contains `TOTAL`; remaining
@@ -533,6 +542,7 @@ commands remain supported as convenience aliases:
   descending except time-only rollups, which remain chronological.
 - Examples:
   - `cagelens stats rollup --metric time --by project`
+  - `cagelens stats rollup --metric time --by tag`
   - `cagelens stats rollup --metric time --by project,month`
   - `cagelens stats rollup --metric time --by workspace,day`
   - `cagelens stats rollup --metric tokens --by project,agent,model`
@@ -634,9 +644,16 @@ added later, they must use a separate explicit command such as
       "wsl:Ubuntu": ["/home/user/myproject"],
       "remote:vm01": ["/home/user/myproject"]
     }
+  },
+  "project_tags": {
+    "myproject": ["work", "personal"]
   }
 }
 ```
+
+Project tags are normalized to lowercase slugs and apply to the project across
+all homes. `--tag <name>` selects projects carrying that tag; `stats rollup
+--by tag` emits one bucket per matching tag plus `untagged`.
 
 ---
 

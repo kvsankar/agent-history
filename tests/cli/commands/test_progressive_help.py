@@ -52,7 +52,7 @@ def test_stats_rollup_help_explains_time_metric_and_month_dimension() -> None:
     assert_cli_success(result, "stats rollup help should succeed")
     assert "Rollup examples:" in result.stdout
     assert "cagelens stats rollup --metric time --by month" in result.stdout
-    assert "project/proj, month" in result.stdout
+    assert "project/proj, tag, month" in result.stdout
     assert "cagelens stats rollup --metric tokens --by ws,month" in result.stdout
     assert "cagelens stats rollup --metric tokens --by ws,month --raw --no-total" in result.stdout
     assert "Not needed for rollups; use --metric time" in result.stdout

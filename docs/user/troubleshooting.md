@@ -305,8 +305,9 @@ When syncing between machines (P1 ↔ P2), the tool automatically filters out ca
 
 ### Where does cagelens store its data?
 
-`cagelens` stores its own cache/config under `~/.cagelens/`. For the
-complete file list and migration behavior, see
+`cagelens` stores its own cache/config under `~/.cagelens/`. Homes, projects,
+and project tags live in `~/.cagelens/config.json`; metrics and remote caches
+are stored separately. For the complete file list and migration behavior, see
 [cagelens-spec.md](../specs/cagelens-spec.md#file-locations).
 
 ### How do I start fresh?
@@ -318,7 +319,7 @@ cagelens reset
 
 # Delete only specific data
 cagelens reset db        # Metrics only
-cagelens reset config    # Homes/projects only
+cagelens reset config    # Homes/projects/project tags only
 cagelens reset cache     # Remote/web caches only
 
 # Skip confirmation (for scripts)

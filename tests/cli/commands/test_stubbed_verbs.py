@@ -237,6 +237,97 @@ class TestStubbedVerbs:
             "gap-project", {}
         ).get("local", []), "Expected workspace to be removed from project"
 
+    def test_tag_add_list_remove_updates_project_tags(
+        self, current_workspace_setup: dict[str, Any], tmp_path: Path
+    ) -> None:
+        config_dir = tmp_path / ".agent-history"
+        env = ensure_config_env(current_workspace_setup["env"], config_dir)
+        config_path = config_dir / "config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "projects": {
+                        "gap-project": {"local": [current_workspace_setup["workspace_path"]]}
+                    },
+                    "homes": [],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        add_result = run_cli_subprocess(
+            ["tag", "add", "--project", "gap-project", "Work Stuff", "client_a"],
+            env=env,
+            cwd=current_workspace_setup["workspace_dir"],
+        )
+
+        assert_cli_success(add_result, "tag add should succeed")
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        assert config["project_tags"]["gap-project"] == ["work-stuff", "client_a"]
+
+        list_result = run_cli_subprocess(
+            ["tag", "list", "--format", "json"],
+            env=env,
+            cwd=current_workspace_setup["workspace_dir"],
+        )
+
+        assert_cli_success(list_result, "tag list should succeed")
+        rows = json.loads(list_result.stdout)
+        assert rows == [{"project": "gap-project", "tags": ["work-stuff", "client_a"]}]
+
+        remove_result = run_cli_subprocess(
+            ["tag", "remove", "--project", "gap-project", "work-stuff"],
+            env=env,
+            cwd=current_workspace_setup["workspace_dir"],
+        )
+
+        assert_cli_success(remove_result, "tag remove should succeed")
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        assert config["project_tags"]["gap-project"] == ["client_a"]
+
+    def test_project_list_json_includes_tags(
+        self, current_workspace_setup: dict[str, Any], tmp_path: Path
+    ) -> None:
+        config_dir = tmp_path / ".agent-history"
+        env = ensure_config_env(current_workspace_setup["env"], config_dir)
+        config_path = config_dir / "config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "projects": {
+                        "gap-project": {"local": [current_workspace_setup["workspace_path"]]}
+                    },
+                    "project_tags": {"gap-project": ["work", "client"]},
+                    "homes": [],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        result = run_cli_subprocess(
+            ["project", "list", "--format", "json"],
+            env=env,
+            cwd=current_workspace_setup["workspace_dir"],
+        )
+
+        assert_cli_success(result, "project list should include tags")
+        rows = json.loads(result.stdout)
+        assert rows[0]["tags"] == ["work", "client"]
+
+        show_result = run_cli_subprocess(
+            ["project", "show", "gap-project", "--format", "json"],
+            env=env,
+            cwd=current_workspace_setup["workspace_dir"],
+        )
+
+        assert_cli_success(show_result, "project show should include tags")
+        details = json.loads(show_result.stdout)
+        assert details["tags"] == ["work", "client"]
+
     def test_project_export_writes_files(
         self, project_config_setup: dict[str, Any], tmp_path: Path
     ) -> None:

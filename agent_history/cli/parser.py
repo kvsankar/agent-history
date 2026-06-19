@@ -38,6 +38,7 @@ from agent_history.cli.constants import (
     RESOURCE_RESET,
     RESOURCE_SESSION,
     RESOURCE_STATS,
+    RESOURCE_TAG,
     RESOURCE_WS,
     SESSION_SUBCOMMANDS,
     WS_SUBCOMMANDS,
@@ -52,6 +53,7 @@ STATS_DIMENSION_ALIASES = {
     "workspaces": "workspace",
     "proj": "project",
     "projects": "project",
+    "tags": "tag",
     "homes": "home",
     "agents": "agent",
     "days": "day",
@@ -66,6 +68,7 @@ Progressive help:
   cagelens ws --help              Discover workspaces and workspace flags
   cagelens session --help         List, export, and analyze sessions
   cagelens project --help         Group related workspaces
+  cagelens tag --help             Tag projects for filtered stats and rollups
   cagelens home --help            Configure local, Windows, WSL, web, and remote homes
 
 Common commands:
@@ -78,6 +81,7 @@ Common commands:
 Scope shortcuts:
   --aw = all workspaces, --ah = all homes, --glob PAT = workspace glob, --regex RE = workspace regex
   --this = current workspace only, --project NAME = configured workspace group
+  --tag NAME = configured project tag
   --format json is best for automation; table/TSV are for terminal and pipes.
   Quote glob/regex patterns so your shell passes them to cagelens unchanged.
 
@@ -286,6 +290,18 @@ Examples:
   cagelens project add myproj --glob "*auth*" --dry-run
   cagelens project show myproj
   cagelens session list --project myproj
+"""
+
+
+TAG_EPILOG = """\
+Tags are normalized project labels. They apply to the project across homes.
+
+Examples:
+  cagelens tag add --project myproj work personal
+  cagelens tag list
+  cagelens tag remove --project myproj personal
+  cagelens stats --tag work
+  cagelens stats rollup --metric time --by tag
 """
 
 
@@ -639,6 +655,7 @@ class CLIParser:
         self._add_session_parser(subparsers)
         self._add_workspace_parser(subparsers)
         self._add_project_parser(subparsers)
+        self._add_tag_parser(subparsers)
         self._add_home_parser(subparsers)
         self._add_stats_parser(subparsers)
         self._add_gemini_index_parser(subparsers)
@@ -873,7 +890,7 @@ class CLIParser:
         proj_add.set_defaults(command=RESOURCE_PROJECT, project_command="add")
         proj_add.add_argument("name", help="Project name")
         self._add_workspace_scope_flags(
-            proj_add, positional_name="workspaces", include_project=False
+            proj_add, positional_name="workspaces", include_project=False, include_tag=False
         )
         self._add_home_scope_flags(proj_add)
         proj_add.add_argument(
@@ -918,6 +935,41 @@ class CLIParser:
         self._add_stats_options(proj_stats)
         self._add_home_scope_flags(proj_stats)
         self._add_agent_filter(proj_stats)
+
+    # =========================================================================
+    # Tag subparser
+    # =========================================================================
+
+    def _add_tag_parser(self, subparsers) -> None:
+        """Add project tag subparser."""
+        tag_parser = subparsers.add_parser(
+            RESOURCE_TAG,
+            help="Manage project tags",
+            description="Manage normalized tags attached to configured projects.",
+            formatter_class=WrappedHelpFormatter,
+            epilog=TAG_EPILOG,
+        )
+        tag_parser.set_defaults(command=RESOURCE_TAG, tag_verb=DEFAULT_VERB_LIST)
+        tag_sub = tag_parser.add_subparsers(dest="tag_verb")
+        tag_sub.required = False
+        tag_sub.default = DEFAULT_VERB_LIST
+
+        tag_list = tag_sub.add_parser(DEFAULT_VERB_LIST, help="List project tags")
+        tag_list.set_defaults(command=RESOURCE_TAG, tag_verb=DEFAULT_VERB_LIST)
+        tag_list.add_argument("--project", dest="tag_project", help="Project name")
+        self._add_output_format(tag_list)
+
+        tag_add = tag_sub.add_parser("add", help="Add tag(s) to a project")
+        tag_add.set_defaults(command=RESOURCE_TAG, tag_verb="add")
+        tag_add.add_argument("--project", dest="tag_project", required=True, help="Project name")
+        tag_add.add_argument("tags", nargs="+", help="Tag(s) to add")
+        self._add_output_format(tag_add)
+
+        tag_remove = tag_sub.add_parser("remove", help="Remove tag(s) from a project")
+        tag_remove.set_defaults(command=RESOURCE_TAG, tag_verb="remove")
+        tag_remove.add_argument("--project", dest="tag_project", required=True, help="Project name")
+        tag_remove.add_argument("tags", nargs="+", help="Tag(s) to remove")
+        self._add_output_format(tag_remove)
 
     # =========================================================================
     # Home subparser
@@ -1337,6 +1389,7 @@ class CLIParser:
         positional_name: str = "workspace",
         include_positional: bool = True,
         include_project: bool = True,
+        include_tag: bool = True,
     ) -> None:
         """Add workspace scope flags.
 
@@ -1388,6 +1441,15 @@ class CLIParser:
                 metavar="NAME",
                 default=argparse.SUPPRESS,
                 help="Project name (repeatable)",
+            )
+        if include_tag:
+            parser.add_argument(
+                "--tag",
+                action="append",
+                dest="tags",
+                metavar="NAME",
+                default=argparse.SUPPRESS,
+                help="Project tag (repeatable)",
             )
 
     def _add_date_filters(self, parser) -> None:
@@ -1540,7 +1602,7 @@ class CLIParser:
             metavar="DIMS",
             help=(
                 "Group by dimensions (comma-separated): home, agent, workspace/ws, day, "
-                "model, tool" + (", project/proj, month" if rollup else "")
+                "model, tool" + (", project/proj, tag, month" if rollup else "")
             ),
         )
         if rollup:
@@ -1766,6 +1828,8 @@ class CLIParser:
             return (RESOURCE_WS, getattr(args, "ws_verb", DEFAULT_VERB_LIST))
         elif command == RESOURCE_PROJECT:
             return (RESOURCE_PROJECT, getattr(args, "project_command", DEFAULT_VERB_LIST))
+        elif command == RESOURCE_TAG:
+            return (RESOURCE_TAG, getattr(args, "tag_verb", DEFAULT_VERB_LIST))
         elif command == RESOURCE_HOME:
             return (RESOURCE_HOME, getattr(args, "home_verb", DEFAULT_VERB_LIST))
         elif command == RESOURCE_STATS:
@@ -1866,6 +1930,7 @@ class CLIParser:
         args: argparse.Namespace,
         *,
         projects: list[str],
+        tags: list[str],
         patterns: list[str],
         glob_patterns: list[str],
         regex_patterns: list[str],
@@ -1881,6 +1946,7 @@ class CLIParser:
             or regex_patterns
             or name_patterns
             or projects
+            or tags
             or all_workspaces
             or this_only
         )
@@ -1896,6 +1962,7 @@ class CLIParser:
         all_homes, home_type, home_value, home_names = self._home_scope_values(args)
         all_workspaces = getattr(args, "all_workspaces", False)
         projects = self._project_scope_values(args)
+        tags = self._split_csv_list(list(getattr(args, "tags", None) or []))
         patterns, glob_patterns, regex_patterns, name_patterns = self._workspace_scope_patterns(
             args
         )
@@ -1906,6 +1973,7 @@ class CLIParser:
         if self._session_export_implies_all_workspaces(
             args,
             projects=projects,
+            tags=tags,
             patterns=patterns,
             glob_patterns=glob_patterns,
             regex_patterns=regex_patterns,
@@ -1938,6 +2006,7 @@ class CLIParser:
             home_names=home_names,
             all_workspaces=all_workspaces,
             projects=projects,
+            tags=tags,
             patterns=patterns,
             glob_patterns=glob_patterns,
             regex_patterns=regex_patterns,
@@ -2020,6 +2089,10 @@ class CLIParser:
                 verb_args["workspace"] = getattr(args, "workspace", None)
                 verb_args["wsl"] = getattr(args, "wsl", False)
                 verb_args["windows"] = getattr(args, "windows", False)
+
+        if resource == RESOURCE_TAG:
+            verb_args["project"] = getattr(args, "tag_project", None)
+            verb_args["tags"] = list(getattr(args, "tags", None) or [])
 
         # Home management args
         if resource == RESOURCE_HOME and verb in ("add", "remove"):

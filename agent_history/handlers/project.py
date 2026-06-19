@@ -16,6 +16,7 @@ from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
 from agent_history.storage.config import load_config
+from agent_history.storage.project_tags import project_tags_for
 from agent_history.utils.workspace_ref import WorkspaceContext, build_workspace_ref
 
 
@@ -70,6 +71,7 @@ class ProjectListHandler(VerbHandler):
             # Use v1-compatible field names: project, source, workspace
             project_info = {
                 "project": name,
+                "tags": project_tags_for(config, name),
                 "source": list(definition.keys()),
                 "workspace": all_workspaces,
                 "workspace_count": len(all_workspaces),
@@ -206,6 +208,7 @@ class ProjectShowHandler(VerbHandler):
             success=True,
             data={
                 "project": project_name,
+                "tags": project_tags_for(config, project_name),
                 "workspaces_by_home": dict(workspaces_by_home),
                 "total_sessions": total_sessions,
                 "total_workspaces": sum(len(ws) for ws in workspaces_by_home.values()),

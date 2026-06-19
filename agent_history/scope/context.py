@@ -42,6 +42,7 @@ class ResolutionContext:
             Example: {"wsl": ["Ubuntu", "Debian"], "windows": ["alice"], "remote": ["dev"]}
         project_config: Mapping of project names to their definitions.
             Each definition maps home identifiers to lists of workspace paths.
+        project_tags: Mapping of project names to normalized tag lists.
         claude_projects_dir: Path to Claude's projects directory for session scanning.
         codex_sessions_dir: Path to Codex's sessions directory for session scanning.
         gemini_sessions_dir: Path to Gemini's sessions directory for session scanning.
@@ -63,6 +64,7 @@ class ResolutionContext:
 
     # Configuration
     project_config: dict[str, dict[str, Any]] = field(default_factory=dict)
+    project_tags: dict[str, list[str]] = field(default_factory=dict)
 
     # Agent paths (for session scanning)
     claude_projects_dir: Path | None = None
@@ -86,6 +88,7 @@ class ScopeArgs:
         home_names: List of explicit home names from --home flags.
         all_workspaces: If True, search all workspaces in selected homes (--aw flag).
         projects: Project names for project-scoped operations (--project flag, repeatable).
+        tags: Project tags for project-scoped operations (--tag flag, repeatable).
         patterns: Exact workspace paths/ids from positional arguments.
         this_only: If True, restrict to current workspace only (--this flag).
         agent: Agent filter ("claude", "codex", "gemini", or None for all).
@@ -110,6 +113,7 @@ class ScopeArgs:
     # Workspace selection
     all_workspaces: bool = False
     projects: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     patterns: list[str] = field(default_factory=list)  # Positional exact workspaces
     glob_patterns: list[str] = field(default_factory=list)  # --glob workspace patterns
     regex_patterns: list[str] = field(default_factory=list)  # --regex workspace patterns
@@ -276,6 +280,7 @@ class ContextBuilder:
         # Configuration
         config = load_config()
         ctx.project_config = config.get("projects", {})
+        ctx.project_tags = config.get("project_tags", {})
 
         # Agent paths (for session scanning)
         claude_dir, codex_dir, gemini_dir, pi_dir = self._get_agent_paths()

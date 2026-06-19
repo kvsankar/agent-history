@@ -14,6 +14,11 @@ from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.handlers.dispatcher import DispatchError
 from agent_history.scope.context import OutputArgs, ResolutionContext, ScopeArgs
 from agent_history.scope.types import ConcreteScope
+from agent_history.storage.project_tags import (
+    UNTAGGED_TAG,
+    normalize_tags,
+    project_tags_for,
+)
 from agent_history.utils.paths import decode_workspace_path, is_encoded_workspace_name
 from agent_history.utils.workspace_ref import build_workspace_ref
 
@@ -161,7 +166,8 @@ class SessionStatsHandler(VerbHandler):
         dimensions = group_list or ["project"]
         filters = self._filters_from_scope(scope)
         project_map = verb_args.get("project_map")
-        storage_dimensions = self._storage_rollup_dimensions(dimensions, project_map)
+        tag_map = verb_args.get("tag_map")
+        storage_dimensions = self._storage_rollup_dimensions(dimensions, project_map, tag_map)
         storage_top = None if storage_dimensions != dimensions else verb_args.get("top")
         rows = get_stats_rollup_from_db(
             filters=filters,
@@ -170,6 +176,12 @@ class SessionStatsHandler(VerbHandler):
             top=storage_top,
             sort_by=verb_args.get("sort"),
             sort_direction=verb_args.get("sort_direction") or "default",
+        )
+        rows = self._apply_tag_rollup(
+            rows,
+            dimensions,
+            tag_map,
+            preserve_workspace="project" in dimensions,
         )
         rows = self._apply_project_rollup(rows, dimensions, project_map)
         if storage_dimensions != dimensions and verb_args.get("top"):
@@ -234,6 +246,7 @@ class SessionStatsHandler(VerbHandler):
         metadata["scope_request"] = self._scope_request_metadata(scope_args, context)
         self._apply_session_filters(filters, scope_args)
         project_map = self._project_membership_map(context, scope_args)
+        tag_map = self._tag_membership_map(context, scope_args)
 
         if verb_args.get("stats_mode") != "rollup":
             self._validate_summary_dimensions(group_list)
@@ -244,7 +257,12 @@ class SessionStatsHandler(VerbHandler):
 
         if verb_args.get("stats_mode") == "rollup":
             return self._execute_cached_rollup(
-                filters, metadata, group_list, verb_args, project_map=project_map
+                filters,
+                metadata,
+                group_list,
+                verb_args,
+                project_map=project_map,
+                tag_map=tag_map,
             )
 
         stats = get_scoped_stats_from_db(filters=filters, include_day="day" in group_list)
@@ -332,11 +350,12 @@ class SessionStatsHandler(VerbHandler):
         verb_args: Dict[str, Any],
         *,
         project_map: dict[str, str] | None = None,
+        tag_map: dict[str, list[str]] | None = None,
     ) -> CommandResult:
         from agent_history.storage.metrics import get_scoped_stats_from_db, get_stats_rollup_from_db
 
         dimensions = group_list or ["project"]
-        storage_dimensions = self._storage_rollup_dimensions(dimensions, project_map)
+        storage_dimensions = self._storage_rollup_dimensions(dimensions, project_map, tag_map)
         storage_top = None if storage_dimensions != dimensions else verb_args.get("top")
         rows = get_stats_rollup_from_db(
             filters=filters,
@@ -345,6 +364,12 @@ class SessionStatsHandler(VerbHandler):
             top=storage_top,
             sort_by=verb_args.get("sort"),
             sort_direction=verb_args.get("sort_direction") or "default",
+        )
+        rows = self._apply_tag_rollup(
+            rows,
+            dimensions,
+            tag_map,
+            preserve_workspace="project" in dimensions,
         )
         rows = self._apply_project_rollup(rows, dimensions, project_map)
         if storage_dimensions != dimensions and verb_args.get("top"):
@@ -389,12 +414,19 @@ class SessionStatsHandler(VerbHandler):
         filters: dict[str, Any] = {}
         metadata: dict[str, Any] = {"homes": [], "workspaces": [], "workspace_display_map": {}}
 
-        if scope_args.projects:
-            homes, workspaces = self._project_filter(scope_args, context)
+        effective_projects = self._effective_projects(scope_args, context)
+        if effective_projects is not None:
+            if not effective_projects:
+                filters["homes"] = self._selected_homes(scope_args, context)
+                filters["workspaces"] = ["__cagelens_no_matching_project_tag__"]
+                metadata["homes"] = filters["homes"]
+                metadata["workspaces"] = []
+                return filters, metadata
+            homes, workspaces = self._project_filter(scope_args, context, effective_projects)
             filters["homes"] = homes
             filters["workspaces"] = workspaces
             project_homes, project_workspaces, display_map = self._project_metadata(
-                scope_args, context
+                scope_args, context, effective_projects
             )
             metadata["homes"] = project_homes or homes
             metadata["workspaces"] = project_workspaces
@@ -427,9 +459,9 @@ class SessionStatsHandler(VerbHandler):
     def _project_membership_map(
         self, context: ResolutionContext, scope_args: ScopeArgs
     ) -> dict[str, str]:
-        projects: list[str]
-        if scope_args.projects:
-            projects = list(scope_args.projects)
+        effective_projects = self._effective_projects(scope_args, context)
+        if effective_projects is not None:
+            projects = effective_projects
         elif context.cwd_project:
             projects = [context.cwd_project]
         else:
@@ -451,19 +483,113 @@ class SessionStatsHandler(VerbHandler):
                         mapping.setdefault(candidate, project)
         return mapping
 
+    def _tag_membership_map(
+        self, context: ResolutionContext, scope_args: ScopeArgs
+    ) -> dict[str, list[str]]:
+        effective_projects = self._effective_projects(scope_args, context)
+        if effective_projects is not None:
+            projects = effective_projects
+        elif context.cwd_project:
+            projects = [context.cwd_project]
+        else:
+            projects = list(context.project_config.keys())
+
+        requested_tags = set(normalize_tags(scope_args.tags)) if scope_args.tags else set()
+        selected_homes = set(self._selected_homes(scope_args, context))
+        home_filter_explicit = bool(
+            scope_args.all_homes or scope_args.home_names or scope_args.home_type
+        )
+        config = {
+            "projects": context.project_config,
+            "project_tags": getattr(context, "project_tags", {}) or {},
+        }
+        mapping: dict[str, list[str]] = {}
+        for project in projects:
+            project_def = context.project_config.get(project, {})
+            tags = project_tags_for(config, project) or [UNTAGGED_TAG]
+            if requested_tags:
+                tags = [tag for tag in tags if tag in requested_tags]
+            if not tags:
+                continue
+            for home, configured in project_def.items():
+                if home_filter_explicit and home not in selected_homes:
+                    continue
+                values = configured if isinstance(configured, list) else [configured]
+                for value in values:
+                    for candidate in self._workspace_candidates(str(value)):
+                        mapping.setdefault(candidate, tags)
+        return mapping
+
+    def _effective_projects(
+        self, scope_args: ScopeArgs, context: ResolutionContext
+    ) -> list[str] | None:
+        if not scope_args.projects and not scope_args.tags:
+            return None
+        projects = list(dict.fromkeys(scope_args.projects))
+        if not scope_args.tags:
+            return projects
+        requested = set(normalize_tags(scope_args.tags))
+        config = {
+            "projects": context.project_config,
+            "project_tags": getattr(context, "project_tags", {}) or {},
+        }
+        tagged = [
+            project
+            for project in context.project_config
+            if requested.intersection(project_tags_for(config, project))
+        ]
+        if projects:
+            project_set = set(projects)
+            return [project for project in tagged if project in project_set]
+        return tagged
+
     def _storage_rollup_dimensions(
-        self, dimensions: list[str], project_map: dict[str, str] | None
+        self,
+        dimensions: list[str],
+        project_map: dict[str, str] | None,
+        tag_map: dict[str, list[str]] | None = None,
     ) -> list[str]:
-        if not project_map or "project" not in dimensions:
+        needs_project = bool(project_map and "project" in dimensions)
+        needs_tag = "tag" in dimensions
+        if not needs_project and not needs_tag:
             return dimensions
         storage_dimensions = [
-            "workspace" if dimension == "project" else dimension for dimension in dimensions
+            "workspace" if dimension in {"project", "tag"} else dimension
+            for dimension in dimensions
         ]
         normalized: list[str] = []
         for dimension in storage_dimensions:
             if dimension not in normalized:
                 normalized.append(dimension)
         return normalized
+
+    def _apply_tag_rollup(
+        self,
+        rows: list[dict[str, Any]],
+        dimensions: list[str],
+        tag_map: dict[str, list[str]] | None,
+        *,
+        preserve_workspace: bool = False,
+    ) -> list[dict[str, Any]]:
+        if "tag" not in dimensions:
+            return rows
+        grouped: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for row in rows:
+            workspace = str(row.get("workspace", ""))
+            tags = tag_map.get(workspace) if tag_map else None
+            if not tags:
+                tags = [UNTAGGED_TAG]
+            for tag in tags:
+                item = dict(row)
+                item["tag"] = tag
+                if "workspace" not in dimensions and not preserve_workspace:
+                    item.pop("workspace", None)
+                key = tuple(item.get(dimension) for dimension in dimensions)
+                if key not in grouped:
+                    grouped[key] = item
+                    continue
+                self._merge_rollup_metrics(grouped[key], item)
+        return list(grouped.values())
 
     def _apply_project_rollup(
         self,
@@ -486,22 +612,29 @@ class SessionStatsHandler(VerbHandler):
             if key not in grouped:
                 grouped[key] = item
                 continue
-            existing = grouped[key]
-            for field in (
-                "sessions",
-                "messages",
-                "input_tokens",
-                "output_tokens",
-                "cache_read_tokens",
-                "cache_creation_tokens",
-                "time_seconds",
-            ):
-                existing[field] = (existing.get(field) or 0) + (item.get(field) or 0)
-            existing["time_hms"] = self._format_rollup_seconds(existing.get("time_seconds") or 0)
-            existing["time_hours"] = (
-                existing.get("time_seconds", 0) / 3600 if existing.get("time_seconds") else 0
-            )
+            self._merge_rollup_metrics(grouped[key], item)
         return list(grouped.values())
+
+    def _merge_rollup_metrics(self, existing: dict[str, Any], item: dict[str, Any]) -> None:
+        for field in (
+            "sessions",
+            "messages",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+        ):
+            existing[field] = (existing.get(field) or 0) + (item.get(field) or 0)
+        existing_time = existing.get("time_seconds")
+        item_time = item.get("time_seconds")
+        if existing_time is None and item_time is None:
+            existing["time_seconds"] = None
+            existing["time_hms"] = None
+            existing["time_hours"] = None
+            return
+        existing["time_seconds"] = (existing_time or 0) + (item_time or 0)
+        existing["time_hms"] = self._format_rollup_seconds(existing.get("time_seconds") or 0)
+        existing["time_hours"] = existing.get("time_seconds", 0) / 3600
 
     def _format_rollup_seconds(self, value: Any) -> str:
         try:
@@ -516,6 +649,8 @@ class SessionStatsHandler(VerbHandler):
         self, scope_args: ScopeArgs, context: ResolutionContext
     ) -> dict[str, Any]:
         """Describe the user's requested scope for human output."""
+        if scope_args.tags:
+            return {"type": "tag", "values": list(scope_args.tags)}
         if scope_args.projects:
             return {"type": "project", "values": list(scope_args.projects)}
         if scope_args.all_workspaces:
@@ -578,7 +713,10 @@ class SessionStatsHandler(VerbHandler):
         return []
 
     def _project_metadata(
-        self, scope_args: ScopeArgs, context: ResolutionContext
+        self,
+        scope_args: ScopeArgs,
+        context: ResolutionContext,
+        projects: list[str] | None = None,
     ) -> tuple[list[str], list[str], dict[str, str]]:
         homes: list[str] = []
         workspaces_by_key: dict[str, str] = {}
@@ -587,7 +725,7 @@ class SessionStatsHandler(VerbHandler):
         home_filter_explicit = bool(
             scope_args.all_homes or scope_args.home_names or scope_args.home_type
         )
-        for project in scope_args.projects:
+        for project in projects if projects is not None else scope_args.projects:
             project_def = context.project_config.get(project, {})
             for home, configured in project_def.items():
                 if home_filter_explicit and home not in selected_homes:
@@ -605,7 +743,10 @@ class SessionStatsHandler(VerbHandler):
         )
 
     def _project_filter(
-        self, scope_args: ScopeArgs, context: ResolutionContext
+        self,
+        scope_args: ScopeArgs,
+        context: ResolutionContext,
+        projects: list[str] | None = None,
     ) -> tuple[list[str], list[str]]:
         homes: list[str] = []
         workspaces: list[str] = []
@@ -613,7 +754,7 @@ class SessionStatsHandler(VerbHandler):
         home_filter_explicit = bool(
             scope_args.all_homes or scope_args.home_names or scope_args.home_type
         )
-        for project in scope_args.projects:
+        for project in projects if projects is not None else scope_args.projects:
             project_def = context.project_config.get(project, {})
             for home, configured in project_def.items():
                 if home_filter_explicit and home not in selected_homes:

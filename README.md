@@ -31,7 +31,7 @@ Claude Code, Codex CLI, Gemini CLI, and Pi leave conversation data fragmented ac
 - **Markdown and offline HTML export** – Export whole workspaces or single sessions; Markdown minimal/layout/split modes; HTML renders turn-centered conversations with progressive detail controls.
 - **Workspace-aware filtering** – Target workspaces by name or path (slashes ok); matches encoded names automatically.
 - **Multi-environment reach** – Local, WSL (UNC or Linux paths), Windows from WSL, and SSH remotes; `[missing]` marker shows closest match for renamed workspaces.
-- **Projects** – Group related workspaces across homes/sources; apply projects to `session`, `ws`, and `project` commands.
+- **Projects and tags** – Group related workspaces across homes/sources, tag projects as work/personal/etc., and use those scopes in sessions, exports, and stats.
 - **Usage metrics** – Summaries, homes/workspaces breakdown, token/tool stats, time tracking (with daily breakdown via `--time`), top workspaces limit via `--top-ws`.
 - **Cross-home sync** – Sync metrics from all homes (`--ah`), all workspaces (`--aw`), or current workspace only (`--this`).
 - **WSL/Windows helpers** – Auto-detect WSL distros/Windows users; UNC path inference for session listing without `--wsl`; converts path separators safely.
@@ -100,6 +100,7 @@ positional arguments:
     session                   Session commands
     ws                        Workspace commands
     project                   Manage projects
+    tag                       Manage project tags
     home                      Manage homes
     stats                     Usage statistics and rollups
     gemini-index              Manage Gemini session index
@@ -117,6 +118,7 @@ Progressive help:
   cagelens ws --help              Discover workspaces and workspace flags
   cagelens session --help         List, export, and analyze sessions
   cagelens project --help         Group related workspaces
+  cagelens tag --help             Tag projects for filtered stats and rollups
   cagelens home --help            Configure local, Windows, WSL, web, and remote homes
 
 Common commands:
@@ -129,6 +131,7 @@ Common commands:
 Scope shortcuts:
   --aw = all workspaces, --ah = all homes, --glob PAT = workspace glob, --regex RE = workspace regex
   --this = current workspace only, --project NAME = configured workspace group
+  --tag NAME = configured project tag
   --format json is best for automation; table/TSV are for terminal and pipes.
   Quote glob/regex patterns so your shell passes them to cagelens unchanged.
 
@@ -293,6 +296,11 @@ cagelens stats --time
 
 # Project rollup
 cagelens stats rollup --metric time --by project
+
+# Tag projects and roll up by tag
+cagelens tag add --project myproject work
+cagelens stats --tag work
+cagelens stats rollup --metric time --by tag
 ```
 
 ## Multi-Environment Access
@@ -333,8 +341,10 @@ cagelens project add myproject -r user@vm myproject
 # Use with @ prefix or --project flag
 cagelens session list @myproject
 cagelens session list --project myproject
+cagelens session list --tag work
 cagelens session export @myproject
 cagelens session export --project myproject
+cagelens session export --tag work
 
 # Remove entries using paths from any home
 cagelens project remove myproject -r user@vm /home/user/myproject
