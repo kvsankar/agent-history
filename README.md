@@ -91,7 +91,8 @@ Pass `--agent`, `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or
 
 <!-- help-snippet:start -->
 ```
-usage: cagelens [-h] [--version] [--agent {auto,claude,codex,gemini,pi}] COMMAND ...
+usage: cagelens [-h] [--version] [--agent {auto,claude,codex,gemini,pi,copilot-cli,copilot-vscode}]
+                COMMAND ...
 
 Browse, export, and analyze AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI, Pi).
 
@@ -111,7 +112,7 @@ positional arguments:
 options:
   -h, --help                  show this help message and exit
   --version                   show program's version number and exit
-  --agent {auto,claude,codex,gemini,pi}
+  --agent {auto,claude,codex,gemini,pi,copilot-cli,copilot-vscode}
                               Agent backend to use (default: auto-detect based on available data)
 
 Progressive help:

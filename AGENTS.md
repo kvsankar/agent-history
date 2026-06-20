@@ -4,16 +4,16 @@ This document compares the AI coding agents supported by `cagelens` and explains
 
 ## Quick Comparison
 
-| Feature | Claude Code | Codex CLI | Gemini CLI | Pi |
-|---------|-------------|-----------|------------|----|
-| **Developer** | Anthropic | OpenAI | Google | Pi |
-| **Session Format** | JSONL | JSONL | JSON | JSONL |
-| **Storage Location** | `~/.claude/projects/` | `~/.codex/sessions/` | `~/.gemini/tmp/` | `~/.pi/agent/sessions/` |
-| **Organization** | By workspace path | By date (YYYY/MM/DD) | By project hash | By workspace path |
-| **Workspace ID** | Encoded path | Extracted from session | SHA-256 of path | Session `cwd` or encoded path |
-| **Built-in Export** | None | None | `/chat share` | `pi agent session export` |
-| **Token Tracking** | Per-message | Per-turn | Per-message | Per-message when present |
-| **Reasoning/Thoughts** | Not stored | Not stored | Stored | Stored when present |
+| Feature | Claude Code | Codex CLI | Gemini CLI | Pi | Copilot CLI | VS Code Copilot |
+|---------|-------------|-----------|------------|----|-------------|-----------------|
+| **Developer** | Anthropic | OpenAI | Google | Pi | GitHub | GitHub |
+| **Session Format** | JSONL | JSONL | JSON / JSONL | JSONL | JSONL | JSONL |
+| **Storage Location** | `~/.claude/projects/` | `~/.codex/sessions/` | `~/.gemini/tmp/` | `~/.pi/agent/sessions/` | `~/.copilot/session-state/` | VS Code `workspaceStorage/` |
+| **Organization** | By workspace path | By date (YYYY/MM/DD) | By project hash | By workspace path | By session ID | By workspace hash |
+| **Workspace ID** | Encoded path | Extracted from session | SHA-256 of path | Session `cwd` or encoded path | `workspace.yaml` or event `cwd` | `workspace.json` folder URI |
+| **Built-in Export** | None | None | `/chat share` | `pi agent session export` | None | None |
+| **Token Tracking** | Per-message | Per-turn | Per-message | Per-message when present | Output tokens when present | Output tokens in transcript; richer OTel data when enabled |
+| **Reasoning/Thoughts** | Not stored | Not stored | Stored | Stored when present | Stored when present | Stored when present |
 
 ## Storage Locations
 
@@ -67,6 +67,38 @@ This document compares the AI coding agents supported by `cagelens` and explains
 - **Session files**: JSONL files with a `session` header and `message` entries
 - **Tool calls**: Assistant tool calls and tool execution results are preserved
 
+### Copilot CLI
+
+```
+~/.copilot/session-state/
+└── <session-id>/
+    ├── events.jsonl               # Event stream transcript
+    └── workspace.yaml             # Workspace metadata
+```
+
+- **Workspace naming**: Read from `workspace.yaml` `cwd`; falls back to
+  `session.start.data.context.cwd`
+- **Session files**: `events.jsonl` event streams
+- **Tool calls**: `tool.execution_start` and `tool.execution_complete` are preserved
+- **Subagents**: `agentId`, `subagent.started`, and `subagent.completed` are preserved
+
+### VS Code Copilot
+
+```
+<VS Code user data>/User/workspaceStorage/
+└── <workspace-hash>/
+    ├── workspace.json
+    └── GitHub.copilot-chat/
+        └── transcripts/
+            └── <session-id>.jsonl
+```
+
+- **Workspace naming**: Read from sibling `workspace.json` folder URI
+- **Session files**: JSONL transcript event streams
+- **Tool calls**: `tool.execution_start` and `tool.execution_complete` are preserved
+- **Additional state**: `chatSessions`, `chatEditingSessions`, and
+  `agent-traces.db` may be used as future enrichment sources
+
 ## How cagelens Works with Each Agent
 
 ### Listing Sessions (`session list`)
@@ -80,13 +112,15 @@ cagelens --agent claude session list /home/user/myproject
 cagelens --agent codex session list /home/user/myproject
 cagelens --agent gemini session list /home/user/myproject
 cagelens --agent pi session list /home/user/myproject
+cagelens --agent copilot-cli session list /home/user/myproject
+cagelens --agent copilot-vscode session list /home/user/myproject
 ```
 
-| Behavior | Claude | Codex | Gemini | Pi |
-|----------|--------|-------|--------|----|
-| Pattern matching | On encoded path | On workspace path | On path or hash | On session `cwd` or encoded path |
-| Date filtering | File mtime | File mtime | File mtime | File mtime |
-| Message count | From JSONL | From JSONL | From JSON | From JSONL |
+| Behavior | Claude | Codex | Gemini | Pi | Copilot CLI | VS Code Copilot |
+|----------|--------|-------|--------|----|-------------|-----------------|
+| Pattern matching | On encoded path | On workspace path | On path or hash | On session `cwd` or encoded path | On workspace `cwd` | On `workspace.json` folder URI |
+| Date filtering | File mtime | File mtime | File mtime | File mtime | File mtime | File mtime |
+| Message count | From JSONL | From JSONL | From JSON/JSONL | From JSONL | From JSONL event stream | From JSONL transcript |
 
 ### Exporting Sessions (`session export`)
 
@@ -97,14 +131,16 @@ cagelens session export /home/user/myproject -o ./output
 # Agent-specific export
 cagelens --agent gemini session export /home/user/myproject -o ./output
 cagelens --agent pi session export /home/user/myproject -o ./output
+cagelens --agent copilot-cli session export /home/user/myproject -o ./output
+cagelens --agent copilot-vscode session export /home/user/myproject -o ./output
 ```
 
-| Feature | Claude | Codex | Gemini | Pi |
-|---------|--------|-------|--------|----|
-| Output format | Markdown | Markdown | Markdown | Markdown |
-| Metadata | Full (UUIDs, tokens, etc.) | Basic (workspace, timestamps) | Full (tokens, thoughts) | Session header, timestamps, model/tokens when present |
-| Tool calls | Preserved | Preserved | Preserved | Preserved |
-| Reasoning steps | N/A | N/A | Included | Included when present |
+| Feature | Claude | Codex | Gemini | Pi | Copilot CLI | VS Code Copilot |
+|---------|--------|-------|--------|----|-------------|-----------------|
+| Output format | Markdown | Markdown | Markdown | Markdown | Markdown | Markdown |
+| Metadata | Full (UUIDs, tokens, etc.) | Basic (workspace, timestamps) | Full (tokens, thoughts) | Session header, timestamps, model/tokens when present | Event IDs, timestamps, model/output tokens when present | Event IDs, timestamps, model/output tokens when present |
+| Tool calls | Preserved | Preserved | Preserved | Preserved | Preserved | Preserved |
+| Reasoning steps | N/A | N/A | Included | Included when present | Included when present | Included when present |
 
 ### Statistics (`stats`)
 
@@ -115,12 +151,12 @@ cagelens stats --by tool
 cagelens stats --by model
 ```
 
-| Metric | Claude | Codex | Gemini | Pi |
-|--------|--------|-------|--------|----|
-| Token counts | Input/output/cache | Input/output | Input/output/thoughts | Input/output/cache when present |
-| Tool usage | Full tracking | Full tracking | Full tracking | Parsed from messages |
-| Model info | Yes | Yes | Yes | Yes when present |
-| Work time | Calculated | Calculated | Calculated | Calculated |
+| Metric | Claude | Codex | Gemini | Pi | Copilot CLI | VS Code Copilot |
+|--------|--------|-------|--------|----|-------------|-----------------|
+| Token counts | Input/output/cache | Input/output | Input/output/thoughts | Input/output/cache when present | Output when present | Output when present |
+| Tool usage | Full tracking | Full tracking | Full tracking | Parsed from messages | Parsed from tool events | Parsed from tool events |
+| Model info | Yes | Yes | Yes | Yes when present | Yes when present | Yes when present |
+| Work time | Calculated | Calculated | Calculated | Calculated | Calculated | Calculated |
 
 ## Agent-Specific Features
 
@@ -143,6 +179,24 @@ cagelens stats --by model
 - **Hash→path index**: `cagelens` progressively learns hash→path mappings
 - **Built-in export**: Gemini has `/chat share` command (we provide more features)
 - **Bulk indexing**: Use `gemini-index` command to scan directories
+
+### Copilot CLI
+
+- **Event stream**: Reads `events.jsonl` from `.copilot/session-state`
+- **Subagent event preservation**: Preserves `agentId`, `subagent.started`, and
+  `subagent.completed`
+- **Workspace metadata**: Uses `workspace.yaml` before falling back to event `cwd`
+- **Scope**: Initial support covers local, WSL, and Windows filesystem sources;
+  SSH remote Copilot discovery is not implemented yet
+
+### VS Code Copilot
+
+- **Transcript stream**: Reads `GitHub.copilot-chat/transcripts/*.jsonl`
+- **Workspace metadata**: Uses sibling `workspace.json` folder URI
+- **Optional enrichment**: `chatSessions`, `chatEditingSessions`, and OTel
+  `agent-traces.db` are documented future enrichment sources
+- **Scope**: Initial support covers local, WSL, and Windows filesystem sources;
+  SSH remote Copilot discovery is not implemented yet
 
 ## Workspace Identification
 
@@ -173,6 +227,18 @@ abc123def456...  →  (index lookup)  →  /home/user/myapp
 cagelens gemini-index --add ~/projects    # Scan for .gemini/ folders
 ```
 
+### Copilot CLI
+Workspace extracted from `workspace.yaml`:
+```yaml
+cwd: /home/user/myapp
+```
+
+### VS Code Copilot
+Workspace extracted from `workspace.json`:
+```json
+{"folder": "file:///home/user/myapp"}
+```
+
 ## Environment Variables
 
 Override default storage locations for testing or custom setups:
@@ -183,30 +249,32 @@ Override default storage locations for testing or custom setups:
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions/` | Codex CLI sessions |
 | `GEMINI_SESSIONS_DIR` | `~/.gemini/tmp/` | Gemini CLI sessions |
 | `PI_SESSIONS_DIR` / `PI_CODING_AGENT_SESSION_DIR` | `~/.pi/agent/sessions/` | Pi sessions |
+| `COPILOT_CLI_SESSIONS_DIR` / `COPILOT_SESSIONS_DIR` | `~/.copilot/session-state/` | Copilot CLI sessions |
+| `COPILOT_VSCODE_WORKSPACE_STORAGE_DIR` | VS Code user `workspaceStorage` | VS Code Copilot transcripts |
 
 ## Data Captured by Each Agent
 
 ### Message Content
 
-| Data | Claude | Codex | Gemini | Pi |
-|------|--------|-------|--------|----|
-| User messages | ✅ | ✅ | ✅ | ✅ |
-| Assistant responses | ✅ | ✅ | ✅ | ✅ |
-| Tool calls (name, args) | ✅ | ✅ | ✅ | ✅ |
-| Tool results | ✅ | ✅ | ✅ | ✅ |
-| Reasoning/thoughts | ❌ | ❌ | ✅ | ✅ when present |
+| Data | Claude | Codex | Gemini | Pi | Copilot CLI | VS Code Copilot |
+|------|--------|-------|--------|----|-------------|-----------------|
+| User messages | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Assistant responses | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tool calls (name, args) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tool results | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reasoning/thoughts | ❌ | ❌ | ✅ | ✅ when present | ✅ when present | ✅ when present |
 
 ### Metadata
 
-| Data | Claude | Codex | Gemini | Pi |
-|------|--------|-------|--------|----|
-| Session ID | ✅ | ✅ | ✅ | ✅ |
-| Timestamps | ✅ | ✅ | ✅ | ✅ |
-| Working directory | ✅ | ✅ | ✅ (as hash) | ✅ |
-| Model name | ✅ | ✅ | ✅ | ✅ when present |
-| Token usage | ✅ | ✅ | ✅ | ✅ when present |
-| Git branch | ✅ | ❌ | ❌ | ❌ |
-| Agent/CLI version | ✅ | ✅ | ❌ | ✅ when present |
+| Data | Claude | Codex | Gemini | Pi | Copilot CLI | VS Code Copilot |
+|------|--------|-------|--------|----|-------------|-----------------|
+| Session ID | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Timestamps | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Working directory | ✅ | ✅ | ✅ (as hash) | ✅ | ✅ | ✅ |
+| Model name | ✅ | ✅ | ✅ | ✅ when present | ✅ when present | ✅ when present |
+| Token usage | ✅ | ✅ | ✅ | ✅ when present | Partial | Partial |
+| Git branch | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Agent/CLI version | ✅ | ✅ | ❌ | ✅ when present | ✅ when present | Extension-dependent |
 
 ## Limitations and Considerations
 
@@ -222,6 +290,15 @@ Override default storage locations for testing or custom setups:
 - Hash-based storage obscures workspace paths (mitigated by hash index)
 - Single JSON files (not streaming JSONL)
 - Format may change as Gemini CLI evolves
+
+### Copilot CLI
+- JSONL transcript token data may include output tokens only.
+- SSH remote command support is not implemented yet.
+
+### VS Code Copilot
+- Transcript format is empirical; no public canonical schema has been found.
+- `agent-traces.db` is a future stats enrichment source, not the primary transcript source.
+- SSH remote command support is not implemented yet.
 
 ## Recommended Workflows
 
@@ -265,7 +342,9 @@ cagelens session export --project myproject --ah -o ./consolidated
 
 ## See Also
 
-- [USAGE.md](USAGE.md) - Full command reference
-- [CLAUDE-FORMAT.md](CLAUDE-FORMAT.md) - Claude Code session format details
-- [CODEX-FORMAT.md](CODEX-FORMAT.md) - Codex CLI session format details
-- [GEMINI-FORMAT.md](GEMINI-FORMAT.md) - Gemini CLI session format details
+- [usage.md](docs/user/usage.md) - Full command reference
+- [claude-code-format.md](docs/specs/agents/formats/claude-code-format.md) - Claude Code session format details
+- [codex-cli-format.md](docs/specs/agents/formats/codex-cli-format.md) - Codex CLI session format details
+- [gemini-cli-format.md](docs/specs/agents/formats/gemini-cli-format.md) - Gemini CLI session format details
+- [copilot-cli-format.md](docs/specs/agents/formats/copilot-cli-format.md) - Copilot CLI session format details
+- [copilot-vscode-format.md](docs/specs/agents/formats/copilot-vscode-format.md) - VS Code Copilot transcript details
