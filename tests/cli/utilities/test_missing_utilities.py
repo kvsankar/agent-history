@@ -11,6 +11,13 @@ from tests.helpers.cli import assert_cli_success, run_cli_subprocess
 pytestmark = pytest.mark.scope
 
 
+def _agent_choice_line(output: str) -> str:
+    for line in output.splitlines():
+        if "--agent" in line and "{" in line:
+            return line
+    return ""
+
+
 @pytest.mark.parametrize(
     "args",
     [
@@ -48,7 +55,12 @@ def test_install_help_is_agent_skill_generic(tmp_path: Path) -> None:
     assert "--dry-run" in result.stdout
     assert "Skip agent skill install" in result.stdout
     assert "Skip agent settings update" in result.stdout
-    assert "--agent {auto,claude,codex,gemini,pi}" in result.stdout
+    agent_line = _agent_choice_line(result.stdout)
+    assert "--agent" in agent_line
+    for choice in ("auto", "claude", "codex", "gemini", "pi"):
+        assert choice in agent_line
+    assert "copilot-cli" not in agent_line
+    assert "copilot-vscode" not in agent_line
     assert "~/.local/bin/cagelens" in result.stdout
     assert "~/.claude/skills/cagelens/" in result.stdout
     assert "${CODEX_HOME:-~/.codex}/skills/cagelens/" in result.stdout
@@ -73,6 +85,16 @@ def test_install_dry_run_reports_paths_without_writing(tmp_path: Path) -> None:
     assert "planned" in result.stdout
     assert str(tmp_path / ".codex-custom" / "skills" / "cagelens") in result.stdout
     assert not (tmp_path / ".codex-custom" / "skills" / "cagelens").exists()
+
+
+def test_install_rejects_non_skill_agent_targets(tmp_path: Path) -> None:
+    result = run_cli_subprocess(
+        ["install", "--dry-run", "--skip-cli", "--skip-settings", "--agent", "copilot-cli"],
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert result.returncode != 0
+    assert "invalid choice" in result.stderr
 
 
 def test_install_creates_selected_agent_skill_package(tmp_path: Path) -> None:

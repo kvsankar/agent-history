@@ -51,6 +51,66 @@ def _write_pi_session(root: Path) -> Path:
     return session_file
 
 
+def _write_copilot_cli_session(root: Path) -> Path:
+    session_dir = root / "copilot-cli-session"
+    events_file = session_dir / "events.jsonl"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "workspace.yaml").write_text(
+        "cwd: /home/user/copilot-cli-project\n",
+        encoding="utf-8",
+    )
+    events = [
+        {
+            "id": "u1",
+            "timestamp": "2026-06-18T14:00:00.000Z",
+            "type": "user.message",
+            "data": {"content": "Hello Copilot CLI"},
+        },
+        {
+            "id": "a1",
+            "parentId": "u1",
+            "timestamp": "2026-06-18T14:00:01.000Z",
+            "type": "assistant.message",
+            "data": {"content": "Copilot CLI response", "model": "gpt-5"},
+        },
+    ]
+    events_file.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+    return events_file
+
+
+def _write_copilot_vscode_session(root: Path) -> Path:
+    workspace_dir = root / "hash123"
+    transcript = workspace_dir / "GitHub.copilot-chat" / "transcripts" / "chat-1.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "workspace.json").write_text(
+        json.dumps({"folder": "file:///home/user/copilot-vscode-project"}),
+        encoding="utf-8",
+    )
+    events = [
+        {
+            "id": "u1",
+            "timestamp": "2026-06-18T14:00:00.000Z",
+            "type": "user.message",
+            "data": {"content": "Hello VS Code Copilot"},
+        },
+        {
+            "id": "a1",
+            "parentId": "u1",
+            "timestamp": "2026-06-18T14:00:01.000Z",
+            "type": "assistant.message",
+            "data": {"content": "VS Code Copilot response", "model": "gpt-5"},
+        },
+    ]
+    transcript.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+    return transcript
+
+
 def test_session_export_default_output_dir_is_cagelens_exports(isolated_home):
     _write_claude_session(isolated_home["claude_dir"])
 
@@ -569,6 +629,86 @@ def test_pi_agent_sessions_list_and_export_via_registry(isolated_home):
     content = _find_single_output_file(output_dir, ".md").read_text(encoding="utf-8")
     assert "# Pi Conversation" in content
     assert "Pi response" in content
+
+
+def test_copilot_cli_sessions_list_and_export_via_registry(isolated_home):
+    copilot_dir = isolated_home["path"] / ".copilot" / "session-state"
+    _write_copilot_cli_session(copilot_dir)
+    env = dict(isolated_home["env"])
+    env["COPILOT_CLI_SESSIONS_DIR"] = str(copilot_dir)
+
+    list_result = run_cli_subprocess(
+        ["session", "list", "--agent", "copilot-cli", "--aw", "--format", "json"],
+        env=env,
+        cwd=isolated_home["path"],
+    )
+
+    assert list_result.returncode == 0, f"stderr: {list_result.stderr}"
+    sessions = load_json_output(list_result)
+    assert len(sessions) == 1
+    assert sessions[0]["agent"] == "copilot-cli"
+    assert sessions[0]["workspace"] == "/home/user/copilot-cli-project"
+
+    output_dir = isolated_home["path"] / "copilot-cli-export"
+    export_result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "--agent",
+            "copilot-cli",
+            "--aw",
+            "-o",
+            str(output_dir),
+            "--force",
+        ],
+        env=env,
+        cwd=isolated_home["path"],
+    )
+
+    assert export_result.returncode == 0, f"stderr: {export_result.stderr}"
+    content = _find_single_output_file(output_dir, ".md").read_text(encoding="utf-8")
+    assert "# Copilot CLI Conversation" in content
+    assert "Copilot CLI response" in content
+
+
+def test_copilot_vscode_sessions_list_and_export_via_registry(isolated_home):
+    storage_dir = isolated_home["path"] / "workspaceStorage"
+    _write_copilot_vscode_session(storage_dir)
+    env = dict(isolated_home["env"])
+    env["COPILOT_VSCODE_WORKSPACE_STORAGE_DIR"] = str(storage_dir)
+
+    list_result = run_cli_subprocess(
+        ["session", "list", "--agent", "copilot-vscode", "--aw", "--format", "json"],
+        env=env,
+        cwd=isolated_home["path"],
+    )
+
+    assert list_result.returncode == 0, f"stderr: {list_result.stderr}"
+    sessions = load_json_output(list_result)
+    assert len(sessions) == 1
+    assert sessions[0]["agent"] == "copilot-vscode"
+    assert sessions[0]["workspace"] == "/home/user/copilot-vscode-project"
+
+    output_dir = isolated_home["path"] / "copilot-vscode-export"
+    export_result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "--agent",
+            "copilot-vscode",
+            "--aw",
+            "-o",
+            str(output_dir),
+            "--force",
+        ],
+        env=env,
+        cwd=isolated_home["path"],
+    )
+
+    assert export_result.returncode == 0, f"stderr: {export_result.stderr}"
+    content = _find_single_output_file(output_dir, ".md").read_text(encoding="utf-8")
+    assert "# VS Code Copilot Conversation" in content
+    assert "VS Code Copilot response" in content
 
 
 def test_codex_markdown_export_uses_codex_header(isolated_home, setup_golden_fixtures):

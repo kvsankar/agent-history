@@ -18,6 +18,7 @@ import pytest
 from agent_history.utils.platform import (
     AGENT_CLAUDE,
     AGENT_CODEX,
+    AGENT_COPILOT_CLI,
     AGENT_GEMINI,
     AGENT_PI,
     _build_wsl_distro_info,
@@ -365,6 +366,28 @@ class TestGetWslDistributions:
         assert result["pi_path"] == str(paths[AGENT_PI])
         assert result["has_claude"] is False
         assert result["path"] is None
+
+    def test_distro_info_normalizes_hyphenated_agent_fields(self, tmp_path: Path) -> None:
+        """WSL metadata field names should be valid for hyphenated agent ids."""
+        paths = {
+            AGENT_CLAUDE: None,
+            AGENT_CODEX: None,
+            AGENT_GEMINI: None,
+            AGENT_PI: None,
+            AGENT_COPILOT_CLI: tmp_path / ".copilot" / "session-state",
+        }
+
+        with patch(
+            "agent_history.utils.platform._locate_wsl_agent_dir",
+            side_effect=lambda _distro, _username, agent: paths.get(agent),
+        ):
+            result = _build_wsl_distro_info("Ubuntu", ["alice"])
+
+        assert result is not None
+        assert result["has_copilot_cli"] is True
+        assert result["copilot_cli_path"] == str(paths[AGENT_COPILOT_CLI])
+        assert "has_copilot-cli" not in result
+        assert "copilot-cli_path" not in result
 
 
 class TestGetWslProjectsDir:

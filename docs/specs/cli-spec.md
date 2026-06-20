@@ -341,7 +341,7 @@ Scope Options:
   --no-wsl, --no-windows, --no-remote, --no-web  # Exclude homes when using --ah
 
 Filter Options:
-  --agent <agent>                 # Filter by agent: auto, claude, codex, gemini, pi
+  --agent <agent>                 # Filter by agent: auto, claude, codex, gemini, pi, copilot-cli, copilot-vscode
   --since <date>                  # Filter by start date (YYYY-MM-DD)
   --until <date>                  # Filter by end date (YYYY-MM-DD)
 

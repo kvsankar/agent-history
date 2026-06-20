@@ -41,12 +41,20 @@ For agent-specific session formats, see [agents/formats/](agents/formats/).
 | Codex CLI | OpenAI | JSONL / JSONL.ZST | `~/.codex/sessions/<date>/` |
 | Gemini CLI | Google | JSONL / legacy JSON | `~/.gemini/tmp/<project-id>/chats/` |
 | Pi | Pi | JSONL | `~/.pi/agent/sessions/<workspace>/` |
+| Copilot CLI | GitHub | JSONL | `~/.copilot/session-state/<session-id>/` |
+| VS Code Copilot | GitHub | JSONL | VS Code `workspaceStorage/<hash>/GitHub.copilot-chat/transcripts/` |
+
+Copilot support is intentionally initial: local, WSL, and Windows filesystem
+sources are in scope, but SSH remote commands are not implemented yet for
+`copilot-cli` or `copilot-vscode`.
 
 Each agent stores sessions differently. See format specifications:
 - [claude-code-format.md](agents/formats/claude-code-format.md)
 - [codex-cli-format.md](agents/formats/codex-cli-format.md)
 - [gemini-cli-format.md](agents/formats/gemini-cli-format.md)
 - [pi-format.md](agents/formats/pi-format.md)
+- [copilot-cli-format.md](agents/formats/copilot-cli-format.md)
+- [copilot-vscode-format.md](agents/formats/copilot-vscode-format.md)
 
 ### Agent Detection
 
@@ -167,6 +175,9 @@ A workspace corresponds to a project directory where the user invoked the AI ass
 | Claude Code | Path with `/` → `-` (e.g., `/home/user/proj` → `-home-user-proj`) |
 | Codex CLI | Extracted from `cwd` field in session metadata |
 | Gemini CLI | SHA-256 hash of path, resolved via index |
+| Pi | Session `cwd` header, or encoded session folder |
+| Copilot CLI | `workspace.yaml` `cwd`, then `session.start.data.context.cwd` |
+| VS Code Copilot | Sibling `workspace.json` folder URI, then transcript `cwd` |
 
 #### Hierarchical Workspaces
 
@@ -249,6 +260,8 @@ A session is a single conversation file containing messages.
 | Gemini CLI | `session-<date>-<id>.jsonl` | Parent-side subagent tool calls; nested child JSONL when present | JSONL |
 | Gemini CLI (legacy) | `session-<date>-<id>.json` | N/A (single file) | JSON |
 | Pi | `<timestamp>_<uuid>.jsonl` | branch tree entries in same file; extension-dependent subagent tool results | JSONL |
+| Copilot CLI | `events.jsonl` under `<session-id>/` | `agentId`, `subagent.started`, `subagent.completed` | JSONL |
+| VS Code Copilot | `<session-id>.jsonl` under `GitHub.copilot-chat/transcripts/` | Event stream only; no confirmed separate child files yet | JSONL |
 
 See [subagents.md](agents/features/subagents.md) for cross-agent lineage
 signals and the normalized fields required by timeline export.
@@ -261,8 +274,8 @@ A message is a single turn in the conversation.
 | Role | Description | Agent-specific names |
 |------|-------------|---------------------|
 | `user` | Human input or task prompt | All agents use `user` |
-| `assistant` | AI response | Claude: `assistant`, Codex: `assistant`, Gemini: `model`/`gemini`/`assistant`, Pi: `assistant` |
-| `system` | System messages, tool results, warnings, compaction markers | Claude system records, Gemini info/error/warning, Pi tool/internal records |
+| `assistant` | AI response | Claude: `assistant`, Codex: `assistant`, Gemini: `model`/`gemini`/`assistant`, Pi: `assistant`, Copilot: `assistant.message` |
+| `system` | System messages, tool results, warnings, compaction markers | Claude system records, Gemini info/error/warning, Pi tool/internal records, Copilot system events |
 
 The tool normalizes role names for consistent display: Gemini's `model`/`gemini` types are displayed as `assistant`.
 

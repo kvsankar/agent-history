@@ -16,7 +16,14 @@ from typing import Any, Callable, Dict, Iterable, List
 
 from agent_history.utils.env import has_env
 from agent_history.utils.paths import is_cached_workspace, normalize_workspace_name
-from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
+from agent_history.utils.platform import (
+    AGENT_CLAUDE,
+    AGENT_CODEX,
+    AGENT_COPILOT_CLI,
+    AGENT_COPILOT_VSCODE,
+    AGENT_GEMINI,
+    AGENT_PI,
+)
 
 DEFAULT_AGENT = "auto"
 DEFAULT_BACKEND_ID = AGENT_CLAUDE
@@ -752,6 +759,153 @@ def _pi_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
     return _wsl_user_paths(distro_name, username, ".pi/agent/sessions")
 
 
+def _copilot_cli_session_dir(resolver: Any, context: Any) -> Path | None:
+    return resolver.get_copilot_cli_dir(context)
+
+
+def _copilot_cli_scan_sessions(sessions_dir: Path) -> SessionList:
+    from agent_history.backends.copilot import copilot_cli_scan_sessions
+
+    return copilot_cli_scan_sessions(
+        pattern="",
+        sessions_dir=sessions_dir,
+        skip_message_count=True,
+    )
+
+
+def _copilot_cli_list_workspaces(sessions_dir: Path, home: str) -> list[str]:
+    del home
+    return _workspace_names_from_sessions(_copilot_cli_scan_sessions(sessions_dir))
+
+
+def _copilot_cli_read_messages(session_file: Path) -> MessageList:
+    from agent_history.backends.copilot import copilot_cli_read_messages
+
+    return copilot_cli_read_messages(session_file)
+
+
+def _copilot_count_messages(session_file: Path) -> int:
+    from agent_history.backends.copilot import copilot_count_messages
+
+    return copilot_count_messages(session_file)
+
+
+def _copilot_cli_render_markdown(
+    session_file: Path,
+    minimal: bool,
+    messages: MessageList | None,
+    markdown_level: int,
+) -> str:
+    from agent_history.backends.copilot import copilot_render_markdown
+
+    return copilot_render_markdown(
+        session_file,
+        minimal,
+        messages,
+        markdown_level,
+        AGENT_COPILOT_CLI,
+    )
+
+
+def _copilot_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
+    from agent_history.backends.copilot import copilot_message_to_unified
+
+    return copilot_message_to_unified(message)
+
+
+def _copilot_cli_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.backends.copilot import copilot_extract_stats
+
+    return copilot_extract_stats(session_file, AGENT_COPILOT_CLI)
+
+
+def _copilot_cli_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    return session_info.get("cwd") or workspace or session_file.parent.name
+
+
+def _copilot_cli_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".copilot/session-state")
+
+
+def _copilot_vscode_session_dir(resolver: Any, context: Any) -> Path | None:
+    return resolver.get_copilot_vscode_dir(context)
+
+
+def _copilot_vscode_scan_sessions(sessions_dir: Path) -> SessionList:
+    from agent_history.backends.copilot import (
+        copilot_vscode_get_home_dir,
+        copilot_vscode_scan_session_roots,
+        copilot_vscode_scan_sessions,
+        copilot_vscode_workspace_storage_roots,
+    )
+
+    if (
+        not os.environ.get("COPILOT_VSCODE_WORKSPACE_STORAGE_DIR")
+        and sessions_dir == copilot_vscode_get_home_dir()
+    ):
+        return copilot_vscode_scan_session_roots(
+            copilot_vscode_workspace_storage_roots(),
+            pattern="",
+            skip_message_count=True,
+        )
+
+    return copilot_vscode_scan_sessions(
+        pattern="",
+        sessions_dir=sessions_dir,
+        skip_message_count=True,
+    )
+
+
+def _copilot_vscode_list_workspaces(sessions_dir: Path, home: str) -> list[str]:
+    del home
+    return _workspace_names_from_sessions(_copilot_vscode_scan_sessions(sessions_dir))
+
+
+def _copilot_vscode_read_messages(session_file: Path) -> MessageList:
+    from agent_history.backends.copilot import copilot_vscode_read_messages
+
+    return copilot_vscode_read_messages(session_file)
+
+
+def _copilot_vscode_render_markdown(
+    session_file: Path,
+    minimal: bool,
+    messages: MessageList | None,
+    markdown_level: int,
+) -> str:
+    from agent_history.backends.copilot import copilot_render_markdown
+
+    return copilot_render_markdown(
+        session_file,
+        minimal,
+        messages,
+        markdown_level,
+        AGENT_COPILOT_VSCODE,
+    )
+
+
+def _copilot_vscode_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.backends.copilot import copilot_extract_stats
+
+    return copilot_extract_stats(session_file, AGENT_COPILOT_VSCODE)
+
+
+def _copilot_vscode_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    return session_info.get("cwd") or workspace or session_file.parent.parent.parent.name
+
+
+def _copilot_vscode_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(
+        distro_name,
+        username,
+        ".vscode-server/data/User/workspaceStorage",
+    )
+
+
 register_backend(
     AgentBackend(
         id=AGENT_CLAUDE,
@@ -845,6 +999,48 @@ register_backend(
         markdown_header_title="Pi Conversation",
         markdown_header_includes_filename=False,
         file_markers=(".pi",),
+        file_suffixes=(".jsonl",),
+    )
+)
+register_backend(
+    AgentBackend(
+        id=AGENT_COPILOT_CLI,
+        label="Copilot CLI",
+        get_session_dir=_copilot_cli_session_dir,
+        scan_sessions=_copilot_cli_scan_sessions,
+        list_workspaces=_copilot_cli_list_workspaces,
+        read_messages=_copilot_cli_read_messages,
+        count_messages=_copilot_count_messages,
+        render_markdown=_copilot_cli_render_markdown,
+        message_to_unified=_copilot_message_to_unified,
+        extract_stats=_copilot_cli_extract_stats,
+        resolve_stats_workspace=_copilot_cli_resolve_stats_workspace,
+        wsl_candidate_paths=_copilot_cli_wsl_candidate_paths,
+        markdown_title="Copilot CLI",
+        markdown_header_title="Copilot CLI Conversation",
+        markdown_header_includes_filename=False,
+        file_markers=(".copilot",),
+        file_suffixes=(".jsonl",),
+    )
+)
+register_backend(
+    AgentBackend(
+        id=AGENT_COPILOT_VSCODE,
+        label="VS Code Copilot",
+        get_session_dir=_copilot_vscode_session_dir,
+        scan_sessions=_copilot_vscode_scan_sessions,
+        list_workspaces=_copilot_vscode_list_workspaces,
+        read_messages=_copilot_vscode_read_messages,
+        count_messages=_copilot_count_messages,
+        render_markdown=_copilot_vscode_render_markdown,
+        message_to_unified=_copilot_message_to_unified,
+        extract_stats=_copilot_vscode_extract_stats,
+        resolve_stats_workspace=_copilot_vscode_resolve_stats_workspace,
+        wsl_candidate_paths=_copilot_vscode_wsl_candidate_paths,
+        markdown_title="VS Code Copilot",
+        markdown_header_title="VS Code Copilot Conversation",
+        markdown_header_includes_filename=False,
+        file_markers=("GitHub.copilot-chat",),
         file_suffixes=(".jsonl",),
     )
 )

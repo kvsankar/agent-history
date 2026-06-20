@@ -26,7 +26,11 @@ def test_builtin_agent_choices_come_from_registry() -> None:
     assert "claude" in choices
     assert "codex" in choices
     assert "gemini" in choices
+    assert "copilot-cli" in choices
+    assert "copilot-vscode" in choices
     assert get_backend("claude") is not None
+    assert get_backend("copilot-cli") is not None
+    assert get_backend("copilot-vscode") is not None
 
 
 def test_gemini_backend_metadata_includes_current_jsonl_remote_support() -> None:

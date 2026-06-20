@@ -105,6 +105,16 @@ class HomeResolver(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_copilot_cli_dir(self, context: ResolutionContext) -> Path | None:
+        """Get the Copilot CLI session-state directory for this home."""
+        ...
+
+    @abstractmethod
+    def get_copilot_vscode_dir(self, context: ResolutionContext) -> Path | None:
+        """Get the VS Code workspaceStorage directory for this home."""
+        ...
+
 
 class LocalHomeResolver(HomeResolver):
     """
@@ -154,6 +164,18 @@ class LocalHomeResolver(HomeResolver):
         environment variable overrides.
         """
         return context.pi_sessions_dir
+
+    def get_copilot_cli_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        from agent_history.backends.copilot import copilot_cli_get_home_dir
+
+        return copilot_cli_get_home_dir()
+
+    def get_copilot_vscode_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        from agent_history.backends.copilot import copilot_vscode_get_home_dir
+
+        return copilot_vscode_get_home_dir()
 
 
 class WSLHomeResolver(HomeResolver):
@@ -261,6 +283,36 @@ class WSLHomeResolver(HomeResolver):
             return get_wsl_pi_sessions_dir(self._distro)
         return None
 
+    def get_copilot_cli_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        if not self._distro:
+            override = get_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL")
+            if override:
+                candidate = Path(override) / ".copilot" / "session-state"
+                if candidate.exists():
+                    return candidate
+
+        from agent_history.utils.platform import get_wsl_copilot_cli_sessions_dir
+
+        if self._distro:
+            return get_wsl_copilot_cli_sessions_dir(self._distro)
+        return None
+
+    def get_copilot_vscode_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        if not self._distro:
+            override = get_env("CAGELENS_HOME_WSL", "AGENT_HISTORY_HOME_WSL")
+            if override:
+                candidate = Path(override) / ".vscode-server" / "data" / "User" / "workspaceStorage"
+                if candidate.exists():
+                    return candidate
+
+        from agent_history.utils.platform import get_wsl_copilot_vscode_workspace_storage_dir
+
+        if self._distro:
+            return get_wsl_copilot_vscode_workspace_storage_dir(self._distro)
+        return None
+
 
 class WindowsHomeResolver(HomeResolver):
     """
@@ -331,6 +383,18 @@ class WindowsHomeResolver(HomeResolver):
 
         return get_windows_pi_sessions_dir(self._user)
 
+    def get_copilot_cli_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        from agent_history.utils.platform import get_windows_copilot_cli_sessions_dir
+
+        return get_windows_copilot_cli_sessions_dir(self._user)
+
+    def get_copilot_vscode_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        from agent_history.utils.platform import get_windows_copilot_vscode_workspace_storage_dir
+
+        return get_windows_copilot_vscode_workspace_storage_dir(self._user)
+
 
 class RemoteHomeResolver(HomeResolver):
     """
@@ -388,6 +452,14 @@ class RemoteHomeResolver(HomeResolver):
 
         Remote homes are accessed via SSH; there is no local path to return.
         """
+        return None
+
+    def get_copilot_cli_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        return None
+
+    def get_copilot_vscode_dir(self, context: ResolutionContext) -> Path | None:
+        del context
         return None
 
 

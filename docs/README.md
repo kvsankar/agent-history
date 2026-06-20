@@ -20,6 +20,11 @@ seven-topic IA from [docs-consolidation-ia-2026-06-05.md](analysis/docs-consolid
 | **Codex CLI** | ✅ Full support | JSONL / JSONL.ZST | All features implemented and tested |
 | **Gemini CLI** | ✅ Full support | JSONL / legacy JSON | All features implemented and tested |
 | **Pi** | ✅ Full support | JSONL | All features implemented and tested |
+| **Copilot CLI** | Initial support | JSONL | Separate terminal-agent backend |
+| **VS Code Copilot** | Initial support | JSONL | Separate VS Code extension backend |
+
+Copilot support currently covers local, WSL, and Windows filesystem sources.
+SSH remote Copilot discovery is not implemented yet.
 
 See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works with this tool.
 
@@ -32,7 +37,7 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | Agent formats and normalization | [specs/agents/formats/](specs/agents/formats/), [unified-json-schema.md](specs/schema/unified-json-schema.md), [schema-refresh-2026-06-04.md](analysis/schema-refresh-2026-06-04.md) | Concrete agent formats, message/tool/token fields, unified NDJSON schema, schema drift notes. |
 | Architecture and implementation | [DESIGN.md](design/DESIGN.md), [pipeline-architecture.md](design-v2/pipeline-architecture.md), [scope-resolution-v2.md](design-v2/scope-resolution-v2.md), [cagelens-code-map.md](cagelens-code-map.md) | Current architecture, v2 pipeline design, scope model, generated code map. |
 | Validation and release readiness | [testing-strategy.md](testing/testing-strategy.md), [docker-e2e.md](testing/docker-e2e.md), [specs/todo.md](specs/todo.md) | Unit/E2E/real-agent validation, fixture strategy, release follow-ups. |
-| Research and collaboration | [analysis/](analysis/), [other/](other/) | Ecosystem research, historical CLI research, collaboration notes, retrospectives. |
+| Research and collaboration | [research/](research/), [analysis/](analysis/), [other/](other/) | Ecosystem research, historical CLI research, collaboration notes, retrospectives. |
 | Navigation and indexes | [docs/README.md](README.md), [specs/README.md](specs/README.md) | Entry points and doc discovery. |
 
 ## User Documentation
@@ -63,6 +68,12 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | [competitive-analysis.md](analysis/competitive-analysis.md) | Historical market analysis and pre-rename roadmap context. |
 | [schema-refresh-2026-06-04.md](analysis/schema-refresh-2026-06-04.md) | Release schema-refresh evidence and parser impact notes. |
 | [docs-consolidation-ia-2026-06-05.md](analysis/docs-consolidation-ia-2026-06-05.md) | Dryscope docs IA findings and consolidation plan. |
+
+## Research
+
+| Document | Purpose |
+|----------|---------|
+| [copilot-local-formats-2026-06-19.md](research/copilot-local-formats-2026-06-19.md) | Copilot CLI and VS Code Copilot local-format findings. |
 
 ## Specifications
 

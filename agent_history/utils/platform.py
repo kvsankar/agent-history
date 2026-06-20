@@ -22,6 +22,8 @@ AGENT_CLAUDE = "claude"
 AGENT_CODEX = "codex"
 AGENT_GEMINI = "gemini"
 AGENT_PI = "pi"
+AGENT_COPILOT_CLI = "copilot-cli"
+AGENT_COPILOT_VSCODE = "copilot-vscode"
 
 
 def _get_wsl_timeout() -> float:
@@ -50,11 +52,15 @@ __all__ = [
     # Agent constants
     "AGENT_CLAUDE",
     "AGENT_CODEX",
+    "AGENT_COPILOT_CLI",
+    "AGENT_COPILOT_VSCODE",
     "AGENT_GEMINI",
     "AGENT_PI",
     # Command path resolution
     "get_command_path",
     "get_windows_codex_sessions_dir",
+    "get_windows_copilot_cli_sessions_dir",
+    "get_windows_copilot_vscode_workspace_storage_dir",
     "get_windows_gemini_sessions_dir",
     # Windows detection
     "get_windows_home_from_wsl",
@@ -62,6 +68,8 @@ __all__ = [
     "get_windows_projects_dir",
     "get_windows_users_with_claude",
     "get_wsl_codex_sessions_dir",
+    "get_wsl_copilot_cli_sessions_dir",
+    "get_wsl_copilot_vscode_workspace_storage_dir",
     "get_wsl_distribution_names",
     "get_wsl_distributions",
     "get_wsl_gemini_sessions_dir",
@@ -518,7 +526,7 @@ def _build_wsl_distro_info(distro_name: str, usernames: list) -> Optional[dict]:
         for agent in _wsl_discoverable_agent_ids():
             agent_path = _locate_wsl_agent_dir(distro_name, username, agent)
             _set_wsl_agent_info(info, agent, agent_path)
-        if any(info.get(f"has_{agent}") for agent in _wsl_discoverable_agent_ids()):
+        if any(info.get(_agent_has_field(agent)) for agent in _wsl_discoverable_agent_ids()):
             return info
 
     if not usernames:
@@ -546,21 +554,32 @@ def _empty_wsl_distro_info(distro_name: str, username: str) -> dict:
 
 
 def _empty_wsl_agent_fields(agent: str) -> dict[str, object]:
-    fields: dict[str, object] = {f"has_{agent}": False}
+    agent_key = _agent_field_key(agent)
+    fields: dict[str, object] = {f"has_{agent_key}": False}
     if agent == AGENT_CLAUDE:
         fields["path"] = None
     else:
-        fields[f"{agent}_path"] = None
+        fields[f"{agent_key}_path"] = None
     return fields
 
 
 def _set_wsl_agent_info(info: dict, agent: str, path: Optional[Path]) -> None:
-    info[f"has_{agent}"] = path is not None
+    agent_key = _agent_field_key(agent)
+    info[f"has_{agent_key}"] = path is not None
     path_value = str(path) if path else None
     if agent == AGENT_CLAUDE:
         info["path"] = path_value
     else:
-        info[f"{agent}_path"] = path_value
+        info[f"{agent_key}_path"] = path_value
+
+
+def _agent_field_key(agent: str) -> str:
+    """Return a metadata-safe field fragment for an agent id."""
+    return agent.replace("-", "_")
+
+
+def _agent_has_field(agent: str) -> str:
+    return f"has_{_agent_field_key(agent)}"
 
 
 def _get_wsl_distro_names() -> list:
@@ -803,6 +822,24 @@ def get_wsl_pi_sessions_dir(distro_name: str) -> Optional[Path]:
     return _get_wsl_agent_sessions_dir(distro_name, AGENT_PI, "PI_WSL_SESSIONS_DIR")
 
 
+def get_wsl_copilot_cli_sessions_dir(distro_name: str) -> Optional[Path]:
+    """Get Copilot CLI sessions directory for a WSL distribution."""
+    return _get_wsl_agent_sessions_dir(
+        distro_name,
+        AGENT_COPILOT_CLI,
+        "COPILOT_CLI_WSL_SESSIONS_DIR",
+    )
+
+
+def get_wsl_copilot_vscode_workspace_storage_dir(distro_name: str) -> Optional[Path]:
+    """Get VS Code Copilot workspaceStorage directory for a WSL distribution."""
+    return _get_wsl_agent_sessions_dir(
+        distro_name,
+        AGENT_COPILOT_VSCODE,
+        "COPILOT_VSCODE_WSL_WORKSPACE_STORAGE_DIR",
+    )
+
+
 def get_windows_projects_dir(username: Optional[str] = None):
     """Get Claude projects directory for Windows from WSL.
 
@@ -898,3 +935,39 @@ def get_windows_pi_sessions_dir(username: Optional[str] = None) -> Optional[Path
 
     sessions_dir = windows_home / ".pi" / "agent" / "sessions"
     return sessions_dir if sessions_dir.exists() else None
+
+
+def get_windows_copilot_cli_sessions_dir(username: Optional[str] = None) -> Optional[Path]:
+    """Get Copilot CLI sessions directory for Windows (from WSL)."""
+    override = os.environ.get("COPILOT_CLI_WINDOWS_SESSIONS_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    if not is_running_in_wsl():
+        return None
+
+    windows_home = get_windows_home_from_wsl(username)
+    if not windows_home:
+        return None
+
+    sessions_dir = windows_home / ".copilot" / "session-state"
+    return sessions_dir if sessions_dir.exists() else None
+
+
+def get_windows_copilot_vscode_workspace_storage_dir(
+    username: Optional[str] = None,
+) -> Optional[Path]:
+    """Get VS Code Copilot workspaceStorage directory for Windows (from WSL)."""
+    override = os.environ.get("COPILOT_VSCODE_WINDOWS_WORKSPACE_STORAGE_DIR")
+    if override and Path(override).exists():
+        return Path(override)
+
+    if not is_running_in_wsl():
+        return None
+
+    windows_home = get_windows_home_from_wsl(username)
+    if not windows_home:
+        return None
+
+    workspace_storage = windows_home / "AppData" / "Roaming" / "Code" / "User" / "workspaceStorage"
+    return workspace_storage if workspace_storage.exists() else None

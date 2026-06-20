@@ -43,6 +43,7 @@ from agent_history.cli.constants import (
     SESSION_SUBCOMMANDS,
     WS_SUBCOMMANDS,
 )
+from agent_history.handlers.utilities import InstallHandler
 from agent_history.scope.context import CommandRequest, OutputArgs, ScopeArgs
 
 # Version - will be updated by package metadata
@@ -1246,7 +1247,7 @@ class CLIParser:
         )
         install_parser.add_argument(
             "--agent",
-            choices=get_agent_choices(),
+            choices=(DEFAULT_AGENT, *InstallHandler.AGENT_SKILL_DIRS.keys()),
             default=DEFAULT_AGENT,
             help="Agent skill target to install (default: all supported agents)",
         )

@@ -1086,7 +1086,7 @@ Tests for workspace and home scope handling. This is the most complex test categ
 | **Workspace** | current, one, some, all, project | cwd, positional exact workspace, `--glob`, `--regex`, `--aw`, `--project` |
 | **Home** | local, wsl, windows, remote, named, all | default, `--wsl`, `--windows`, `-r`, `--home`, `--ah` |
 | **Date filter** | none, since, until, range | `--since`, `--until` |
-| **Agent filter** | auto, claude, codex, gemini | `--agent` |
+| **Agent filter** | auto, claude, codex, gemini, pi, copilot-cli, copilot-vscode | `--agent` |
 | **Exclusions** | none, no-wsl, no-windows, no-remote | `--no-*` flags |
 | **Override** | none, this | `--this` |
 

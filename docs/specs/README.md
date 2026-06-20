@@ -29,6 +29,8 @@ How each AI coding assistant stores conversation data.
 | [codex-cli-format.md](agents/formats/codex-cli-format.md) | Codex CLI (OpenAI) |
 | [gemini-cli-format.md](agents/formats/gemini-cli-format.md) | Gemini CLI (Google) |
 | [pi-format.md](agents/formats/pi-format.md) | Pi Coding Agent |
+| [copilot-cli-format.md](agents/formats/copilot-cli-format.md) | GitHub Copilot CLI |
+| [copilot-vscode-format.md](agents/formats/copilot-vscode-format.md) | VS Code Copilot |
 
 ## Web and Import Reference Formats
 

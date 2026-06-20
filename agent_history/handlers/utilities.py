@@ -87,7 +87,7 @@ class InstallHandler(VerbHandler):
             return [self._plan_skill_package("custom", Path(skill_dir).expanduser())]
 
         agent = verb_args.get("agent")
-        agents = [agent] if agent else list(self.AGENT_SKILL_DIRS)
+        agents = [agent] if agent and agent != "auto" else list(self.AGENT_SKILL_DIRS)
         actions = []
         for target_agent in agents:
             target_template = self.AGENT_SKILL_DIRS.get(target_agent)
