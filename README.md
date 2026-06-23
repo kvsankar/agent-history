@@ -161,19 +161,22 @@ an explicit workspace/project scope.
 
 ## Testing
 
-Use pytest to run unit and integration tests. By default, `pytest` runs everything.
+Use the project runner to run unit and integration tests. It wraps pytest and
+uses faster Windows temp/cache defaults. On a fresh checkout, run
+`uv sync --dev` first. The examples below assume an activated virtualenv; the
+Makefile and PowerShell helper use `.venv` directly when it exists.
 
 Quick commands:
 
 ```bash
 # Default suite (excludes legacy tests)
-uv run pytest
+python scripts/run_tests.py
 
 # Unit only
-uv run pytest -m "not integration"
+python scripts/run_tests.py -m "not integration"
 
 # Integration only
-uv run pytest -m integration tests/integration
+python scripts/run_tests.py -m integration tests/integration
 
 # Makefile shortcuts
 make test
@@ -239,9 +242,9 @@ Thanks for considering a contribution! A few quick notes to get you productive:
 - Discuss: Open an issue for feature ideas or larger changes.
 - Scope: Keep PRs focused; add tests that demonstrate behavior.
 - Tests: Ensure both unit and integration suites pass.
-  - All tests: `uv run pytest`
-  - Unit only: `uv run pytest -m "not integration"`
-  - Integration only: `uv run pytest -m integration tests/integration`
+  - All tests: `python scripts/run_tests.py`
+  - Unit only: `python scripts/run_tests.py -m "not integration"`
+  - Integration only: `python scripts/run_tests.py -m integration tests/integration`
   - Make targets: `make test`, `make test-unit`, `make test-integration`
   - Windows helper: `scripts\\run-tests.ps1 [-Unit | -Integration]`
 - Cross‑boundary flows (optional):

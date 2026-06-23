@@ -348,3 +348,4 @@ cagelens session export --project myproject --ah -o ./consolidated
 - [gemini-cli-format.md](docs/specs/agents/formats/gemini-cli-format.md) - Gemini CLI session format details
 - [copilot-cli-format.md](docs/specs/agents/formats/copilot-cli-format.md) - Copilot CLI session format details
 - [copilot-vscode-format.md](docs/specs/agents/formats/copilot-vscode-format.md) - VS Code Copilot transcript details
+- [TESTING.md](TESTING.md) - Test matrix and Windows runner guidance

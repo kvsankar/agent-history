@@ -1,18 +1,22 @@
 .PHONY: test test-unit test-integration
 
-PYTHON := $(CURDIR)/.venv/Scripts/python
+ifeq ($(OS),Windows_NT)
+PYTHON ?= $(CURDIR)/.venv/Scripts/python.exe
+else
+PYTHON ?= $(CURDIR)/.venv/bin/python
+endif
 
-# Use uv to run pytest in the project venv/environment.
-# If you prefer plain pytest, replace `uv run` with `python -m`.
+# Use the project test runner so Windows gets the fast temp/cache defaults.
+# Run `uv sync --dev` first on a fresh checkout, or override PYTHON.
 
 test:
-	uv run python -m pytest -q
+	"$(PYTHON)" scripts/run_tests.py -q
 
 test-unit:
-	uv run python -m pytest -q -m "not integration"
+	"$(PYTHON)" scripts/run_tests.py -q -m "not integration"
 
 test-integration:
-	uv run python -m pytest -q -m integration tests/integration
+	"$(PYTHON)" scripts/run_tests.py -q -m integration tests/integration
 
 .PHONY: coverage coverage-report coverage-html coverage-clean
 
