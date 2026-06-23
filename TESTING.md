@@ -24,6 +24,25 @@ ver  # Windows command prompt/PowerShell
 
 ---
 
+## Windows Test Runner
+
+On Windows, pytest cache writes can be very slow. Use the helper script to set
+temp directories and disable the cache provider by default:
+
+```bash
+python scripts/run_tests.py
+```
+
+Run `uv sync --dev` first on a fresh checkout. The examples assume an activated
+virtualenv; `make test` and `scripts\run-tests.ps1` use `.venv` directly when it
+exists.
+
+Options:
+- `--cache` keeps pytest's cache provider enabled.
+- `--tmp-root <path>` overrides the temp root used for `--basetemp`.
+
+---
+
 ## Test Suite Organization
 
 ### Section 1: Basic Commands (All Environments)
