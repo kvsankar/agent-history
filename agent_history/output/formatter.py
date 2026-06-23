@@ -1503,7 +1503,7 @@ class OutputFormatter:
             raise FormatterError(f"Unknown format: {format_name}")
 
         self._configure_table_width(format_name, formatter, output_args)
-        if self._handle_empty_result(result):
+        if self._handle_empty_result(result, format_name):
             return
 
         output = formatter.format(result.data, result.data_type, result.metadata)
@@ -1526,8 +1526,10 @@ class OutputFormatter:
             return
         formatter.width = width if width > 0 else None
 
-    def _handle_empty_result(self, result: CommandResult) -> bool:
+    def _handle_empty_result(self, result: CommandResult, format_name: str) -> bool:
         if result.data_type == "stats_rollup":
+            return False
+        if format_name == "json":
             return False
         is_empty = (isinstance(result.data, list) and len(result.data) == 0) or (
             result.data is None

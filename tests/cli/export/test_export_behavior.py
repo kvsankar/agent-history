@@ -711,6 +711,128 @@ def test_copilot_vscode_sessions_list_and_export_via_registry(isolated_home):
     assert "VS Code Copilot response" in content
 
 
+def test_copilot_vscode_windows_workspace_sessions_export_from_workspace_scope(isolated_home):
+    storage_dir = isolated_home["path"] / "windows" / "workspaceStorage"
+    workspace_dir = storage_dir / "e9d2bd165be5e72d21f6e6f3c2699e13"
+    transcript = (
+        workspace_dir
+        / "GitHub.copilot-chat"
+        / "transcripts"
+        / "b52a58a1-7877-4746-85a3-88bd963f1fea.jsonl"
+    )
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "workspace.json").write_text(
+        json.dumps({"folder": "file:///d%3A/stellantis/pre/todo-priority"}),
+        encoding="utf-8",
+    )
+    transcript.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in [
+                {
+                    "id": "u1",
+                    "timestamp": "2026-06-18T14:00:00.000Z",
+                    "type": "user.message",
+                    "data": {"content": "Hello Windows VS Code Copilot"},
+                },
+                {
+                    "id": "a1",
+                    "parentId": "u1",
+                    "timestamp": "2026-06-18T14:00:01.000Z",
+                    "type": "assistant.message",
+                    "data": {"content": "Windows VS Code Copilot response", "model": "gpt-5"},
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    env = dict(isolated_home["env"])
+    env["COPILOT_VSCODE_WINDOWS_WORKSPACE_STORAGE_DIR"] = str(storage_dir)
+
+    ws_result = run_cli_subprocess(
+        [
+            "ws",
+            "list",
+            "--home",
+            "windows",
+            "--agent",
+            "copilot-vscode",
+            "--format",
+            "json",
+        ],
+        env=env,
+        cwd=isolated_home["path"],
+    )
+    assert ws_result.returncode == 0, f"stderr: {ws_result.stderr}"
+    workspaces = load_json_output(ws_result)
+    assert workspaces[0]["workspace"] == "/mnt/d/stellantis/pre/todo-priority"
+    assert workspaces[0]["session_count"] == 1
+
+    list_result = run_cli_subprocess(
+        [
+            "session",
+            "list",
+            "/mnt/d/stellantis/pre/todo-priority",
+            "--home",
+            "windows",
+            "--agent",
+            "copilot-vscode",
+            "--format",
+            "json",
+        ],
+        env=env,
+        cwd=isolated_home["path"],
+    )
+    assert list_result.returncode == 0, f"stderr: {list_result.stderr}"
+    sessions = load_json_output(list_result)
+    assert len(sessions) == 1
+    assert sessions[0]["workspace_key"] == "/mnt/d/stellantis/pre/todo-priority"
+
+    empty_list_result = run_cli_subprocess(
+        [
+            "session",
+            "list",
+            "/mnt/d/stellantis/pre/no-such-project",
+            "--home",
+            "windows",
+            "--agent",
+            "copilot-vscode",
+            "--format",
+            "json",
+        ],
+        env=env,
+        cwd=isolated_home["path"],
+    )
+    assert empty_list_result.returncode == 0, f"stderr: {empty_list_result.stderr}"
+    assert load_json_output(empty_list_result) == []
+
+    output_dir = isolated_home["path"] / "copilot-vscode-windows-export"
+    export_result = run_cli_subprocess(
+        [
+            "ws",
+            "export",
+            "/mnt/d/stellantis/pre/todo-priority",
+            "--home",
+            "windows",
+            "--agent",
+            "copilot-vscode",
+            "--format",
+            "html",
+            "-o",
+            str(output_dir),
+            "--force",
+        ],
+        env=env,
+        cwd=isolated_home["path"],
+    )
+    assert export_result.returncode == 0, f"stderr: {export_result.stderr}"
+    payload = load_json_output(export_result)
+    assert payload["exported"] == 1
+    content = _find_single_output_file(output_dir, ".html").read_text(encoding="utf-8")
+    assert "Windows VS Code Copilot response" in content
+
+
 def test_codex_markdown_export_uses_codex_header(isolated_home, setup_golden_fixtures):
     output_dir = isolated_home["path"] / "exports"
     output_dir.mkdir()
