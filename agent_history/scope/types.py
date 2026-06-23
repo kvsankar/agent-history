@@ -599,7 +599,7 @@ class ProjectRecord:
     """
 
     project: str
-    sessions: SessionSpec = field(default_factory=lambda: SessionSpecAll())
+    sessions: SessionSpec = field(default_factory=SessionSpecAll)
 
     def __str__(self) -> str:
         return f"ProjectRecord(project={self.project!r}, sessions={self.sessions})"

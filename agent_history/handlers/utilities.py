@@ -167,6 +167,10 @@ class InstallHandler(VerbHandler):
         if agent == "codex":
             codex_home = Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
             return codex_home / "skills" / self.SKILL_NAME
+        home = os.environ.get("HOME")
+        template = str(target_template)
+        if home and template.startswith(("~/", "~\\")):
+            return Path(home) / template[2:]
         return target_template.expanduser()
 
     def _find_skill_source(self) -> Path:

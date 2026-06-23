@@ -54,6 +54,10 @@ PROBE_RESPONSE_PATTERN = re.compile(
     r"(?:cagelens|agent-\s*history)\s+(claude|codex|gemini|pi)\s+persistence\s+probe\.?",
     re.IGNORECASE,
 )
+BASE_INSTRUCTIONS_TEXT_PATTERN = re.compile(
+    r'("base_instructions"\s*:\s*\{\s*"text"\s*:\s*")[^"]*(")',
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -516,6 +520,9 @@ def sanitize_text(text: str, replacements: dict[str, str] | None = None) -> str:
         sanitized = pattern.sub("[REDACTED_SECRET]", sanitized)
     for prompt in (*PROMPTS.values(), *LEGACY_PROMPTS.values()):
         sanitized = sanitized.replace(prompt, "[REDACTED_PROMPT]")
+    sanitized = BASE_INSTRUCTIONS_TEXT_PATTERN.sub(
+        r"\1[REDACTED_BASE_INSTRUCTIONS]\2", sanitized
+    )
     sanitized = PROBE_RESPONSE_PATTERN.sub("[REDACTED_ASSISTANT_TEXT]", sanitized)
     for raw, redacted in (replacements or {}).items():
         if raw:
@@ -538,15 +545,11 @@ def _sanitize_json_value(value: object, replacements: dict[str, str]) -> object:
         if key in sanitized:
             sanitized[key] = f"[REDACTED_{key.upper()}]"
 
-    base_instructions = sanitized.get("base_instructions")
-    if isinstance(base_instructions, dict) and "text" in base_instructions:
-        base_instructions["text"] = "[REDACTED_BASE_INSTRUCTIONS]"
+    _redact_base_instructions(sanitized)
 
     payload = sanitized.get("payload")
     if isinstance(payload, dict):
-        payload_base_instructions = payload.get("base_instructions")
-        if isinstance(payload_base_instructions, dict) and "text" in payload_base_instructions:
-            payload_base_instructions["text"] = "[REDACTED_BASE_INSTRUCTIONS]"
+        _redact_base_instructions(payload)
         if payload.get("role") == "developer":
             payload["content"] = [{"type": "input_text", "text": "[REDACTED_DEVELOPER_CONTEXT]"}]
 
@@ -560,6 +563,15 @@ def _sanitize_json_value(value: object, replacements: dict[str, str]) -> object:
                 thought["description"] = "[REDACTED_THOUGHT]"
 
     return sanitized
+
+
+def _redact_base_instructions(container: dict[str, object]) -> None:
+    base_instructions = container.get("base_instructions")
+    if isinstance(base_instructions, dict) and "text" in base_instructions:
+        base_instructions["text"] = "[REDACTED_BASE_INSTRUCTIONS]"
+    payload = container.get("payload")
+    if isinstance(payload, dict):
+        _redact_base_instructions(payload)
 
 
 def sanitize_session_content(content: str, replacements: dict[str, str] | None = None) -> str:

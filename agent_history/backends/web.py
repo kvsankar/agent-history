@@ -191,13 +191,14 @@ def extract_github_repo_from_git_url(url: str) -> str | None:
         return None
 
     if "github.com/" in url:
-        repo = url.split("github.com/")[-1]
+        repo = url.rsplit("github.com/", 1)[-1]
         return repo.rstrip("/").removesuffix(".git")
 
-    if ":" in url and "/" in url.split(":")[-1]:
-        host_part = url.split(":")[0]
+    repo_candidate = url.rsplit(":", 1)[-1]
+    if ":" in url and "/" in repo_candidate:
+        host_part = url.split(":", 1)[0]
         if "github" in host_part.lower():
-            repo_part = url.split(":")[-1]
+            repo_part = repo_candidate
             return repo_part.removesuffix(".git")
 
     return None
