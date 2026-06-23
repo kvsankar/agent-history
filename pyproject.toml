@@ -83,6 +83,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "radon>=6.0.1",
     "hypothesis>=6.100.0",
+    "ruff>=0.15.18",
 ]
 
 # Radon complexity thresholds (documented here, enforced in scripts/check_complexity.py)
