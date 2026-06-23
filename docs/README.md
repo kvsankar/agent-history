@@ -35,7 +35,7 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | User workflows | [usage.md](user/usage.md), [cookbook.md](user/cookbook.md), [troubleshooting.md](user/troubleshooting.md) | Command lookup, recipes, export/stat workflows, common recovery. |
 | Session discovery and access | [workspace-scope-hub.md](design-v2/workspace-scope-hub.md), [cagelens-spec.md](specs/cagelens-spec.md), [scope-resolution-v2.md](design-v2/scope-resolution-v2.md), [docker-e2e.md](testing/docker-e2e.md) | Storage locations, workspace matching, scope resolution, local/remote/Windows/WSL access. |
 | Agent formats and normalization | [specs/agents/formats/](specs/agents/formats/), [unified-json-schema.md](specs/schema/unified-json-schema.md), [schema-refresh-2026-06-04.md](analysis/schema-refresh-2026-06-04.md) | Concrete agent formats, message/tool/token fields, unified NDJSON schema, schema drift notes. |
-| Architecture and implementation | [DESIGN.md](design/DESIGN.md), [pipeline-architecture.md](design-v2/pipeline-architecture.md), [scope-resolution-v2.md](design-v2/scope-resolution-v2.md), [cagelens-code-map.md](cagelens-code-map.md) | Current architecture, v2 pipeline design, scope model, generated code map. |
+| Architecture and implementation | [DESIGN.md](design/DESIGN.md), [pipeline-architecture.md](design-v2/pipeline-architecture.md), [scope-resolution-v2.md](design-v2/scope-resolution-v2.md) | Current architecture, v2 pipeline design, and scope model. |
 | Validation and release readiness | [testing-strategy.md](testing/testing-strategy.md), [docker-e2e.md](testing/docker-e2e.md), [specs/todo.md](specs/todo.md) | Unit/E2E/real-agent validation, fixture strategy, release follow-ups. |
 | Research and collaboration | [research/](research/), [analysis/](analysis/), [other/](other/) | Ecosystem research, historical CLI research, collaboration notes, retrospectives. |
 | Navigation and indexes | [docs/README.md](README.md), [specs/README.md](specs/README.md) | Entry points and doc discovery. |
@@ -57,8 +57,6 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | [pipeline-architecture.md](design-v2/pipeline-architecture.md) | V2 command pipeline design and implementation mapping. |
 | [scope-resolution-v2.md](design-v2/scope-resolution-v2.md) | Scope resolution model for homes, workspaces, sessions, and agents. |
 | [code-reuse-mapping.md](design-v2/code-reuse-mapping.md) | Planning map from legacy code to pipeline entities. |
-| [cagelens-code-map.md](cagelens-code-map.md) | Generated/supporting code architecture map. |
-| [cagelens-process-image.md](cagelens-process-image.md) | Supporting process diagram brief. |
 
 ## Analysis
 
