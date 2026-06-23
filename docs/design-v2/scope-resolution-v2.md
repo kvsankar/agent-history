@@ -705,7 +705,7 @@ context = ResolutionContext(
     cwd=Path("/home/user/projects/auth"),
     cwd_home="local",
     cwd_workspace="/home/user/projects/auth",
-    cwd_project="testproj",  # Auto-detected!
+    cwd_project="testproj",  # Known for explicit --project, not implicit scope
     available_homes={"wsl": ["Ubuntu"], "windows": [], "remote": ["dev"]},
     project_config={
         "testproj": {
@@ -719,19 +719,19 @@ context = ResolutionContext(
 
 **Step 1: Parse Command (Stage 0)**
 ```python
-# No explicit args, but in project workspace
-# OLD BUGGY: [ScopeRecord(Local, Current, All)]  # Uses CWD, then substring match
-# NEW FIXED: [ProjectRecord("testproj", All)]    # Uses project definition!
+# No explicit args, but in a configured project workspace
+# OLD BUGGY: [ProjectRecord("testproj", All)]    # Implicit project expansion
+# NEW FIXED: [ScopeRecord(Local, Path("/home/user/projects/auth"), All)]
+# Uses the nearest current/parent workspace with recorded sessions.
 
-template = [ProjectRecord("testproj", SessionSpec.All)]
+template = [ScopeRecord(Concrete("local"), Path("/home/user/projects/auth"), SessionSpec.All)]
 ```
 
 **Step 2: Resolve Projects (Stage 1)**
 ```python
-# ProjectRecord("testproj") expands to project's defined workspaces
+# No project record is present unless the user passed --project or --tag.
 template = [
     ScopeRecord(Concrete("local"), Path("/home/user/projects/auth"), All),
-    ScopeRecord(Concrete("wsl:Ubuntu"), Path("/home/user/projects/auth"), All),
 ]
 ```
 
@@ -740,7 +740,6 @@ template = [
 # Already concrete, no change
 template = [
     ScopeRecord(Concrete("local"), Path("/home/user/projects/auth"), All),
-    ScopeRecord(Concrete("wsl:Ubuntu"), Path("/home/user/projects/auth"), All),
 ]
 ```
 
@@ -749,7 +748,6 @@ template = [
 # Path specs are already concrete
 template = [
     ScopeRecord(Concrete("local"), Concrete("/home/user/projects/auth"), All),
-    ScopeRecord(Concrete("wsl:Ubuntu"), Concrete("/home/user/projects/auth"), All),
 ]
 ```
 
@@ -766,17 +764,10 @@ concrete = [
             {"file": "rollout-codex-00.jsonl", "workspace": "/home/user/projects/auth", ...},
         ]
     ),
-    ConcreteRecord(
-        home="wsl:Ubuntu",
-        workspace="/home/user/projects/auth",
-        sessions=[
-            {"file": "auth-session-02.jsonl", "workspace": "/home/user/projects/auth", ...},
-        ]
-    ),
 ]
 ```
 
-**Result: 4 sessions** (not 9+ with substring bug!)
+**Result: 3 sessions** (not the whole configured project!)
 
 ---
 

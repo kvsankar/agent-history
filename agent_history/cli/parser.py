@@ -74,9 +74,9 @@ Progressive help:
 
 Common commands:
   cagelens ws                     List all local workspaces with counts
-  cagelens session list           List sessions for the current workspace/project
+  cagelens session list           List nearest current/parent workspace sessions
   cagelens session list --aw      List sessions from all local workspaces
-  cagelens session export -o DIR  Export current workspace/project sessions
+  cagelens session export -o DIR  Export nearest current/parent workspace sessions
   cagelens stats --sync           Refresh metrics and show stats
 
 Scope shortcuts:
@@ -130,14 +130,14 @@ Tip:
 SESSION_EPILOG = """\
 Default behavior:
   cagelens session is the same as cagelens session list.
-  Without --aw or a pattern, session commands use the current workspace or its
-  auto-detected project.
+  Without --aw, --project, or a pattern, session commands use the nearest
+  current/parent folder that has recorded sessions.
 
 Examples:
-  cagelens session list           Current workspace/project sessions
+  cagelens session list           Nearest current/parent workspace sessions
   cagelens session list --aw      All local workspace sessions
   cagelens session list --glob "*auth*"   Sessions from matching workspaces
-  cagelens session export -o DIR  Export current workspace/project sessions
+  cagelens session export -o DIR  Export nearest current/parent workspace sessions
   cagelens stats --sync           Refresh metrics and show stats
 
 Tip:
@@ -153,9 +153,10 @@ Next help:
 
 SESSION_LIST_EPILOG = """\
 Default behavior:
-  Lists sessions for the current workspace or auto-detected project.
+  Lists sessions for the nearest current/parent folder that has recorded sessions.
   --ah expands homes only; use --aw or a workspace argument to broaden
   workspace scope.
+  Use --project NAME for configured project expansion.
   Output columns: AGENT, HOME, WORKSPACE, FILE, MESSAGES, MODIFIED.
   MESSAGES is populated when available; use --counts to force message counting.
 
@@ -244,7 +245,7 @@ Tip:
 STATS_SUMMARY_EPILOG = """\
 Summary examples:
   cagelens stats
-      Fast cached dashboard for the current workspace or auto-detected project.
+      Fast cached dashboard for the selected current workspace scope.
 
   cagelens stats --sync --force
       Rebuild metrics for the selected scope before showing the dashboard.
@@ -491,6 +492,21 @@ def _validate_non_negative_int(value: str) -> int:
         raise argparse.ArgumentTypeError(f"Invalid number: {value}") from err
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must be zero or greater")
+    return parsed
+
+
+def _validate_parent_levels(value: str | None) -> int | None:
+    """Validate --parents argument."""
+    if value is None or value == "all":
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(
+            "--parents must be a non-negative integer or 'all'"
+        ) from err
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("--parents must be a non-negative integer or 'all'")
     return parsed
 
 
@@ -784,7 +800,9 @@ class CLIParser:
         ws_parser.set_defaults(command=RESOURCE_WS, ws_verb=DEFAULT_VERB_LIST)
         # Add flags to ws top-level so ws --local, ws --glob "*pattern*" work
         # Note: include_positional=False to avoid conflict with subcommand selection
-        self._add_workspace_scope_flags(ws_parser, include_positional=False)
+        self._add_workspace_scope_flags(
+            ws_parser, include_positional=False, include_parent_search=False
+        )
         self._add_home_scope_flags(ws_parser)
         self._add_agent_filter(ws_parser)
         ws_parser.add_argument(
@@ -807,7 +825,7 @@ class CLIParser:
             epilog=WS_LIST_EPILOG,
         )
         ws_list.set_defaults(command=RESOURCE_WS, ws_verb=DEFAULT_VERB_LIST)
-        self._add_workspace_scope_flags(ws_list)
+        self._add_workspace_scope_flags(ws_list, include_parent_search=False)
         self._add_home_scope_flags(ws_list)
         self._add_agent_filter(ws_list)
         ws_list.add_argument(
@@ -898,7 +916,11 @@ class CLIParser:
         proj_add.set_defaults(command=RESOURCE_PROJECT, project_command="add")
         proj_add.add_argument("name", help="Project name")
         self._add_workspace_scope_flags(
-            proj_add, positional_name="workspaces", include_project=False, include_tag=False
+            proj_add,
+            positional_name="workspaces",
+            include_project=False,
+            include_tag=False,
+            include_parent_search=False,
         )
         self._add_home_scope_flags(proj_add)
         proj_add.add_argument(
@@ -1288,7 +1310,7 @@ class CLIParser:
             epilog=FETCH_EPILOG,
         )
         fetch_parser.set_defaults(command=RESOURCE_FETCH, fetch_verb=DEFAULT_VERB_RUN)
-        self._add_workspace_scope_flags(fetch_parser)
+        self._add_workspace_scope_flags(fetch_parser, include_parent_search=False)
         fetch_parser.add_argument(
             "--home",
             action="append",
@@ -1398,6 +1420,7 @@ class CLIParser:
         include_positional: bool = True,
         include_project: bool = True,
         include_tag: bool = True,
+        include_parent_search: bool = True,
     ) -> None:
         """Add workspace scope flags.
 
@@ -1439,8 +1462,24 @@ class CLIParser:
             dest="this_only",
             action="store_true",
             default=argparse.SUPPRESS,
-            help="Current workspace only (skip project auto-detection)",
+            help=(
+                "Current folder only (disable parent search)"
+                if include_parent_search
+                else "Current workspace only"
+            ),
         )
+        if include_parent_search:
+            parser.add_argument(
+                "--parents",
+                nargs="?",
+                const="all",
+                default=argparse.SUPPRESS,
+                metavar="N|all",
+                help=(
+                    "Search parent directories for nearest workspace when the current folder has "
+                    "no exact sessions (default: all; use 0 for current folder only)"
+                ),
+            )
         if include_project:
             parser.add_argument(
                 "--project",
@@ -1976,6 +2015,7 @@ class CLIParser:
         )
 
         this_only = getattr(args, "this_only", False)
+        parent_levels = _validate_parent_levels(getattr(args, "parents", None))
         if all_workspaces and this_only:
             raise ValueError("Use either --aw or --this, not both")
         if self._session_export_implies_all_workspaces(
@@ -2020,6 +2060,7 @@ class CLIParser:
             regex_patterns=regex_patterns,
             name_patterns=name_patterns,
             this_only=this_only,
+            parent_levels=parent_levels,
             agent=agent,
             since=since,
             until=until,

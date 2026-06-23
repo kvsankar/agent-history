@@ -177,12 +177,13 @@ Notes:
 
 | Argument/Flag | Description |
 |---------------|-------------|
-| (none) | Current workspace (from cwd) |
+| (none) | Nearest current/parent workspace with recorded sessions |
 | `<workspace>` | Exact workspace path or identifier (positional, repeatable) |
 | `--glob <pattern>` | Explicit shell-style workspace pattern (repeatable) |
 | `--regex <regex>` | Explicit regular expression workspace pattern (repeatable) |
 | `--aw` / `--all-workspaces` | All workspaces |
-| `--this` | Current workspace only (override project auto-detection) |
+| `--this` | Current folder only; disable parent search |
+| `--parents N|all` | Search parent directories for the nearest workspace with sessions (default: `all`) |
 
 **Pattern matching:**
 - Positional workspace arguments are exact. They never imply substring matching.
@@ -206,12 +207,18 @@ Multiple `--tag` flags select projects with any requested tag. When both
 `--project` and `--tag` are supplied, the effective project set is the
 intersection.
 
-**Project Auto-Detection:** When running `session`, `export`, or `stats` commands without explicit workspace arguments, if the current directory belongs to a project, the command automatically scopes to that project. Use `--this` to override and target only the current workspace. `ws list` is a discovery command and defaults to all workspaces in the selected homes unless a workspace pattern/project/`--this` is provided.
+**Project Scope:** Project expansion is explicit. Use `--project <name>` or
+`--tag <name>` when a command should include all workspaces in a configured
+project. With no explicit workspace scope, session-oriented commands use the
+nearest current/parent folder that has recorded sessions. `ws list` is a
+discovery command and defaults to all workspaces in the selected homes unless a
+workspace pattern/project/`--this` is provided.
 
 ```
 # In ~/myproject (which is part of project "myproj")
-session list                    # Uses project myproj (implicit)
-session list --this             # Current workspace only, no project expansion
+session list                    # Nearest current/parent workspace
+session list --this             # Current folder only, no parent search
+session list --parents 2        # Search at most two parent directories
 session list --project other    # Explicit project selection
 session list --tag work         # All projects tagged work
 ```
@@ -330,7 +337,8 @@ session stats [options]           # Stats for sessions
 Scope Options:
   <pattern>                       # Workspace pattern (positional, repeatable)
   --aw, --all-workspaces          # All workspaces
-  --this                          # Current workspace only (override project)
+  --this                          # Current folder only (disable parent search)
+  --parents N|all                 # Parent search depth for implicit workspace
   --project <name>                # Use workspaces from project
   --tag <name>                    # Use workspaces from tagged projects
   --home <name>                   # Specific home (repeatable)

@@ -247,24 +247,25 @@ class TestBuildTemplate:
         assert isinstance(template[0], ScopeRecord)
         assert isinstance(template[0].workspace, WorkspaceSpecCurrent)
 
-    def test_implicit_project_detection_from_cwd(self, mock_context: ResolutionContext) -> None:
-        """When CWD is in a project workspace, should create ProjectRecord.
-
-        If the user's current directory is within a configured project's
-        workspace, we should automatically scope to that project.
-        """
+    def test_cwd_workspace_wins_over_implicit_project(
+        self, mock_context: ResolutionContext
+    ) -> None:
+        """Bare scope should use the current workspace, not expand to its project."""
         # Set up CWD to be in a project
+        mock_context.cwd = Path("/home/user/auth")
         mock_context.cwd_project = "testproj"
         mock_context.cwd_workspace = "/home/user/auth"
         resolver = ScopeResolver(mock_context)
+        resolver._enumerate_workspaces = lambda home, agent=None: ["/home/user/auth"]  # type: ignore[method-assign]
 
         args = ScopeArgs()  # No explicit flags
 
         template = resolver._build_template(args)
 
         assert len(template) == 1
-        assert isinstance(template[0], ProjectRecord)
-        assert template[0].project == "testproj"
+        assert isinstance(template[0], ScopeRecord)
+        assert isinstance(template[0].workspace, WorkspaceSpecPath)
+        assert template[0].workspace.path == "/home/user/auth"
 
     def test_explicit_name_pattern_overrides_cwd_project(
         self, mock_context: ResolutionContext
