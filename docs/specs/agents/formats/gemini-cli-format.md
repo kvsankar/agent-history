@@ -1,0 +1,485 @@
+# Gemini CLI Session Format
+
+<!-- doc-meta
+doc_role: spec
+audience: contributor
+lifecycle: current
+content_type: api
+surface: integration
+canonicality: primary
+-->
+
+This document describes the session storage format used by Google's Gemini CLI.
+
+> **Status**: Refreshed 2026-06-04 from current public
+> `google-gemini/gemini-cli` source and docs. Current persistence is JSONL;
+> older single-JSON sessions can still exist. See
+> [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Storage Locations](#storage-locations)
+3. [Session File Format](#session-file-format)
+4. [Message Types](#message-types)
+5. [Tool Calls](#tool-calls)
+6. [Data Captured](#data-captured)
+7. [Built-in Export Options](#built-in-export-options)
+8. [Comparison with Claude/Codex](#comparison-with-claudecodex)
+9. [Implementation Considerations](#implementation-considerations)
+10. [Sources](#sources)
+
+---
+
+## Overview
+
+Gemini CLI is Google's open-source AI coding assistant for the terminal. It supports:
+- 1M token context window
+- Built-in tools (Google Search, file operations, shell commands, web fetching)
+- MCP (Model Context Protocol) server extensibility
+- Automatic session management (as of v0.20.0+)
+
+---
+
+## Storage Locations
+
+### Session Storage
+
+Sessions are stored in project-specific directories:
+
+```
+~/.gemini/tmp/<project_identifier>/chats/
+```
+
+Older docs and files use a SHA-256 project hash. Current Gemini CLI uses a
+project registry identifier and can migrate old hash directories, so parsers
+must not assume this path component is always a SHA-256 hash.
+
+**Current file naming pattern:** `session-<timestamp>-<shortSessionId>.jsonl`
+
+**Observed OAuth prompt-mode compatibility pattern:** Gemini CLI 0.38.2 produced
+`session-*.json` during the 2026-06-05 isolated real-agent validation run, so
+parsers must continue to support both append-only JSONL and single-file JSON.
+
+**Legacy file naming pattern:** `session-YYYY-MM-DDTHH-MM-<session_id_prefix>.json`
+
+Example: `session-2025-12-03T06-35-477739d0.json`
+
+### Checkpoints (Manual Saves)
+
+Checkpoints from `/chat save <tag>` are stored in:
+
+```
+~/.gemini/tmp/<project_hash>/checkpoints/
+```
+
+### User Input Log
+
+A separate file tracks user inputs:
+
+```
+~/.gemini/tmp/<project_hash>/logs.json
+```
+
+### Configuration
+
+```
+~/.gemini/settings.json          # User settings
+./.gemini/settings.json          # Project settings
+~/.gemini/GEMINI.md              # Global context file
+```
+
+---
+
+`GEMINI_CLI_HOME` moves the upstream `.gemini` home. `cagelens` also
+supports `GEMINI_SESSIONS_DIR` as a direct `tmp` directory override.
+
+## Session File Format
+
+### Current JSONL Format
+
+Current Gemini CLI session files are append-only JSONL. The first record is
+session metadata. Later records can be message records, `{"$set": ...}`
+metadata/snapshot updates, or `{"$rewindTo": "<messageId>"}`.
+
+Message records keep the same broad fields documented below: `id`,
+`timestamp`, `type`, `content`, and optional Gemini metadata such as `model`,
+`thoughts`, `tokens`, and `toolCalls`.
+
+Subagent sessions can be nested under `chats/<parentSessionId>/<agentId>.jsonl`.
+
+### Legacy JSON Format
+
+Legacy sessions are stored as single JSON files.
+
+### Top-Level Structure
+
+```json
+{
+  "sessionId": "477739d0-1b78-4aa7-9116-02d08c952344",
+  "projectHash": "8876362f5a5f00ff0d93bf9c95efa883e60cbd44bfa1db1f77ad4280aeab35a6",
+  "startTime": "2025-12-03T06:35:37.302Z",
+  "lastUpdated": "2025-12-03T06:38:32.429Z",
+  "messages": [...]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sessionId` | string | UUID identifying the session |
+| `projectHash` | string | SHA-256 hash of project root path |
+| `startTime` | string | ISO 8601 timestamp of session start |
+| `lastUpdated` | string | ISO 8601 timestamp of last update |
+| `messages` | array | Array of message objects |
+| `summary` | string | Optional session summary (generated on demand) |
+
+---
+
+## Message Types
+
+### User Message
+
+```json
+{
+  "id": "553d877e-dd47-42b6-ae51-84d990c8ae10",
+  "timestamp": "2025-12-03T06:35:37.302Z",
+  "type": "user",
+  "content": "User's message here"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | UUID for this message |
+| `timestamp` | string | ISO 8601 timestamp |
+| `type` | string | `"user"`, `"info"`, `"error"`, or `"warning"` |
+| `content` | string/PartListUnion | The message content |
+
+**Note:** The `type` field can also be `"info"`, `"error"`, or `"warning"` for system messages.
+
+### System Messages (info/error/warning)
+
+System messages use the same structure but with different `type` values:
+
+```json
+{
+  "id": "9d608b69-76eb-42e8-8e0d-b5b76b06eb7c",
+  "timestamp": "2025-11-30T10:08:12.198Z",
+  "type": "info",
+  "content": "Request cancelled."
+}
+```
+
+```json
+{
+  "id": "0ef400f8-4d45-41a0-9eae-6f55bcfb8a81",
+  "timestamp": "2025-12-29T17:54:49.000Z",
+  "type": "error",
+  "content": "Automatic update failed. Please try updating manually"
+}
+```
+
+| Type | Description |
+|------|-------------|
+| `info` | Informational messages (e.g., "Request cancelled.") |
+| `error` | Error messages (e.g., update failures) |
+| `warning` | Warning messages |
+
+### Gemini Message
+
+```json
+{
+  "id": "d0d8eed9-9936-4c96-97c1-eb7541b05b2a",
+  "timestamp": "2025-12-03T06:35:51.334Z",
+  "type": "gemini",
+  "content": "Model response here...",
+  "thoughts": [...],
+  "tokens": {...},
+  "model": "gemini-2.5-pro",
+  "toolCalls": [...]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | UUID for this message |
+| `timestamp` | string | ISO 8601 timestamp |
+| `type` | string | Always `"gemini"` |
+| `content` | string | The model's response text |
+| `thoughts` | array | Optional reasoning/thinking steps |
+| `tokens` | object | Token usage statistics |
+| `model` | string | Model name (e.g., `"gemini-2.5-pro"`, `"gemini-3-pro-preview"`) |
+| `toolCalls` | array | Optional tool calls made by the model |
+
+### Thoughts Array
+
+When present, contains the model's reasoning steps:
+
+```json
+{
+  "thoughts": [
+    {
+      "subject": "Considering Code Review Scope",
+      "description": "I'm currently focused on the scope of the code review...",
+      "timestamp": "2025-12-03T06:35:40.321Z"
+    }
+  ]
+}
+```
+
+### Token Usage
+
+```json
+{
+  "tokens": {
+    "input": 2678,
+    "output": 591,
+    "cached": 0,
+    "thoughts": 874,
+    "tool": 0,
+    "total": 4143
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `input` | Input tokens consumed |
+| `output` | Output tokens generated |
+| `cached` | Tokens served from cache |
+| `thoughts` | Tokens used for reasoning |
+| `tool` | Tokens used for tool calls |
+| `total` | Total tokens for this turn |
+
+---
+
+## Tool Calls
+
+Tool calls are embedded in Gemini messages as a `toolCalls` array:
+
+```json
+{
+  "toolCalls": [
+    {
+      "id": "codebase_investigator-1764743737251-810082eb3c63c",
+      "name": "codebase_investigator",
+      "args": {
+        "objective": "Review the codebase for bugs..."
+      },
+      "result": [...],
+      "status": "success",
+      "timestamp": "2025-12-03T06:38:32.431Z",
+      "displayName": "Codebase Investigator Agent",
+      "description": "The specialized tool for codebase analysis...",
+      "renderOutputAsMarkdown": true
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier for this tool call |
+| `name` | string | Tool name (e.g., `"shell"`, `"read_file"`) |
+| `args` | object | Arguments passed to the tool |
+| `result` | array | Tool execution results |
+| `status` | string | `"success"` or `"error"` |
+| `error` | string | Error message (present when `status` is `"error"`) |
+| `timestamp` | string | When the tool call completed |
+| `displayName` | string | Human-readable tool name |
+| `description` | string | Tool description |
+| `resultDisplay` | string | Formatted result for display |
+| `renderOutputAsMarkdown` | boolean | Whether to render output as markdown |
+
+### Subagent Tool Calls
+
+Gemini CLI exposes subagents as tool-style delegation from the parent session.
+Observed local records include tool calls such as `codebase_investigator` with
+`displayName: "Codebase Investigator Agent"`, `status: "success"`, and
+`resultDisplay` containing a completion banner, termination reason, and final
+result.
+
+This parent-side record is enough to represent a subagent action span and
+returned result in timeline export. When a current JSONL session also stores a
+nested child transcript under a parent chat directory, `cagelens` should link
+that child transcript by parent session path and child agent/session id.
+
+### Tool Result Structure
+
+```json
+{
+  "result": [
+    {
+      "functionResponse": {
+        "id": "codebase_investigator-1764743737251-810082eb3c63c",
+        "name": "codebase_investigator",
+        "response": {
+          "output": "Tool output here..."
+        }
+      }
+    }
+  ]
+}
+```
+
+### Tool Error Example
+
+When a tool fails, the `status` is `"error"` and an `error` field contains the message:
+
+```json
+{
+  "toolCalls": [
+    {
+      "id": "edit_file-1766466138789-e2c99dfd917c",
+      "name": "edit_file",
+      "args": {"file_path": "src/file.py", "old_string": "..."},
+      "result": [...],
+      "status": "error",
+      "error": "Failed to edit, 0 occurrences found for old_string (...). Original old_string was (...) in /path/to/file. No edits made. The exact text in old_string was not found.",
+      "timestamp": "2025-12-23T05:02:19.249Z"
+    }
+  ]
+}
+```
+
+---
+
+## Data Captured
+
+| Data | Description |
+|------|-------------|
+| Session ID | UUID identifying the conversation |
+| Project Hash | SHA-256 of project path (for organization) |
+| Timestamps | Start time, last update, per-message timestamps |
+| User Messages | Full user input text |
+| Model Responses | Complete model output |
+| Reasoning | Thinking/reasoning steps with subjects and descriptions |
+| Tool Calls | Tool name, arguments, results, and status |
+| Token Usage | Detailed breakdown per message |
+| Model Name | Which Gemini model was used |
+
+---
+
+## Built-in Export Options
+
+### `/chat share` Command
+
+Exports current conversation to file:
+
+```bash
+/chat share conversation.md   # Markdown format
+/chat share conversation.json # JSON format
+```
+
+### `/chat save` Command
+
+Saves checkpoint for later resumption:
+
+```bash
+/chat save my-checkpoint
+```
+
+### Session Browser
+
+The `/resume` command opens an interactive session browser for:
+- Browsing past sessions chronologically
+- Searching by ID or content
+- Previewing message counts and summaries
+- Restoring full conversation context
+
+### JSON Output Mode
+
+For scripting, use CLI flags:
+
+```bash
+gemini --output-format json         # Structured JSON output
+gemini --output-format stream-json  # Real-time newline-delimited JSON
+```
+
+---
+
+## Comparison with Claude/Codex
+
+| Aspect | Claude Code | Codex CLI | Gemini CLI |
+|--------|-------------|-----------|------------|
+| **Location** | `~/.claude/projects/<workspace>/` | `~/.codex/sessions/YYYY/MM/DD/` | `~/.gemini/tmp/<hash>/chats/` |
+| **Format** | JSONL | JSONL | JSONL or JSON |
+| **Organization** | By workspace path | By date | By project hash |
+| **Message Type Field** | `type: "user"/"assistant"` | `payload.role` | `type: "user"/"gemini"` |
+| **Content Field** | `content` array | `content` array | `content` string |
+| **Session ID** | UUID in filename/records | In `session_meta` | In root `sessionId` |
+| **Tool Calls** | In message content | Separate `response_item` | In message `toolCalls` |
+| **Token Usage** | In assistant message | In `turn_context` | In message `tokens` |
+| **Reasoning** | Not stored | Not stored | In message `thoughts` |
+| **Built-in Export** | None | None | `/chat share` |
+
+### Key Differences
+
+1. **File Format**: Gemini can use append-only JSONL or single JSON files; Claude/Codex use JSONL (one JSON per line).
+
+2. **Role Names**: Gemini uses `"gemini"` for model responses; Claude/Codex use `"assistant"`.
+
+3. **Content Structure**: Gemini stores content as direct strings; Claude/Codex use arrays of content blocks.
+
+4. **Reasoning/Thoughts**: Gemini explicitly stores reasoning steps; Claude/Codex do not.
+
+5. **Project Identification**: Gemini uses project identifiers that may be registry slugs or legacy SHA-256 hashes; Claude uses encoded paths; Codex uses dates.
+
+---
+
+## Implementation Considerations
+
+### Parser Support
+
+1. **Parse current JSONL and legacy JSON**: Current files are append-only JSONL; older files are single JSON objects.
+2. **Handle Hashed Paths**: Scan all `~/.gemini/tmp/*/chats/` directories
+3. **Map Type Names**: Convert `"gemini"` → `"assistant"` for unified display
+4. **Extract Workspace**: Project identifier may obscure original path (may need `projects.json` or cagelens index mapping)
+5. **Handle Thoughts**: Optionally display reasoning steps in export
+
+### Environment Variable
+
+Upstream Gemini uses `GEMINI_CLI_HOME`; `cagelens` also supports a direct
+sessions override:
+
+```python
+gemini_tmp = (
+    Path(os.environ["GEMINI_SESSIONS_DIR"])
+    if os.environ.get("GEMINI_SESSIONS_DIR")
+    else Path(os.environ["GEMINI_CLI_HOME"]) / ".gemini" / "tmp"
+    if os.environ.get("GEMINI_CLI_HOME")
+    else Path.home() / ".gemini" / "tmp"
+)
+```
+
+### Challenges
+
+1. **Project Identifier**: May be a registry slug or legacy hash; not always reversible.
+2. **JSON vs JSONL**: Both formats need support during migration.
+3. **Workspace Display**: Need strategy for displaying opaque project identifiers meaningfully.
+4. **Format Evolution**: Gemini CLI is actively developed; format may change
+
+### Potential Solutions for Project Hash
+
+1. **Scan for GEMINI.md**: Check if project has `.gemini/` directory to map hash → path
+2. **Use CWD heuristic**: Compare current directory hash to find matching project
+3. **Display hash prefix**: Show first 8 chars of hash as identifier
+4. **Build mapping file**: Cache hash → path mappings on first discovery
+
+---
+
+## Sources
+
+- [Gemini CLI GitHub Repository](https://github.com/google-gemini/gemini-cli)
+- [chatRecordingService.ts](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/services/chatRecordingService.ts) - Source of truth for session format
+- [Session Management Documentation](https://geminicli.com/docs/cli/session-management/)
+- [Configuration Documentation](https://google-gemini.github.io/gemini-cli/docs/get-started/configuration.html)
+- Actual session files from `~/.gemini/tmp/*/chats/` (verified December 2025)
+
+---
+
+## Changelog
+
+- **2025-12-13**: Full implementation complete (21 unit tests, 10 E2E tests)
+- **2025-12-13**: Verified format from actual session files; updated all documentation
+- **2025-12-13**: Initial research documentation

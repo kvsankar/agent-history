@@ -45,5 +45,9 @@ wait_for_ssh "$NODE_BETA" "$BETA_USER"
 echo "=== All nodes ready ==="
 echo ""
 
+# Avoid pytest cache writes to read-only /app
+export PYTEST_CACHE_DIR="${PYTEST_CACHE_DIR:-/tmp/pytest_cache}"
+mkdir -p "$PYTEST_CACHE_DIR"
+
 # Run the command (default: pytest)
 exec "$@"

@@ -1,0 +1,1046 @@
+"""Internal registry for coding-agent backends.
+
+The registry is intentionally internal for now: built-in backends register a
+small capability surface, and CLI/handlers consume those capabilities instead
+of branching on agent ids throughout the package.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shlex
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List
+
+from agent_history.utils.env import has_env
+from agent_history.utils.paths import is_cached_workspace, normalize_workspace_name
+from agent_history.utils.platform import (
+    AGENT_CLAUDE,
+    AGENT_CODEX,
+    AGENT_COPILOT_CLI,
+    AGENT_COPILOT_VSCODE,
+    AGENT_GEMINI,
+    AGENT_PI,
+)
+
+DEFAULT_AGENT = "auto"
+DEFAULT_BACKEND_ID = AGENT_CLAUDE
+
+MessageList = List[Dict[str, Any]]
+SessionList = List[Dict[str, Any]]
+StatsPayload = tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]
+
+
+@dataclass(frozen=True)
+class AgentBackend:
+    """Capability descriptor for one coding-agent session source."""
+
+    id: str
+    label: str
+    get_session_dir: Callable[[Any, Any], Path | None]
+    scan_sessions: Callable[[Path], SessionList]
+    list_workspaces: Callable[[Path, str], list[str]]
+    read_messages: Callable[[Path], MessageList]
+    count_messages: Callable[[Path], int]
+    render_markdown: Callable[[Path, bool, MessageList | None, int], str]
+    message_to_unified: Callable[[dict[str, Any]], dict[str, Any]]
+    extract_stats: Callable[[Path], StatsPayload]
+    resolve_stats_workspace: Callable[[Path, dict[str, Any], str | None], str]
+    remote_list_workspaces_command: Callable[[], str] | None = None
+    remote_parse_workspaces: Callable[[str], list[str]] | None = None
+    remote_list_sessions_command: Callable[[str], str] | None = None
+    remote_workspace_readable: Callable[[str], str] | None = None
+    remote_file_path: Callable[[str, str, dict[str, Any]], str | None] | None = None
+    wsl_candidate_paths: Callable[[str, str], list[Path]] | None = None
+    markdown_title: str = ""
+    markdown_header_title: str = ""
+    markdown_header_includes_filename: bool = True
+    file_markers: tuple[str, ...] = ()
+    file_suffixes: tuple[str, ...] = ()
+    supports_conversation_graph: bool = False
+
+
+_BACKENDS: dict[str, AgentBackend] = {}
+
+
+def register_backend(backend: AgentBackend) -> None:
+    """Register or replace a backend capability descriptor."""
+    _BACKENDS[backend.id] = backend
+
+
+def unregister_backend(agent_id: str) -> None:
+    """Remove a backend from the registry."""
+    _BACKENDS.pop(agent_id, None)
+
+
+def get_backend(agent_id: str | None) -> AgentBackend | None:
+    """Return a backend by id, treating ``auto``/None as the default backend."""
+    if agent_id in (None, DEFAULT_AGENT):
+        agent_id = DEFAULT_BACKEND_ID
+    return _BACKENDS.get(str(agent_id))
+
+
+def require_backend(agent_id: str | None) -> AgentBackend:
+    """Return a backend or raise a clear error for unsupported agents."""
+    backend = get_backend(agent_id)
+    if backend is None:
+        raise KeyError(f"Unsupported agent backend: {agent_id}")
+    return backend
+
+
+def iter_backends(agent_id: str | None = None) -> Iterable[AgentBackend]:
+    """Iterate selected backends, or all registered backends for auto/None."""
+    if agent_id in (None, DEFAULT_AGENT):
+        return tuple(_BACKENDS.values())
+    backend = get_backend(agent_id)
+    return (backend,) if backend else ()
+
+
+def get_agent_choices(include_auto: bool = True) -> tuple[str, ...]:
+    """Return CLI agent choices from registered backends."""
+    choices = tuple(_BACKENDS.keys())
+    if include_auto:
+        return (DEFAULT_AGENT, *choices)
+    return choices
+
+
+def get_default_backend_id() -> str:
+    """Return the fallback backend id for legacy/default behavior."""
+    return DEFAULT_BACKEND_ID
+
+
+def infer_backend_from_file(session_file: Path) -> AgentBackend:
+    """Infer a backend from a local session file path."""
+    parts = set(session_file.parts)
+    suffix = session_file.suffix.lower()
+    for backend in _BACKENDS.values():
+        if backend.file_markers and any(marker in parts for marker in backend.file_markers):
+            return backend
+    for backend in _BACKENDS.values():
+        if suffix and suffix in backend.file_suffixes:
+            return backend
+    return require_backend(DEFAULT_BACKEND_ID)
+
+
+def _workspace_names_from_sessions(sessions: SessionList) -> list[str]:
+    return sorted(
+        {
+            (
+                s.get("workspace_key") or s.get("workspace_readable") or s.get("workspace", "")
+            ).strip()
+            for s in sessions
+            if s
+        }
+        - {""}
+    )
+
+
+def _claude_session_dir(resolver: Any, context: Any) -> Path | None:
+    return resolver.get_claude_dir(context)
+
+
+def _claude_scan_sessions(projects_dir: Path) -> SessionList:
+    from agent_history.backends.claude import get_workspace_sessions
+
+    return get_workspace_sessions(
+        workspace_pattern="*",
+        projects_dir=projects_dir,
+        skip_message_count=True,
+    )
+
+
+def _claude_list_workspaces(projects_dir: Path, home: str) -> list[str]:
+    verify_local = home == "local" or home.startswith("windows:")
+    if has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and os.environ.get(
+        "CLAUDE_WINDOWS_PROJECTS_DIR"
+    ):
+        verify_local = False
+
+    workspaces: list[str] = []
+    for entry in projects_dir.iterdir():
+        if (
+            entry.is_dir()
+            and not entry.name.startswith(".")
+            and not is_cached_workspace(entry.name)
+        ):
+            workspaces.append(normalize_workspace_name(entry.name, verify_local=verify_local))
+    return workspaces
+
+
+def _claude_read_messages(session_file: Path) -> MessageList:
+    from agent_history.backends.claude import read_jsonl_messages
+
+    return read_jsonl_messages(session_file)
+
+
+def _claude_count_messages(session_file: Path) -> int:
+    from agent_history.backends.claude import _count_file_messages
+
+    return _count_file_messages(session_file, skip_count=False, use_cached_counts=True)
+
+
+def _claude_render_markdown(
+    session_file: Path,
+    minimal: bool,
+    messages: MessageList | None,
+    markdown_level: int,
+) -> str:
+    from agent_history.export.markdown import parse_jsonl_to_markdown
+
+    return parse_jsonl_to_markdown(
+        session_file,
+        minimal,
+        messages,
+        agent_type=AGENT_CLAUDE,
+        markdown_level=markdown_level,
+    )
+
+
+def _claude_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
+    from agent_history.backends.claude import claude_message_to_unified
+
+    return claude_message_to_unified(message)
+
+
+def _claude_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.storage.metrics import _parse_claude_jsonl
+
+    return _parse_claude_jsonl(session_file)
+
+
+def _claude_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    del session_info
+    return workspace or session_file.parent.name
+
+
+def _claude_remote_list_workspaces_command() -> str:
+    return r"""python3 - <<'PY'
+from pathlib import Path
+
+root = Path.home() / ".claude" / "projects"
+
+def resolve_parts(parts, base):
+    resolved = []
+    current = base
+    i = 0
+    while i < len(parts):
+        match = None
+        match_end = i + 1
+        for end in range(len(parts), i, -1):
+            candidate = "-".join(parts[i:end])
+            if (current / candidate).exists():
+                match = candidate
+                match_end = end
+                break
+        if match is None:
+            resolved.extend(parts[i:])
+            break
+        resolved.append(match)
+        current = current / match
+        i = match_end
+    return str(base.joinpath(*resolved))
+
+def decode_workspace(name):
+    if name.startswith("-"):
+        return resolve_parts(name[1:].split("-"), Path("/"))
+    return name
+
+if root.exists():
+    for entry in sorted(root.iterdir()):
+        name = entry.name
+        if not entry.is_dir() or not name.startswith("-"):
+            continue
+        if name.startswith(("remote_", "wsl_", "windows_")):
+            continue
+        print(decode_workspace(name))
+PY"""
+
+
+def _claude_remote_parse_workspaces(output: str) -> list[str]:
+    items = [line.strip() for line in output.splitlines() if line.strip()]
+    return [
+        item
+        for item in items
+        if (item.startswith("/") or item.startswith("-"))
+        and not item.startswith(("remote_", "wsl_", "windows_"))
+    ]
+
+
+def _claude_remote_list_sessions_command(workspace: str) -> str:
+    safe_workspace = shlex.quote(workspace)
+    return f"""python3 - {safe_workspace} <<'PY'
+from pathlib import Path
+import sys
+
+workspace = sys.argv[1]
+
+
+def encode_workspace(value):
+    value = value.replace('\\\\', '/').rstrip('/')
+    if len(value) > 1 and value[1] == ':':
+        return value[0].upper() + "--" + value[2:].lstrip('/').replace('/', '-')
+    if value.startswith("-"):
+        return value
+    return "-" + value.lstrip('/').replace('/', '-')
+
+
+def resolve_parts(parts, base):
+    resolved = []
+    current = base
+    i = 0
+    while i < len(parts):
+        match = None
+        match_end = i + 1
+        for end in range(len(parts), i, -1):
+            candidate = "-".join(parts[i:end])
+            if (current / candidate).exists():
+                match = candidate
+                match_end = end
+                break
+        if match is None:
+            resolved.extend(parts[i:])
+            break
+        resolved.append(match)
+        current = current / match
+        i = match_end
+    return str(base.joinpath(*resolved))
+
+
+def decode_workspace(name):
+    if name.startswith("-"):
+        return resolve_parts(name[1:].split("-"), Path("/"))
+    return name
+
+
+def iter_session_files(workspace_dir):
+    yield from workspace_dir.glob("*.jsonl")
+    for path in workspace_dir.glob("*/subagents/agent-*.jsonl"):
+        if not path.name.startswith("agent-acompact-"):
+            yield path
+
+
+encoded = encode_workspace(workspace)
+root = Path.home() / ".claude" / "projects" / encoded
+readable = decode_workspace(encoded)
+
+if root.is_dir():
+    for path in sorted(iter_session_files(root)):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        print(f"{{path}}|{{stat.st_size}}|{{int(stat.st_mtime)}}|0|{{encoded}}|{{readable}}")
+PY"""
+
+
+def _claude_remote_workspace_readable(workspace: str) -> str:
+    return normalize_workspace_name(workspace, verify_local=False)
+
+
+def _claude_remote_file_path(workspace: str, filename: str, session: dict[str, Any]) -> str:
+    del session
+    return f"$HOME/.claude/projects/{workspace}/{filename}"
+
+
+def _wsl_user_paths(distro_name: str, username: str, relative_dir: str) -> list[Path]:
+    return [
+        Path(f"//wsl.localhost/{distro_name}/home/{username}/{relative_dir}"),
+        Path(f"//wsl$/{distro_name}/home/{username}/{relative_dir}"),
+    ]
+
+
+def _claude_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".claude/projects")
+
+
+def _codex_session_dir(resolver: Any, context: Any) -> Path | None:
+    return resolver.get_codex_dir(context)
+
+
+def _codex_scan_sessions(sessions_dir: Path) -> SessionList:
+    from agent_history.backends.codex import codex_scan_sessions
+
+    return codex_scan_sessions(pattern="", sessions_dir=sessions_dir, skip_message_count=True)
+
+
+def _codex_list_workspaces(sessions_dir: Path, home: str) -> list[str]:
+    del home
+    return _workspace_names_from_sessions(_codex_scan_sessions(sessions_dir))
+
+
+def _codex_read_messages(session_file: Path) -> MessageList:
+    from agent_history.backends.codex import codex_read_jsonl_messages
+
+    messages, _ = codex_read_jsonl_messages(session_file)
+    return messages
+
+
+def _codex_count_messages(session_file: Path) -> int:
+    from agent_history.backends.codex import codex_count_messages
+
+    return codex_count_messages(session_file)
+
+
+def _codex_render_markdown(
+    session_file: Path,
+    minimal: bool,
+    messages: MessageList | None,
+    markdown_level: int,
+) -> str:
+    from agent_history.export.markdown import MARKDOWN_DEFAULT_LEVEL, parse_jsonl_to_markdown
+
+    if markdown_level < MARKDOWN_DEFAULT_LEVEL:
+        return parse_jsonl_to_markdown(
+            session_file,
+            minimal,
+            messages,
+            agent_type=AGENT_CODEX,
+            markdown_level=markdown_level,
+        )
+
+    from agent_history.backends.codex import codex_parse_jsonl_to_markdown
+
+    return codex_parse_jsonl_to_markdown(session_file, minimal)
+
+
+def _codex_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
+    from agent_history.backends.codex import codex_message_to_unified
+
+    return codex_message_to_unified(message)
+
+
+def _codex_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.storage.metrics import _parse_codex_jsonl
+
+    return _parse_codex_jsonl(session_file)
+
+
+def _codex_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    del session_file
+    return session_info.get("cwd") or workspace or "unknown"
+
+
+def _codex_remote_list_workspaces_command() -> str:
+    return """for f in ~/.codex/sessions/*/*/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"cwd"' "$f" | head -1)
+    echo "$line" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/'
+done | sort -u"""
+
+
+def _codex_remote_list_sessions_command(workspace: str) -> str:
+    safe_workspace = shlex.quote(workspace)
+    return f"""ws={safe_workspace}
+for f in ~/.codex/sessions/*/*/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"cwd"' "$f" | head -1)
+    cwd=$(echo "$line" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/')
+    if [ -n "$cwd" ] && [ "$cwd" = "$ws" ]; then
+        size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+        mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+        echo "$f|$size|$mtime|0|$cwd"
+    fi
+done"""
+
+
+def _codex_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".codex/sessions")
+
+
+def _gemini_session_dir(resolver: Any, context: Any) -> Path | None:
+    return resolver.get_gemini_dir(context)
+
+
+def _gemini_scan_sessions(sessions_dir: Path) -> SessionList:
+    from agent_history.backends.gemini import gemini_scan_sessions
+
+    return gemini_scan_sessions(pattern="", sessions_dir=sessions_dir, skip_message_count=True)
+
+
+def _gemini_list_workspaces(sessions_dir: Path, home: str) -> list[str]:
+    del home
+    return _workspace_names_from_sessions(_gemini_scan_sessions(sessions_dir))
+
+
+def _gemini_read_messages(session_file: Path) -> MessageList:
+    from agent_history.backends.gemini import gemini_read_json_messages
+
+    messages, _ = gemini_read_json_messages(session_file)
+    return messages
+
+
+def _gemini_count_messages(session_file: Path) -> int:
+    from agent_history.backends.gemini import gemini_count_messages
+
+    return gemini_count_messages(session_file)
+
+
+def _gemini_render_markdown(
+    session_file: Path,
+    minimal: bool,
+    messages: MessageList | None,
+    markdown_level: int,
+) -> str:
+    from agent_history.export.markdown import MARKDOWN_DEFAULT_LEVEL, parse_jsonl_to_markdown
+
+    if markdown_level < MARKDOWN_DEFAULT_LEVEL:
+        return parse_jsonl_to_markdown(
+            session_file,
+            minimal,
+            messages,
+            agent_type=AGENT_GEMINI,
+            markdown_level=markdown_level,
+        )
+
+    from agent_history.backends.gemini import gemini_parse_json_to_markdown
+
+    return gemini_parse_json_to_markdown(session_file, minimal)
+
+
+def _gemini_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
+    from agent_history.backends.gemini import _gemini_message_to_unified
+
+    return _gemini_message_to_unified(message)
+
+
+def _gemini_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.storage.metrics import _parse_gemini_json
+
+    return _parse_gemini_json(session_file)
+
+
+def _gemini_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    from agent_history.backends.gemini import (
+        gemini_get_hash_index_file,
+        gemini_get_legacy_hash_index_file,
+        gemini_get_path_for_hash,
+    )
+
+    del session_info
+    project_hash = None
+    for parent in session_file.parents:
+        if parent.name == "chats":
+            project_hash = parent.parent.name
+            break
+    if project_hash is None:
+        hash_dir = session_file.parent.parent
+        project_hash = hash_dir.name if hash_dir.name else None
+    if project_hash:
+        resolved = gemini_get_path_for_hash(project_hash)
+        if resolved:
+            return resolved
+        for index_file in (gemini_get_hash_index_file(), gemini_get_legacy_hash_index_file()):
+            try:
+                data = json.loads(index_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            resolved = data.get("hashes", {}).get(project_hash)
+            if resolved:
+                return resolved
+    return workspace or session_file.parent.name
+
+
+def _gemini_remote_list_workspaces_command() -> str:
+    return "ls -1 ~/.gemini/tmp 2>/dev/null || true"
+
+
+def _gemini_remote_list_sessions_command(workspace: str) -> str:
+    safe_workspace = shlex.quote(workspace)
+    return f"""for f in ~/.gemini/tmp/{safe_workspace}/chats/*.json ~/.gemini/tmp/{safe_workspace}/chats/*.jsonl; do
+    [ -f "$f" ] || continue
+    size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+    echo "$f|$size|$mtime|0"
+done"""
+
+
+def _gemini_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".gemini/tmp")
+
+
+def _pi_session_dir(resolver: Any, context: Any) -> Path | None:
+    return resolver.get_pi_dir(context)
+
+
+def _pi_scan_sessions(sessions_dir: Path) -> SessionList:
+    from agent_history.backends.pi import pi_scan_sessions
+
+    return pi_scan_sessions(pattern="", sessions_dir=sessions_dir, skip_message_count=True)
+
+
+def _pi_list_workspaces(sessions_dir: Path, home: str) -> list[str]:
+    del home
+    return _workspace_names_from_sessions(_pi_scan_sessions(sessions_dir))
+
+
+def _pi_read_messages(session_file: Path) -> MessageList:
+    from agent_history.backends.pi import pi_read_jsonl_messages
+
+    messages, _ = pi_read_jsonl_messages(session_file)
+    return messages
+
+
+def _pi_count_messages(session_file: Path) -> int:
+    from agent_history.backends.pi import pi_count_messages
+
+    return pi_count_messages(session_file)
+
+
+def _pi_render_markdown(
+    session_file: Path,
+    minimal: bool,
+    messages: MessageList | None,
+    markdown_level: int,
+) -> str:
+    from agent_history.backends.pi import pi_render_markdown
+
+    return pi_render_markdown(session_file, minimal, messages, markdown_level)
+
+
+def _pi_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
+    from agent_history.backends.pi import pi_message_to_unified
+
+    return pi_message_to_unified(message)
+
+
+def _empty_session_info() -> dict[str, Any]:
+    return {
+        "session_id": None,
+        "message_count": 0,
+        "user_messages": 0,
+        "assistant_messages": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "first_timestamp": None,
+        "last_timestamp": None,
+        "cwd": None,
+        "git_branch": None,
+        "claude_version": None,
+        "is_agent": False,
+        "parent_session_id": None,
+    }
+
+
+def _pi_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.backends.pi import pi_read_jsonl_messages
+
+    messages, session_meta = pi_read_jsonl_messages(session_file)
+    session_info = _empty_session_info()
+    session_info["session_id"] = (session_meta or {}).get("id")
+    session_info["cwd"] = (session_meta or {}).get("cwd") or (session_meta or {}).get("workspace")
+
+    db_messages: list[dict[str, Any]] = []
+    tool_uses: list[dict[str, Any]] = []
+    timestamps: list[str] = []
+
+    for msg in messages:
+        role = msg.get("role")
+        timestamp = msg.get("timestamp", "")
+        if timestamp:
+            timestamps.append(timestamp)
+
+        for tool_call in msg.get("tool_calls", []):
+            tool_uses.append(
+                {
+                    "tool_use_id": tool_call.get("id"),
+                    "message_uuid": msg.get("id"),
+                    "session_id": session_info["session_id"],
+                    "tool_name": tool_call.get("name", "unknown"),
+                    "is_error": 0,
+                    "timestamp": timestamp,
+                }
+            )
+
+        if msg.get("is_tool_result"):
+            tool_uses.append(
+                {
+                    "tool_use_id": msg.get("tool_call_id"),
+                    "message_uuid": msg.get("id"),
+                    "session_id": session_info["session_id"],
+                    "tool_name": msg.get("tool_name", "unknown"),
+                    "is_error": 1 if msg.get("is_error") else 0,
+                    "timestamp": timestamp,
+                }
+            )
+            continue
+
+        if role not in ("user", "assistant"):
+            continue
+
+        tokens = msg.get("tokens") or {}
+        input_tokens = tokens.get("input", 0) or 0
+        output_tokens = tokens.get("output", 0) or 0
+        cache_creation = tokens.get("cacheWrite", 0) or 0
+        cache_read = tokens.get("cacheRead", 0) or 0
+
+        session_info["message_count"] += 1
+        if role == "user":
+            session_info["user_messages"] += 1
+        else:
+            session_info["assistant_messages"] += 1
+        session_info["input_tokens"] += input_tokens
+        session_info["output_tokens"] += output_tokens
+        session_info["cache_creation_tokens"] += cache_creation
+        session_info["cache_read_tokens"] += cache_read
+
+        db_messages.append(
+            {
+                "uuid": msg.get("id"),
+                "session_id": session_info["session_id"],
+                "parent_uuid": msg.get("parent_id"),
+                "type": role,
+                "timestamp": timestamp,
+                "model": msg.get("model"),
+                "stop_reason": None,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_creation_tokens": cache_creation,
+                "cache_read_tokens": cache_read,
+            }
+        )
+
+    if timestamps:
+        session_info["first_timestamp"] = min(timestamps)
+        session_info["last_timestamp"] = max(timestamps)
+
+    return session_info, db_messages, tool_uses
+
+
+def _pi_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    from agent_history.backends.pi import pi_get_workspace_from_session
+
+    return session_info.get("cwd") or workspace or pi_get_workspace_from_session(session_file)
+
+
+def _pi_remote_list_workspaces_command() -> str:
+    return """for f in ~/.pi/agent/sessions/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"type".*"session"' "$f" | head -1)
+    cwd=$(echo "$line" | sed 's/.*"cwd"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/')
+    if [ -n "$cwd" ] && [ "$cwd" != "$line" ]; then
+        echo "$cwd"
+    else
+        basename "$(dirname "$f")"
+    fi
+done | sort -u"""
+
+
+def _pi_remote_list_sessions_command(workspace: str) -> str:
+    safe_workspace = shlex.quote(workspace)
+    return f"""ws={safe_workspace}
+for f in ~/.pi/agent/sessions/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '"type".*"session"' "$f" | head -1)
+    cwd=$(echo "$line" | sed 's/.*"cwd"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/')
+    parent=$(basename "$(dirname "$f")")
+    if [ "$cwd" = "$ws" ] || [ "$parent" = "$ws" ]; then
+        size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
+        mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+        workspace_value="$cwd"
+        [ -n "$workspace_value" ] && [ "$workspace_value" != "$line" ] || workspace_value="$parent"
+        echo "$f|$size|$mtime|0|$workspace_value"
+    fi
+done"""
+
+
+def _pi_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".pi/agent/sessions")
+
+
+def _copilot_cli_session_dir(resolver: Any, context: Any) -> Path | None:
+    return resolver.get_copilot_cli_dir(context)
+
+
+def _copilot_cli_scan_sessions(sessions_dir: Path) -> SessionList:
+    from agent_history.backends.copilot import copilot_cli_scan_sessions
+
+    return copilot_cli_scan_sessions(
+        pattern="",
+        sessions_dir=sessions_dir,
+        skip_message_count=True,
+    )
+
+
+def _copilot_cli_list_workspaces(sessions_dir: Path, home: str) -> list[str]:
+    del home
+    return _workspace_names_from_sessions(_copilot_cli_scan_sessions(sessions_dir))
+
+
+def _copilot_cli_read_messages(session_file: Path) -> MessageList:
+    from agent_history.backends.copilot import copilot_cli_read_messages
+
+    return copilot_cli_read_messages(session_file)
+
+
+def _copilot_count_messages(session_file: Path) -> int:
+    from agent_history.backends.copilot import copilot_count_messages
+
+    return copilot_count_messages(session_file)
+
+
+def _copilot_cli_render_markdown(
+    session_file: Path,
+    minimal: bool,
+    messages: MessageList | None,
+    markdown_level: int,
+) -> str:
+    from agent_history.backends.copilot import copilot_render_markdown
+
+    return copilot_render_markdown(
+        session_file,
+        minimal,
+        messages,
+        markdown_level,
+        AGENT_COPILOT_CLI,
+    )
+
+
+def _copilot_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
+    from agent_history.backends.copilot import copilot_message_to_unified
+
+    return copilot_message_to_unified(message)
+
+
+def _copilot_cli_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.backends.copilot import copilot_extract_stats
+
+    return copilot_extract_stats(session_file, AGENT_COPILOT_CLI)
+
+
+def _copilot_cli_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    return session_info.get("cwd") or workspace or session_file.parent.name
+
+
+def _copilot_cli_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(distro_name, username, ".copilot/session-state")
+
+
+def _copilot_vscode_session_dir(resolver: Any, context: Any) -> Path | None:
+    return resolver.get_copilot_vscode_dir(context)
+
+
+def _copilot_vscode_scan_sessions(sessions_dir: Path) -> SessionList:
+    from agent_history.backends.copilot import (
+        copilot_vscode_get_home_dir,
+        copilot_vscode_scan_session_roots,
+        copilot_vscode_scan_sessions,
+        copilot_vscode_workspace_storage_roots,
+    )
+
+    if (
+        not os.environ.get("COPILOT_VSCODE_WORKSPACE_STORAGE_DIR")
+        and sessions_dir == copilot_vscode_get_home_dir()
+    ):
+        return copilot_vscode_scan_session_roots(
+            copilot_vscode_workspace_storage_roots(),
+            pattern="",
+            skip_message_count=True,
+        )
+
+    return copilot_vscode_scan_sessions(
+        pattern="",
+        sessions_dir=sessions_dir,
+        skip_message_count=True,
+    )
+
+
+def _copilot_vscode_list_workspaces(sessions_dir: Path, home: str) -> list[str]:
+    del home
+    return _workspace_names_from_sessions(_copilot_vscode_scan_sessions(sessions_dir))
+
+
+def _copilot_vscode_read_messages(session_file: Path) -> MessageList:
+    from agent_history.backends.copilot import copilot_vscode_read_messages
+
+    return copilot_vscode_read_messages(session_file)
+
+
+def _copilot_vscode_render_markdown(
+    session_file: Path,
+    minimal: bool,
+    messages: MessageList | None,
+    markdown_level: int,
+) -> str:
+    from agent_history.backends.copilot import copilot_render_markdown
+
+    return copilot_render_markdown(
+        session_file,
+        minimal,
+        messages,
+        markdown_level,
+        AGENT_COPILOT_VSCODE,
+    )
+
+
+def _copilot_vscode_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.backends.copilot import copilot_extract_stats
+
+    return copilot_extract_stats(session_file, AGENT_COPILOT_VSCODE)
+
+
+def _copilot_vscode_resolve_stats_workspace(
+    session_file: Path, session_info: dict[str, Any], workspace: str | None
+) -> str:
+    return session_info.get("cwd") or workspace or session_file.parent.parent.parent.name
+
+
+def _copilot_vscode_wsl_candidate_paths(distro_name: str, username: str) -> list[Path]:
+    return _wsl_user_paths(
+        distro_name,
+        username,
+        ".vscode-server/data/User/workspaceStorage",
+    )
+
+
+register_backend(
+    AgentBackend(
+        id=AGENT_CLAUDE,
+        label="Claude Code",
+        get_session_dir=_claude_session_dir,
+        scan_sessions=_claude_scan_sessions,
+        list_workspaces=_claude_list_workspaces,
+        read_messages=_claude_read_messages,
+        count_messages=_claude_count_messages,
+        render_markdown=_claude_render_markdown,
+        message_to_unified=_claude_message_to_unified,
+        extract_stats=_claude_extract_stats,
+        resolve_stats_workspace=_claude_resolve_stats_workspace,
+        remote_list_workspaces_command=_claude_remote_list_workspaces_command,
+        remote_parse_workspaces=_claude_remote_parse_workspaces,
+        remote_list_sessions_command=_claude_remote_list_sessions_command,
+        remote_workspace_readable=_claude_remote_workspace_readable,
+        remote_file_path=_claude_remote_file_path,
+        wsl_candidate_paths=_claude_wsl_candidate_paths,
+        markdown_title="Claude",
+        markdown_header_title="Claude Code Session",
+        markdown_header_includes_filename=True,
+        file_markers=(".claude",),
+        file_suffixes=(".jsonl",),
+        supports_conversation_graph=True,
+    )
+)
+register_backend(
+    AgentBackend(
+        id=AGENT_CODEX,
+        label="Codex CLI",
+        get_session_dir=_codex_session_dir,
+        scan_sessions=_codex_scan_sessions,
+        list_workspaces=_codex_list_workspaces,
+        read_messages=_codex_read_messages,
+        count_messages=_codex_count_messages,
+        render_markdown=_codex_render_markdown,
+        message_to_unified=_codex_message_to_unified,
+        extract_stats=_codex_extract_stats,
+        resolve_stats_workspace=_codex_resolve_stats_workspace,
+        remote_list_workspaces_command=_codex_remote_list_workspaces_command,
+        remote_list_sessions_command=_codex_remote_list_sessions_command,
+        wsl_candidate_paths=_codex_wsl_candidate_paths,
+        markdown_title="Codex",
+        markdown_header_title="Codex Conversation",
+        markdown_header_includes_filename=False,
+        file_markers=(".codex",),
+        file_suffixes=(".jsonl",),
+    )
+)
+register_backend(
+    AgentBackend(
+        id=AGENT_GEMINI,
+        label="Gemini CLI",
+        get_session_dir=_gemini_session_dir,
+        scan_sessions=_gemini_scan_sessions,
+        list_workspaces=_gemini_list_workspaces,
+        read_messages=_gemini_read_messages,
+        count_messages=_gemini_count_messages,
+        render_markdown=_gemini_render_markdown,
+        message_to_unified=_gemini_message_to_unified,
+        extract_stats=_gemini_extract_stats,
+        resolve_stats_workspace=_gemini_resolve_stats_workspace,
+        remote_list_workspaces_command=_gemini_remote_list_workspaces_command,
+        remote_list_sessions_command=_gemini_remote_list_sessions_command,
+        wsl_candidate_paths=_gemini_wsl_candidate_paths,
+        markdown_title="Gemini",
+        markdown_header_title="Gemini Conversation",
+        markdown_header_includes_filename=False,
+        file_markers=(".gemini",),
+        file_suffixes=(".json", ".jsonl"),
+    )
+)
+register_backend(
+    AgentBackend(
+        id=AGENT_PI,
+        label="Pi",
+        get_session_dir=_pi_session_dir,
+        scan_sessions=_pi_scan_sessions,
+        list_workspaces=_pi_list_workspaces,
+        read_messages=_pi_read_messages,
+        count_messages=_pi_count_messages,
+        render_markdown=_pi_render_markdown,
+        message_to_unified=_pi_message_to_unified,
+        extract_stats=_pi_extract_stats,
+        resolve_stats_workspace=_pi_resolve_stats_workspace,
+        remote_list_workspaces_command=_pi_remote_list_workspaces_command,
+        remote_list_sessions_command=_pi_remote_list_sessions_command,
+        wsl_candidate_paths=_pi_wsl_candidate_paths,
+        markdown_title="Pi",
+        markdown_header_title="Pi Conversation",
+        markdown_header_includes_filename=False,
+        file_markers=(".pi",),
+        file_suffixes=(".jsonl",),
+    )
+)
+register_backend(
+    AgentBackend(
+        id=AGENT_COPILOT_CLI,
+        label="Copilot CLI",
+        get_session_dir=_copilot_cli_session_dir,
+        scan_sessions=_copilot_cli_scan_sessions,
+        list_workspaces=_copilot_cli_list_workspaces,
+        read_messages=_copilot_cli_read_messages,
+        count_messages=_copilot_count_messages,
+        render_markdown=_copilot_cli_render_markdown,
+        message_to_unified=_copilot_message_to_unified,
+        extract_stats=_copilot_cli_extract_stats,
+        resolve_stats_workspace=_copilot_cli_resolve_stats_workspace,
+        wsl_candidate_paths=_copilot_cli_wsl_candidate_paths,
+        markdown_title="Copilot CLI",
+        markdown_header_title="Copilot CLI Conversation",
+        markdown_header_includes_filename=False,
+        file_markers=(".copilot",),
+        file_suffixes=(".jsonl",),
+    )
+)
+register_backend(
+    AgentBackend(
+        id=AGENT_COPILOT_VSCODE,
+        label="VS Code Copilot",
+        get_session_dir=_copilot_vscode_session_dir,
+        scan_sessions=_copilot_vscode_scan_sessions,
+        list_workspaces=_copilot_vscode_list_workspaces,
+        read_messages=_copilot_vscode_read_messages,
+        count_messages=_copilot_count_messages,
+        render_markdown=_copilot_vscode_render_markdown,
+        message_to_unified=_copilot_message_to_unified,
+        extract_stats=_copilot_vscode_extract_stats,
+        resolve_stats_workspace=_copilot_vscode_resolve_stats_workspace,
+        wsl_candidate_paths=_copilot_vscode_wsl_candidate_paths,
+        markdown_title="VS Code Copilot",
+        markdown_header_title="VS Code Copilot Conversation",
+        markdown_header_includes_filename=False,
+        file_markers=("GitHub.copilot-chat",),
+        file_suffixes=(".jsonl",),
+    )
+)

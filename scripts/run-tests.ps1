@@ -14,16 +14,24 @@ if ($Unit -and $Integration) {
   exit 2
 }
 
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+$Python = "python"
+if (Test-Path $VenvPython) {
+  $Python = $VenvPython
+}
+$Runner = Join-Path $RepoRoot "scripts\run_tests.py"
+
 if ($Unit) {
-  uv run python -m pytest -q -m "not integration"
+  & $Python $Runner -q -m "not integration"
   exit $LASTEXITCODE
 }
 
 if ($Integration) {
-  uv run python -m pytest -q -m integration tests/integration
+  & $Python $Runner -q -m integration tests/integration
   exit $LASTEXITCODE
 }
 
 # default: run all
-uv run python -m pytest -q
+& $Python $Runner -q
 exit $LASTEXITCODE
