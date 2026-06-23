@@ -313,8 +313,9 @@ chooses an explicit operation such as `cagelens session list`.
 - Input: Workspace scope, home scope, optional date filter
 - Output columns: AGENT, HOME, WORKSPACE, FILE, MESSAGES, MODIFIED
 - Behavior: List session file metadata from the resolved workspace scope. Defaults
-  to the current workspace, or its auto-detected project when configured. Message
-  counts are empty unless `--counts` is used.
+  to the nearest current/parent folder that has recorded sessions. Project and
+  tag expansion require explicit `--project` or `--tag` flags. Message counts
+  are empty unless `--counts` is used.
 
 **`home list`** - Enumerate configured homes
 - Input: None
@@ -705,12 +706,11 @@ export`, and `session stats`).
 
 Priority order for workspace resolution:
 
-1. **Explicit project**: `--project <name>` (single project) uses configured workspaces
-2. **`--this` flag**: Force current workspace only (skip project auto-detection)
-3. **Auto-detect project**: If cwd belongs to a project, use that project
-4. **`--aw` (all workspaces)**: Only when no patterns are provided
-5. **Explicit workspace scope**: positional exact workspaces, `--glob`, or `--regex`
-6. **Current workspace**: If cwd is in a workspace
+1. **Explicit project/tag**: `--project <name>` or `--tag <name>` uses configured workspaces
+2. **`--this` flag**: Current folder only; disable parent search
+3. **Explicit workspace scope**: positional exact workspaces, `--glob`, or `--regex`
+4. **`--aw` (all workspaces)**: All workspaces in selected homes
+5. **Nearest current/parent workspace**: First cwd/ancestor folder with recorded sessions
 7. **Fallback**: All workspaces
 
 Positional workspace arguments are exact; pattern matching requires `--glob` or `--regex`.

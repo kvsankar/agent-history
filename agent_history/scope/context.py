@@ -91,6 +91,8 @@ class ScopeArgs:
         tags: Project tags for project-scoped operations (--tag flag, repeatable).
         patterns: Exact workspace paths/ids from positional arguments.
         this_only: If True, restrict to current workspace only (--this flag).
+        parent_levels: Maximum parent directories to search for an implicit
+            nearest workspace. None means unlimited.
         agent: Agent filter ("claude", "codex", "gemini", or None for all).
         since: Start date filter for sessions (date string).
         until: End date filter for sessions (date string).
@@ -119,6 +121,7 @@ class ScopeArgs:
     regex_patterns: list[str] = field(default_factory=list)  # --regex workspace patterns
     name_patterns: list[str] = field(default_factory=list)  # Legacy -n patterns
     this_only: bool = False
+    parent_levels: int | None = None
 
     # Session filters
     agent: str | None = None

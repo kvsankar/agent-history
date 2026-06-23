@@ -65,7 +65,7 @@ cagelens home add alice@server       # add SSH remote
 
 # Now --ah includes configured sources
 cagelens ws list --ah                # includes configured homes
-cagelens session export --ah         # current workspace/project from all homes
+cagelens session export --ah         # nearest workspace from all homes
 cagelens session export --ah --aw    # all workspaces from all homes
 cagelens session stats --time --ah   # cached stats from all homes
 ```
@@ -132,10 +132,11 @@ cagelens session list [PATTERN] [OPTIONS]
 ```
 
 **Arguments:**
-- `PATTERN`: Workspace name pattern (default: current workspace or its project)
+- `PATTERN`: Workspace name pattern (default: nearest current/parent workspace with sessions)
 
 **Scope Options:**
-- `--this`: Use current workspace only, not its project (if in a project)
+- `--this`: Use current folder only; disable parent search
+- `--parents N|all`: Search parent directories for the nearest workspace with sessions (default: `all`)
 - `--project NAME`: Use workspaces from a configured project
 - `--tag NAME`: Use workspaces from projects with this tag
 - `--ah`, `--all-homes`: List from all configured homes
@@ -157,11 +158,17 @@ cagelens session list [PATTERN] [OPTIONS]
 
 **Examples:**
 ```bash
-# List sessions from current workspace (or project if in a project)
+# List sessions from the nearest current/parent workspace with sessions
 cagelens session list
 
-# Force current workspace only (not project)
+# Disable parent search; use the current folder only
 cagelens session list --this
+
+# Bound parent search depth
+cagelens session list --parents 2
+
+# Use a configured project explicitly
+cagelens session list --project myproject
 
 # List sessions from WSL
 cagelens session list myproject --wsl
@@ -196,12 +203,13 @@ cagelens session export [WORKSPACE...] [OPTIONS]
 **Scope Flags (Orthogonal):**
 - `--ah`, `--all-homes`: Export from ALL sources (local + WSL + Windows + remotes)
 - `--aw`, `--all-workspaces` (also `-a`, `--all`): Export ALL workspaces
-- `--this`: Use current workspace only, not its project membership
+- `--this`: Use current folder only; disable parent search
+- `--parents N|all`: Search parent directories for the nearest workspace with sessions (default: `all`)
 - `--project NAME`: Export workspaces from a configured project
 - `--tag NAME`: Export workspaces from projects with this tag
 
 **Arguments:**
-- `WORKSPACE`: One or more workspace patterns (default: current workspace or its project)
+- `WORKSPACE`: One or more workspace patterns (default: nearest current/parent workspace with sessions)
 
 `--ah` and `--aw` are independent. `--ah` does not mean "all workspaces"; it
 only expands the source homes. Use `--ah --aw` for every workspace in every
@@ -344,16 +352,24 @@ cagelens project export myproject --agent codex -o ./backup
 cagelens project stats myproject --agent codex --sync
 ```
 
-**Automatic Project Scoping:**
+**Nearest Workspace Defaults:**
 
-When running commands without arguments from a project workspace:
+When running commands without arguments, `cagelens` first looks for sessions
+recorded against the current folder. If none exist, it walks upward until it
+finds the nearest parent folder with recorded sessions.
+
 ```bash
-cagelens session list      # Uses project automatically
-cagelens session export    # Uses project automatically
-cagelens session stats     # Uses project automatically
+cagelens session list      # Nearest current/parent workspace
+cagelens session export    # Nearest current/parent workspace
 
-# Force current workspace only
+# Use configured project expansion explicitly
+cagelens session list --project myproject
+
+# Disable parent search
 cagelens session list --this
+
+# Limit parent search depth
+cagelens session list --parents 2
 ```
 
 ---
@@ -399,7 +415,7 @@ cagelens stats rollup --metric METRIC --by DIMS [OPTIONS]
 **Scope Flags (Orthogonal):**
 - `--ah`, `--all-homes`: Sync from all homes first
 - `--aw`, `--all-workspaces`: Query all workspaces (default: current)
-- `--this`: Use current workspace only, not its project membership
+- `--this`: Use current workspace only
 
 **Sync Options:**
 - `--sync`: Refresh source session files before showing stats (slower, freshest)

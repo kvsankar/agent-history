@@ -128,9 +128,9 @@ Progressive help:
 
 Common commands:
   cagelens ws                     List all local workspaces with counts
-  cagelens session list           List sessions for the current workspace/project
+  cagelens session list           List nearest current/parent workspace sessions
   cagelens session list --aw      List sessions from all local workspaces
-  cagelens session export -o DIR  Export current workspace/project sessions
+  cagelens session export -o DIR  Export nearest current/parent workspace sessions
   cagelens stats --sync           Refresh metrics and show stats
 
 Scope shortcuts:
@@ -149,15 +149,15 @@ Migration:
 
 | Command | Remote/Home Options | Workspace Options | Default Scope |
 |---------|---------------------|-------------------|----------------|
-| `session list` | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, projects (`@name` / `--project`), `--aw`, `--this` | Uses the current workspace (or its project) even when you target other homes. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
+| `session list` | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, projects (`@name` / `--project`), `--aw`, `--this`, `--parents` | Uses the nearest current/parent workspace with recorded sessions. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
 | `ws list` | Same as `session list` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
-| `export` | `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), projects, `--aw`, `--this` | Exports the current workspace (or project) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
-| `stats` | `--wsl`, `--windows`, `-r`, `--ah`, `--home`, `--local` | Workspace patterns/projects, `--aw`, `--this` | Uses cached metrics by default. Defaults to the current workspace (or project) when available; outside a workspace it reads cached local metrics. Use `--sync` to refresh from source files before display. |
+| `export` | `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), projects, `--aw`, `--this`, `--parents` | Exports the nearest current/parent workspace with recorded sessions unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
+| `stats` | `--wsl`, `--windows`, `-r`, `--ah`, `--home`, `--local` | Workspace patterns/projects, `--aw`, `--this` | Uses cached metrics by default. Use `--sync` to refresh from source files before display. |
 
 When in doubt: `--aw` means "all workspaces"; `--ah` means "all homes." `ws list`
-already lists all workspaces in the selected homes. `session list`, `export`,
-and `stats` stick to the current workspace/project unless you pass `--aw` or an
-explicit workspace/project scope.
+already lists all workspaces in the selected homes. `session list` and `export`
+use the nearest current/parent workspace with sessions unless you pass `--aw` or
+an explicit workspace/project scope.
 
 ## Testing
 

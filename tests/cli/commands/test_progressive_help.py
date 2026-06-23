@@ -31,9 +31,18 @@ def test_session_list_help_explains_scope_and_columns() -> None:
 
     assert_cli_success(result, "session list help should succeed")
     assert "Default behavior:" in result.stdout
-    assert "current workspace or auto-detected project" in result.stdout
+    assert "nearest current/parent folder that has recorded sessions" in result.stdout
+    assert "--parents" in result.stdout
     assert "Output columns: AGENT, HOME, WORKSPACE, FILE, MESSAGES, MODIFIED." in result.stdout
     assert "cagelens session list --aw --format json" in result.stdout
+
+
+def test_ws_list_help_does_not_show_parent_session_scope() -> None:
+    result = run_cli_subprocess(["ws", "list", "--help"])
+
+    assert_cli_success(result, "ws list help should succeed")
+    assert "--parents" not in result.stdout
+    assert "disable parent search" not in result.stdout
 
 
 def test_stats_help_points_to_monthly_time_rollups() -> None:

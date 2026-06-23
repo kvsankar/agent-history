@@ -21,6 +21,7 @@ See docs/design-v2/pipeline-architecture.md for the algorithm details.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from agent_history.backends.gemini import gemini_load_hash_index
@@ -168,12 +169,12 @@ class ScopeResolver:
         TemplateScope. The key logic determines what the user's intent is:
 
         Resolution Priority:
-        1. Explicit --project flag -> ProjectRecord
-        2. CWD is in a project (and not --this) -> ProjectRecord (implicit detection)
-        3. Explicit --aw flag -> WorkspaceSpec.All
-        4. Explicit patterns -> WorkspaceSpec.Pattern for each (EXACT match!)
-        5. --this flag -> WorkspaceSpec.Current
-        6. CWD is in a workspace -> WorkspaceSpec.Current
+        1. Explicit --project/--tag flag -> ProjectRecord
+        2. --this flag -> WorkspaceSpec.Current
+        3. Explicit workspace paths/patterns
+        4. Explicit --aw flag -> WorkspaceSpec.All
+        5. ws list discovery -> WorkspaceSpec.All
+        6. Nearest cwd/parent workspace with sessions -> WorkspaceSpec.Path
         7. Default -> WorkspaceSpec.All
 
         Args:
@@ -247,9 +248,17 @@ class ScopeResolver:
                 )
             ]
 
-        # Check for implicit project detection (CWD in project)
-        if self.context.cwd_project:
-            return [ProjectRecord(project=self.context.cwd_project, sessions=session_spec)]
+        # Bare session/export/stats scope uses the nearest exact workspace with
+        # recorded sessions. Project expansion is explicit via --project/--tag.
+        nearest_workspace = self._nearest_cwd_workspace(args)
+        if nearest_workspace:
+            return [
+                ScopeRecord(
+                    home=home_spec,
+                    workspace=WorkspaceSpecFactory.Path(nearest_workspace),
+                    sessions=session_spec,
+                )
+            ]
 
         # Check if CWD is in a workspace (use it as current)
         if self.context.cwd_workspace:
@@ -288,6 +297,55 @@ class ScopeResolver:
                 sessions=session_spec,
             )
         ]
+
+    def _nearest_cwd_workspace(self, args: ScopeArgs) -> str | None:
+        """Return the nearest cwd/ancestor workspace that has sessions."""
+        cwd = getattr(self.context, "cwd", None)
+        if cwd is None:
+            return None
+
+        from agent_history.utils.workspace_ref import build_workspace_ref
+
+        agent = args.agent
+        try:
+            workspaces = set(self._enumerate_workspaces("local", agent=agent))
+        except Exception:
+            workspaces = set()
+        if not workspaces:
+            return None
+
+        current = Path(cwd)
+        max_levels = args.parent_levels
+        level = 0
+        while True:
+            for raw_candidate in self._cwd_workspace_candidates(current):
+                candidate = build_workspace_ref(raw_candidate).key
+                if candidate in workspaces:
+                    return candidate
+            if max_levels is not None and level >= max_levels:
+                return None
+            parent = current.parent
+            if parent == current:
+                return None
+            current = parent
+            level += 1
+
+    def _cwd_workspace_candidates(self, cwd: Path) -> list[str]:
+        """Return real and synthetic workspace candidate paths for a cwd."""
+        candidates = [str(cwd)]
+        agent_home = getattr(self.context, "agent_history_home", None)
+        if not agent_home:
+            from agent_history.utils.env import get_env
+
+            agent_home = get_env("CAGELENS_HOME", "AGENT_HISTORY_HOME")
+        if agent_home:
+            try:
+                rel = cwd.relative_to(Path(agent_home))
+            except ValueError:
+                pass
+            else:
+                candidates.append("/" + str(rel).replace("\\", "/").lstrip("/"))
+        return candidates
 
     def _cross_home_guard_applies(self, args: ScopeArgs) -> bool:
         non_web_homes = [home for home in args.home_names if home != "web"]

@@ -20,6 +20,7 @@ from tests.helpers.cli import (
     assert_cli_success,
     run_cli_subprocess,
 )
+from tests.helpers.gap_helpers import load_json_output
 
 # ---------------------------------------------------------------------------
 # Markers
@@ -81,6 +82,65 @@ class TestCurrentWorkspaceScope:
         )
 
         assert_cli_success(result, "session list with json format should succeed")
+
+    def test_session_list_project_member_defaults_to_exact_workspace(
+        self, project_config_setup: Dict[str, Any]
+    ) -> None:
+        """Project membership should not expand bare session list scope."""
+        cwd = Path(project_config_setup["env"]["AGENT_HISTORY_HOME"]) / "home/user/project-alpha"
+        cwd.mkdir(parents=True, exist_ok=True)
+
+        result = run_cli_subprocess(
+            ["session", "list", "--format", "json"],
+            env=project_config_setup["env"],
+            cwd=cwd,
+        )
+
+        assert_cli_success(result, "session list should succeed")
+        sessions = load_json_output(result)
+        assert sessions
+        assert {session["workspace_key"] for session in sessions} == {"/home/user/project-alpha"}
+
+    def test_session_list_falls_back_to_nearest_parent_workspace(
+        self, multi_workspace_home: Dict[str, Any]
+    ) -> None:
+        """If the current folder has no exact sessions, use nearest parent with sessions."""
+        cwd = (
+            Path(multi_workspace_home["env"]["AGENT_HISTORY_HOME"])
+            / "home/user/project-alpha/src/components"
+        )
+        cwd.mkdir(parents=True, exist_ok=True)
+
+        result = run_cli_subprocess(
+            ["session", "list", "--format", "json"],
+            env=multi_workspace_home["env"],
+            cwd=cwd,
+        )
+
+        assert_cli_success(result, "session list should succeed")
+        sessions = load_json_output(result)
+        assert sessions
+        assert {session["workspace_key"] for session in sessions} == {"/home/user/project-alpha"}
+
+    def test_session_list_parent_search_can_be_depth_limited(
+        self, multi_workspace_home: Dict[str, Any]
+    ) -> None:
+        """--parents N limits how many parent directories are searched."""
+        cwd = (
+            Path(multi_workspace_home["env"]["AGENT_HISTORY_HOME"]) / "home/user/project-alpha/src"
+        )
+        cwd.mkdir(parents=True, exist_ok=True)
+
+        result = run_cli_subprocess(
+            ["session", "list", "--parents", "1", "--format", "json"],
+            env=multi_workspace_home["env"],
+            cwd=cwd,
+        )
+
+        assert_cli_success(result, "session list with --parents 1 should succeed")
+        sessions = load_json_output(result)
+        assert sessions
+        assert {session["workspace_key"] for session in sessions} == {"/home/user/project-alpha"}
 
 
 # ---------------------------------------------------------------------------
