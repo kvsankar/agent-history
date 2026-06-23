@@ -117,7 +117,6 @@ Canonical docs:
 - `docs/design/DESIGN.md` - current architecture.
 - `docs/design-v2/pipeline-architecture.md` - proposed/current v2 pipeline detail.
 - `docs/design-v2/scope-resolution-v2.md` - scope model.
-- `docs/cagelens-code-map.md` - generated/supporting code map.
 
 Owns:
 
@@ -217,7 +216,6 @@ Priority docs for facet tagging:
 - `docs/analysis/*.md`
 - local ignored review outputs under `docs/reviews/`
 - `docs/specs/todo.md`
-- `docs/cagelens-code-map.md`
 
 ## High-Signal Consolidation Targets
 
@@ -230,7 +228,7 @@ These are not section-level duplicate copies. They are topic-coverage overlaps w
 | Release follow-up items | `docs/specs/todo.md` | dated analysis/review docs should link here after findings are promoted |
 | Conversation export | `docs/user/usage.md` and `docs/user/cookbook.md` for workflows; `unified-json-schema.md` for NDJSON | `cagelens-spec.md`, `cli-spec.md`, local review output after findings are promoted |
 | Unified NDJSON schema | `docs/specs/schema/unified-json-schema.md` | `schema-refresh`, `clearing`, `compaction`, `interruptions`, `rejections` |
-| Agent storage locations | `docs/specs/cagelens-spec.md` and per-agent format specs | `troubleshooting.md`, `cagelens-process-image.md`, dated analysis |
+| Agent storage locations | `docs/specs/cagelens-spec.md` and per-agent format specs | `troubleshooting.md`, dated analysis |
 | Scope resolution | `docs/design-v2/scope-resolution-v2.md` | `cagelens-spec.md`, `DESIGN.md`, `code-reuse-mapping.md` |
 | Tool call records | per-agent format specs and `unified-json-schema.md` | avoid duplicating tool-call mapping in feature docs |
 | Command result formatting | `docs/specs/cli-spec.md` | `pipeline-architecture.md`, `cli-command-patterns.md`, review docs |
@@ -256,7 +254,9 @@ These are not section-level duplicate copies. They are topic-coverage overlaps w
 - `docs/reviews/` should remain ignored local review output after actionable findings are promoted.
 - `docs/other/exploration-log.md` after findings are promoted.
 - `docs/other/context-cli-test-restoration.md` once test restoration context is no longer active.
-- `docs/cagelens-code-map.md` as generated/supporting.
+- Generated code maps, image prompts, and rendered schema diagrams should stay
+  out of tracked release docs unless they are actively maintained and linked
+  from a current documentation owner.
 
 ## Suggested Consolidation Order
 

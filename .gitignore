@@ -46,14 +46,10 @@ test-*/
 .claude/*
 !.claude/agents/
 docs/learning/
-docs/reviews/
 docs/*review*.md
 
 # Local review files
-reviews/
-
-# Generated documentation analysis reports
-.dryscope/
+/reviews/
 
 # Test output files
 codex_rejection_session.jsonl

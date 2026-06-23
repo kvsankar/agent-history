@@ -2,8 +2,6 @@
 
 A CLI tool to browse and export AI coding assistant conversation history with multi-environment support.
 
-See [cagelens-process-image.md](docs/cagelens-process-image.md) for the process diagram brief.
-
 ## Supported Agents
 
 | Agent | Status | Format | Documentation |
@@ -12,14 +10,20 @@ See [cagelens-process-image.md](docs/cagelens-process-image.md) for the process 
 | [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-cli-format.md](docs/specs/agents/formats/codex-cli-format.md) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-cli-format.md](docs/specs/agents/formats/gemini-cli-format.md) |
 | Pi | ✅ Full support | JSONL | [pi-format.md](docs/specs/agents/formats/pi-format.md) |
+| GitHub Copilot CLI | Initial support | JSONL | [copilot-cli-format.md](docs/specs/agents/formats/copilot-cli-format.md) |
+| VS Code Copilot | Initial support | JSONL | [copilot-vscode-format.md](docs/specs/agents/formats/copilot-vscode-format.md) |
 
-Use `--agent claude`, `--agent codex`, `--agent gemini`, `--agent pi`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
+Use `--agent claude`, `--agent codex`, `--agent gemini`, `--agent pi`,
+`--agent copilot-cli`, `--agent copilot-vscode`, or `--agent auto` (default)
+to select which agent's sessions to query. The `--agent` flag can appear
+anywhere in the command.
 
 See [AGENTS.md](AGENTS.md) for a detailed comparison of storage locations, features, and behaviors.
 
 ## Why This Tool?
 
-Claude Code, Codex CLI, Gemini CLI, and Pi leave conversation data fragmented across session files. This tool solves the pain points:
+Claude Code, Codex CLI, Gemini CLI, Pi, and Copilot leave conversation data
+fragmented across session files. This tool solves the pain points:
 - Finding past work by project, not by opaque session IDs.
 - Getting readable exports for sharing, backup, or audits.
 - Seeing where and how you code across homes (local/WSL/Windows/SSH) with session/token/tool/time metrics.
