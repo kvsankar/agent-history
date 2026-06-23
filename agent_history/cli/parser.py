@@ -154,6 +154,8 @@ Next help:
 SESSION_LIST_EPILOG = """\
 Default behavior:
   Lists sessions for the current workspace or auto-detected project.
+  --ah expands homes only; use --aw or a workspace argument to broaden
+  workspace scope.
   Output columns: AGENT, HOME, WORKSPACE, FILE, MESSAGES, MODIFIED.
   MESSAGES is populated when available; use --counts to force message counting.
 
@@ -162,6 +164,7 @@ Examples:
   cagelens session list --aw --format json
   cagelens session list --glob "*auth*" --since 2026-01-01
   cagelens session list --ah --aw --agent codex
+  cagelens session list --ah --aw --agent copilot-vscode --format json
 
 Tip:
   Quote glob patterns, for example --glob '/home/user/projects/auth*'.
@@ -185,11 +188,15 @@ EXPORT_EPILOG = """\
 Output:
   Prefer -o DIR for export destination. Positional workspace/target arguments
   are exact paths or IDs; use --glob or --regex for pattern matching.
+  --ah expands homes only; combine it with --aw for every workspace in every
+  selected home. For a single workspace, pass the workspace path explicitly.
 
 Examples:
   cagelens session export --project myproj -o ./exports
   cagelens session export --glob "*auth*" -o ./exports
+  cagelens session export --ah --aw --agent copilot-vscode -o ./exports
   cagelens ws export /home/user/project -o ./exports
+  cagelens ws export /home/user/project --ah --agent copilot-vscode -o ./exports
   cagelens project export myproj -o ./exports
 """
 

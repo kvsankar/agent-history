@@ -65,7 +65,8 @@ cagelens home add alice@server       # add SSH remote
 
 # Now --ah includes configured sources
 cagelens ws list --ah                # includes configured homes
-cagelens session export --ah         # exports from all homes
+cagelens session export --ah         # current workspace/project from all homes
+cagelens session export --ah --aw    # all workspaces from all homes
 cagelens session stats --time --ah   # cached stats from all homes
 ```
 
@@ -202,6 +203,10 @@ cagelens session export [WORKSPACE...] [OPTIONS]
 **Arguments:**
 - `WORKSPACE`: One or more workspace patterns (default: current workspace or its project)
 
+`--ah` and `--aw` are independent. `--ah` does not mean "all workspaces"; it
+only expands the source homes. Use `--ah --aw` for every workspace in every
+selected home, or pass an explicit workspace path/pattern.
+
 **Options:**
 - `-o`, `--output DIR`: Output directory (default: `./.cagelens/exports`)
 - `--format markdown|html`: Export Markdown or offline HTML (default: `markdown`)
@@ -244,6 +249,9 @@ cagelens session export --aw
 
 # All workspaces, all homes
 cagelens session export --ah --aw
+
+# All VS Code Copilot sessions from all homes
+cagelens session export --ah --aw --agent copilot-vscode --format html -o ./exports
 
 # Specific workspace, all homes, custom output
 cagelens session export myproject --ah -o /tmp/backup

@@ -274,7 +274,8 @@ session list --aw                 # all ws, local home
 session list --aw --ah            # all ws, all homes
 session list --glob '*auth*' --ah     # workspaces containing "auth", all homes
 session list --agent codex        # codex sessions only
-session list --ah --agent gemini  # gemini sessions, all homes
+session list --ah --agent gemini  # gemini sessions for current ws/project, all homes
+session list --ah --aw --agent copilot-vscode  # all VS Code Copilot sessions, all homes
 ```
 
 ---
@@ -618,8 +619,8 @@ cagelens session export --glob '*auth*' -o ./exports
 ### Multi-Home Operations
 
 ```bash
-# List workspaces from all homes
-cagelens ws --aw --ah
+# List workspaces from all homes; ws list already discovers all workspaces
+cagelens ws --ah
 
 # List sessions from WSL
 cagelens session --wsl --aw
@@ -630,7 +631,7 @@ cagelens session --windows --aw
 # Export from multiple homes
 cagelens session export --home local --home remote:vm01
 
-# Stats across all homes
+# Stats across all homes and all workspaces
 cagelens session stats --ah --aw
 ```
 
@@ -703,9 +704,9 @@ cagelens stats summary
 cagelens session stats              # compatibility/convenience form
 
 # Stats across scopes
-cagelens stats --aw                     # All workspaces
-cagelens stats --ah                     # All homes
-cagelens stats --ah --aw                # Everything
+cagelens stats --aw                     # All workspaces, local home
+cagelens stats --ah                     # Current workspace/project, all homes
+cagelens stats --ah --aw                # All workspaces, all homes
 
 # Make sync explicit or skip it
 cagelens stats --sync

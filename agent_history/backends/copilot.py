@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlparse
 
 from agent_history.export.markdown import MARKDOWN_DEFAULT_LEVEL, parse_jsonl_to_markdown
 from agent_history.utils.platform import AGENT_COPILOT_CLI, AGENT_COPILOT_VSCODE
+from agent_history.utils.workspace_ref import apply_workspace_ref
 
 
 def copilot_cli_get_home_dir() -> Path:
@@ -444,7 +445,7 @@ def _build_session_dict(
     modified: datetime,
     skip_message_count: bool,
 ) -> dict[str, Any]:
-    return {
+    session = {
         "agent": agent,
         "workspace": workspace,
         "workspace_readable": workspace,
@@ -455,6 +456,8 @@ def _build_session_dict(
         "modified": modified,
         "source": "local",
     }
+    apply_workspace_ref(session)
+    return session
 
 
 def copilot_cli_scan_sessions(
