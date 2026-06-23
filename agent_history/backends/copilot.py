@@ -10,8 +10,15 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from agent_history.export.markdown import MARKDOWN_DEFAULT_LEVEL, parse_jsonl_to_markdown
+from agent_history.utils.env import has_env
 from agent_history.utils.platform import AGENT_COPILOT_CLI, AGENT_COPILOT_VSCODE
 from agent_history.utils.workspace_ref import apply_workspace_ref
+
+
+def _test_mode_without_explicit_copilot_home(*names: str) -> bool:
+    return has_env("CAGELENS_TEST_MODE", "AGENT_HISTORY_TEST_MODE") and not any(
+        os.environ.get(name) for name in names
+    )
 
 
 def copilot_cli_get_home_dir() -> Path:
@@ -22,6 +29,10 @@ def copilot_cli_get_home_dir() -> Path:
     copilot_home = os.environ.get("COPILOT_HOME")
     if copilot_home:
         return Path(copilot_home).expanduser() / "session-state"
+    if _test_mode_without_explicit_copilot_home(
+        "COPILOT_CLI_SESSIONS_DIR", "COPILOT_SESSIONS_DIR", "COPILOT_HOME"
+    ):
+        return Path("__cagelens_test_missing_copilot_cli_home__")
     return Path.home() / ".copilot" / "session-state"
 
 
@@ -61,6 +72,8 @@ def copilot_vscode_workspace_storage_roots() -> list[Path]:
     override = os.environ.get("COPILOT_VSCODE_WORKSPACE_STORAGE_DIR")
     if override:
         return [Path(override).expanduser()]
+    if _test_mode_without_explicit_copilot_home("COPILOT_VSCODE_WORKSPACE_STORAGE_DIR"):
+        return [Path("__cagelens_test_missing_copilot_vscode_home__")]
     return _default_vscode_workspace_storage_roots()
 
 

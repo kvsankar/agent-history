@@ -104,6 +104,19 @@ def _normalize_path(value: str) -> str:
     return normalized
 
 
+def _display_path(value: str) -> str:
+    if not value:
+        return value
+    normalized = value.replace("/", "\\") if len(value) > 2 and value[1:3] == ":/" else value
+    if normalized.startswith("//"):
+        return "//" + re.sub(r"/{2,}", "/", normalized[2:])
+    if "/" in normalized:
+        normalized = re.sub(r"/{2,}", "/", normalized)
+    if len(normalized) > 1 and normalized.endswith(("/", "\\")):
+        normalized = normalized.rstrip("/\\")
+    return normalized
+
+
 def _strip_cached_prefix(value: str) -> str:
     if value.startswith((CACHED_REMOTE_PREFIX, CACHED_WSL_PREFIX, CACHED_WINDOWS_PREFIX)):
         parts = value.split("_", 2)
@@ -137,7 +150,7 @@ def _display_from_raw(raw: str, kind: WorkspaceKind) -> str:
     if kind == WorkspaceKind.ENCODED:
         return decode_workspace_path(raw, verify_local=True)
     if kind == WorkspaceKind.PATH:
-        return _normalize_path(raw)
+        return _display_path(raw)
     if kind == WorkspaceKind.HASH:
         return f"[hash:{raw[:8]}]"
     return raw

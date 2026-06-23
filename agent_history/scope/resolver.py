@@ -830,9 +830,15 @@ class ScopeResolver:
         import re
 
         if match_type == MatchType.EXACT:
-            return [ws for ws in workspaces if ws == normalized_pattern]
+            from agent_history.utils.workspace_ref import build_workspace_ref
+
+            return [ws for ws in workspaces if build_workspace_ref(ws).key == normalized_pattern]
         elif match_type == MatchType.PREFIX:
-            return [ws for ws in workspaces if ws.startswith(normalized_pattern)]
+            from agent_history.utils.workspace_ref import build_workspace_ref
+
+            return [
+                ws for ws in workspaces if build_workspace_ref(ws).key.startswith(normalized_pattern)
+            ]
         elif match_type == MatchType.CONTAINS:
             pattern_lower = pattern.lower()
             result = []

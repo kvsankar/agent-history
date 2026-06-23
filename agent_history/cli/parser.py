@@ -438,6 +438,17 @@ class WrappedHelpFormatter(argparse.RawDescriptionHelpFormatter):
     ):
         super().__init__(prog, indent_increment, max_help_position, width)
 
+    def _format_action_invocation(self, action: argparse.Action) -> str:
+        if not action.option_strings:
+            return super()._format_action_invocation(action)
+        if action.nargs == 0:
+            return ", ".join(action.option_strings)
+        metavar = self._format_args(
+            action,
+            self._get_default_metavar_for_optional(action),
+        )
+        return ", ".join(f"{option} {metavar}" for option in action.option_strings)
+
 
 def _validate_split_lines(value: str) -> int:
     """Validate --split argument."""

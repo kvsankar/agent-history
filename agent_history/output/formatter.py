@@ -68,13 +68,7 @@ def _format_modified_iso(modified: Any) -> str:
 
 def _tsv_cell(value: Any) -> str:
     """Escape control characters that would otherwise change TSV shape."""
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace("\t", "\\t")
-        .replace("\r", "\\r")
-        .replace("\n", "\\n")
-    )
+    return str(value).replace("\t", "\\t").replace("\r", "\\r").replace("\n", "\\n")
 
 
 def _tsv_row(values: list[Any] | tuple[Any, ...]) -> str:

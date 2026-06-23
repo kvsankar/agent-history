@@ -271,14 +271,15 @@ class WorkspaceStage:
             from agent_history.utils.workspace_ref import build_workspace_ref
 
             normalized_pattern = build_workspace_ref(pattern).key
+            workspace_keys = {ws: build_workspace_ref(ws).key for ws in all_workspaces}
 
         if match_type == MatchType.EXACT:
             # THE FIX: Exact equality, no substring matching!
-            return [ws for ws in all_workspaces if ws == normalized_pattern]
+            return [ws for ws in all_workspaces if workspace_keys[ws] == normalized_pattern]
 
         elif match_type == MatchType.PREFIX:
             # Prefix matching - useful for directory hierarchies
-            return [ws for ws in all_workspaces if ws.startswith(normalized_pattern)]
+            return [ws for ws in all_workspaces if workspace_keys[ws].startswith(normalized_pattern)]
 
         elif match_type == MatchType.CONTAINS:
             # Substring matching - the OLD BUGGY behavior

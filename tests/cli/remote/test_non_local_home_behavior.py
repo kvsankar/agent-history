@@ -121,4 +121,6 @@ def test_remote_exact_workspace_does_not_enumerate_all_workspaces(tmp_path: Path
         ("vm01", "/home/testuser/remote/project", "codex"),
         ("vm01", "/home/testuser/remote/project", "gemini"),
         ("vm01", "/home/testuser/remote/project", "pi"),
+        ("vm01", "/home/testuser/remote/project", "copilot-cli"),
+        ("vm01", "/home/testuser/remote/project", "copilot-vscode"),
     ]
