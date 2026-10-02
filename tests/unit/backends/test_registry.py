@@ -1,0 +1,308 @@
+"""Tests for the internal coding-agent backend registry."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+from agent_history.adapters.inventory import InventoryProvider
+from agent_history.backends import ssh as ssh_backend
+from agent_history.backends.registry import (
+    AgentBackend,
+    get_agent_choices,
+    get_backend,
+    register_backend,
+    unregister_backend,
+)
+from agent_history.cli.parser import CLIParser
+from agent_history.scope.context import ResolutionContext
+
+
+def test_builtin_agent_choices_come_from_registry() -> None:
+    """Built-in agent choices should be registry-backed."""
+    choices = get_agent_choices()
+
+    assert choices[0] == "auto"
+    assert "claude" in choices
+    assert "codex" in choices
+    assert "gemini" in choices
+    assert "copilot-cli" in choices
+    assert "copilot-vscode" in choices
+    assert get_backend("claude") is not None
+    assert get_backend("copilot-cli") is not None
+    assert get_backend("copilot-vscode") is not None
+
+
+def test_gemini_backend_metadata_includes_current_jsonl_remote_support() -> None:
+    """Gemini backend metadata should cover current JSONL sessions."""
+    backend = get_backend("gemini")
+
+    assert backend is not None
+    assert ".jsonl" in backend.file_suffixes
+    assert backend.remote_list_sessions_command is not None
+
+    command = backend.remote_list_sessions_command("project-id")
+
+    assert "*.jsonl" in command
+    assert "*.json" in command
+
+
+def test_claude_remote_session_command_uses_python_enumerator() -> None:
+    """Remote Claude session listing should use a scalable Python enumerator."""
+    backend = get_backend("claude")
+
+    assert backend is not None
+    assert backend.remote_list_sessions_command is not None
+
+    command = backend.remote_list_sessions_command("/home/test/project")
+
+    assert "iter_session_files" in command
+    assert "for f in *.jsonl" not in command
+
+
+def test_ssh_command_nonzero_reports_error(monkeypatch) -> None:
+    """Remote command failures must not look like empty successful listings."""
+
+    def fake_run(cmd, **kwargs):
+        return SimpleNamespace(returncode=2, stdout="", stderr="remote failed")
+
+    monkeypatch.setattr(ssh_backend.subprocess, "run", fake_run)
+
+    stdout, error = ssh_backend._run_remote_command("user@example", "false")
+
+    assert stdout == ""
+    assert error is not None
+    assert "remote failed" in error
+
+
+def test_gemini_stats_workspace_resolution_handles_nested_jsonl(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Nested Gemini JSONL child sessions should resolve using the project hash."""
+    from agent_history.backends.registry import _gemini_resolve_stats_workspace
+
+    project_hash = "c" * 64
+    config_dir = tmp_path / ".agent-history"
+    config_dir.mkdir()
+    (config_dir / "gemini_index.json").write_text(
+        '{"version": 1, "hashes": {"' + project_hash + '": "/home/testuser/gemini-nested"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HISTORY_CONFIG_DIR", str(config_dir))
+
+    session_file = tmp_path / ".gemini" / "tmp" / project_hash / "chats" / "parent" / "agent.jsonl"
+
+    assert _gemini_resolve_stats_workspace(session_file, {}, None) == "/home/testuser/gemini-nested"
+
+
+def test_registered_backend_is_visible_to_parser_and_inventory(tmp_path: Path) -> None:
+    """A backend can be added without editing parser or inventory dispatch code."""
+    session_file = tmp_path / "fake-session.jsonl"
+    session_file.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
+
+    backend = AgentBackend(
+        id="fake",
+        label="Fake Agent",
+        get_session_dir=lambda resolver, context: tmp_path,
+        scan_sessions=lambda sessions_dir: [
+            {
+                "agent": "fake",
+                "workspace": "/tmp/fake-workspace",
+                "workspace_readable": "/tmp/fake-workspace",
+                "file": session_file,
+                "filename": session_file.name,
+                "message_count": 0,
+                "message_count_skipped": True,
+            }
+        ],
+        list_workspaces=lambda sessions_dir, home: ["/tmp/fake-workspace"],
+        read_messages=lambda path: [{"role": "user", "content": "hello"}],
+        count_messages=lambda path: 1,
+        render_markdown=lambda path, minimal, messages, level: "# Fake\n",
+        message_to_unified=lambda msg: {
+            "timestamp": msg.get("timestamp", ""),
+            "role": msg.get("role", "user"),
+            "content": msg.get("content", ""),
+        },
+        extract_stats=lambda path: (
+            {
+                "session_id": "fake-session",
+                "message_count": 1,
+                "user_messages": 1,
+                "assistant_messages": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
+                "first_timestamp": "2026-01-01T00:00:00Z",
+                "last_timestamp": "2026-01-01T00:00:00Z",
+            },
+            [
+                {
+                    "session_id": "fake-session",
+                    "type": "user",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                }
+            ],
+            [],
+        ),
+        resolve_stats_workspace=lambda path, session_info, workspace: workspace
+        or "/tmp/fake-workspace",
+    )
+
+    register_backend(backend)
+    try:
+        assert "fake" in get_agent_choices()
+
+        request = CLIParser().parse(["session", "list", "--agent", "fake"])
+        assert request.scope_args.agent == "fake"
+
+        inventory = InventoryProvider(ResolutionContext())
+        sessions = inventory.list_sessions("local", agent="fake")
+
+        assert len(sessions) == 1
+        assert sessions[0]["agent"] == "fake"
+        assert sessions[0]["workspace_display"] == "/tmp/fake-workspace"
+    finally:
+        unregister_backend("fake")
+
+
+def test_registered_backend_can_drive_remote_listing(monkeypatch, tmp_path: Path) -> None:
+    """Remote SSH listing should consume backend commands, not central agent branches."""
+    session_file = tmp_path / "fake-remote.jsonl"
+    session_file.write_text('{"role":"user","content":"remote"}\n', encoding="utf-8")
+
+    backend = AgentBackend(
+        id="fake-remote",
+        label="Fake Remote Agent",
+        get_session_dir=lambda resolver, context: tmp_path,
+        scan_sessions=lambda sessions_dir: [],
+        list_workspaces=lambda sessions_dir, home: [],
+        read_messages=lambda path: [{"role": "user", "content": "remote"}],
+        count_messages=lambda path: 1,
+        render_markdown=lambda path, minimal, messages, level: "# Fake Remote\n",
+        message_to_unified=lambda msg: {
+            "timestamp": msg.get("timestamp", ""),
+            "role": msg.get("role", "user"),
+            "content": msg.get("content", ""),
+        },
+        extract_stats=lambda path: (
+            {"session_id": "fake-remote", "message_count": 1},
+            [{"session_id": "fake-remote", "type": "user", "timestamp": ""}],
+            [],
+        ),
+        resolve_stats_workspace=lambda path, session_info, workspace: workspace or "fake-ws",
+        remote_list_workspaces_command=lambda: "fake-list-workspaces",
+        remote_parse_workspaces=lambda output: [f"parsed:{output.strip()}"],
+        remote_list_sessions_command=lambda workspace: f"fake-list-sessions {workspace}",
+        remote_workspace_readable=lambda workspace: f"readable:{workspace}",
+        remote_file_path=lambda workspace, filename, session: f"/remote/{workspace}/{filename}",
+    )
+
+    commands: list[str] = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd[-1])
+        if cmd[-1] == "fake-list-workspaces":
+            return SimpleNamespace(returncode=0, stdout="fake-ws\n", stderr="")
+        if cmd[-1] == "fake-list-sessions parsed:fake-ws":
+            return SimpleNamespace(
+                returncode=0,
+                stdout="/remote/fake-ws/fake-remote.jsonl|12|1700000000|1|parsed:fake-ws\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="unexpected command")
+
+    monkeypatch.setattr(ssh_backend, "check_ssh_connection", lambda remote: (True, ""))
+    monkeypatch.setattr(ssh_backend.subprocess, "run", fake_run)
+
+    register_backend(backend)
+    try:
+        workspaces, workspace_error = ssh_backend.list_remote_workspaces(
+            "user@example", agent="fake-remote"
+        )
+        sessions, session_error = ssh_backend.list_remote_sessions(
+            "user@example", workspaces[0], agent="fake-remote"
+        )
+    finally:
+        unregister_backend("fake-remote")
+
+    assert workspace_error is None
+    assert session_error is None
+    assert workspaces == ["parsed:fake-ws"]
+    assert sessions[0]["agent"] == "fake-remote"
+    assert sessions[0]["remote_path"] == "/remote/fake-ws/fake-remote.jsonl"
+    assert commands == ["fake-list-workspaces", "fake-list-sessions parsed:fake-ws"]
+
+
+def test_registered_backend_can_drive_wsl_path_selection(monkeypatch, tmp_path: Path) -> None:
+    """WSL probing should ask backend metadata for candidate session paths."""
+    expected = tmp_path / "fake" / "sessions"
+    fallback = tmp_path / "fallback" / "sessions"
+
+    backend = AgentBackend(
+        id="fake-wsl",
+        label="Fake WSL Agent",
+        get_session_dir=lambda resolver, context: tmp_path,
+        scan_sessions=lambda sessions_dir: [],
+        list_workspaces=lambda sessions_dir, home: [],
+        read_messages=lambda path: [],
+        count_messages=lambda path: 0,
+        render_markdown=lambda path, minimal, messages, level: "# Fake WSL\n",
+        message_to_unified=lambda msg: msg,
+        extract_stats=lambda path: ({}, [], []),
+        resolve_stats_workspace=lambda path, session_info, workspace: workspace or "",
+        wsl_candidate_paths=lambda distro, username: [fallback, expected],
+    )
+
+    def fake_exists(path: Path, timeout: float) -> bool:
+        del timeout
+        return path == expected
+
+    monkeypatch.setattr("agent_history.utils.platform._wsl_unc_available", lambda distro: True)
+    monkeypatch.setattr("agent_history.utils.platform._path_exists_with_timeout", fake_exists)
+
+    register_backend(backend)
+    try:
+        from agent_history.utils.platform import _locate_wsl_agent_dir
+
+        result = _locate_wsl_agent_dir("Ubuntu", "alice", "fake-wsl")
+    finally:
+        unregister_backend("fake-wsl")
+
+    assert result == expected
+
+
+def test_registered_backend_can_drive_markdown_titles(tmp_path: Path) -> None:
+    """Generic Markdown headers should use backend presentation metadata."""
+    from agent_history.export.markdown import generate_markdown_file_header
+
+    backend = AgentBackend(
+        id="fake-markdown",
+        label="Fake Markdown Agent",
+        get_session_dir=lambda resolver, context: tmp_path,
+        scan_sessions=lambda sessions_dir: [],
+        list_workspaces=lambda sessions_dir, home: [],
+        read_messages=lambda path: [],
+        count_messages=lambda path: 0,
+        render_markdown=lambda path, minimal, messages, level: "# Fake Markdown\n",
+        message_to_unified=lambda msg: msg,
+        extract_stats=lambda path: ({}, [], []),
+        resolve_stats_workspace=lambda path, session_info, workspace: workspace or "",
+        markdown_title="Fake",
+        markdown_header_title="Fake Conversation",
+        markdown_header_includes_filename=False,
+    )
+
+    register_backend(backend)
+    try:
+        header = generate_markdown_file_header(
+            tmp_path / "session.jsonl",
+            [{"timestamp": "2026-01-01T00:00:00Z"}],
+            agent_type="fake-markdown",
+        )
+    finally:
+        unregister_backend("fake-markdown")
+
+    assert header[0] == "# Fake Conversation"
+    assert "session.jsonl" not in header[0]

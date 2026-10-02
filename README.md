@@ -1,184 +1,147 @@
-# agent-history
+# cagelens
 
 A CLI tool to browse and export AI coding assistant conversation history with multi-environment support.
-
-> **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
-
-![How agent-history collects, normalizes, and exports AI coding assistant session history](docs/images/agent-history-process.png)
-
-*How agent-history collects fragmented Claude Code, Codex CLI, Gemini CLI, and Pi session files across local, WSL, Windows, and SSH homes, normalizes them into a unified workspace/session model, and produces listings, markdown/HTML exports, and usage metrics. See [docs/agent-history-process-image.md](docs/agent-history-process-image.md) for the diagram brief.*
 
 ## Supported Agents
 
 | Agent | Status | Format | Documentation |
 |-------|--------|--------|---------------|
-| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-format.md](docs/claude-format.md) |
-| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-format.md](docs/codex-format.md) |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-format.md](docs/gemini-format.md) |
-| [Pi](https://pi.dev) | ✅ Full support | JSONL | [pi-format.md](docs/pi-format.md) |
+| [Claude Code](https://github.com/anthropics/claude-code) | ✅ Full support | JSONL | [claude-code-format.md](docs/specs/agents/formats/claude-code-format.md) |
+| [Codex CLI](https://github.com/openai/codex) | ✅ Full support | JSONL | [codex-cli-format.md](docs/specs/agents/formats/codex-cli-format.md) |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ Full support | JSON | [gemini-cli-format.md](docs/specs/agents/formats/gemini-cli-format.md) |
+| Pi | ✅ Full support | JSONL | [pi-format.md](docs/specs/agents/formats/pi-format.md) |
+| GitHub Copilot CLI | Initial support | JSONL | [copilot-cli-format.md](docs/specs/agents/formats/copilot-cli-format.md) |
+| VS Code Copilot | Initial support | JSONL | [copilot-vscode-format.md](docs/specs/agents/formats/copilot-vscode-format.md) |
 
-Use `--agent claude`, `--agent codex`, `--agent gemini`, `--agent pi`, or `--agent auto` (default) to select which agent's sessions to query. The `--agent` flag can appear anywhere in the command.
+Use `--agent claude`, `--agent codex`, `--agent gemini`, `--agent pi`,
+`--agent copilot-cli`, `--agent copilot-vscode`, or `--agent auto` (default)
+to select which agent's sessions to query. The `--agent` flag can appear
+anywhere in the command.
 
 See [AGENTS.md](AGENTS.md) for a detailed comparison of storage locations, features, and behaviors.
 
 ## Why This Tool?
 
-Claude Code, Codex CLI, Gemini CLI, and Pi leave conversation data fragmented across session files. This tool solves the pain points:
+Claude Code, Codex CLI, Gemini CLI, Pi, and Copilot leave conversation data
+fragmented across session files. This tool solves the pain points:
 - Finding past work by project, not by opaque session IDs.
 - Getting readable exports for sharing, backup, or audits.
 - Seeing where and how you code across homes (local/WSL/Windows/SSH) with session/token/tool/time metrics.
-- Surviving moves/renames with aliasing and “closest match” `[missing]` hints.
-- Staying lightweight: one stdlib-only CLI plus a small SQLite db for metrics—no extra installs.
+- Surviving moves/renames with projects and “closest match” `[missing]` hints.
+- Staying lightweight: a Python CLI plus a small SQLite database for metrics.
 
 ## Features
 
-- **Markdown and offline HTML export** – Export whole workspaces or single sessions; Markdown minimal/flat/split modes; HTML renders turn-centered conversations with toggle controls for action snippets, full tool I/O, and full trace views.
+- **Markdown and offline HTML export** – Export whole workspaces or single sessions; Markdown minimal/layout/split modes; HTML renders turn-centered conversations with progressive detail controls.
 - **Workspace-aware filtering** – Target workspaces by name or path (slashes ok); matches encoded names automatically.
 - **Multi-environment reach** – Local, WSL (UNC or Linux paths), Windows from WSL, and SSH remotes; `[missing]` marker shows closest match for renamed workspaces.
-- **Aliases** – Group related workspaces across homes/sources; apply aliases to `lss`, `lsw`, `export`, and `stats`.
+- **Projects and tags** – Group related workspaces across homes/sources, tag projects as work/personal/etc., and use those scopes in sessions, exports, and stats.
 - **Usage metrics** – Summaries, homes/workspaces breakdown, token/tool stats, time tracking (with daily breakdown via `--time`), top workspaces limit via `--top-ws`.
 - **Cross-home sync** – Sync metrics from all homes (`--ah`), all workspaces (`--aw`), or current workspace only (`--this`).
-- **WSL/Windows helpers** – Auto-detect WSL distros/Windows users; UNC path inference for `lss` without `--wsl`; converts path separators safely.
+- **WSL/Windows helpers** – Auto-detect WSL distros/Windows users; UNC path inference for session listing without `--wsl`; converts path separators safely.
 - **Claude Code skill** – Enables Claude to search your history ([SKILL.md](SKILL.md)).
-- **Stdlib only** – Single Python file; no pip installs needed.
+- **Backend registry** – Agent-specific parsing and paths live in registered backends, keeping handlers and scope resolution agent-agnostic where practical.
 
 ## Quick Start
 
 ```bash
 # Make executable
-chmod +x /path/to/agent-history
+chmod +x /path/to/cagelens
 
 # Go to your project directory
 cd /path/to/project
 
 # List sessions from current project
-/path/to/agent-history lss
+/path/to/cagelens session list
 
 # Export to markdown
-/path/to/agent-history export
+/path/to/cagelens session export
 
-# Export offline HTML with progressive detail controls
-/path/to/agent-history export --format html --html-single
+# Export offline HTML
+/path/to/cagelens session export --format html
 
-# Output goes to ./.agent-history/exports/
+# Output goes to ./.cagelens/exports/
 ```
 
 **Windows:**
 ```powershell
 cd \path\to\project
-python \path\to\agent-history lss
-python \path\to\agent-history export
+python \path\to\cagelens session list
+python \path\to\cagelens session export
 ```
 
 ## Installation
 
 ```bash
 # Download
-curl -O https://raw.githubusercontent.com/kvsankar/agent-history/main/agent-history
+curl -O https://raw.githubusercontent.com/kvsankar/cagelens/main/cagelens
 
-# Install (cli + skill + retention settings)
-python agent-history install
+# Install CLI and agent skills
+python cagelens install
 ```
 
-By default the installer:
-- Copies the CLI to `~/.local/bin/agent-history` (no sudo needed).
-- Installs the Claude skill into `~/.claude/skills/agent-history` (CLI + SKILL.md).
-- Ensures `~/.claude/settings.json` has `cleanupPeriodDays` set to `99999` so conversations aren’t purged.
-  - If the existing `settings.json` contains additional preferences, they are preserved; only `cleanupPeriodDays` is adjusted.
-  - If the installer encounters malformed JSON, it first renames the original file to `settings.json.<timestamp>.bak` before writing the corrected copy.
+By default, `install` copies the CLI wrapper to `~/.local/bin/cagelens` and
+installs the `cagelens` skill package for Claude Code, Codex CLI, Gemini CLI,
+and Pi in each agent's native user skill directory.
 
-Pass `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or `--skip-settings` for custom setups.
+Pass `--agent`, `--bin-dir`, `--skill-dir`, `--skip-cli`, `--skip-skill`, or
+`--skip-settings` for custom setups.
 
-**Requirements:** Python 3.6+ (stdlib only, no pip install needed)
+**Requirements:** Python 3.11+ and project dependencies from `pyproject.toml`.
 
-> **Note:** Examples below assume `agent-history` is in your PATH.
+> **Note:** Examples below assume `cagelens` is in your PATH.
 
 ## Help
 
 <!-- help-snippet:start -->
 ```
-usage: agent-history [-h] [--version] [--agent {auto,claude,codex,gemini,pi}]
-                     {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index} ...
+usage: cagelens [-h] [--version] [--agent {auto,claude,codex,gemini,pi,copilot-cli,copilot-vscode}]
+                COMMAND ...
 
-Browse and export AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI, Pi)
+Browse, export, and analyze AI coding assistant conversation history (Claude Code, Codex CLI, Gemini CLI, Pi).
 
 positional arguments:
-  {lsw,lss,lsh,export,alias,stats,reset,install,gemini-index}
-                        Command to execute
-    lsw                 List workspaces
-    lss                 List sessions
-    lsh                 List homes and manage SSH remotes
-    export              Export to markdown or offline HTML
-    alias               Manage workspace aliases
-    stats               Show usage statistics and metrics
-    reset               Reset stored data (database, settings, aliases)
-    install             Install CLI and Claude skill
-    gemini-index        Manage Gemini hash→path index
+  COMMAND                     Command to execute
+    session                   Session commands
+    ws                        Workspace commands
+    project                   Manage projects
+    tag                       Manage project tags
+    home                      Manage homes
+    stats                     Usage statistics and rollups
+    gemini-index              Manage Gemini session index
+    install                   Install CLI and agent skill packages
+    reset                     Reset stored data
+    fetch                     Fetch remote sessions into cache
 
 options:
-  -h, --help            show this help message and exit
-  --version             show program's version number and exit
-  --agent {auto,claude,codex,gemini,pi}
-                        Agent backend to use (default: auto-detect based on
-                        available data)
+  -h, --help                  show this help message and exit
+  --version                   show program's version number and exit
+  --agent {auto,claude,codex,gemini,pi,copilot-cli,copilot-vscode}
+                              Agent backend to use (default: auto-detect based on available data)
 
-EXAMPLES:
+Progressive help:
+  cagelens ws --help              Discover workspaces and workspace flags
+  cagelens session --help         List, export, and analyze sessions
+  cagelens project --help         Group related workspaces
+  cagelens tag --help             Tag projects for filtered stats and rollups
+  cagelens home --help            Configure local, Windows, WSL, web, and remote homes
 
-  List workspaces:
-    agent-history lsw                        # all local workspaces
-    agent-history lsw myproject              # filter by pattern
-    agent-history lsw -r user@server         # remote workspaces
+Common commands:
+  cagelens ws                     List all local workspaces with counts
+  cagelens session list           List nearest current/parent workspace sessions
+  cagelens session list --aw      List sessions from all local workspaces
+  cagelens session export -o DIR  Export nearest current/parent workspace sessions
+  cagelens stats --sync           Refresh metrics and show stats
 
-  List sessions:
-    agent-history lss                        # current workspace
-    agent-history lss myproject              # specific workspace
-    agent-history lss myproject -r user@server    # remote sessions
+Scope shortcuts:
+  --aw = all workspaces, --ah = all homes, --glob PAT = workspace glob, --regex RE = workspace regex
+  --this = current workspace only, --project NAME = configured workspace group
+  --tag NAME = configured project tag
+  --format json is best for automation; table/TSV are for terminal and pipes.
+  Quote glob/regex patterns so your shell passes them to cagelens unchanged.
 
-  Export (unified interface with orthogonal flags):
-    agent-history export                     # current workspace, local home
-    agent-history export --ah                # current workspace, all homes
-    agent-history export --aw                # all workspaces, local home
-    agent-history export --ah --aw           # all workspaces, all homes
-
-    agent-history export myproject           # specific workspace, local
-    agent-history export myproject --ah      # specific workspace, all homes
-    agent-history export file.jsonl         # export single file
-
-    agent-history export -o /tmp/backup      # current workspace, custom output
-    agent-history export myproject -o ./out  # specific workspace, custom output
-
-    agent-history export -r user@server      # current workspace, specific remote
-    agent-history export --ah -r user@vm01   # current workspace, all homes + SSH
-
-  Date filtering:
-    agent-history lss myproject --since 2025-11-01
-    agent-history export myproject --since 2025-11-01 --until 2025-11-30
-
-  Export options:
-    agent-history export myproject --minimal       # minimal mode
-    agent-history export myproject --split 500     # split long conversations
-    agent-history export myproject --flat          # flat structure (no subdirs)
-    agent-history export /full/path/to/session.jsonl -o - --markdown-level 1  # single session to stdout
-    agent-history export myproject --markdown-level 2  # conversation + action snippets
-    agent-history export myproject --format html   # offline HTML with detail controls
-    agent-history export myproject --format html --html-single  # one HTML file per workspace
-
-  WSL access (Windows):
-    agent-history lsh --wsl                        # list WSL distributions
-    agent-history lsw --wsl                        # list WSL workspaces
-    agent-history lsw --wsl Ubuntu                 # list from specific distro
-    agent-history lss myproject --wsl              # list WSL sessions
-    agent-history export myproject --wsl           # export from WSL
-
-  Windows access (from WSL):
-    agent-history lsh --windows                    # list Windows users with Claude
-    agent-history lsw --windows                    # list Windows workspaces
-    agent-history lss myproject --windows          # list Windows sessions
-    agent-history export myproject --windows       # export from Windows
-
-  Notes:
-    - Outputs may show '[missing]' when a workspace directory no longer exists; the path
-      is the closest match based on the stored workspace name.
+Migration:
+  Old short aliases are not part of the current CLI. Use session list, ws, project, and home.
 ```
 <!-- help-snippet:end -->
 
@@ -186,33 +149,46 @@ EXAMPLES:
 
 | Command | Remote/Home Options | Workspace Options | Default Scope |
 |---------|---------------------|-------------------|----------------|
-| `lss`   | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, aliases (`@name` / `--alias`), `--aw`, `--this` | Uses the current workspace (or its alias) even when you target other homes. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
-| `lsw`   | Same as `lss` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
-| `export`| `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), aliases, `--aw`, `--this` | Exports the current workspace (or alias) unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
-| `stats` | `--wsl`, `--windows`, `-r`, `--ah` (to sync), `--source` | Workspace patterns/aliases, `--aw`, `--this` | Defaults to the current workspace (or alias). If not in a workspace, pass a pattern or use `--aw`. Use `--aw` for every workspace in the metrics DB, or pass patterns/aliases to filter. `--source` limits results to a specific home and defaults to all workspaces for that source unless `--this` is set. |
+| `session list` | `--wsl`, `--windows`, `--no-wsl`, `--no-windows`, `-r HOST`, `--ah`, `--local`, `--counts`, `--wsl-counts` | Patterns, projects (`@name` / `--project`), `--aw`, `--this`, `--parents` | Uses the nearest current/parent workspace with recorded sessions. Pass `--aw` or explicit patterns to broaden results; `--ah` fans out to every saved home. |
+| `ws list` | Same as `session list` (`--wsl`, `--windows`, `-r`, `--ah`, `--local`) | Optional patterns | Lists every workspace in the selected homes that matches your patterns (default pattern = `""`, so you see all). |
+| `export` | `--wsl`, `--windows`, `-r`, `--ah`, `--local` | Targets (`export <pattern>`), projects, `--aw`, `--this`, `--parents` | Exports the nearest current/parent workspace with recorded sessions unless you pass `--aw` or explicit targets. Running outside a workspace requires `--aw`/patterns. |
+| `stats` | `--wsl`, `--windows`, `-r`, `--ah`, `--home`, `--local` | Workspace patterns/projects, `--aw`, `--this` | Uses cached metrics by default. Use `--sync` to refresh from source files before display. |
 
-When in doubt: `--aw` means “all workspaces”; `--ah` means “all homes.” Without those switches the CLI sticks to the current workspace/alias, even if you add Windows/WSL/remote flags, so you get predictable, scoped results.
+When in doubt: `--aw` means "all workspaces"; `--ah` means "all homes." `ws list`
+already lists all workspaces in the selected homes. `session list` and `export`
+use the nearest current/parent workspace with sessions unless you pass `--aw` or
+an explicit workspace/project scope.
 
 ## Testing
 
-Use pytest to run unit and integration tests. By default, `pytest` runs everything.
+Use the project runner to run unit and integration tests. It wraps pytest and
+uses faster Windows temp/cache defaults. On a fresh checkout, run
+`uv sync --dev` first. The examples below assume an activated virtualenv; the
+Makefile and PowerShell helper use `.venv` directly when it exists.
 
 Quick commands:
 
 ```bash
-# All tests
-uv run pytest
+# Default suite (excludes legacy tests)
+python scripts/run_tests.py
 
 # Unit only
-uv run pytest -m "not integration"
+python scripts/run_tests.py -m "not integration"
 
 # Integration only
-uv run pytest -m integration tests/integration
+python scripts/run_tests.py -m integration tests/integration
 
 # Makefile shortcuts
 make test
 make test-unit
 make test-integration
+
+# Tests are organized by surface area:
+# - tests/cli (CLI behavior and scope)
+# - tests/formats (agent session formats)
+# - tests/legacy (v1 script compatibility)
+# - tests/unit (package internals)
+# - tests/e2e_docker (Docker + SSH E2E)
 
 # Windows PowerShell helper
 scripts\run-tests.ps1              # all
@@ -250,7 +226,7 @@ docker-compose down -v            # Cleanup
 ```
 
 This creates containers with:
-- **node-alpha**: Users alice, bob with synthetic Claude/Codex/Gemini/Pi sessions
+- **node-alpha**: Users alice, bob with synthetic Claude/Codex/Gemini sessions
 - **node-beta**: Users charlie, dave with synthetic sessions
 - **test-runner**: Executes tests with real SSH connections between nodes
 
@@ -266,9 +242,9 @@ Thanks for considering a contribution! A few quick notes to get you productive:
 - Discuss: Open an issue for feature ideas or larger changes.
 - Scope: Keep PRs focused; add tests that demonstrate behavior.
 - Tests: Ensure both unit and integration suites pass.
-  - All tests: `uv run pytest`
-  - Unit only: `uv run pytest -m "not integration"`
-  - Integration only: `uv run pytest -m integration tests/integration`
+  - All tests: `python scripts/run_tests.py`
+  - Unit only: `python scripts/run_tests.py -m "not integration"`
+  - Integration only: `python scripts/run_tests.py -m integration tests/integration`
   - Make targets: `make test`, `make test-unit`, `make test-integration`
   - Windows helper: `scripts\\run-tests.ps1 [-Unit | -Integration]`
 - Cross‑boundary flows (optional):
@@ -283,99 +259,104 @@ We run CI on GitHub Actions for Linux and Windows. Hosted Windows machines do no
 
 ## Additional Resources
 
-- [Claude Collaboration Playbook](https://github.com/kvsankar/agent-history/blob/main/docs/claude-collaboration-playbook.md) – distilled lessons from hundreds of Claude Code sessions. Great to drop into your repo's `CLAUDE.md` or share with new collaborators.
+- [Claude Collaboration Playbook](https://github.com/kvsankar/cagelens/blob/main/docs/claude-collaboration-playbook.md) – distilled lessons from hundreds of Claude Code sessions. Great to drop into your repo's `CLAUDE.md` or share with new collaborators.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `lsh` | List homes and manage SSH remotes |
-| `lsw` | List workspaces |
-| `lss` | List sessions |
-| `export` | Export to Markdown or offline HTML |
-| `alias` | Manage workspace aliases |
-| `stats` | Usage statistics |
+| `home` | List homes and manage sources (WSL, Windows, SSH) |
+| `ws` | List workspaces |
+| `session` | List sessions |
+| `session export` | Export sessions to Markdown or HTML |
+| `project` | Manage workspace projects |
+| `stats` | Usage statistics and rollups |
+| `session stats` | Usage statistics (compatibility form) |
 | `reset` | Reset stored data |
-| `install` | Install CLI + Claude skill and update retention settings |
+| `install` | Install CLI and agent skill packages |
 
 ## Common Examples
 
 ```bash
 # List all workspaces
-agent-history lsw
+cagelens ws list
 
 # Export specific project
-agent-history export myproject
+cagelens session export myproject
 
 # Export from all homes (local + WSL + Windows + remotes)
-agent-history export myproject --ah
+cagelens session export myproject --ah
 
 # Date filtering
-agent-history lss --since 2025-11-01
+cagelens session list --since 2025-11-01
 
 # Minimal export (no metadata, for sharing)
-agent-history export myproject --minimal
+cagelens session export myproject --minimal
 
-# Single-session Markdown to stdout
-agent-history export /full/path/to/session.jsonl -o - --markdown-level 1
+# Stats sync
+cagelens stats --sync --ah
 
-# Find the full Claude session path from a session id
-find ~/.claude/projects -name '459ef8a3-7ef0-43ed-92a4-bf3e91715a9e.jsonl' -print
-
-# Offline HTML export, one file per workspace
-agent-history export myproject --format html --html-single
-
-# Faster sync/export
-agent-history stats --sync --ah --jobs 4
-agent-history export myproject --jobs 4 --quiet
+# Faster export
+cagelens session export myproject --jobs 4 --quiet
 
 # Time tracking
-agent-history stats --time
+cagelens stats --time
+
+# Project rollup
+cagelens stats rollup --metric time --by project
+
+# Tag projects and roll up by tag
+cagelens tag add --project myproject work
+cagelens stats --tag work
+cagelens stats rollup --metric time --by tag
 ```
 
 ## Multi-Environment Access
 
 ```bash
-# Discover all Claude installations and SSH remotes
-agent-history lsh
+# Discover all Claude installations
+cagelens home list
 
-# Add/remove SSH remotes
-agent-history lsh add user@server
-agent-history lsh remove user@server
+# Add homes (explicit model - must add for --ah to include)
+cagelens home add --wsl              # add WSL
+cagelens home add --windows          # add Windows
+cagelens home add user@server        # add SSH remote
+cagelens home remove user@server     # remove a source
 
 # Access WSL (from Windows)
-agent-history lss --wsl
+cagelens session list --wsl
 
 # Access Windows (from WSL)
-agent-history lss --windows
+cagelens session list --windows
 
 # Access SSH remote
-agent-history lss -r user@server
+cagelens session list -r user@server
 
-# All homes at once (includes saved SSH remotes)
-agent-history export --ah
+# All homes at once (includes configured sources)
+cagelens session export --ah
 ```
 
-## Workspace Aliases
+## Projects
 
 Group related workspaces across environments:
 
 ```bash
-# Create alias
-agent-history alias create myproject
-
 # Add workspaces
-agent-history alias add myproject myproject
-agent-history alias add myproject --windows myproject
-agent-history alias add myproject -r user@vm myproject
+cagelens project add myproject myproject
+cagelens project add myproject --windows myproject
+cagelens project add myproject -r user@vm myproject
 
-# Use with @ prefix
-agent-history lss @myproject
-agent-history export @myproject
+# Use with @ prefix or --project flag
+cagelens session list @myproject
+cagelens session list --project myproject
+cagelens session list --tag work
+cagelens session export @myproject
+cagelens session export --project myproject
+cagelens session export --tag work
 
 # Remove entries using paths from any home
-agent-history alias remove myproject -r user@vm /home/user/myproject
-agent-history alias remove myproject --windows /mnt/c/Users/me/projects/myproject
+cagelens project remove myproject -r user@vm /home/user/myproject
+cagelens project remove myproject --windows /mnt/c/Users/me/projects/myproject
 ```
 
 ## Important: Preserve Your History
@@ -393,7 +374,7 @@ By default, Claude Code deletes conversation history after 30 days. Add this to 
 Set `CLAUDE_PROJECTS_DIR` to point the CLI at a different `.claude/projects` root. This is handy when running inside containers, CI pipelines, or when your Claude data lives on another drive:
 
 ```bash
-CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects agent-history lsw
+CLAUDE_PROJECTS_DIR=/mnt/windows/Users/me/.claude/projects cagelens ws list
 ```
 
 The directory must mirror Claude's standard layout (`<root>/<encoded-workspace>/*.jsonl`).
@@ -417,5 +398,3 @@ MIT License - See [LICENSE](LICENSE) file.
 
 Related projects worth exploring:
 - [ZeroSumQuant/claude-conversation-extractor](https://github.com/ZeroSumQuant/claude-conversation-extractor) – JSON→Markdown converter with a UI and filtering.
-- [thejud/claude-history](https://github.com/thejud/claude-history) – simple CLI to extract/format session files.
-- [raine/claude-history](https://github.com/raine/claude-history) – fuzzy-search across Claude history from the terminal.

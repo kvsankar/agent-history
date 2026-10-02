@@ -184,7 +184,7 @@ source =
 show_missing = true
 skip_covered = false
 include =
-    {project / 'agent-history'}
+    {project / 'cagelens'}
 """
     coveragerc.write_text(coveragerc_content)
 

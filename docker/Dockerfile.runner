@@ -15,14 +15,14 @@ RUN pip install --no-cache-dir pytest pytest-cov coverage hypothesis
 # Create test user (non-root for realistic testing)
 RUN useradd -m -s /bin/bash tester
 
-# Create dummy Claude/Codex/Gemini directories (agent-history requires these to exist)
+# Create dummy Claude/Codex/Gemini directories (cagelens requires these to exist)
 # Also create /coverage for coverage data files
 RUN mkdir -p /home/tester/.claude/projects \
     && mkdir -p /home/tester/.codex/sessions \
     && mkdir -p /home/tester/.gemini/tmp \
-    && mkdir -p /home/tester/.agent-history \
+    && mkdir -p /home/tester/.cagelens \
     && mkdir -p /coverage \
-    && chown -R tester:tester /home/tester/.claude /home/tester/.codex /home/tester/.gemini /home/tester/.agent-history /coverage
+    && chown -R tester:tester /home/tester/.claude /home/tester/.codex /home/tester/.gemini /home/tester/.cagelens /coverage
 
 # Copy SSH setup script and coverage script
 # Note: sed removes Windows CRLF line endings in case files were checked out on Windows

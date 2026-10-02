@@ -1,8 +1,24 @@
 [project]
-name = "claude-history"
+name = "cagelens"
 version = "1.0.0"
-description = "CLI tool to browse and export Claude Code conversation history"
+description = "CLI tool to parse coding-agent logs, export sessions, and surface usage insights"
 requires-python = ">=3.8"
+dependencies = [
+    "pygments>=2.17",
+]
+
+[project.scripts]
+cagelens = "agent_history.cli.orchestrator:main"
+agent-history = "agent_history.cli.orchestrator:main"
+claude-history = "agent_history.cli.orchestrator:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agent_history*"]
+exclude = ["tests*", "docs*", "docker*", "scripts*", "poc*", "reviews*"]
 
 [tool.ruff]
 target-version = "py38"
@@ -31,6 +47,12 @@ ignore = [
     "E402",    # module import not at top (sqlite3 imported where needed)
     "RUF013",  # implicit Optional (requires 3.10+ for clean syntax)
     "PLC0415", # import not at top (intentional lazy imports)
+    "C901",    # complexity is enforced by scripts/check_complexity.py
+    "PLR0911", # return count refactors are tracked by complexity gate
+    "PLR0912", # branch count refactors are tracked by complexity gate
+    "PLR0913", # argument count refactors are tracked separately
+    "PLR0915", # statement count refactors are tracked by complexity gate
+    "PLR2004", # magic values are acceptable in formatting/reporting code
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -38,11 +60,13 @@ ignore = [
 "test_*.py" = ["PLR2004", "PLR0913", "PLR0915", "N802", "N803", "RUF012"]
 # Main script has some complexity that's baselined
 "claude-history" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
+"agent-history" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
+"cagelens" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901"]
 # Scripts use magic values and have some complexity
 "scripts/*.py" = ["PLR2004", "PLW1510", "C901", "PLR0915"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["claude_history"]
+known-first-party = ["agent_history"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -59,6 +83,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "radon>=6.0.1",
     "hypothesis>=6.100.0",
+    "ruff>=0.15.18",
 ]
 
 # Radon complexity thresholds (documented here, enforced in scripts/check_complexity.py)
