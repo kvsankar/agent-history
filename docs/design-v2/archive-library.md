@@ -109,12 +109,16 @@ uses JSON, like the existing `~/.cagelens/config.json`.
 | `destination` | A local path (which may be a network mount) or `ssh://host/path`. |
 | `compression_level` | The zstd level, 1–19. The default is 19. Higher levels make smaller files and compress more slowly; reading is about equally fast at every level. |
 | `min_interval_hours` | A run exits without work if the source's last successful run was more recent. A scheduler can then start the collector often (for example hourly) and still get one run a day, plus a catch-up run after a machine was off. `--force` ignores it. |
+| `workers` | Files compressed in parallel. The default is the number of CPUs, at most 8. |
 | `health_url` | Optional. The collector requests `<url>/start` at the beginning, `<url>` on success and `<url>/fail` on failure. Any service that accepts these requests works. |
 | `sources[].home` | The home directory to read. Agent folders are found under it with the default layouts below. |
 | `sources[].platform` | `linux`, `darwin` or `windows`. It selects platform-specific default folders, such as where VS Code keeps its chats. It describes the source, not the machine the collector runs on, so a Linux collector can read a Windows home through a mount. |
 | `sources[].roots` | Optional per-agent folders that replace the defaults. They are used to bring in an existing tree whose layout differs from a home directory. |
 | `sources[].agents` | Optional list of agents to include. The default is every agent below. |
-| `sources[].include`, `exclude` | Optional extra glob patterns, relative to the home. |
+| `sources[].include`, `exclude` | Optional extra glob patterns, relative to the home. They may not leave the home. |
+| `sources[].note` | Optional text recorded in the source's `SOURCE.json`. |
+
+Unknown settings are rejected, so a misspelt name fails instead of being ignored.
 
 A source name may appear more than once if each entry covers different agents or
 roots. The entries merge into one source in the archive.
@@ -127,27 +131,40 @@ are skipped.
 | Agent | Included | Excluded |
 |---|---|---|
 | Claude Code | `.claude/projects`, `sessions`, `history.jsonl`, `todos`, `plans`, `tasks`, `file-history`, `usage-data` | — |
-| Codex | `.codex/sessions`, `archived_sessions`, `history.jsonl`, `session_index.jsonl`; databases `state_*.sqlite`, `memories_*.sqlite`, `goals_*.sqlite`, `queue_*.sqlite`; new rows of `logs_*.sqlite` | `auth.json`, `thread_history_*.sqlite` |
+| Codex | `.codex/sessions`, `archived_sessions`, `history.jsonl`, `session_index.jsonl`; databases `state_*.sqlite`, `memories_*.sqlite`, `goals_*.sqlite`, `queue_*.sqlite`; new rows of `logs_*.sqlite` | everything else, including `auth.json` and `thread_history_*.sqlite` |
 | Gemini CLI | `.gemini/history`, `tmp`, `antigravity` | `tmp/*/tool-outputs/**`, `tmp/bin/**`, `oauth_creds.json`, `google_accounts.json` |
 | Pi | `.pi/agent/sessions` | `.pi/agent/auth.json` |
-| Copilot CLI | `.copilot/session-state`, `chats`, `history-session-state`; databases `session-store.db`, `data.db`, `data.db.pre-update-backup-*` | `mcp-oauth-config/**`, `config.json`, `repo-metadata-cache.db` |
-| Copilot in VS Code | `<VS Code user dir>/workspaceStorage/*/GitHub.copilot-chat/**`, `workspaceStorage/*/chatSessions/**` | — |
-| cagelens | `.agent-history`, `.cagelens/config.json`, `.cagelens/project_tags*` | `.cagelens/remote-cache/**`, `.cagelens/web-cache/**` |
+| Copilot CLI (`copilot-cli`) | `.copilot/session-state`, `chats`, `history-session-state`; databases `session-store.db`, `data.db`, `data.db.pre-update-backup-*`, `session-state/*/session.db` | everything else, including `mcp-oauth-config`, `config.json` and `repo-metadata-cache.db` |
+| Copilot in VS Code (`copilot-vscode`) | `<VS Code user dir>/workspaceStorage/*/GitHub.copilot-chat/**`, `workspaceStorage/*/chatSessions/**` | — |
+| cagelens | `config.json`, `aliases*.json` and `project_tags*` in `.cagelens` and the older `.agent-history` | caches, which hold copies of other machines' sessions |
+
+Agent names are the cagelens backend ids, as used by `--agent`.
 
 - The VS Code user directory depends on `platform`: `AppData/Roaming/Code/User`
   on Windows, `Library/Application Support/Code/User` on macOS, and
   `.config/Code/User` and `.vscode-server/data/User` on Linux. The `Code - Insiders`
   variants are included too.
-- Every layout also excludes `*.tmp`, `*.part`, and SQLite side files (`*-wal`,
-  `*-shm`). A database snapshot already contains what those side files hold.
+- Every layout also excludes `*.tmp`, `*.part`, `*.lock`, and SQLite side files
+  (`*-wal`, `*-shm`, `*-journal`). A database snapshot already contains what those
+  side files hold.
 - The rule for databases: keep a database when it holds information that is not in
   the agent's JSONL or JSON files, and skip it when it is built entirely from them.
   For example, Copilot's `session-store.db` keeps sessions after Copilot has
   deleted their JSONL folders, so it is kept. Codex's `thread_history_*.sqlite` is
   built from the rollout files and records how far into each one it has read, so it
   is skipped. Caches are skipped.
-- The global denylist removes `auth.json`, `*oauth*`, `*.pem`, `*.key`, `.credentials.json`
-  and `credentials*` everywhere, whatever the configuration says.
+- The global denylist removes `auth.json`, `*oauth*`, `*.pem`, `*.key`,
+  `.credentials.json`, `credentials*` and browser credential stores (`Cookies`,
+  `Login Data`, `Web Data`, `Local State`, `cookies.sqlite`, `logins.json`, `key4.db`)
+  everywhere, whatever the configuration says. Names are compared case-insensitively.
+- **Browser profiles are skipped whole.** Agents that drive a browser can leave a
+  profile inside a session folder: Copilot sessions were found holding Chrome profiles
+  of several hundred MB, with cookies and saved logins. A folder holding `Local State`,
+  `cookies.sqlite`, `logins.json` or `key4.db` is not descended into.
+- **The walk only descends where a pattern can match.** Patterns are followed folder by
+  folder, and only a `**` segment walks a whole subtree, so a pattern such as
+  `state_*.sqlite` lists one folder instead of walking all of `.codex`. Symbolic links
+  are never followed.
 - The layouts live in one module (`archive/layouts.py`). When an agent changes its
   storage, that module and its tests change, and nothing else.
 
@@ -156,7 +173,8 @@ are skipped.
 ### Change detection
 
 The collector keeps a state file per source and destination at
-`<user state dir>/cagelens/archive/<destination hash>/<source>.json`. For each
+`~/.cagelens/archive-state/<destination hash>/<source>.json` (`--state-dir` overrides
+the folder). For each
 archived path it records the original size, modification time (nanoseconds) and
 SHA-256 hash.
 
@@ -165,6 +183,12 @@ The collector hashes only changed files.
 
 If the state file is missing, for example on a new machine, the collector rebuilds
 it by reading the source's manifests from the archive.
+
+**Recently modified files.** A file can change again within the same filesystem
+timestamp tick without its size changing, for example a database's last write. A file
+modified within 2 seconds of being read is marked `racy` in the manifest, and its
+state is not trusted: the next run reads it again and compares hashes. This is the same
+problem and remedy as Git's "racy clean" files.
 
 ### Content-loss guard
 
@@ -194,15 +218,19 @@ produce a broken copy. So for each changed snapshot database the collector:
 
 1. treats the database as changed when the size or modification time of the file
    or of its `-wal` side file changed;
-2. copies it with SQLite's backup API into a temporary file, which gives a
-   consistent copy that includes the `-wal` content;
+2. copies it with SQLite's backup API, from a read-only connection, into a temporary
+   file, which gives a consistent copy that includes the `-wal` content. Some
+   filesystems (WSL's `/mnt/c`) cannot open a WAL database read-only; then the file and
+   its WAL are copied to local disk, the copy is retried if the source changed while
+   being copied, and the copy must pass `PRAGMA quick_check` before it is used;
 3. blanks credential columns in the copy (see below), then runs `VACUUM` so that
    the blanked values do not survive in free pages of the file;
 4. hashes, compresses and archives the copy like any other file, under the
    database's own path.
 
 A snapshot is never an append of the previous one, so every snapshot after the
-first goes through `versions/` as a rewrite.
+first goes through `versions/` as a rewrite. An empty `-wal` file counts as none, because
+opening a WAL database, even read-only, can create one.
 
 **Credential columns.** The layout lists, per database, the columns that hold
 credentials. For example, Copilot's `data.db` holds GitHub access tokens in
@@ -239,15 +267,18 @@ retries on the next run.
    times.
 4. For each changed file: copy and redact it if it is a snapshot database, or
    export its new rows if it is a log database; then hash it, apply the
-   content-loss guard, and compress it into a local staging directory laid out
-   like the archive.
-5. Transfer the staging directory:
+   content-loss guard, and compress it into a staging folder laid out like the
+   archive. `workers` files are processed in parallel, and entries are recorded in
+   walk order. The staging folder is under the state folder, never the system temp
+   folder, which is often a small in-memory filesystem.
+5. Whenever about 512 MB is staged, and at the end, transfer the staging folder,
+   after first moving aside the archived copies that rewrites will replace:
    - **Local destination:** write each file as `<name>.part`, then rename it into
      place.
    - **SSH destination:** run the `versions/` moves as one remote shell command,
      then stream a tar archive into `tar -xf -` on the remote host. The remote host
      needs only `sh`, `mkdir`, `mv` and `tar`.
-6. Write the manifest. The manifest is the commit record: a file counts as archived
+6. After the last transfer, write the manifest. The manifest is the commit record: a file counts as archived
    only when a manifest lists it. If a run stops before step 6, the next run
    rewrites the same files, and readers ignore files no manifest lists.
 7. Update the local state file and send the success request to `health_url`.
@@ -297,9 +328,15 @@ The catalog has one row per source, per run, per archived file and per session.
 | `sources` | `name` | kind, platform, note, first and last run time |
 | `runs` | `run_id` | source, collector host, tool version, start and finish, counts, errors |
 | `files` | `source`, `path` | agent, kind (file, database snapshot or row export), size, modification time, SHA-256, compressed size, archive path, first run, last written run, run in which it went `gone` |
-| `file_versions` | `source`, `path`, `sha256` | size, modification time, run, archive path, whether superseded |
+| `file_versions` | `source`, `path`, `run_id` | SHA-256, size, modification time, archive path (kept versions only), the run that superseded it |
+| `row_exports` | `source`, `archive_path` | database path, table, first and last key, row count, whether the database was recreated, run, SHA-256, size |
 | `sessions` | `source`, `path`, `session_id` | agent, workspace, working directory, project, git branch, models, first and last message time, message counts by role, tool-use count, token totals, parent session ID, lineage kind, file SHA-256 |
 | `schema_meta` | — | schema version |
+
+Sessions are read from session files by the agent's cagelens parser (`extract_stats`),
+and from databases by a query in the layout that returns each session's id, working
+directory, branch, first and last time, and message count. Timestamps are stored as
+ISO 8601 UTC; epoch seconds and milliseconds are converted.
 
 A session can be known only from a database. For example, Copilot's
 `session-store.db` keeps sessions whose JSONL folders Copilot deleted. Such a
@@ -373,33 +410,41 @@ records the schema version in `schema_meta`.
 
 ```
 agent_history/archive/
-  __init__.py        public API: load_config, collect, verify
-  config.py          configuration loading and validation
-  layouts.py         per-agent allowlists, exclusions and the credential denylist
-  codec.py           zstd compression and the open-either-name helper
-  state.py           local state files and rebuilding them from manifests
-  guard.py           the content-loss guard
-  databases.py       SQLite snapshots, credential blanking and row export
-  transport.py       local and SSH destinations
-  manifest.py        manifest writing and reading
-  collect.py         the run steps
-  verify.py          verification
+  __init__.py          public API: load_config, collect_source, verify_source, ...
+  errors.py            ArchiveError and ArchiveConfigError
+  config.py            configuration loading and validation
+  layouts.py           per-agent file lists, session patterns, the credential denylist,
+                       browser-profile skipping, and archive path mapping
+  codec.py             zstd compression, hashing, and the open-either-name helper
+  state.py             collector state, rebuilding it from manifests, the source lock
+  manifest.py          manifest writing and reading
+  transport.py         the destination interface and the local destination
+  ssh_destination.py   the SSH destination
+  databases.py         SQLite snapshots, credential blanking and log row export
+  collect.py           the run steps
+  verify.py            verification
+  cli.py               the `cagelens archive` commands
   catalog/
-    model.py         records and the CatalogStore interface
-    sync.py          manifest ingestion and session metadata extraction
-    store_sqlite.py
-    store_postgres.py
-    schema/          table definitions and migrations
+    schema.py          table definitions for SQLite and PostgreSQL
+    store.py           the CatalogStore interface and both stores
+    sync.py            manifest ingestion, session extraction, status
 ```
 
 ```
-cagelens archive collect [--source NAME]... [--force] [--dry-run] [--config PATH]
+cagelens archive collect [--source NAME]... [--force] [--dry-run] [--state-dir DIR]
 cagelens archive verify  [--source NAME]... [--all | --sample N]
 cagelens archive catalog sync | rebuild | status [--store sqlite:PATH | postgres:CONNINFO]
 ```
 
+Every command also takes `--config PATH`, `--destination` (overrides the configured one)
+and `--json`. Exit codes: 0 success; 1 the command failed; 2 it finished but found
+problems (files that could not be read, or verification differences). The catalog
+defaults to `sqlite:~/.cagelens/archive-catalog.db`. `archive` must be the first word
+after `cagelens`, because it does not use the session-scope options.
+
 `--dry-run` lists what a run would write and which files the content-loss guard
-would version, without writing.
+would version, without writing. It hashes changed files that are already archived and
+compresses nothing.
 
 Packaging: `pip install "cagelens[archive]"`, or `cagelens[archive,postgres]` for a
 PostgreSQL catalog.

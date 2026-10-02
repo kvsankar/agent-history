@@ -310,7 +310,6 @@ def test_large_runs_transfer_in_batches(env, monkeypatch):
     from agent_history.archive.transport import LocalDestination
 
     monkeypatch.setattr(collect_module, "BATCH_BYTES", 1)
-    monkeypatch.setattr(collect_module, "_CHUNK_FILES", 2)
     calls = []
     real_put = LocalDestination.put_tree
 
@@ -320,7 +319,7 @@ def test_large_runs_transfer_in_batches(env, monkeypatch):
 
     monkeypatch.setattr(LocalDestination, "put_tree", counting)
 
-    summary = _collect(env)
+    summary = _collect(env, config=_config(env, workers=1))
 
     assert summary.written == 5
     assert len(calls) >= 2
@@ -355,3 +354,54 @@ def test_parallel_workers_give_the_same_archive(env):
     assert summary.written == 20
     assert _archived(env, ".claude/projects/p/s7.jsonl") == b"7\n"
     assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_a_slow_file_does_not_hold_up_the_others(env, monkeypatch):
+    import threading
+
+    from agent_history.archive import collect as collect_module
+
+    _write(env, ".claude/projects/p/a-slow.jsonl", b"slow\n", mtime=1_790_000_000)
+    for index in range(30):
+        _write(env, f".claude/projects/p/s{index:02}.jsonl", b"x\n", mtime=1_790_000_000)
+    others_done = threading.Event()
+    finished = []
+    real = collect_module.compress_file
+
+    def gated(src, *args, **kwargs):
+        result = real(src, *args, **kwargs)
+        if Path(src).name == "a-slow.jsonl":
+            assert others_done.wait(timeout=10), "other files waited for the slow one"
+        else:
+            finished.append(src)
+            if len(finished) == 30:
+                others_done.set()
+        return result
+
+    monkeypatch.setattr(collect_module, "compress_file", gated)
+
+    summary = _collect(env, config=_config(env, workers=2))
+
+    assert summary.written == 31
+    paths = [entry["path"] for entry in summary.entries]
+    assert paths == sorted(paths)
+
+
+def test_large_files_use_multithreaded_compression(env, monkeypatch):
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"y" * 2048, mtime=1_790_000_000)
+    monkeypatch.setattr(collect_module, "LARGE_FILE_BYTES", 1024)
+    seen = []
+    real = collect_module.compress_file
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("threads", 0))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(collect_module, "compress_file", spy)
+
+    _collect(env, config=_config(env, workers=3))
+
+    assert seen == [3]
+    assert _archived(env, SESSION) == b"y" * 2048

@@ -8,7 +8,6 @@ files that no manifest lists; the next run writes them again.
 
 from __future__ import annotations
 
-import itertools
 import json
 import os
 import shutil
@@ -17,7 +16,7 @@ import sys
 import tempfile
 import time
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -53,7 +52,10 @@ ARCHIVE_FORMAT = 1
 RACY_WINDOW_NS = 2_000_000_000
 # Staged files are transferred whenever this much has accumulated, and at the end.
 BATCH_BYTES = 512 * 1024 * 1024
-_CHUNK_FILES = 64
+_IN_FLIGHT_PER_WORKER = 4
+# Files this large are compressed with zstd's own threads as well, so one large session
+# file does not take minutes on a single core.
+LARGE_FILE_BYTES = 64 * 1024 * 1024
 _FILE_ERRORS = (OSError, sqlite3.Error)
 
 
@@ -162,22 +164,45 @@ class _Run:
     # -- scanning ---------------------------------------------------------------------
 
     def _scan(self, staging: Path) -> None:
+        """Process files on a pool, recording each result as soon as it is ready.
+
+        Up to ``_IN_FLIGHT_PER_WORKER`` files per worker are in flight, so one large file
+        does not leave the other workers idle. Before a batch is transferred, every file
+        in flight finishes, because the transfer empties the staging folder. Entries are
+        sorted by path at the end, so manifests do not depend on timing.
+        """
         seen = set()
-        items = iter_source_files(self.source)
-        with ThreadPoolExecutor(max_workers=self.config.workers) as pool:
-            while True:
-                chunk = list(itertools.islice(items, _CHUNK_FILES))
-                if not chunk:
-                    break
-                seen.update(item.rel_path for item in chunk)
-                for entry in pool.map(lambda item: self._safe_process(item, staging), chunk):
-                    if entry:
-                        self._record(entry)
+        pending: set = set()
+        window = self.config.workers * _IN_FLIGHT_PER_WORKER
+        pool = ThreadPoolExecutor(max_workers=self.config.workers)
+        try:
+            for item in iter_source_files(self.source):
+                seen.add(item.rel_path)
+                pending.add(pool.submit(self._safe_process, item, staging))
+                if len(pending) >= window:
+                    pending = self._record_done(pending, FIRST_COMPLETED)
                 if not self.dry_run and self.staged_bytes >= BATCH_BYTES:
+                    pending = self._record_done(pending, ALL_COMPLETED)
                     self._flush(staging)
+            self._record_done(pending, ALL_COMPLETED)
+        except BaseException:
+            for future in pending:
+                future.cancel()  # queued work is dropped; running files finish
+            raise
+        finally:
+            pool.shutdown(wait=True)
         for rel_path, previous in sorted(self.state.files.items()):
             if rel_path not in seen and not previous.gone:
                 self._record({"type": "file", "path": rel_path, "action": "gone"})
+        self.summary.entries.sort(key=lambda entry: (entry["path"], entry["type"]))
+
+    def _record_done(self, pending: set, return_when: str) -> set:
+        done, still_pending = wait(pending, return_when=return_when)
+        for future in done:
+            entry = future.result()
+            if entry:
+                self._record(entry)
+        return still_pending
 
     def _safe_process(self, item: SelectedFile, staging: Path) -> dict[str, Any] | None:
         try:
@@ -238,6 +263,7 @@ class _Run:
                 self.config.compression_level,
                 size=size,
                 prefix_length=prefix_length,
+                threads=self.config.workers if size >= LARGE_FILE_BYTES else 0,
             )
             os.utime(staged, ns=(mtime_ns, mtime_ns))
         if previous and result.sha256 == previous.sha256:

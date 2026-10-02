@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
@@ -26,6 +27,20 @@ def _zstd():
     return zstandard
 
 
+_LOCAL = threading.local()
+
+
+def _thread_compressor(level: int, threads: int = 0):
+    """One compressor per thread, level and thread count: building a level-19 one is costly."""
+    cache = getattr(_LOCAL, "compressors", None)
+    if cache is None:
+        cache = _LOCAL.compressors = {}
+    key = (level, threads)
+    if key not in cache:
+        cache[key] = _zstd().ZstdCompressor(level=level, write_content_size=True, threads=threads)
+    return cache[key]
+
+
 @dataclass(frozen=True)
 class CompressResult:
     size: int
@@ -40,20 +55,21 @@ def compress_file(
     level: int,
     size: int | None = None,
     prefix_length: int | None = None,
+    threads: int = 0,
 ) -> CompressResult:
     """Compress the first ``size`` bytes of ``src`` (default: its current size) into ``dst``.
 
     ``prefix_length`` asks for the SHA-256 of the first that many bytes as well; it is None
     when the file is shorter. A file that shrinks while being read raises ``OSError``.
     """
-    zstandard = _zstd()
+    _zstd()
     if size is None:
         size = src.stat().st_size
     whole = hashlib.sha256()
     prefix_digest = hashlib.sha256().hexdigest() if prefix_length == 0 else None
     remaining = size
     dst.parent.mkdir(parents=True, exist_ok=True)
-    compressor = zstandard.ZstdCompressor(level=level, write_content_size=True)
+    compressor = _thread_compressor(level, threads)
     try:
         with src.open("rb") as reader, dst.open("wb") as raw_out:
             # Not a context manager: on error the frame must not be finished.

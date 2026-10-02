@@ -93,3 +93,18 @@ def test_open_maybe_compressed_reads_text(tmp_path, compressed):
 
     with open_maybe_compressed(path) as handle:
         assert handle.read() == "line one\nline two\n"
+
+
+def test_reused_compressor_gives_identical_frames(tmp_path):
+    first = tmp_path / "a.jsonl"
+    second = tmp_path / "b.jsonl"
+    first.write_bytes(b"alpha " * 5000)
+    second.write_bytes(b"beta " * 7000)
+
+    for name in ("a1", "b1", "a2", "b2"):
+        compress_file(first if name[0] == "a" else second, tmp_path / f"{name}.zst", level=19)
+
+    assert (tmp_path / "a1.zst").read_bytes() == (tmp_path / "a2.zst").read_bytes()
+    assert (tmp_path / "b1.zst").read_bytes() == (tmp_path / "b2.zst").read_bytes()
+    fresh = zstandard.ZstdCompressor(level=19, write_content_size=True).compress(b"beta " * 7000)
+    assert zstandard.ZstdDecompressor().decompress(fresh) == b"beta " * 7000
