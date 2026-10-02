@@ -47,8 +47,10 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     tmp_root = Path(args.tmp_root) if args.tmp_root else repo_root / ".tmp"
 
+    # pytest creates --basetemp itself but not its parent, which a fresh checkout lacks.
+    tmp_root.mkdir(parents=True, exist_ok=True)
+
     if _is_windows():
-        tmp_root.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("TEMP", str(tmp_root))
         os.environ.setdefault("TMP", str(tmp_root))
         os.environ.setdefault("TMPDIR", str(tmp_root))
