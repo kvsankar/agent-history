@@ -1,0 +1,142 @@
+"""Tests for the SSH destination, using a stand-in ssh that runs commands locally."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import stat
+import sys
+from datetime import datetime, timedelta, timezone
+
+import pytest
+import zstandard
+
+from agent_history.archive.collect import collect_source
+from agent_history.archive.config import parse_config
+from agent_history.archive.ssh_destination import SshDestination
+from agent_history.archive.transport import open_destination
+from agent_history.archive.verify import verify_source
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("sh") is None, reason="needs a POSIX sh"
+)
+
+# Like ssh: skip options and the host, then run the remaining words joined by spaces.
+FAKE_SSH = """#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o|-p) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+shift
+exec sh -c "$*"
+"""
+
+T0 = datetime(2026, 10, 2, 6, 15, tzinfo=timezone.utc)
+SESSION = ".claude/projects/-home-alex-shop/a1.jsonl"
+
+
+@pytest.fixture
+def fake_ssh(tmp_path):
+    path = tmp_path / "bin" / "ssh"
+    path.parent.mkdir()
+    path.write_text(FAKE_SSH, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return str(path)
+
+
+@pytest.fixture
+def remote(tmp_path, fake_ssh):
+    root = tmp_path / "remote archive"  # a space, to exercise quoting
+    return SshDestination("nas", str(root), ssh=[fake_ssh]), root
+
+
+def test_parses_ssh_urls():
+    dest = SshDestination.from_url("ssh://alex@nas:2222/volume1/agent-archive")
+
+    assert dest.host == "alex@nas"
+    assert dest.port == 2222
+    assert dest.root == "/volume1/agent-archive"
+
+
+def test_open_destination_selects_ssh():
+    dest = open_destination("ssh://nas/srv/archive")
+
+    assert isinstance(dest, SshDestination)
+    assert dest.root == "/srv/archive"
+
+
+def test_basic_operations(remote):
+    dest, root = remote
+
+    assert dest.read_bytes("a/b.txt") is None
+    dest.write_bytes("a/b.txt", b"hello")
+    assert (root / "a" / "b.txt").read_bytes() == b"hello"
+    assert dest.read_bytes("a/b.txt") == b"hello"
+    assert dest.exists("a/b.txt")
+    assert dest.list_files("a") == ["b.txt"]
+    assert dest.list_files("missing") == []
+    assert dest.move("a/b.txt", "c/d e.txt")
+    assert not dest.move("a/b.txt", "x.txt")
+    assert dest.read_bytes("c/d e.txt") == b"hello"
+    with dest.open_binary("c/d e.txt") as handle:
+        assert handle.read() == b"hello"
+
+
+def test_put_tree_keeps_times(remote, tmp_path):
+    dest, root = remote
+    staging = tmp_path / "staging"
+    (staging / "sources" / "s").mkdir(parents=True)
+    staged = staging / "sources" / "s" / "f.zst"
+    staged.write_bytes(b"data")
+    os.utime(staged, (1_790_000_000, 1_790_000_000))
+
+    dest.put_tree(staging)
+
+    copied = root / "sources" / "s" / "f.zst"
+    assert copied.read_bytes() == b"data"
+    assert int(copied.stat().st_mtime) == 1_790_000_000
+
+
+def test_collect_and_verify_over_ssh(remote, tmp_path):
+    dest, root = remote
+    home = tmp_path / "home"
+    session = home / SESSION
+    session.parent.mkdir(parents=True)
+    session.write_bytes(b"original\n")
+    os.utime(session, (1_790_000_000, 1_790_000_000))
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    state = tmp_path / "state"
+
+    collect_source(config, "src", state_dir=state, now=T0, destination=dest)
+    session.write_bytes(b"new\n")
+    os.utime(session, (1_790_000_100, 1_790_000_100))
+    second = collect_source(
+        config, "src", state_dir=state, now=T0 + timedelta(hours=1), destination=dest
+    )
+
+    assert second.versioned == 1
+    archived = root / "sources" / "src" / "files" / f"{SESSION}.zst"
+    assert zstandard.ZstdDecompressor().decompress(archived.read_bytes()) == b"new\n"
+    assert verify_source(dest, "src").ok
+    for state_file in state.rglob("*.json"):
+        state_file.unlink()
+    third = collect_source(
+        config, "src", state_dir=state, now=T0 + timedelta(hours=2), destination=dest
+    )
+    assert third.written == 0
+
+
+def test_unsafe_paths_are_refused(remote):
+    from agent_history.archive.errors import ArchiveError
+
+    dest, _root = remote
+    with pytest.raises(ArchiveError):
+        dest.write_bytes("../escape", b"x")
