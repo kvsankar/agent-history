@@ -31,13 +31,20 @@ _LOCAL = threading.local()
 
 
 def _thread_compressor(level: int, threads: int = 0):
-    """One compressor per thread, level and thread count: building a level-19 one is costly."""
+    """A compressor for this thread.
+
+    Single-threaded ones are kept per thread and level, because building a level-19 one
+    is costly. Multi-threaded ones hold a large buffer per zstd thread, so they are built
+    for one file and released.
+    """
+    if threads:
+        return _zstd().ZstdCompressor(level=level, write_content_size=True, threads=threads)
     cache = getattr(_LOCAL, "compressors", None)
     if cache is None:
         cache = _LOCAL.compressors = {}
-    key = (level, threads)
+    key = (level, 0)
     if key not in cache:
-        cache[key] = _zstd().ZstdCompressor(level=level, write_content_size=True, threads=threads)
+        cache[key] = _zstd().ZstdCompressor(level=level, write_content_size=True)
     return cache[key]
 
 

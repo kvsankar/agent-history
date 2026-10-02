@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -56,6 +57,8 @@ _IN_FLIGHT_PER_WORKER = 4
 # Files this large are compressed with zstd's own threads as well, so one large session
 # file does not take minutes on a single core.
 LARGE_FILE_BYTES = 64 * 1024 * 1024
+# Only one large file at a time uses those threads, which bounds the memory they take.
+_LARGE_FILE_SLOT = threading.Lock()
 _FILE_ERRORS = (OSError, sqlite3.Error)
 
 
@@ -257,14 +260,7 @@ class _Run:
         elif self.dry_run:
             result = hash_file(content, size, prefix_length)
         else:
-            result = compress_file(
-                content,
-                staged,
-                self.config.compression_level,
-                size=size,
-                prefix_length=prefix_length,
-                threads=self.config.workers if size >= LARGE_FILE_BYTES else 0,
-            )
+            result = self._compress(content, staged, size, prefix_length)
             os.utime(staged, ns=(mtime_ns, mtime_ns))
         if previous and result.sha256 == previous.sha256:
             staged.unlink(missing_ok=True)
@@ -282,6 +278,20 @@ class _Run:
             entry["version_path"] = version
             self.moves.append((archived, f"sources/{self.source.name}/{version}"))
         return entry
+
+    def _compress(self, content: Path, staged: Path, size: int, prefix_length: int | None):
+        level = self.config.compression_level
+        if size < LARGE_FILE_BYTES or self.config.workers < 2:
+            return compress_file(content, staged, level, size=size, prefix_length=prefix_length)
+        with _LARGE_FILE_SLOT:
+            return compress_file(
+                content,
+                staged,
+                level,
+                size=size,
+                prefix_length=prefix_length,
+                threads=self.config.workers,
+            )
 
     def _file_entry(self, item, action, size, mtime_ns, sha256, extra=None) -> dict[str, Any]:
         entry = {

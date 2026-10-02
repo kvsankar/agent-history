@@ -121,7 +121,7 @@ def test_load_config_reports_missing_file(tmp_path):
 
 
 def test_workers_default_and_validation():
-    assert 1 <= parse_config(_config()).workers <= 8
+    assert 1 <= parse_config(_config()).workers <= 4
     assert parse_config(_config(archive={"destination": "/a", "workers": 3})).workers == 3
     with pytest.raises(ArchiveConfigError, match="workers"):
         parse_config(_config(archive={"destination": "/a", "workers": 0}))

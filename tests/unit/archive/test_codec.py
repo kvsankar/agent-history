@@ -108,3 +108,18 @@ def test_reused_compressor_gives_identical_frames(tmp_path):
     assert (tmp_path / "b1.zst").read_bytes() == (tmp_path / "b2.zst").read_bytes()
     fresh = zstandard.ZstdCompressor(level=19, write_content_size=True).compress(b"beta " * 7000)
     assert zstandard.ZstdDecompressor().decompress(fresh) == b"beta " * 7000
+
+
+def test_multithreaded_compressors_are_not_kept(tmp_path):
+    from agent_history.archive import codec
+
+    src = tmp_path / "s.jsonl"
+    src.write_bytes(b"z" * 10000)
+
+    compress_file(src, tmp_path / "o.zst", level=3, threads=2)
+
+    cached = getattr(codec._LOCAL, "compressors", {})
+    assert all(threads == 0 for (_level, threads) in cached)
+    assert (
+        zstandard.ZstdDecompressor().decompress((tmp_path / "o.zst").read_bytes()) == b"z" * 10000
+    )

@@ -103,7 +103,7 @@ def _reject_unknown(section: dict[str, Any], allowed: set, where: str) -> None:
 
 
 def _workers(archive: dict[str, Any]) -> int:
-    value = archive.get("workers", min(8, os.cpu_count() or 1))
+    value = archive.get("workers", min(4, os.cpu_count() or 1))
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 64:
         raise ArchiveConfigError("archive.workers must be an integer from 1 to 64")
     return value

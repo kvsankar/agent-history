@@ -109,7 +109,7 @@ uses JSON, like the existing `~/.cagelens/config.json`.
 | `destination` | A local path (which may be a network mount) or `ssh://host/path`. |
 | `compression_level` | The zstd level, 1–19. The default is 19. Higher levels make smaller files and compress more slowly; reading is about equally fast at every level. |
 | `min_interval_hours` | A run exits without work if the source's last successful run was more recent. A scheduler can then start the collector often (for example hourly) and still get one run a day, plus a catch-up run after a machine was off. `--force` ignores it. |
-| `workers` | Files compressed in parallel. The default is the number of CPUs, at most 8. |
+| `workers` | Files compressed in parallel. The default is the number of CPUs, at most 4. At level 19, 4 workers peaked at about 700 MB of memory and 8 at about 940 MB, at nearly the same speed. |
 | `health_url` | Optional. The collector requests `<url>/start` at the beginning, `<url>` on success and `<url>/fail` on failure. Any service that accepts these requests works. |
 | `sources[].home` | The home directory to read. Agent folders are found under it with the default layouts below. |
 | `sources[].platform` | `linux`, `darwin` or `windows`. It selects platform-specific default folders, such as where VS Code keeps its chats. It describes the source, not the machine the collector runs on, so a Linux collector can read a Windows home through a mount. |
@@ -268,8 +268,11 @@ retries on the next run.
 4. For each changed file: copy and redact it if it is a snapshot database, or
    export its new rows if it is a log database; then hash it, apply the
    content-loss guard, and compress it into a staging folder laid out like the
-   archive. `workers` files are processed in parallel, and entries are recorded in
-   walk order. The staging folder is under the state folder, never the system temp
+   archive. `workers` files are processed in parallel; entries are recorded as files
+   finish and sorted by path at the end. Each worker keeps one single-threaded
+   compressor. A file of 64 MB or more is compressed with `workers` zstd threads by a
+   compressor built for that file alone, and only one such file is compressed at a
+   time, which bounds memory. The staging folder is under the state folder, never the system temp
    folder, which is often a small in-memory filesystem.
 5. Whenever about 512 MB is staged, and at the end, transfer the staging folder,
    after first moving aside the archived copies that rewrites will replace:

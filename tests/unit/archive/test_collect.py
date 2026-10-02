@@ -405,3 +405,35 @@ def test_large_files_use_multithreaded_compression(env, monkeypatch):
 
     assert seen == [3]
     assert _archived(env, SESSION) == b"y" * 2048
+
+
+def test_only_one_large_file_uses_extra_threads_at_a_time(env, monkeypatch):
+    import threading
+    import time as time_module
+
+    from agent_history.archive import collect as collect_module
+
+    for index in range(4):
+        _write(env, f".claude/projects/p/big{index}.jsonl", b"b" * 4096, mtime=1_790_000_000)
+    monkeypatch.setattr(collect_module, "LARGE_FILE_BYTES", 1024)
+    active = []
+    peak = [0]
+    lock = threading.Lock()
+    real = collect_module.compress_file
+
+    def tracking(*args, **kwargs):
+        if kwargs.get("threads"):
+            with lock:
+                active.append(1)
+                peak[0] = max(peak[0], len(active))
+            time_module.sleep(0.05)
+            with lock:
+                active.pop()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(collect_module, "compress_file", tracking)
+
+    summary = _collect(env, config=_config(env, workers=4))
+
+    assert summary.written == 4
+    assert peak[0] == 1
