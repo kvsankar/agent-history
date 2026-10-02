@@ -64,10 +64,10 @@ class TestRemoteSessionList:
         assert any("session-claude-001" in s.get("filename", "") for s in sessions)
 
     def test_session_list_remote_with_workspace(self, docker_env, cli_path):
-        """session list -r with workspace pattern."""
+        """session list -r with an exact workspace (positional workspaces are exact)."""
         node = docker_env["node_alpha"]
         result = run_cli(
-            ["session", "list", "-r", f"alice@{node}", "myproject", "--format", "json"],
+            ["session", "list", "-r", f"alice@{node}", "/home/alice/myproject", "--format", "json"],
             cli_path,
         )
 
