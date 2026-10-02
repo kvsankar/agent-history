@@ -57,3 +57,6 @@ codex_rejection_session.jsonl
 # PoC exploratory scripts
 poc/
 scripts/poc/
+
+# Test temp root created by scripts/run_tests.py
+.tmp/
