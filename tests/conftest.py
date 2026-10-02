@@ -449,6 +449,18 @@ def gemini_expected(expected_values: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _drop_inherited_config_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop an outer config-dir override from leaking into tests.
+
+    CAGELENS_CONFIG_DIR takes precedence over AGENT_HISTORY_CONFIG_DIR, so an inherited
+    value (CI sets one) would override the config dir that isolated-home fixtures choose.
+    Tests that need either variable set it themselves.
+    """
+    monkeypatch.delenv("CAGELENS_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("AGENT_HISTORY_CONFIG_DIR", raising=False)
+
+
 @pytest.fixture
 def isolated_home(tmp_path: Path) -> Generator[Dict[str, Any], None, None]:
     """Create function-scoped isolated home with environment overrides.
