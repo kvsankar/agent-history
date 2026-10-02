@@ -128,13 +128,8 @@ class SSHRemoteClient:
         if ".." in remote_path:
             raise RemoteClientError("Unsafe remote path")
 
-        cmd = [
-            "ssh",
-            remote_host,
-            "sh",
-            "-c",
-            f"cat {shlex.quote(remote_path)}",
-        ]
+        # ssh joins its remote arguments with spaces, so pass one already-quoted command.
+        cmd = ["ssh", remote_host, f"cat {shlex.quote(remote_path)}"]
 
         result = subprocess.run(cmd, capture_output=True, check=False)
         if result.returncode != 0:
