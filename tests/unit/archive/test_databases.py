@@ -260,3 +260,21 @@ def test_recently_modified_database_is_checked_again(env):
     (entry2,) = _entries(env, second.run_id)
     assert entry1["racy"] is True
     assert entry2["action"] == "versioned"
+
+
+def test_database_that_cannot_be_opened_read_only_is_copied_first(env, monkeypatch):
+    """Network filesystems (WSL's /mnt/c) cannot open WAL databases read-only."""
+    from agent_history.archive import databases
+
+    def refuse(path):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(databases, "_open_read_only", refuse)
+    conn = _copilot_data_db(env)  # open: recent rows are only in the WAL
+
+    summary = _collect(env)
+
+    conn.close()
+    assert summary.errors == 0
+    path, _raw = _restore(env, ".copilot/data.db")
+    assert sqlite3.connect(path).execute("SELECT login FROM accounts").fetchall() == [("alex",)]

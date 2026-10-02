@@ -118,3 +118,15 @@ def test_load_config_reads_json_file(tmp_path):
 def test_load_config_reports_missing_file(tmp_path):
     with pytest.raises(ArchiveConfigError, match="not found"):
         load_config(tmp_path / "missing.json")
+
+
+def test_workers_default_and_validation():
+    assert 1 <= parse_config(_config()).workers <= 8
+    assert parse_config(_config(archive={"destination": "/a", "workers": 3})).workers == 3
+    with pytest.raises(ArchiveConfigError, match="workers"):
+        parse_config(_config(archive={"destination": "/a", "workers": 0}))
+
+
+def test_unknown_settings_are_rejected():
+    with pytest.raises(ArchiveConfigError, match="worker"):
+        parse_config(_config(archive={"destination": "/a", "worker": 3}))

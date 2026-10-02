@@ -49,18 +49,28 @@ def sync_catalog(
     destination: Destination,
     sources: list[str] | None = None,
     rebuild: bool = False,
+    work_dir: Path | None = None,
 ) -> SyncSummary:
-    """Ingest new manifests of each source; ``rebuild`` first empties the catalog."""
+    """Ingest new manifests of each source; ``rebuild`` first empties the catalog.
+
+    Session files are decompressed into ``work_dir`` (default: under the cagelens config
+    folder, not the system temp folder, which is often a small tmpfs).
+    """
+    if work_dir is None:
+        from agent_history.storage.config import get_config_dir
+
+        work_dir = get_config_dir() / "archive-work"
+    Path(work_dir).mkdir(parents=True, exist_ok=True)
     if rebuild:
         store.clear()
     summary = SyncSummary()
     for name in sources or list_sources(destination):
-        _sync_source(store, destination, name, summary)
+        _sync_source(store, destination, name, summary, Path(work_dir))
         summary.sources += 1
     return summary
 
 
-def _sync_source(store, destination, name: str, summary: SyncSummary) -> None:
+def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: Path) -> None:
     descriptor = json.loads(destination.read_bytes(f"sources/{name}/SOURCE.json") or b"{}")
     done = {row[0] for row in store.fetchall("SELECT run_id FROM runs WHERE source = ?", (name,))}
     changed: dict[str, str] = {}
@@ -78,7 +88,7 @@ def _sync_source(store, destination, name: str, summary: SyncSummary) -> None:
         if target is None:
             continue
         try:
-            rows = _extract_sessions(destination, name, path, target, sha256)
+            rows = _extract_sessions(destination, name, path, target, sha256, work_dir)
         except Exception as exc:  # one bad file must not stop the sync
             summary.errors.append(f"{name}:{path}: {exc}")
             continue
@@ -210,9 +220,14 @@ def _record_rows(store, source: str, run_id: str, entry: dict) -> None:
 
 
 def _extract_sessions(
-    destination: Destination, source: str, path: str, target: SessionTarget, sha256: str
+    destination: Destination,
+    source: str,
+    path: str,
+    target: SessionTarget,
+    sha256: str,
+    work_dir: Path,
 ) -> list[dict[str, Any]]:
-    with tempfile.TemporaryDirectory(prefix="cagelens-catalog-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="session-", dir=work_dir) as tmp:
         local = Path(tmp) / path  # keep folder names: some parsers read them
         local.parent.mkdir(parents=True, exist_ok=True)
         with destination.open_binary(archive_file_path(source, path)) as raw, local.open(

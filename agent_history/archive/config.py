@@ -7,6 +7,7 @@ The configuration names the archive destination and the sources to collect. Entr
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,8 @@ DEFAULT_COMPRESSION_LEVEL = 19
 SOURCE_KINDS = ("live", "imported", "restored")
 PLATFORMS = ("linux", "darwin", "windows")
 _SOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_ARCHIVE_KEYS = {"destination", "compression_level", "min_interval_hours", "health_url", "workers"}
+_SOURCE_KEYS = {"name", "kind", "platform", "note", "home", "roots", "agents", "include", "exclude"}
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,7 @@ class ArchiveConfig:
     min_interval_hours: float
     health_url: str | None
     sources: tuple[SourceConfig, ...]
+    workers: int = 1
 
     def source(self, name: str) -> SourceConfig:
         for source in self.sources:
@@ -78,6 +82,7 @@ def parse_config(data: dict[str, Any]) -> ArchiveConfig:
     if not isinstance(data, dict):
         raise ArchiveConfigError("Archive configuration must be a JSON object")
     archive = data.get("archive") or {}
+    _reject_unknown(archive, _ARCHIVE_KEYS, "archive")
     destination = archive.get("destination")
     if not isinstance(destination, str) or not destination.strip():
         raise ArchiveConfigError("archive.destination is required")
@@ -87,7 +92,21 @@ def parse_config(data: dict[str, Any]) -> ArchiveConfig:
         min_interval_hours=_min_interval(archive),
         health_url=archive.get("health_url") or None,
         sources=_merge_sources(data.get("sources") or []),
+        workers=_workers(archive),
     )
+
+
+def _reject_unknown(section: dict[str, Any], allowed: set, where: str) -> None:
+    unknown = sorted(set(section) - allowed)
+    if unknown:
+        raise ArchiveConfigError(f"Unknown setting in {where}: {', '.join(unknown)}")
+
+
+def _workers(archive: dict[str, Any]) -> int:
+    value = archive.get("workers", min(8, os.cpu_count() or 1))
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 64:
+        raise ArchiveConfigError("archive.workers must be an integer from 1 to 64")
+    return value
 
 
 def _compression_level(archive: dict[str, Any]) -> int:
@@ -107,6 +126,7 @@ def _min_interval(archive: dict[str, Any]) -> float:
 def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:
     merged: dict[str, SourceConfig] = {}
     for entry in entries:
+        _reject_unknown(entry, _SOURCE_KEYS, f"source {entry.get('name')!r}")
         name, kind, platform, note = _source_identity(entry)
         part = _source_part(entry, name)
         existing = merged.get(name)

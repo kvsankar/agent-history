@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 import sqlite3
 import tempfile
 from contextlib import closing
@@ -45,7 +46,7 @@ def process_database(run: _Run, item: SelectedFile, staging: Path) -> dict[str, 
     previous = run.state.files.get(item.rel_path)
     if previous is not None and previous.signature == signature:
         return None
-    with tempfile.TemporaryDirectory(prefix="cagelens-db-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="db-", dir=run.work_root) as tmp:
         snapshot = Path(tmp) / "snapshot.db"
         backup_database(item.path, snapshot)
         if rule.mode == "log":
@@ -94,12 +95,50 @@ def signature_is_racy(signature: list[int]) -> bool:
 
 
 def backup_database(src: Path, dst: Path) -> None:
-    """Copy a live database consistently, without writing to the source folder."""
-    source = sqlite3.connect(f"{src.resolve().as_uri()}?mode=ro", uri=True)
-    with closing(source), closing(sqlite3.connect(dst)) as target:
-        source.backup(target)
+    """Copy a live database consistently, without writing to the source folder.
+
+    Some filesystems (WSL's /mnt/c) cannot open a WAL database read-only. Then the file and
+    its WAL are copied to local disk first, and the copy is checked before it is used.
+    """
+    try:
+        with closing(_open_read_only(src)) as source, closing(sqlite3.connect(dst)) as target:
+            source.backup(target)
+    except sqlite3.OperationalError:
+        dst.unlink(missing_ok=True)
+        _backup_from_copy(src, dst)
     with closing(sqlite3.connect(dst)) as target:
         target.execute("PRAGMA journal_mode=DELETE")
+
+
+def _open_read_only(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+    except sqlite3.Error:
+        conn.close()
+        raise
+    return conn
+
+
+def _backup_from_copy(src: Path, dst: Path, attempts: int = 3) -> None:
+    copy = dst.with_name("source-copy.db")
+    wal = src.with_name(src.name + "-wal")
+    for _ in range(attempts):
+        before = database_signature(src)
+        shutil.copyfile(src, copy)
+        copy_wal = copy.with_name(copy.name + "-wal")
+        copy_wal.unlink(missing_ok=True)
+        if wal.exists():
+            shutil.copyfile(wal, copy_wal)
+        if database_signature(src) != before:
+            continue  # written while copying; try again
+        with closing(sqlite3.connect(copy)) as conn:
+            if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                continue
+            with closing(sqlite3.connect(dst)) as target:
+                conn.backup(target)
+        return
+    raise sqlite3.OperationalError(f"{src} kept changing or failed its check while being copied")
 
 
 def blank_credentials(path: Path, rule: DatabaseRule) -> list[str]:

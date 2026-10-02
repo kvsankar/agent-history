@@ -31,10 +31,22 @@ CREDENTIAL_DENYLIST = (
     ".credentials.json",
     "credentials*",
     "google_accounts.json",
+    # Browser credential stores (also caught by skipping whole profiles, below).
+    "cookies",
+    "cookies.sqlite*",
+    "login data*",
+    "web data*",
+    "local state",
+    "key4.db",
+    "logins.json",
 )
 
+# A folder holding any of these is a browser profile: cookies, saved logins and caches,
+# never session content. Such folders are not descended into.
+BROWSER_PROFILE_MARKERS = ("Local State", "cookies.sqlite", "logins.json", "key4.db")
+
 # Matched against file names only, in every layout.
-COMMON_EXCLUDES = ("*.tmp", "*.part", "*-wal", "*-shm", "*-journal")
+COMMON_EXCLUDES = ("*.tmp", "*.part", "*-wal", "*-shm", "*-journal", "*.lock")
 
 
 @dataclass(frozen=True)
@@ -145,6 +157,7 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         roots={"*": (".copilot",)},
         include=("session-state/**", "chats/**", "history-session-state/**"),
         databases=(
+            DatabaseRule("session-state/*/session.db", "snapshot"),
             DatabaseRule(
                 "session-store.db",
                 "snapshot",
@@ -177,8 +190,7 @@ LAYOUTS: tuple[AgentLayout, ...] = (
     AgentLayout(
         name="cagelens",
         roots={"*": (".agent-history", ".cagelens")},
-        include=("**",),
-        exclude=("remote-cache/**", "web-cache/**", "archive-state/**", "*.db"),
+        include=("config.json", "aliases*.json", "project_tags*"),
     ),
 )
 
@@ -296,42 +308,59 @@ def _name_allowed(rel_path: str) -> bool:
 
 
 def _walk_matching(root: Path, patterns: list[str]) -> Iterator[str]:
-    """Yield "/"-separated paths under ``root`` that match any pattern, without symlinks."""
+    """Yield "/"-separated paths under ``root`` that match any pattern, without symlinks.
+
+    Each pattern is followed segment by segment, so a pattern only descends into folders
+    it can match; only a ``**`` segment walks a whole subtree.
+    """
     found = set()
     for pattern in patterns:
         regex = _compiled(pattern)
-        prefix = _static_prefix(pattern)
-        start = root / prefix if prefix else root
-        for rel_path in _walk_files(root, start):
+        for rel_path in _walk_segments(root, "", pattern.split("/")):
             if rel_path not in found and regex.match(rel_path):
                 found.add(rel_path)
                 yield rel_path
 
 
-def _walk_files(root: Path, start: Path) -> Iterator[str]:
-    if start.is_symlink():
+def _walk_segments(root: Path, rel_dir: str, segments: list[str]) -> Iterator[str]:
+    segment, rest = segments[0], segments[1:]
+    if segment == "**":
+        yield from _walk_tree(root, rel_dir)
         return
-    if start.is_file():
-        yield start.relative_to(root).as_posix()
-        return
-    if not start.is_dir():
-        return
-    for dirpath, dirnames, filenames in os.walk(start, followlinks=False):
-        dirnames[:] = sorted(d for d in dirnames if not os.path.islink(os.path.join(dirpath, d)))
-        base = Path(dirpath)
-        for filename in sorted(filenames):
-            path = base / filename
-            if not path.is_symlink():
-                yield path.relative_to(root).as_posix()
+    matcher = _compiled(segment)
+    for entry in _scan(root / rel_dir if rel_dir else root):
+        if not matcher.match(entry.name) or entry.is_symlink():
+            continue
+        rel_path = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
+        if rest and entry.is_dir(follow_symlinks=False):
+            if not _is_browser_profile(Path(entry.path)):
+                yield from _walk_segments(root, rel_path, rest)
+        elif not rest and entry.is_file(follow_symlinks=False):
+            yield rel_path
 
 
-def _static_prefix(pattern: str) -> str:
-    segments = []
-    for segment in pattern.split("/"):
-        if any(ch in segment for ch in "*?["):
-            break
-        segments.append(segment)
-    return "/".join(segments)
+def _walk_tree(root: Path, rel_dir: str) -> Iterator[str]:
+    for entry in _scan(root / rel_dir if rel_dir else root):
+        if entry.is_symlink():
+            continue
+        rel_path = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
+        if entry.is_dir(follow_symlinks=False):
+            if not _is_browser_profile(Path(entry.path)):
+                yield from _walk_tree(root, rel_path)
+        elif entry.is_file(follow_symlinks=False):
+            yield rel_path
+
+
+def _is_browser_profile(folder: Path) -> bool:
+    return any((folder / marker).exists() for marker in BROWSER_PROFILE_MARKERS)
+
+
+def _scan(folder: Path) -> list[os.DirEntry]:
+    try:
+        with os.scandir(folder) as entries:
+            return sorted(entries, key=lambda entry: entry.name)
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return []
 
 
 def _matches_any(rel_path: str, patterns) -> bool:

@@ -8,19 +8,22 @@ files that no manifest lists; the next run writes them again.
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from agent_history.archive.codec import compress_file
+from agent_history.archive.codec import CompressResult, compress_file, hash_file
 from agent_history.archive.config import ArchiveConfig, SourceConfig
 from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import SelectedFile, archive_file_path, iter_source_files
@@ -48,6 +51,9 @@ ARCHIVE_FORMAT = 1
 # A file modified this recently may change again within the same timestamp tick without
 # its size or time changing, so its state is not trusted and the next run checks it again.
 RACY_WINDOW_NS = 2_000_000_000
+# Staged files are transferred whenever this much has accumulated, and at the end.
+BATCH_BYTES = 512 * 1024 * 1024
+_CHUNK_FILES = 64
 _FILE_ERRORS = (OSError, sqlite3.Error)
 
 
@@ -115,6 +121,9 @@ class _Run:
         self.state = load_state(self.state_file) or self._rebuild_state()
         self.summary = RunSummary(self.run_id, source.name, dry_run=dry_run)
         self.moves: list[tuple[str, str]] = []
+        self.staged_bytes = 0
+        # On disk next to the state, never the system temp folder (often a small tmpfs).
+        self.work_root = self.state_file.parent / "work"
 
     def _rebuild_state(self) -> SourceState:
         state = SourceState()
@@ -133,8 +142,12 @@ class _Run:
         check_archive_format(self.destination, create=not self.dry_run)
         if not self.dry_run:
             self._ping("/start")
+            self.destination.write_bytes(
+                f"sources/{self.source.name}/SOURCE.json", self._descriptor()
+            )
+        self.work_root.mkdir(parents=True, exist_ok=True)
         try:
-            with tempfile.TemporaryDirectory(prefix="cagelens-archive-") as staging:
+            with tempfile.TemporaryDirectory(prefix="staging-", dir=self.work_root) as staging:
                 self._scan(Path(staging))
                 if not self.dry_run:
                     self._commit(Path(staging))
@@ -150,21 +163,33 @@ class _Run:
 
     def _scan(self, staging: Path) -> None:
         seen = set()
-        for item in iter_source_files(self.source):
-            seen.add(item.rel_path)
-            try:
-                entry = self._process(item, staging)
-            except _FILE_ERRORS as exc:
-                self.summary.errors += 1
-                entry = {"type": "error", "path": item.rel_path, "message": str(exc)}
-            if entry:
-                self._record(entry)
+        items = iter_source_files(self.source)
+        with ThreadPoolExecutor(max_workers=self.config.workers) as pool:
+            while True:
+                chunk = list(itertools.islice(items, _CHUNK_FILES))
+                if not chunk:
+                    break
+                seen.update(item.rel_path for item in chunk)
+                for entry in pool.map(lambda item: self._safe_process(item, staging), chunk):
+                    if entry:
+                        self._record(entry)
+                if not self.dry_run and self.staged_bytes >= BATCH_BYTES:
+                    self._flush(staging)
         for rel_path, previous in sorted(self.state.files.items()):
             if rel_path not in seen and not previous.gone:
                 self._record({"type": "file", "path": rel_path, "action": "gone"})
 
+    def _safe_process(self, item: SelectedFile, staging: Path) -> dict[str, Any] | None:
+        try:
+            return self._process(item, staging)
+        except _FILE_ERRORS as exc:
+            return {"type": "error", "path": item.rel_path, "message": str(exc)}
+
     def _record(self, entry: dict[str, Any]) -> None:
         self.summary.entries.append(entry)
+        if entry.get("type") == "error":
+            self.summary.errors += 1
+        self.staged_bytes += entry.get("compressed_size") or 0
         action = entry.get("action")
         if action in ("added", "updated", "versioned") or entry.get("rows"):
             self.summary.written += 1
@@ -201,16 +226,22 @@ class _Run:
         """Compress ``content`` as the new version of ``item`` and decide its action."""
         archived = archive_file_path(self.source.name, item.rel_path)
         staged = staging / archived
-        result = compress_file(
-            content,
-            staged,
-            self.config.compression_level,
-            size=size,
-            prefix_length=previous.size if previous else None,
-        )
-        os.utime(staged, ns=(mtime_ns, mtime_ns))
+        prefix_length = previous.size if previous else None
+        if self.dry_run and previous is None:
+            result = CompressResult(size=size, sha256="", compressed_size=0)  # always "added"
+        elif self.dry_run:
+            result = hash_file(content, size, prefix_length)
+        else:
+            result = compress_file(
+                content,
+                staged,
+                self.config.compression_level,
+                size=size,
+                prefix_length=prefix_length,
+            )
+            os.utime(staged, ns=(mtime_ns, mtime_ns))
         if previous and result.sha256 == previous.sha256:
-            staged.unlink()
+            staged.unlink(missing_ok=True)
             return self._file_entry(item, "touched", size, mtime_ns, result.sha256, extra)
         action = "added"
         if previous:
@@ -243,12 +274,17 @@ class _Run:
 
     # -- committing -------------------------------------------------------------------
 
-    def _commit(self, staging: Path) -> None:
-        self.destination.write_bytes(f"sources/{self.source.name}/SOURCE.json", self._descriptor())
+    def _flush(self, staging: Path) -> None:
+        """Move aside rewritten files, transfer what is staged, then empty the staging folder."""
         self._apply_moves()
-        files_root = staging / "sources"
-        if files_root.exists():
+        self.moves = []
+        if (staging / "sources").exists():
             self.destination.put_tree(staging)
+            shutil.rmtree(staging / "sources")
+        self.staged_bytes = 0
+
+    def _commit(self, staging: Path) -> None:
+        self._flush(staging)
         run = {
             "run_id": self.run_id,
             "source": self.source.name,

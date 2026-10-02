@@ -275,3 +275,83 @@ def test_paths_are_never_written_outside_the_archive(env):
 
     written = [p for p in env["dest"].rglob("*") if p.is_file()]
     assert all(Path(os.path.commonpath([env["dest"], p])) == env["dest"] for p in written)
+
+
+def test_staging_lives_in_the_state_folder_and_is_removed(env, monkeypatch):
+    import tempfile as tempfile_module
+
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"a\n")
+    seen = []
+    real = collect_module.compress_file
+
+    def spy(src, dst, *args, **kwargs):
+        seen.append(Path(dst))
+        return real(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(collect_module, "compress_file", spy)
+    monkeypatch.setattr(tempfile_module, "tempdir", str(env["home"] / "no-system-temp"))
+
+    _collect(env)
+
+    assert seen
+    assert all(env["state"] in path.parents for path in seen)
+    assert not list((env["state"]).rglob("*.zst"))
+
+
+def test_large_runs_transfer_in_batches(env, monkeypatch):
+    from agent_history.archive import collect as collect_module
+
+    for index in range(5):
+        _write(
+            env, f".claude/projects/p/s{index}.jsonl", bytes(range(256)) * 40, mtime=1_790_000_000
+        )
+    from agent_history.archive.transport import LocalDestination
+
+    monkeypatch.setattr(collect_module, "BATCH_BYTES", 1)
+    monkeypatch.setattr(collect_module, "_CHUNK_FILES", 2)
+    calls = []
+    real_put = LocalDestination.put_tree
+
+    def counting(self, staging):
+        calls.append(sum(1 for p in Path(staging).rglob("*") if p.is_file()))
+        return real_put(self, staging)
+
+    monkeypatch.setattr(LocalDestination, "put_tree", counting)
+
+    summary = _collect(env)
+
+    assert summary.written == 5
+    assert len(calls) >= 2
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_dry_run_does_not_compress(env, monkeypatch):
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+
+    def fail(*args, **kwargs):
+        raise AssertionError("dry run compressed a file")
+
+    monkeypatch.setattr(collect_module, "compress_file", fail)
+    summary = _collect(env, now=T0 + timedelta(hours=1), dry_run=True)
+
+    assert [entry["action"] for entry in summary.entries] == ["versioned"]
+
+
+def test_parallel_workers_give_the_same_archive(env):
+    for index in range(20):
+        _write(
+            env, f".claude/projects/p/s{index}.jsonl", f"{index}\n".encode(), mtime=1_790_000_000
+        )
+    config = _config(env, workers=4)
+
+    summary = _collect(env, config=config)
+
+    assert summary.written == 20
+    assert _archived(env, ".claude/projects/p/s7.jsonl") == b"7\n"
+    assert verify_source(open_destination(str(env["dest"])), "src").ok

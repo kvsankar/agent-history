@@ -164,3 +164,63 @@ def test_archive_path_round_trip(segments):
 
     assert archived == f"sources/laptop/files/{rel}.zst"
     assert original_path("laptop", archived) == rel
+
+
+def test_walk_descends_only_where_patterns_can_match(tmp_path, monkeypatch):
+    from agent_history.archive import layouts
+
+    _touch(tmp_path, ".codex/state_5.sqlite")
+    _touch(tmp_path, ".codex/.tmp/plugins/deep/tree/file.txt")
+    _touch(tmp_path, ".codex/sessions/2026/10/02/rollout-1.jsonl")
+    visited = []
+    real_scandir = layouts.os.scandir
+
+    def recording(path):
+        visited.append(Path(path).as_posix())
+        return real_scandir(path)
+
+    monkeypatch.setattr(layouts.os, "scandir", recording)
+
+    selected = _selected(_source(tmp_path, agents=["codex"]))
+
+    assert set(selected) == {".codex/state_5.sqlite", ".codex/sessions/2026/10/02/rollout-1.jsonl"}
+    assert not [path for path in visited if "/.tmp" in path]
+
+
+def test_cagelens_keeps_configuration_not_caches(tmp_path):
+    _touch(tmp_path, ".cagelens/config.json")
+    _touch(tmp_path, ".cagelens/aliases.backup.20251216_104723.json")
+    _touch(tmp_path, ".cagelens/project_tags.json")
+    _touch(tmp_path, ".cagelens/remote_u1_codex/s.jsonl")
+    _touch(tmp_path, ".cagelens/remote-cache/h/claude/x.jsonl")
+    _touch(tmp_path, ".cagelens/metrics.db")
+    _touch(tmp_path, ".agent-history/config.json")
+
+    assert set(_selected(_source(tmp_path, agents=["cagelens"]))) == {
+        ".cagelens/config.json",
+        ".cagelens/aliases.backup.20251216_104723.json",
+        ".cagelens/project_tags.json",
+        ".agent-history/config.json",
+    }
+
+
+def test_browser_profiles_are_never_archived(tmp_path):
+    base = ".copilot/session-state/abc/files"
+    _touch(tmp_path, f"{base}/chrome-profile/Local State")
+    _touch(tmp_path, f"{base}/chrome-profile/Default/Network/Cookies")
+    _touch(tmp_path, f"{base}/chrome-profile/Default/Preferences")
+    _touch(tmp_path, f"{base}/firefox/cookies.sqlite")
+    _touch(tmp_path, f"{base}/firefox/prefs.js")
+    _touch(tmp_path, f"{base}/stray/Login Data")
+    _touch(tmp_path, f"{base}/screenshot.png")
+    _touch(tmp_path, ".copilot/session-state/abc/inuse.41364.lock")
+
+    assert set(_selected(_source(tmp_path))) == {f"{base}/screenshot.png"}
+
+
+def test_copilot_session_databases_are_snapshots(tmp_path):
+    _touch(tmp_path, ".copilot/session-state/abc/session.db")
+
+    selected = _selected(_source(tmp_path))
+
+    assert selected[".copilot/session-state/abc/session.db"].database.mode == "snapshot"

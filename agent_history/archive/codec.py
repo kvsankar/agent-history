@@ -82,6 +82,27 @@ def compress_file(
     )
 
 
+def hash_file(src: Path, size: int, prefix_length: int | None = None) -> CompressResult:
+    """Like :func:`compress_file` without writing anything; ``compressed_size`` is 0."""
+    whole = hashlib.sha256()
+    prefix_digest = whole.hexdigest() if prefix_length == 0 else None
+    done = 0
+    with src.open("rb") as reader:
+        while done < size:
+            chunk = reader.read(min(CHUNK_SIZE, size - done))
+            if not chunk:
+                raise OSError(f"{src} shrank while it was being archived")
+            if prefix_length and done < prefix_length <= done + len(chunk):
+                head = whole.copy()
+                head.update(chunk[: prefix_length - done])
+                prefix_digest = head.hexdigest()
+            whole.update(chunk)
+            done += len(chunk)
+    return CompressResult(
+        size=size, sha256=whole.hexdigest(), compressed_size=0, prefix_sha256=prefix_digest
+    )
+
+
 def compress_bytes(data: bytes, level: int) -> bytes:
     return _zstd().ZstdCompressor(level=level, write_content_size=True).compress(data)
 
