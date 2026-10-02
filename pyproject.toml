@@ -12,6 +12,11 @@ cagelens = "agent_history.cli.orchestrator:main"
 agent-history = "agent_history.cli.orchestrator:main"
 claude-history = "agent_history.cli.orchestrator:main"
 
+[project.optional-dependencies]
+archive = [
+    "zstandard>=0.22",
+]
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -84,6 +89,7 @@ dev = [
     "radon>=6.0.1",
     "hypothesis>=6.100.0",
     "ruff>=0.15.18",
+    "zstandard>=0.22",
 ]
 
 # Radon complexity thresholds (documented here, enforced in scripts/check_complexity.py)
