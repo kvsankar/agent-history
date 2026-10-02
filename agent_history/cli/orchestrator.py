@@ -812,6 +812,11 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
+    if argv and argv[0] == "archive":
+        from agent_history.archive.cli import main as archive_main
+
+        return archive_main(argv[1:])
+
     debug = (
         os.environ.get("CAGELENS_DEBUG") or os.environ.get("AGENT_HISTORY_DEBUG", "")
     ).lower() in ("1", "true", "yes")

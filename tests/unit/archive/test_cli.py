@@ -1,0 +1,87 @@
+"""Tests for the `cagelens archive` commands."""
+
+from __future__ import annotations
+
+import json
+import os
+
+import pytest
+
+from agent_history.cli.orchestrator import main
+
+SESSION = ".claude/projects/-home-alex-shop/a1.jsonl"
+
+
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    session = home / SESSION
+    session.parent.mkdir(parents=True)
+    session.write_text('{"type":"user"}\n', encoding="utf-8")
+    os.utime(session, (1_700_000_000, 1_700_000_000))
+    config = tmp_path / "archive.json"
+    config.write_text(
+        json.dumps(
+            {
+                "archive": {"destination": str(tmp_path / "archive"), "compression_level": 3},
+                "sources": [
+                    {"name": "laptop", "kind": "live", "platform": "linux", "home": str(home)}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "cagelens"))
+    return {"config": str(config), "tmp": tmp_path, "home": home}
+
+
+def test_collect_verify_and_catalog(setup, capsys):
+    config = setup["config"]
+
+    assert main(["archive", "collect", "--config", config]) == 0
+    assert "laptop: 1 written" in capsys.readouterr().out
+    assert main(["archive", "verify", "--config", config, "--all"]) == 0
+    assert "laptop: checked 1, ok" in capsys.readouterr().out
+    assert main(["archive", "catalog", "sync", "--config", config]) == 0
+    capsys.readouterr()
+    assert main(["archive", "catalog", "status", "--config", config, "--json"]) == 0
+    (status,) = json.loads(capsys.readouterr().out)
+    assert status["source"] == "laptop"
+    assert status["files"] == 1
+    assert (setup["tmp"] / "cagelens" / "archive-catalog.db").exists()
+
+
+def test_dry_run_lists_actions_without_writing(setup, capsys):
+    assert main(["archive", "collect", "--config", setup["config"], "--dry-run"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"added {SESSION}" in out
+    assert not (setup["tmp"] / "archive").exists()
+
+
+def test_unknown_source_is_an_error(setup, capsys):
+    assert main(["archive", "collect", "--config", setup["config"], "--source", "nope"]) == 1
+    assert "Unknown source: nope" in capsys.readouterr().err
+
+
+def test_missing_config_is_an_error(tmp_path, capsys):
+    assert main(["archive", "collect", "--config", str(tmp_path / "none.json")]) == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_verify_problems_give_exit_code_2(setup, capsys):
+    config = setup["config"]
+    main(["archive", "collect", "--config", config])
+    archived = setup["tmp"] / "archive" / "sources" / "laptop" / "files" / f"{SESSION}.zst"
+    archived.write_bytes(b"not zstd")
+    capsys.readouterr()
+
+    assert main(["archive", "verify", "--config", config]) == 2
+    assert f"mismatched: {SESSION}" in capsys.readouterr().out
+
+
+def test_archive_is_listed_in_main_help(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+
+    assert "archive" in capsys.readouterr().out

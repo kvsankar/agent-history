@@ -112,6 +112,7 @@ positional arguments:
     install                   Install CLI and agent skill packages
     reset                     Reset stored data
     fetch                     Fetch remote sessions into cache
+    archive                   Collect sessions into a compressed archive, verify it, and catalog it
 
 options:
   -h, --help                  show this help message and exit

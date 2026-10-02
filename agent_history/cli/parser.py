@@ -30,6 +30,7 @@ from agent_history.cli.constants import (
     MARKDOWN_MAX_LEVEL,
     MIN_SPLIT_LINES,
     OUTPUT_FORMAT_CHOICES,
+    RESOURCE_ARCHIVE,
     RESOURCE_FETCH,
     RESOURCE_GEMINI_INDEX,
     RESOURCE_HOME,
@@ -697,8 +698,19 @@ class CLIParser:
         self._add_install_parser(subparsers)
         self._add_reset_parser(subparsers)
         self._add_fetch_parser(subparsers)
+        self._add_archive_parser(subparsers)
 
         return parser
+
+    def _add_archive_parser(self, subparsers) -> None:
+        """List `archive` in help; `cagelens archive ...` is run by agent_history.archive.cli."""
+        archive_parser = subparsers.add_parser(
+            RESOURCE_ARCHIVE,
+            help="Collect sessions into a compressed archive, verify it, and catalog it",
+            add_help=False,
+        )
+        archive_parser.set_defaults(command=RESOURCE_ARCHIVE)
+        archive_parser.add_argument("archive_args", nargs=argparse.REMAINDER)
 
     # =========================================================================
     # Session subparser
@@ -1900,6 +1912,8 @@ class CLIParser:
             return (RESOURCE_RESET, DEFAULT_VERB_RUN)
         elif command == RESOURCE_FETCH:
             return (RESOURCE_FETCH, DEFAULT_VERB_RUN)
+        elif command == RESOURCE_ARCHIVE:
+            raise ValueError("Put 'archive' first, without global options: cagelens archive ...")
         else:
             raise ValueError(f"Unknown command: {command}")
 

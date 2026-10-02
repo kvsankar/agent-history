@@ -119,6 +119,7 @@ RESOURCE_GEMINI_INDEX = "gemini-index"
 RESOURCE_INSTALL = "install"
 RESOURCE_RESET = "reset"
 RESOURCE_FETCH = "fetch"
+RESOURCE_ARCHIVE = "archive"
 
 # Default verbs
 DEFAULT_VERB_LIST = "list"
