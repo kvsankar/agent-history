@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import secrets
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Collection, Iterator
 
 from agent_history.archive.codec import compress_bytes, decompress_bytes
 
@@ -50,13 +50,13 @@ def decode_manifest(data: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]]:
 
 
 def read_manifests(
-    destination: Destination, source: str
+    destination: Destination, source: str, skip_run_ids: Collection[str] = ()
 ) -> Iterator[tuple[dict[str, Any], list[dict[str, Any]]]]:
     """Yield (run, entries) for every manifest of a source, oldest first."""
     names = sorted(
         name
         for name in destination.list_files(manifests_dir(source))
-        if name.endswith(MANIFEST_SUFFIX)
+        if name.endswith(MANIFEST_SUFFIX) and name[: -len(MANIFEST_SUFFIX)] not in skip_run_ids
     )
     for name in names:
         data = destination.read_bytes(f"{manifests_dir(source)}/{name}")

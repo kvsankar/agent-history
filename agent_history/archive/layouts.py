@@ -46,6 +46,8 @@ class DatabaseRule:
     blank_columns: tuple[str, ...] = ()  # "table.column"
     log_table: str | None = None
     log_key: str | None = None
+    # Returns (session_id, cwd, git_branch, first_time, last_time, message_count) per session.
+    sessions_sql: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,8 @@ class AgentLayout:
     include: tuple[str, ...]
     exclude: tuple[str, ...] = ()
     databases: tuple[DatabaseRule, ...] = ()
+    backend: str | None = None  # cagelens backend id that reads this agent's sessions
+    sessions: tuple[str, ...] = ()  # session file patterns, relative to the root
 
     def roots_for(self, platform: str) -> tuple[str, ...]:
         return self.roots.get(platform) or self.roots.get("*", ())
@@ -95,17 +99,30 @@ LAYOUTS: tuple[AgentLayout, ...] = (
             "file-history/**",
             "usage-data/**",
         ),
+        backend="claude",
+        sessions=("projects/*/*.jsonl", "projects/*/*/subagents/*.jsonl"),
     ),
     AgentLayout(
         name="codex",
         roots={"*": (".codex",)},
         include=("sessions/**", "archived_sessions/**", "history.jsonl", "session_index.jsonl"),
         databases=(
-            DatabaseRule("state_*.sqlite", "snapshot"),
+            DatabaseRule(
+                "state_*.sqlite",
+                "snapshot",
+                sessions_sql="SELECT id, cwd, NULL, created_at, updated_at, NULL FROM threads",
+            ),
             DatabaseRule("memories_*.sqlite", "snapshot"),
             DatabaseRule("goals_*.sqlite", "snapshot"),
             DatabaseRule("queue_*.sqlite", "snapshot"),
             DatabaseRule("logs_*.sqlite", "log", log_table="logs", log_key="id"),
+        ),
+        backend="codex",
+        sessions=(
+            "sessions/**/rollout-*.jsonl",
+            "sessions/**/rollout-*.jsonl.zst",
+            "archived_sessions/**/rollout-*.jsonl",
+            "archived_sessions/**/rollout-*.jsonl.zst",
         ),
     ),
     AgentLayout(
@@ -113,18 +130,29 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         roots={"*": (".gemini",)},
         include=("history/**", "tmp/**", "antigravity/**"),
         exclude=("tmp/*/tool-outputs/**", "tmp/bin/**"),
+        backend="gemini",
+        sessions=("tmp/*/chats/*.json", "tmp/*/chats/*.jsonl"),
     ),
     AgentLayout(
         name="pi",
         roots={"*": (".pi/agent",)},
         include=("sessions/**",),
+        backend="pi",
+        sessions=("sessions/**/*.jsonl",),
     ),
     AgentLayout(
-        name="copilot",
+        name="copilot-cli",
         roots={"*": (".copilot",)},
         include=("session-state/**", "chats/**", "history-session-state/**"),
         databases=(
-            DatabaseRule("session-store.db", "snapshot"),
+            DatabaseRule(
+                "session-store.db",
+                "snapshot",
+                sessions_sql=(
+                    "SELECT s.id, s.cwd, s.branch, s.created_at, s.updated_at, "
+                    "(SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id) FROM sessions s"
+                ),
+            ),
             DatabaseRule(
                 "data.db",
                 "snapshot",
@@ -136,11 +164,15 @@ LAYOUTS: tuple[AgentLayout, ...] = (
                 blank_columns=("accounts.access_token", "settings.github_access_token"),
             ),
         ),
+        backend="copilot-cli",
+        sessions=("session-state/*/events.jsonl",),
     ),
     AgentLayout(
         name="copilot-vscode",
         roots=_VSCODE_USER_DIRS,
         include=("workspaceStorage/*/GitHub.copilot-chat/**", "workspaceStorage/*/chatSessions/**"),
+        backend="copilot-vscode",
+        sessions=("workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl",),
     ),
     AgentLayout(
         name="cagelens",
@@ -165,6 +197,31 @@ def original_path(source: str, archived: str) -> str:
     if not archived.startswith(prefix) or not archived.endswith(ARCHIVE_SUFFIX):
         raise ValueError(f"Not an archived file of {source}: {archived}")
     return archived[len(prefix) : -len(ARCHIVE_SUFFIX)]
+
+
+@dataclass(frozen=True)
+class SessionTarget:
+    """How to read sessions out of an archived file."""
+
+    backend: str
+    database: DatabaseRule | None = None
+
+
+def session_target(rel_path: str, platform: str) -> SessionTarget | None:
+    """The backend that reads sessions from a home-relative path, if it holds any."""
+    for layout in LAYOUTS:
+        if layout.backend is None:
+            continue
+        for root in layout.roots_for(platform):
+            if not rel_path.startswith(root + "/"):
+                continue
+            inner = rel_path[len(root) + 1 :]
+            if _matches_any(inner, layout.sessions):
+                return SessionTarget(layout.backend)
+            for rule in layout.databases:
+                if rule.sessions_sql and _compiled(rule.pattern).match(inner):
+                    return SessionTarget(layout.backend, rule)
+    return None
 
 
 def iter_source_files(source: SourceConfig) -> Iterator[SelectedFile]:
