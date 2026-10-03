@@ -184,7 +184,9 @@ def test_walk_descends_only_where_patterns_can_match(tmp_path, monkeypatch):
     selected = _selected(_source(tmp_path, agents=["codex"]))
 
     assert set(selected) == {".codex/state_5.sqlite", ".codex/sessions/2026/10/02/rollout-1.jsonl"}
-    assert not [path for path in visited if "/.tmp" in path]
+    skipped = (tmp_path / ".codex/.tmp").as_posix()
+    assert visited
+    assert not [path for path in visited if path == skipped or path.startswith(skipped + "/")]
 
 
 def test_cagelens_keeps_configuration_not_caches(tmp_path):
