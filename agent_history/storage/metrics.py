@@ -306,6 +306,28 @@ def _run_migrations(conn: sqlite3.Connection, current_version: int, is_new: bool
     conn.execute("UPDATE schema_version SET version = ?", (METRICS_DB_VERSION,))
 
 
+_CLAUDE_SESSION_FIELDS = (
+    ("cwd", "cwd"),
+    ("git_branch", "gitBranch"),
+    ("claude_version", "version"),
+)
+
+
+def _read_claude_session_fields(session_info: Dict[str, Any], entry: Dict[str, Any]) -> None:
+    """Fill session metadata from a Claude transcript line."""
+    # Extract session metadata from first relevant entry
+    if session_info["session_id"] is None:
+        session_info["session_id"] = entry.get("sessionId")
+        if entry.get("agentId"):
+            session_info["is_agent"] = True
+            session_info["parent_session_id"] = entry.get("parentUuid")
+    # Lines such as queue-operation carry no cwd, branch or version,
+    # so take each from the first line that has it
+    for key, field in _CLAUDE_SESSION_FIELDS:
+        if session_info[key] is None:
+            session_info[key] = entry.get(field)
+
+
 def _parse_claude_jsonl(
     jsonl_file: Path,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -352,15 +374,7 @@ def _parse_claude_jsonl(
                 entry_type = entry.get("type")
                 timestamp = entry.get("timestamp", "")
 
-                # Extract session metadata from first relevant entry
-                if session_info["session_id"] is None:
-                    session_info["session_id"] = entry.get("sessionId")
-                    session_info["cwd"] = entry.get("cwd")
-                    session_info["git_branch"] = entry.get("gitBranch")
-                    session_info["claude_version"] = entry.get("version")
-                    if entry.get("agentId"):
-                        session_info["is_agent"] = True
-                        session_info["parent_session_id"] = entry.get("parentUuid")
+                _read_claude_session_fields(session_info, entry)
 
                 if entry_type in ("user", "assistant"):
                     session_info["message_count"] += 1
@@ -439,6 +453,32 @@ def _parse_claude_jsonl(
     return session_info, messages, tool_uses
 
 
+def _apply_codex_token_count(
+    session_info: Dict[str, Any], messages: List[Dict[str, Any]], payload: Dict[str, Any]
+) -> None:
+    """Record the running token totals from a Codex token_count event."""
+    info = payload.get("info") or {}
+    total_usage = info.get("total_token_usage", {})
+    input_tokens = total_usage.get("input_tokens", 0)
+    output_tokens = total_usage.get("output_tokens", 0) + total_usage.get(
+        "reasoning_output_tokens", 0
+    )
+    cache_read = total_usage.get("cached_input_tokens", 0)
+
+    session_info["input_tokens"] = input_tokens
+    session_info["output_tokens"] = output_tokens
+    session_info["cache_read_tokens"] = cache_read
+
+    # Store tokens on the last assistant message for DB queries
+    # that sum from messages table
+    for msg in reversed(messages):
+        if msg["type"] == "assistant":
+            msg["input_tokens"] = input_tokens
+            msg["output_tokens"] = output_tokens
+            msg["cache_read_tokens"] = cache_read
+            break
+
+
 def _parse_codex_jsonl(
     jsonl_file: Path,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -476,6 +516,7 @@ def _parse_codex_jsonl(
     messages: List[Dict[str, Any]] = []
     tool_uses: List[Dict[str, Any]] = []
     timestamps: List[str] = []
+    turn_model: Optional[str] = None
 
     try:
         with open(jsonl_file, encoding="utf-8-sig") as f:
@@ -500,6 +541,10 @@ def _parse_codex_jsonl(
                     session_info["git_branch"] = git_info.get("branch")
                     session_info["claude_version"] = payload.get("cli_version")
 
+                # Each turn names its model; assistant messages carry it
+                elif entry_type == "turn_context":
+                    turn_model = payload.get("model") or turn_model
+
                 # Extract messages
                 elif entry_type == "response_item":
                     payload_type = payload.get("type")
@@ -522,7 +567,7 @@ def _parse_codex_jsonl(
                                 "parent_uuid": None,
                                 "type": role,
                                 "timestamp": timestamp,
-                                "model": None,
+                                "model": turn_model if role == "assistant" else None,
                                 "stop_reason": None,
                                 "input_tokens": 0,
                                 "output_tokens": 0,
@@ -544,28 +589,8 @@ def _parse_codex_jsonl(
                         )
 
                 # Extract token usage from event_msg
-                elif entry_type == "event_msg":
-                    if payload.get("type") == "token_count":
-                        info = payload.get("info") or {}
-                        total_usage = info.get("total_token_usage", {})
-                        input_tokens = total_usage.get("input_tokens", 0)
-                        output_tokens = total_usage.get("output_tokens", 0) + total_usage.get(
-                            "reasoning_output_tokens", 0
-                        )
-                        cache_read = total_usage.get("cached_input_tokens", 0)
-
-                        session_info["input_tokens"] = input_tokens
-                        session_info["output_tokens"] = output_tokens
-                        session_info["cache_read_tokens"] = cache_read
-
-                        # Store tokens on the last assistant message for DB queries
-                        # that sum from messages table
-                        for msg in reversed(messages):
-                            if msg["type"] == "assistant":
-                                msg["input_tokens"] = input_tokens
-                                msg["output_tokens"] = output_tokens
-                                msg["cache_read_tokens"] = cache_read
-                                break
+                elif entry_type == "event_msg" and payload.get("type") == "token_count":
+                    _apply_codex_token_count(session_info, messages, payload)
 
     except OSError:
         pass
