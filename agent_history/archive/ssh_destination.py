@@ -131,25 +131,27 @@ class SshDestination(Destination):
         """Run every move as one shell script, read from standard input.
 
         The script is sent on standard input rather than as the command, because a first
-        run can move thousands of files, more than a command line can hold.
+        run can move thousands of files, more than a command line can hold. Each target
+        folder is created once, before the moves.
         """
-        lines = []
+        if not keeps and not puts:
+            return
+        targets = [version for _, version, _ in keeps] + [current for _, current in puts]
+        lines = [
+            f"mkdir -p {parent} || exit 1\n" for parent in sorted(set(map(self._parent, targets)))
+        ]
         for current, version, incoming in keeps:
             cur, ver, inc = self._remote(current), self._remote(version), self._remote(incoming)
             lines.append(
                 f"if [ ! -e {ver} ] && [ -e {inc} ]; then "
                 f"[ -e {cur} ] || {{ echo {shlex.quote(current)} is missing >&2; exit 1; }}; "
-                f"mkdir -p {self._parent(version)} && mv {cur} {ver} || exit 1; fi\n"
+                f"mv {cur} {ver} || exit 1; fi\n"
             )
         for incoming, current in puts:
             inc, cur = self._remote(incoming), self._remote(current)
-            lines.append(
-                f"if [ -e {inc} ]; then "
-                f"mkdir -p {self._parent(current)} && mv {inc} {cur} || exit 1; fi\n"
-            )
-        if lines:
-            lines.append("sync\n")
-            self._check(self._run_script("".join(lines)), "Moving files into place")
+            lines.append(f"if [ -e {inc} ]; then mv {inc} {cur} || exit 1; fi\n")
+        lines.append("sync\n")
+        self._check(self._run_script("".join(lines)), "Moving files into place")
 
     def discard_tree(self, rel: str) -> None:
         path = self._remote(_check_discardable(rel))
