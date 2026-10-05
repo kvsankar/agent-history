@@ -156,7 +156,12 @@ LAYOUTS: tuple[AgentLayout, ...] = (
             "usage-data/**",
         ),
         backend="claude",
-        sessions=("projects/*/*.jsonl", "projects/*/*/subagents/*.jsonl"),
+        sessions=(
+            "projects/*/*.jsonl",
+            "projects/*/*/subagents/*.jsonl",
+            # Sub-agents of a workflow; the folder's journal.jsonl holds no session.
+            "projects/*/*/subagents/workflows/*/agent-*.jsonl",
+        ),
         workspace_folder="projects",
     ),
     AgentLayout(

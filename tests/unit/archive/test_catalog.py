@@ -241,6 +241,25 @@ def test_a_claude_sub_agent_has_its_projects_folder_as_workspace(store, archive)
     ) == [("a1", "-home-alex-shop", "claude-s1"), ("claude-s1", "-home-alex-shop", None)]
 
 
+def test_a_claude_workflow_sub_agent_is_catalogued(store, archive):
+    workflow = "subagents/workflows/wf_1"
+    _add_claude_sub_agent(archive, workflow, name="agent-w1.jsonl", agent_id="w1")
+    journal = archive["home"] / ".claude/projects/-home-alex-shop/claude-s1" / workflow
+    (journal / "journal.jsonl").write_text('{"type":"step"}\n', encoding="utf-8")
+    _settle(journal / "journal.jsonl")
+    archive["collect"](hours=1)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _rows(
+        store,
+        "SELECT session_id, workspace, parent_session_id, is_subagent FROM sessions "
+        "WHERE path LIKE ?",
+        ("%/workflows/%",),
+    ) == [("w1", "-home-alex-shop", "claude-s1", True)]
+
+
 def test_a_gemini_chat_of_an_unknown_project_has_its_project_folder_as_workspace(
     store, archive, monkeypatch, tmp_path
 ):

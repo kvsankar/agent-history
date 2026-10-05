@@ -15,7 +15,29 @@ from agent_history.archive.layouts import (
     archive_file_path,
     iter_source_files,
     original_path,
+    session_target,
 )
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    [
+        ".claude/projects/-home-alex-shop/s1.jsonl",
+        ".claude/projects/-home-alex-shop/s1/subagents/agent-a1.jsonl",
+        ".claude/projects/-home-alex-shop/s1/subagents/workflows/wf_1/agent-a2.jsonl",
+    ],
+)
+def test_claude_session_files_are_read_for_sessions(rel_path):
+    target = session_target(rel_path, "linux")
+
+    assert target is not None
+    assert (target.backend, target.workspace) == ("claude", "-home-alex-shop")
+
+
+def test_a_claude_workflow_journal_is_not_read_for_sessions():
+    rel = ".claude/projects/-home-alex-shop/s1/subagents/workflows/wf_1/journal.jsonl"
+
+    assert session_target(rel, "linux") is None
 
 
 def _touch(root: Path, rel: str, text: str = "x") -> None:

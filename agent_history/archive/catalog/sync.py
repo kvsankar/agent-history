@@ -29,9 +29,10 @@ from agent_history.archive.manifest import read_manifests
 from agent_history.archive.transport import Destination
 from agent_history.storage.metrics import METRICS_PARSER_VERSION
 
-# The catalog's own part of how a session file becomes rows (such as how it derives the
-# workspace). Raise it when that changes; METRICS_PARSER_VERSION covers the parsers.
-_EXTRACTION_REVISION = 2
+# The catalog's own part of how session files become rows (which archived paths hold
+# sessions, how the workspace is derived). Raise it when that changes;
+# METRICS_PARSER_VERSION covers the parsers.
+_EXTRACTION_REVISION = 3
 # Recorded in schema_meta. A catalog whose rows were written under another version has
 # every session file read again on its next sync.
 READER_VERSION = f"{METRICS_PARSER_VERSION}.{_EXTRACTION_REVISION}"
