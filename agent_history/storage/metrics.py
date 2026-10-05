@@ -538,16 +538,25 @@ def _read_codex_session_meta(session_info: Dict[str, Any], payload: Dict[str, An
     session_info["parent_session_id"] = _codex_meta_parent(payload)
 
 
+def _add_usage(target: Dict[str, Any], delta: Dict[str, int]) -> None:
+    for field, value in delta.items():
+        target[field] = (target.get(field) or 0) + value
+
+
 def _apply_codex_token_count(
     session_info: Dict[str, Any],
     messages: List[Dict[str, Any]],
     payload: Dict[str, Any],
     counter: CodexTokenCounter,
+    pending: Dict[str, int],
 ) -> None:
     """Add one Codex token_count event's per-response usage.
 
     The usage goes to the session totals and to the latest assistant message,
-    so sums over the messages table match the session.
+    so sums over the messages table match the session. Usage that arrives
+    before any assistant message (a sub-agent can start with tool calls) is
+    held in ``pending`` until ``_add_pending_codex_usage`` adds it to the
+    first assistant message.
     """
     delta = counter.add(payload.get("info") or {})
     if delta is None:
@@ -559,9 +568,23 @@ def _apply_codex_token_count(
 
     for msg in reversed(messages):
         if msg["type"] == "assistant":
-            for field, value in delta.items():
-                msg[field] = (msg.get(field) or 0) + value
-            break
+            _add_usage(msg, delta)
+            return
+    _add_usage(pending, delta)
+
+
+def _add_pending_codex_usage(messages: List[Dict[str, Any]], pending: Dict[str, int]) -> None:
+    """Add usage seen before any assistant message to the first assistant message.
+
+    A rollout without assistant messages keeps that usage in the session
+    totals only.
+    """
+    if not pending:
+        return
+    for msg in messages:
+        if msg["type"] == "assistant":
+            _add_usage(msg, pending)
+            return
 
 
 def _parse_codex_jsonl(
@@ -603,6 +626,7 @@ def _parse_codex_jsonl(
     timestamps: List[str] = []
     turn_model: Optional[str] = None
     token_counter = CodexTokenCounter()
+    pending_usage: Dict[str, int] = {}
 
     from agent_history.backends.codex import _codex_open_text
 
@@ -676,10 +700,14 @@ def _parse_codex_jsonl(
 
                 # Extract token usage from event_msg
                 elif entry_type == "event_msg" and payload.get("type") == "token_count":
-                    _apply_codex_token_count(session_info, messages, payload, token_counter)
+                    _apply_codex_token_count(
+                        session_info, messages, payload, token_counter, pending_usage
+                    )
 
     except OSError:
         pass
+
+    _add_pending_codex_usage(messages, pending_usage)
 
     # Set first/last timestamps
     if timestamps:

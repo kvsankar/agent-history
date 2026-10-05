@@ -111,6 +111,29 @@ def test_events_without_last_usage_fall_back_to_the_change_in_totals(tmp_path):
     assert [m["input_tokens"] for m in messages] == [100, 200]
 
 
+def test_usage_before_the_first_assistant_message_goes_to_that_message(tmp_path):
+    """A sub-agent can start with tool calls, so usage arrives before any reply."""
+    session_file = _write_jsonl(
+        tmp_path / "rollout.jsonl",
+        [
+            _meta(),
+            _message("user", "2026-09-29T12:00:01Z"),
+            _token_count("2026-09-29T12:00:02Z", _usage(100, 40, 10), _usage(100, 40, 10)),
+            _token_count("2026-09-29T12:00:03Z", _usage(300, 90, 30), _usage(200, 50, 20)),
+            _message("assistant", "2026-09-29T12:00:04Z"),
+            _token_count("2026-09-29T12:00:05Z", _usage(700, 190, 70), _usage(400, 100, 40)),
+            _message("assistant", "2026-09-29T12:00:06Z"),
+        ],
+    )
+
+    session_info, messages, _tools = metrics._parse_codex_jsonl(session_file)
+
+    assistant = [m for m in messages if m["type"] == "assistant"]
+    assert [m["input_tokens"] for m in assistant] == [700, 0]
+    for field in ("input_tokens", "output_tokens", "cache_read_tokens"):
+        assert sum(m[field] for m in messages) == session_info[field]
+
+
 def test_backend_token_summary_uses_the_same_per_response_sums(tmp_path):
     summary = codex_extract_metrics_from_jsonl(_subagent_session(tmp_path))["tokens_summary"]
 
