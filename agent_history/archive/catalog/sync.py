@@ -527,7 +527,10 @@ def _text(value: Any) -> str | None:
 
 
 def catalog_status(store: CatalogStore, sources: list[str] | None = None) -> list[dict[str, Any]]:
-    """Counts and the newest run per source, for ``sources`` (default: every source)."""
+    """Counts and the newest run per source, for ``sources`` (default: every source).
+
+    A named source that the catalog does not hold is an error, as it is for sync.
+    """
     rows = store.fetchall(
         "SELECT s.name, s.kind, "
         "(SELECT COUNT(*) FROM runs r WHERE r.source = s.name), "
@@ -537,6 +540,9 @@ def catalog_status(store: CatalogStore, sources: list[str] | None = None) -> lis
         "(SELECT MAX(started_at) FROM runs r WHERE r.source = s.name) "
         "FROM sources s ORDER BY s.name"
     )
+    unknown = sorted(set(sources or ()) - {row[0] for row in rows})
+    if unknown:
+        raise ArchiveError(f"Not in the catalog: {', '.join(unknown)}")
     return [
         {
             "source": name,

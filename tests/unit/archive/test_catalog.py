@@ -874,6 +874,19 @@ def test_status_reads_a_sqlite_catalog_it_cannot_write(tmp_path, archive, capsys
         folder.chmod(0o755)
 
 
+def test_status_of_a_source_that_is_not_in_the_catalog_is_an_error(store_spec, archive, capsys):
+    catalog = open_store(store_spec)
+    sync_catalog(catalog, archive["destination"])
+    catalog.close()
+    capsys.readouterr()
+
+    assert _status(store_spec, "--source", "laptop", "--source", "nope") == 1
+
+    captured = capsys.readouterr()
+    assert "nope" in captured.err
+    assert captured.out == ""
+
+
 def test_a_catalog_opened_read_only_refuses_writes(store_spec):
     open_store(store_spec).close()
     reader = open_store(store_spec, read_only=True)
