@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_history.types import SessionDict
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
+from agent_history.utils.session_identity import claude_session_identity
 
 LineageRecord = dict[str, Any]
 
@@ -282,11 +283,10 @@ def _collect_claude_lineage_parts(
         "has_records": False,
         "first_ts": None,
         "last_ts": None,
-        "session_id": None,
+        "session_ids": [],
         "agent_id": None,
-        "is_sidechain": False,
+        "notifications": [],
     }
-    notifications: dict[tuple[str, str], dict[str, Any]] = {}
 
     try:
         with open(jsonl_file, encoding="utf-8") as handle:
@@ -297,66 +297,57 @@ def _collect_claude_lineage_parts(
                     continue
                 state["has_records"] = True
                 _update_claude_lineage_state(state, entry)
-                _collect_claude_notifications(state, entry, jsonl_file, notifications)
+                state["notifications"].extend(_claude_notifications_from_entry(entry, jsonl_file))
     except OSError:
-        return {}, notifications
+        return {}, {}
 
-    return state, notifications
+    state["identity"] = claude_session_identity(jsonl_file, state["session_ids"], state["agent_id"])
+    return state, _claude_notifications_by_task(state)
 
 
 def _update_claude_lineage_state(state: dict[str, Any], entry: dict[str, Any]) -> None:
     timestamp = entry.get("timestamp")
     state["first_ts"] = state["first_ts"] or timestamp
     state["last_ts"] = timestamp or state["last_ts"]
-    state["session_id"] = state["session_id"] or entry.get("sessionId")
+    session_id = entry.get("sessionId")
+    if session_id and session_id not in state["session_ids"]:
+        state["session_ids"].append(session_id)
     state["agent_id"] = state["agent_id"] or entry.get("agentId")
-    state["is_sidechain"] = state["is_sidechain"] or bool(entry.get("isSidechain"))
 
 
-def _collect_claude_notifications(
+def _claude_notifications_by_task(
     state: dict[str, Any],
-    entry: dict[str, Any],
-    jsonl_file: Path,
-    notifications: dict[tuple[str, str], dict[str, Any]],
-) -> None:
-    session_id = state.get("session_id")
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Key the file's task notifications by (its session ID, task ID)."""
+    session_id = state["identity"]["session_id"]
+    notifications: dict[tuple[str, str], dict[str, Any]] = {}
     if not session_id:
-        return
-    for notification in _claude_notifications_from_entry(entry, jsonl_file):
+        return notifications
+    for notification in state["notifications"]:
         task_id = notification.get("task_id")
         if task_id:
             notifications[(str(session_id), str(task_id))] = notification
+    return notifications
 
 
 def _claude_lineage_record(jsonl_file: Path, state: dict[str, Any]) -> LineageRecord:
-    session_id = state.get("session_id") or _session_id_from_claude_path(jsonl_file)
-    task_id = _task_id_from_claude_path(jsonl_file)
-    agent_id = state.get("agent_id")
-    if not agent_id and task_id:
-        agent_id = task_id
-    is_subagent = (
-        bool(state.get("is_sidechain")) or bool(task_id) or jsonl_file.name.startswith("agent-")
-    )
-    record_session_id = (
-        f"{session_id}:{agent_id}"
-        if is_subagent and session_id and agent_id
-        else session_id
-        if not is_subagent
-        else None
-    )
+    identity = state["identity"]
+    is_subagent = identity["is_agent"]
+    # A main transcript without sessionId lines is named by its file
+    session_id = identity["session_id"] or (None if is_subagent else jsonl_file.stem)
 
     record: LineageRecord = {
         "agent": AGENT_CLAUDE,
         "kind": "subagent" if is_subagent else "main",
-        "session_id": record_session_id,
-        "parent_session_id": session_id if is_subagent else None,
-        "agent_id": agent_id,
+        "session_id": session_id,
+        "parent_session_id": identity["parent_session_id"],
+        "agent_id": identity["agent_id"],
         "agent_name": None,
         "start_ts": state.get("first_ts"),
         "end_ts": state.get("last_ts"),
         "status": None,
         "confidence": "confirmed",
-        "evidence": [_evidence(jsonl_file, "jsonl", "sessionId/agentId/isSidechain")],
+        "evidence": [_evidence(jsonl_file, "jsonl", "sessionId/agentId")],
         "source_file": str(jsonl_file),
     }
     return _drop_none(record)
@@ -917,21 +908,6 @@ def _lineage_sort_key(record: LineageRecord) -> tuple[str, str, str]:
         str(record.get("parent_session_id") or record.get("session_id") or ""),
         str(record.get("session_id") or ""),
     )
-
-
-def _session_id_from_claude_path(jsonl_file: Path) -> str | None:
-    parts = jsonl_file.parts
-    if len(parts) >= 3 and parts[-2] == "subagents":
-        return parts[-3]
-    if not jsonl_file.name.startswith("agent-"):
-        return jsonl_file.stem
-    return None
-
-
-def _task_id_from_claude_path(jsonl_file: Path) -> str | None:
-    if not jsonl_file.name.startswith("agent-"):
-        return None
-    return jsonl_file.stem.removeprefix("agent-")
 
 
 def _loads_json_object(value: Any) -> dict[str, Any]:

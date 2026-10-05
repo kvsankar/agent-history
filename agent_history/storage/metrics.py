@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.codex_tokens import CodexTokenCounter
+from agent_history.utils.session_identity import claude_session_identity
 
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
@@ -42,7 +43,7 @@ METRICS_DB_VERSION = 8
 # Version of the transcript parsers that fill a session row. A sync parses a
 # file again when its row was written by another version, even if the file
 # is unchanged. Raise it whenever a parser change alters stored values.
-METRICS_PARSER_VERSION = 1
+METRICS_PARSER_VERSION = 2
 
 # Work period gap threshold in seconds (30 minutes per spec)
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60
@@ -349,45 +350,18 @@ def _read_claude_session_fields(
             session_info[key] = entry.get(field)
 
 
-def _claude_subagent_owner(jsonl_file: Path) -> Optional[str]:
-    """Name of the session folder that holds ``<session>/subagents/.../agent-*.jsonl``."""
-    parts = jsonl_file.parts
-    for index in range(len(parts) - 2, 0, -1):
-        if parts[index] == "subagents":
-            return parts[index - 1]
-    return None
-
-
 def _set_claude_session_identity(
     session_info: Dict[str, Any], identity: Dict[str, Any], jsonl_file: Path
 ) -> None:
     """Set session_id, parent_session_id and is_agent for one Claude file.
 
-    Lines carry the sessionId of the conversation they were written in, so
-    one file can hold several. A continued session starts with lines copied
-    from the earlier session; its own ID is the one in its file name. A
-    sub-agent's lines carry its parent's sessionId; the sub-agent's own ID is
-    its agentId, and its parent is the session whose folder holds it, or the
-    latest sessionId when the parent was continued while the agent ran.
+    ``claude_session_identity`` holds the rules; a sub-agent's ID is
+    ``<parent>:<agentId>``.
     """
-    session_ids: List[str] = identity["session_ids"]
-    agent_id = identity["agent_id"]
-    stem = jsonl_file.name.split(".")[0]
-    if not (stem.startswith("agent-") or agent_id):
-        if stem in session_ids:
-            session_info["session_id"] = stem
-        elif session_ids:
-            session_info["session_id"] = session_ids[0]
-        return
-
-    owner = _claude_subagent_owner(jsonl_file)
-    if owner and (owner in session_ids or not session_ids):
-        parent = owner
-    else:
-        parent = session_ids[-1] if session_ids else None
-    session_info["session_id"] = agent_id or stem.removeprefix("agent-")
-    session_info["parent_session_id"] = parent
-    session_info["is_agent"] = True
+    resolved = claude_session_identity(jsonl_file, identity["session_ids"], identity["agent_id"])
+    session_info["session_id"] = resolved["session_id"]
+    session_info["parent_session_id"] = resolved["parent_session_id"]
+    session_info["is_agent"] = resolved["is_agent"]
 
 
 def _parse_claude_jsonl(
