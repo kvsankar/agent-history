@@ -353,15 +353,17 @@ and a copy can be an earlier, shorter state of the same session.
 ### Updating
 
 `cagelens archive catalog sync` reads manifests that the catalog has not yet
-ingested, oldest first. For each run it:
+ingested, oldest first. For each source it:
 
-1. records the run,
-2. updates `files` and `file_versions`,
-3. decompresses each added or updated session file and extracts its session
-   metadata with the agent's existing parser in `backends/`,
-4. marks `gone` paths.
+1. decompresses each session file that those runs added or updated, once, and
+   extracts its session metadata with the agent's existing parser in
+   `backends/`, replacing that file's earlier session rows;
+2. then, for each run, records the run, updates `files` and `file_versions`,
+   and marks `gone` paths.
 
-All changes for one run go into one transaction. Because sync follows manifests
+Each session file and each run is one transaction. Runs are recorded last, so a
+sync that stops part way leaves its runs unrecorded, and the next sync reads the
+same session files again. Because sync follows manifests
 rather than walking the archive, a daily update reads only that day's files, even
 when the archive is on a network mount.
 

@@ -73,15 +73,31 @@ def sync_catalog(
 def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: Path) -> None:
     descriptor = json.loads(destination.read_bytes(f"sources/{name}/SOURCE.json") or b"{}")
     done = {row[0] for row in store.fetchall("SELECT run_id FROM runs WHERE source = ?", (name,))}
+    runs = list(read_manifests(destination, name, skip_run_ids=done))
     changed: dict[str, str] = {}
-    for run, entries in read_manifests(destination, name, skip_run_ids=done):
+    for _run, entries in runs:
+        for entry in entries:
+            if entry.get("type") == "file" and entry.get("action") in _WRITTEN:
+                changed[entry["path"]] = entry["sha256"]
+    # Sessions first, runs last: a sync stopped part way records no run, so the next
+    # sync reads the same sessions again instead of skipping them.
+    _sync_sessions(store, destination, name, descriptor, changed, summary, work_dir)
+    for run, entries in runs:
         with store.transaction():
             _upsert_source(store, name, descriptor, run)
             _record_run(store, name, run, entries)
         summary.runs += 1
-        for entry in entries:
-            if entry.get("type") == "file" and entry.get("action") in _WRITTEN:
-                changed[entry["path"]] = entry["sha256"]
+
+
+def _sync_sessions(
+    store,
+    destination,
+    name: str,
+    descriptor: dict,
+    changed: dict[str, str],
+    summary: SyncSummary,
+    work_dir: Path,
+) -> None:
     platform = descriptor.get("platform", "linux")
     for path, sha256 in sorted(changed.items()):
         target = session_target(path, platform)

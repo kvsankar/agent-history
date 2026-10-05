@@ -196,6 +196,35 @@ def test_sync_is_incremental(store, archive):
     assert again.runs == 0
 
 
+def test_sync_interrupted_while_reading_sessions_finishes_on_the_next_sync(
+    store, archive, monkeypatch
+):
+    from agent_history.archive.catalog import sync
+
+    real_extract = sync._extract_sessions
+    calls = []
+
+    def interrupted(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return real_extract(*args, **kwargs)
+
+    monkeypatch.setattr(sync, "_extract_sessions", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        sync_catalog(store, archive["destination"])
+    monkeypatch.setattr(sync, "_extract_sessions", real_extract)
+
+    sync_catalog(store, archive["destination"])
+
+    assert _rows(store, "SELECT COUNT(*) FROM runs") == [(1,)]
+    assert sorted(row[0] for row in _rows(store, "SELECT session_id FROM sessions")) == [
+        "claude-s1",
+        "codex-s1",
+        "copilot-gone",
+    ]
+
+
 def test_versions_and_gone_files_are_recorded(store, archive):
     archive["claude_file"].write_text('{"type":"summary"}\n', encoding="utf-8")
     _settle(archive["claude_file"])
