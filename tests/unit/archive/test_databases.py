@@ -103,6 +103,58 @@ def test_snapshot_includes_wal_content_and_blanks_credentials(env):
     ]
 
 
+def test_not_null_credential_columns_are_blanked_with_allowed_values(env):
+    path = env["home"] / ".copilot" / "data.db"
+    path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE accounts (id INTEGER PRIMARY KEY, login TEXT, "
+        "access_token TEXT NOT NULL, refresh_token BLOB NOT NULL, api_key INTEGER NOT NULL)"
+    )
+    # REPLACE would delete a row if two rows were given the same blank value.
+    conn.execute(
+        "CREATE TABLE keys (id INTEGER, client_secret TEXT NOT NULL UNIQUE ON CONFLICT REPLACE)"
+    )
+    conn.execute(
+        "CREATE TABLE checked (id INTEGER, secret TEXT NOT NULL CHECK (length(secret) > 8))"
+    )
+    conn.execute(
+        "CREATE TABLE strict_keys (id INTEGER, password TEXT NOT NULL) STRICT"
+        if sqlite3.sqlite_version_info >= (3, 37)
+        else "CREATE TABLE strict_keys (id INTEGER, password TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO accounts VALUES (1, 'alex', ?, ?, 7)", (TOKEN, TOKEN.encode()))
+    conn.executemany("INSERT INTO keys VALUES (?, ?)", [(1, TOKEN), (2, TOKEN + "2")])
+    conn.execute("INSERT INTO checked VALUES (1, ?)", (TOKEN,))
+    conn.execute("INSERT INTO strict_keys VALUES (1, ?)", (TOKEN,))
+    conn.commit()
+    conn.close()
+
+    summary = _collect(env)
+
+    assert summary.errors == 0
+    restored_path, raw = _restore(env, ".copilot/data.db")
+    restored = sqlite3.connect(restored_path)
+    assert restored.execute(
+        "SELECT login, access_token, refresh_token, api_key FROM accounts"
+    ).fetchall() == [("alex", "", b"", 0)]
+    secrets = [row[0] for row in restored.execute("SELECT client_secret FROM keys")]
+    assert len(set(secrets)) == 2
+    (checked,) = restored.execute("SELECT secret FROM checked").fetchone()
+    assert checked != TOKEN
+    assert restored.execute("SELECT password FROM strict_keys").fetchall() == [("",)]
+    assert TOKEN.encode() not in raw
+    (entry,) = _entries(env, summary.run_id)
+    assert entry["blanked"] == [
+        "accounts.access_token",
+        "accounts.api_key",
+        "accounts.refresh_token",
+        "checked.secret",
+        "keys.client_secret",
+        "strict_keys.password",
+    ]
+
+
 def test_unchanged_database_is_not_copied_again(env):
     _copilot_data_db(env).close()
     _advance_mtime(env["home"] / ".copilot" / "data.db")

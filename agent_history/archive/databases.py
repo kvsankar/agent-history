@@ -142,22 +142,62 @@ def _backup_from_copy(src: Path, dst: Path, attempts: int = 3) -> None:
 
 
 def blank_credentials(path: Path, rule: DatabaseRule) -> list[str]:
-    """Set credential columns to NULL, then VACUUM; return the "table.column" names."""
+    """Blank credential columns, then VACUUM; return the "table.column" names.
+
+    A column that allows NULL is set to NULL. A NOT NULL column gets an empty value of
+    its type. A column in a UNIQUE index or primary key, or one whose CHECK constraint
+    refuses the empty value, gets a random value per row instead, so no row is replaced
+    or refused. Each column is committed on its own, so a refused update cannot undo
+    another column's blanking.
+    """
     named = {entry.lower() for entry in rule.blank_columns}
     blanked = []
     with closing(sqlite3.connect(path)) as conn:
         for table in _plain_tables(conn):
-            for column in _columns(conn, table):
+            unique = _unique_columns(conn, table)
+            for column, declared, not_null in _column_info(conn, table):
                 qualified = f"{table}.{column}"
                 if qualified.lower() in named or _looks_like_credential(column):
-                    conn.execute(
-                        f"UPDATE {_quote(table)} SET {_quote(column)} = NULL "
-                        f"WHERE {_quote(column)} IS NOT NULL"
-                    )
+                    _blank_column(conn, table, column, declared, not_null, column in unique)
                     blanked.append(qualified)
-        conn.commit()
         conn.execute("VACUUM")
     return sorted(blanked)
+
+
+def _blank_column(conn, table: str, column: str, declared: str, not_null: bool, unique: bool):
+    update = f"UPDATE {_quote(table)} SET {_quote(column)} = "
+    where = f" WHERE {_quote(column)} IS NOT NULL"
+    empty, random = _blank_values(declared)
+    if not not_null:
+        conn.execute(update + "NULL" + where)
+    elif unique:
+        conn.execute(update + random + where)
+    else:
+        try:
+            conn.execute(update + empty + where)
+        except sqlite3.IntegrityError:  # a CHECK constraint refuses the empty value
+            conn.rollback()
+            conn.execute(update + random + where)
+    conn.commit()
+
+
+def _blank_values(declared: str) -> tuple[str, str]:
+    """SQL for an empty value and a random per-row value of a column's declared type.
+
+    The type follows SQLite's affinity rules, so the values also suit STRICT tables.
+    """
+    upper = declared.upper()
+    if "INT" in upper:
+        return "0", "random()"
+    if "CHAR" in upper or "CLOB" in upper or "TEXT" in upper:
+        return "''", "lower(hex(randomblob(16)))"
+    if "BLOB" in upper:
+        return "zeroblob(0)", "randomblob(16)"
+    if "REAL" in upper or "FLOA" in upper or "DOUB" in upper:
+        return "0.0", "random() * 1.0"
+    if not upper or upper == "ANY":
+        return "''", "lower(hex(randomblob(16)))"
+    return "0", "random()"  # NUMERIC affinity
 
 
 def _looks_like_credential(column: str) -> bool:
@@ -172,8 +212,20 @@ def _plain_tables(conn: sqlite3.Connection) -> list[str]:
     return [name for name, sql in rows if not (sql or "").upper().startswith("CREATE VIRTUAL")]
 
 
-def _columns(conn: sqlite3.Connection, table: str) -> list[str]:
-    return [row[1] for row in conn.execute(f"PRAGMA table_info({_quote(table)})")]
+def _column_info(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, bool]]:
+    """(name, declared type, NOT NULL) for each column of a table."""
+    rows = conn.execute(f"PRAGMA table_info({_quote(table)})").fetchall()
+    return [(row[1], row[2] or "", bool(row[3])) for row in rows]
+
+
+def _unique_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Columns of a table that are part of its primary key or of any UNIQUE index."""
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({_quote(table)})") if row[5]}
+    for index in conn.execute(f"PRAGMA index_list({_quote(table)})").fetchall():
+        if index[2]:
+            info = conn.execute(f"PRAGMA index_info({_quote(index[1])})").fetchall()
+            columns.update(row[2] for row in info if row[2] is not None)
+    return columns
 
 
 def _quote(identifier: str) -> str:
