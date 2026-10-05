@@ -123,6 +123,67 @@ def test_roots_override_maps_to_home_relative_paths(tmp_path):
     assert selected[".claude/history.jsonl"].path == old / "history.jsonl"
 
 
+def _merged_source(home: Path, old: Path):
+    entries = [
+        {"name": "src", "kind": "live", "platform": "linux", "home": str(home)},
+        {"name": "src", "kind": "live", "platform": "linux", "roots": {"claude": str(old)}},
+    ]
+    return parse_config({"archive": {"destination": "/d"}, "sources": entries}).sources[0]
+
+
+def _set_mtime(path: Path, stamp: int) -> None:
+    os.utime(path, (stamp, stamp))
+
+
+def test_merged_parts_with_a_differing_copy_report_it(tmp_path):
+    home, old = tmp_path / "home", tmp_path / "old"
+    _touch(home, ".claude/projects/p/a.jsonl", "live\n")
+    _touch(old, "projects/p/a.jsonl", "older and longer\n")
+    _touch(old, "projects/p/only-old.jsonl")
+
+    items = list(iter_source_files(_merged_source(home, old)))
+
+    paths = [(item.rel_path, item.path, item.error is not None) for item in items]
+    assert sorted(paths) == [
+        (".claude/projects/p/a.jsonl", home / ".claude/projects/p/a.jsonl", False),
+        (".claude/projects/p/a.jsonl", old / "projects/p/a.jsonl", True),
+        (".claude/projects/p/only-old.jsonl", old / "projects/p/only-old.jsonl", False),
+    ]
+    (error,) = [item.error for item in items if item.error]
+    assert str(old / "projects/p/a.jsonl") in error
+
+
+def test_merged_parts_with_the_same_content_are_not_reported(tmp_path):
+    home, old = tmp_path / "home", tmp_path / "old"
+    _touch(home, ".claude/history.jsonl", "same\n")
+    _touch(old, "history.jsonl", "same\n")
+    _touch(home, ".claude/projects/p/a.jsonl", "same size, other time\n")
+    _touch(old, "projects/p/a.jsonl", "same size, other time\n")
+    _set_mtime(home / ".claude/history.jsonl", 1_790_000_000)
+    _set_mtime(old / "history.jsonl", 1_790_000_000)
+    _set_mtime(old / "projects/p/a.jsonl", 1_780_000_000)
+
+    items = list(iter_source_files(_merged_source(home, old)))
+
+    assert [item.error for item in items] == [None, None]
+    assert {item.path for item in items} == {
+        home / ".claude/history.jsonl",
+        home / ".claude/projects/p/a.jsonl",
+    }
+
+
+def test_merged_parts_with_same_size_and_other_content_report_it(tmp_path):
+    home, old = tmp_path / "home", tmp_path / "old"
+    _touch(home, ".claude/history.jsonl", "aaaa\n")
+    _touch(old, "history.jsonl", "bbbb\n")
+    _set_mtime(home / ".claude/history.jsonl", 1_790_000_000)
+    _set_mtime(old / "history.jsonl", 1_780_000_000)
+
+    items = list(iter_source_files(_merged_source(home, old)))
+
+    assert [item.error is not None for item in items] == [False, True]
+
+
 def test_databases_are_marked(tmp_path):
     _touch(tmp_path, ".codex/state_5.sqlite")
     _touch(tmp_path, ".codex/logs_2.sqlite")

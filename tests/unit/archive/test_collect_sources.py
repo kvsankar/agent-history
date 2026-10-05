@@ -114,3 +114,20 @@ def test_folder_without_permissions_does_not_abort_the_run(env):
         locked.chmod(0o755)
 
     assert (summary.errors, summary.gone) == (1, 0)
+
+
+def test_differing_copy_in_a_merged_part_is_an_error_not_dropped(env):
+    old = env["tmp"] / "old-claude"
+    _write(env["home"], SESSION, b"live\n", mtime=1_790_000_000)
+    _write(old, "projects/-home-alex-shop/a1.jsonl", b"older, other text\n", mtime=1_780_000_000)
+    _write(old, "projects/-home-alex-shop/z9.jsonl", b"only in the old tree\n")
+    merged = {"name": "src", "kind": "live", "platform": "linux", "roots": {"claude": str(old)}}
+
+    summary = _collect(env, config=_config(env, merged))
+
+    assert summary.errors == 1
+    assert summary.written == 2
+    entries = _run_entries(env, summary.run_id)
+    (error,) = [entry for entry in entries if entry["type"] == "error"]
+    assert error["path"] == SESSION
+    assert "old-claude" in error["message"]

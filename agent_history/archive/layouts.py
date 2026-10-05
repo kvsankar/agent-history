@@ -8,10 +8,11 @@ source's home directory, so ``.claude/history.jsonl`` is stored at
 
 from __future__ import annotations
 
+import filecmp
 import fnmatch
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator, NamedTuple, Pattern
@@ -247,14 +248,43 @@ def iter_source_files(source: SourceConfig) -> Iterator[SelectedFile]:
     :class:`ArchiveError`, because walking it would make every file look deleted. A
     folder inside it that cannot be read is yielded as an item with ``error`` set, whose
     ``rel_path`` is the folder; the walk goes on with the other folders.
+
+    When parts of a merged source map two different files to one archive path, the
+    first part's file is archived. If the other file's content differs, it is yielded
+    as an item with ``error`` set, so the run reports it instead of dropping it.
     """
     _check_configured_folders(source)
-    seen = set()
+    seen: dict[str, SelectedFile] = {}
     for part in source.parts:
         for item in _iter_part(part, source.platform):
-            if item.rel_path not in seen:
-                seen.add(item.rel_path)
+            first = seen.get(item.rel_path)
+            if first is None:
+                seen[item.rel_path] = item
                 yield item
+            elif first.error is None and item.error is None and first.path != item.path:
+                problem = _collision(first, item)
+                if problem:
+                    yield replace(item, error=problem)
+
+
+def _collision(first: SelectedFile, other: SelectedFile) -> str | None:
+    """Why ``other`` cannot share ``first``'s archive path, or None if they are the same.
+
+    Files of the same size and modification time count as the same, as in change
+    detection; files of the same size are otherwise compared byte by byte.
+    """
+    try:
+        a, b = os.stat(first.path), os.stat(other.path)
+        if a.st_size == b.st_size and (
+            a.st_mtime_ns == b.st_mtime_ns or filecmp.cmp(first.path, other.path, shallow=False)
+        ):
+            return None
+    except OSError as exc:
+        return f"cannot compare {other.path} with {first.path}: {exc}"
+    return (
+        f"{other.path} differs from {first.path}, which another entry of this source maps "
+        "to the same archive path; it is not archived. Give its folder its own source name."
+    )
 
 
 def is_within(rel_path: str, folders) -> bool:
