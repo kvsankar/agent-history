@@ -644,6 +644,25 @@ def test_staging_lives_in_the_state_folder_and_is_removed(env, monkeypatch):
     assert not list((env["state"]).rglob("*.zst"))
 
 
+def test_staging_left_by_a_killed_run_is_removed(env):
+    from agent_history.archive.state import state_path
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    config = _config(env)
+    work = state_path(env["state"], config.destination, "src").parent / "work"
+    stale = [work / "src" / "staging-abc123", work / "src" / "db-def456"]
+    for folder in stale:
+        (folder / "sources").mkdir(parents=True)
+        (folder / "sources" / "big.zst").write_bytes(b"x" * 1000)
+    other = work / "other" / "staging-789"  # another source's run may be using it
+    other.mkdir(parents=True)
+
+    _collect(env, config=config)
+
+    assert not any(folder.exists() for folder in stale)
+    assert other.exists()
+
+
 def test_large_runs_transfer_in_batches(env, monkeypatch):
     from agent_history.archive import collect as collect_module
 

@@ -227,7 +227,8 @@ class _Run:
         self.moves: list[tuple[dict[str, Any], str, str]] = []
         self.staged_bytes = 0
         # On disk next to the state, never the system temp folder (often a small tmpfs).
-        self.work_root = self.state_file.parent / "work"
+        # One folder per source, because the lock that keeps runs apart is per source.
+        self.work_root = self.state_file.parent / "work" / source.name
 
     # -- the state against the archive ------------------------------------------------
 
@@ -291,6 +292,16 @@ class _Run:
             if manifest is not None:
                 self.state.apply_manifest(*manifest)
 
+    def _clear_work(self) -> None:
+        """Remove staging and database copies left by a run that was killed.
+
+        The source's lock is held, so no other run is using this source's work folder.
+        """
+        self.work_root.mkdir(parents=True, exist_ok=True)
+        for folder in self.work_root.iterdir():
+            if folder.is_dir() and folder.name.startswith(("staging-", "db-")):
+                shutil.rmtree(folder, ignore_errors=True)
+
     def too_soon(self) -> bool:
         hours = self.config.min_interval_hours
         if not hours or not self.state.last_success:
@@ -305,7 +316,7 @@ class _Run:
             self.destination.write_bytes(
                 f"sources/{self.source.name}/SOURCE.json", self._descriptor()
             )
-        self.work_root.mkdir(parents=True, exist_ok=True)
+        self._clear_work()
         try:
             with tempfile.TemporaryDirectory(prefix="staging-", dir=self.work_root) as staging:
                 self._scan(Path(staging))
