@@ -314,19 +314,66 @@ _CLAUDE_SESSION_FIELDS = (
 )
 
 
-def _read_claude_session_fields(session_info: Dict[str, Any], entry: Dict[str, Any]) -> None:
-    """Fill session metadata from a Claude transcript line."""
-    # Extract session metadata from first relevant entry
-    if session_info["session_id"] is None:
-        session_info["session_id"] = entry.get("sessionId")
-        if entry.get("agentId"):
-            session_info["is_agent"] = True
-            session_info["parent_session_id"] = entry.get("parentUuid")
+def _read_claude_session_fields(
+    session_info: Dict[str, Any], identity: Dict[str, Any], entry: Dict[str, Any]
+) -> None:
+    """Fill session metadata from a Claude transcript line.
+
+    ``identity`` collects the line-level IDs that
+    ``_set_claude_session_identity`` turns into the file's session.
+    """
+    session_id = entry.get("sessionId")
+    if session_id:
+        if session_id not in identity["session_ids"]:
+            identity["session_ids"].append(session_id)
+        if identity["agent_id"] is None and entry.get("agentId"):
+            identity["agent_id"] = entry.get("agentId")
     # Lines such as queue-operation carry no cwd, branch or version,
     # so take each from the first line that has it
     for key, field in _CLAUDE_SESSION_FIELDS:
         if session_info[key] is None:
             session_info[key] = entry.get(field)
+
+
+def _claude_subagent_owner(jsonl_file: Path) -> Optional[str]:
+    """Name of the session folder that holds ``<session>/subagents/.../agent-*.jsonl``."""
+    parts = jsonl_file.parts
+    for index in range(len(parts) - 2, 0, -1):
+        if parts[index] == "subagents":
+            return parts[index - 1]
+    return None
+
+
+def _set_claude_session_identity(
+    session_info: Dict[str, Any], identity: Dict[str, Any], jsonl_file: Path
+) -> None:
+    """Set session_id, parent_session_id and is_agent for one Claude file.
+
+    Lines carry the sessionId of the conversation they were written in, so
+    one file can hold several. A continued session starts with lines copied
+    from the earlier session; its own ID is the one in its file name. A
+    sub-agent's lines carry its parent's sessionId; the sub-agent's own ID is
+    its agentId, and its parent is the session whose folder holds it, or the
+    latest sessionId when the parent was continued while the agent ran.
+    """
+    session_ids: List[str] = identity["session_ids"]
+    agent_id = identity["agent_id"]
+    stem = jsonl_file.name.split(".")[0]
+    if not (stem.startswith("agent-") or agent_id):
+        if stem in session_ids:
+            session_info["session_id"] = stem
+        elif session_ids:
+            session_info["session_id"] = session_ids[0]
+        return
+
+    owner = _claude_subagent_owner(jsonl_file)
+    if owner and (owner in session_ids or not session_ids):
+        parent = owner
+    else:
+        parent = session_ids[-1] if session_ids else None
+    session_info["session_id"] = agent_id or stem.removeprefix("agent-")
+    session_info["parent_session_id"] = parent
+    session_info["is_agent"] = True
 
 
 def _parse_claude_jsonl(
@@ -360,6 +407,7 @@ def _parse_claude_jsonl(
     messages: List[Dict[str, Any]] = []
     tool_uses: List[Dict[str, Any]] = []
     timestamps: List[str] = []
+    identity: Dict[str, Any] = {"session_ids": [], "agent_id": None}
 
     try:
         with open(jsonl_file, encoding="utf-8-sig") as f:
@@ -375,7 +423,7 @@ def _parse_claude_jsonl(
                 entry_type = entry.get("type")
                 timestamp = entry.get("timestamp", "")
 
-                _read_claude_session_fields(session_info, entry)
+                _read_claude_session_fields(session_info, identity, entry)
 
                 if entry_type in ("user", "assistant"):
                     session_info["message_count"] += 1
@@ -445,6 +493,8 @@ def _parse_claude_jsonl(
 
     except OSError:
         pass
+
+    _set_claude_session_identity(session_info, identity, jsonl_file)
 
     # Set first/last timestamps
     if timestamps:
