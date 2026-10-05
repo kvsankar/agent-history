@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from agent_history.archive.errors import ArchiveConfigError
 from agent_history.archive.layouts import AGENT_NAMES
@@ -92,7 +93,7 @@ def parse_config(data: dict[str, Any]) -> ArchiveConfig:
         destination=destination,
         compression_level=_compression_level(archive),
         min_interval_hours=_min_interval(archive),
-        health_url=archive.get("health_url") or None,
+        health_url=_health_url(archive),
         sources=_merge_sources(data.get("sources") or []),
         workers=_workers(archive),
     )
@@ -123,6 +124,23 @@ def _min_interval(archive: dict[str, Any]) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         raise ArchiveConfigError("archive.min_interval_hours must be a number >= 0")
     return float(value)
+
+
+def _health_url(archive: dict[str, Any]) -> str | None:
+    url = archive.get("health_url") or None
+    if url is None:
+        return None
+    message = f"archive.health_url must be an http:// or https:// URL: {url!r}"
+    if not isinstance(url, str):
+        raise ArchiveConfigError(message)
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018 - raises ValueError for a port that is not a number
+    except ValueError as exc:
+        raise ArchiveConfigError(message) from exc
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ArchiveConfigError(message)
+    return url
 
 
 def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:

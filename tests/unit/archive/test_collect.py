@@ -271,6 +271,38 @@ def test_a_successful_run_sends_start_and_success_pings(env, monkeypatch):
     assert pings == [f"{HEALTH}/start", HEALTH]
 
 
+def _failing_health_requests(monkeypatch, error: Exception) -> None:
+    from agent_history.archive import collect as collect_module
+
+    def urlopen(url, timeout=None):
+        raise error
+
+    monkeypatch.setattr(collect_module.urllib.request, "urlopen", urlopen)
+
+
+@pytest.mark.parametrize("error", [ValueError("unknown url type"), RuntimeError("unforeseen")])
+def test_a_failing_health_request_only_warns(env, monkeypatch, capsys, error):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _failing_health_requests(monkeypatch, error)
+
+    summary = _collect(env, config=_config(env, health_url=HEALTH))
+
+    assert summary.written == 1
+    assert f"health request failed: {error}" in capsys.readouterr().err
+
+
+def test_a_failing_failure_request_does_not_replace_the_runs_error(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _failing_health_requests(monkeypatch, ValueError("unknown url type"))
+
+    with pytest.raises(OSError, match="connection dropped during put_tree"):
+        _collect(
+            env,
+            config=_config(env, health_url=HEALTH),
+            destination=_FailingDestination.make(env, "put_tree"),
+        )
+
+
 @pytest.mark.parametrize("state", ["kept", "rebuilt"])
 def test_run_with_errors_does_not_delay_the_next_run(env, monkeypatch, state):
     """min_interval_hours counts from the last run without errors, so failures are retried."""

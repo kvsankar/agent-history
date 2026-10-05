@@ -678,13 +678,14 @@ class _Run:
         return (json.dumps(data, indent=2) + "\n").encode("utf-8")
 
     def _ping(self, suffix: str) -> None:
+        """Send a health request; a failure only warns, so it never replaces a run's error."""
         url = self.config.health_url
         if not url:
             return
         try:
             urllib.request.urlopen(url.rstrip("/") + suffix, timeout=10).close()
-        except OSError as exc:
-            sys.stderr.write(f"Warning: health ping failed: {exc}\n")
+        except Exception as exc:
+            sys.stderr.write(f"Warning: health request failed: {exc}\n")
 
 
 def is_racy(mtime_ns: int, read_ns: int) -> bool:

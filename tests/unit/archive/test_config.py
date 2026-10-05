@@ -114,6 +114,20 @@ def test_compression_level_must_be_in_range(level):
         parse_config(_config(archive={"destination": "/a", "compression_level": level}))
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["hc-ping.example/abc", "ftp://hc-ping.example/abc", "https://", "http://[::1/ping", 5],
+)
+def test_health_url_must_be_an_http_url(url):
+    with pytest.raises(ArchiveConfigError, match="health_url"):
+        parse_config(_config(archive={"destination": "/a", "health_url": url}))
+
+
+@pytest.mark.parametrize("url", ["https://hc-ping.example/abc", "http://nas:8000/ping/1"])
+def test_health_url_accepts_http_and_https(url):
+    assert parse_config(_config(archive={"destination": "/a", "health_url": url})).health_url == url
+
+
 def test_load_config_reads_json_file(tmp_path):
     path = tmp_path / "archive.json"
     path.write_text(json.dumps(_config()), encoding="utf-8")
