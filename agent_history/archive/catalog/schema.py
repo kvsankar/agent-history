@@ -3,6 +3,10 @@
 ``{TS}``, ``{JSON}``, ``{BIG}`` and ``{BOOL}`` are replaced per store: PostgreSQL gets
 ``timestamptz``, ``jsonb``, ``bigint`` and ``boolean``; SQLite gets ``TEXT`` and ``INTEGER``.
 The catalog holds metadata only, never message text.
+
+Views hold no data, so changing one needs no new schema version: every open replaces them
+(SQLite drops and creates each view; PostgreSQL uses ``CREATE OR REPLACE VIEW``, which
+accepts a changed query as long as the view's columns stay the same).
 """
 
 from __future__ import annotations
@@ -127,11 +131,17 @@ TABLES = (
                MAX(last_timestamp) AS last_timestamp
         FROM sessions
         GROUP BY agent, session_id""",
+    # Session files before database rows (a database may count turns, a file counts
+    # messages), then the most messages, then the latest message. "x IS NULL" puts
+    # NULLs last on both stores: they sort last in SQLite but first in PostgreSQL.
     """CREATE VIEW IF NOT EXISTS session_longest_copy AS
         SELECT * FROM (
             SELECT s.*, ROW_NUMBER() OVER (
                 PARTITION BY agent, session_id
-                ORDER BY message_count DESC, last_timestamp DESC, source, path
+                ORDER BY from_database,
+                         message_count IS NULL, message_count DESC,
+                         last_timestamp IS NULL, last_timestamp DESC,
+                         source, path
             ) AS copy_rank
             FROM sessions s
         ) ranked
@@ -150,6 +160,9 @@ DATA_TABLES = (
 )
 
 
+_CREATE_VIEW = "CREATE VIEW IF NOT EXISTS "
+
+
 def statements(dialect: str) -> list[str]:
     types = TYPES[dialect]
     result = []
@@ -157,7 +170,12 @@ def statements(dialect: str) -> list[str]:
         sql = template
         for name, value in types.items():
             sql = sql.replace("{" + name + "}", value)
-        if dialect == "postgres":
-            sql = sql.replace("CREATE VIEW IF NOT EXISTS", "CREATE OR REPLACE VIEW")
+        if sql.startswith(_CREATE_VIEW):
+            view = sql[len(_CREATE_VIEW) :].split()[0]
+            if dialect == "postgres":
+                sql = "CREATE OR REPLACE VIEW " + sql[len(_CREATE_VIEW) :]
+            else:
+                result.append(f"DROP VIEW IF EXISTS {view}")
+                sql = "CREATE VIEW " + sql[len(_CREATE_VIEW) :]
         result.append(sql)
     return result

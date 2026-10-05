@@ -371,6 +371,65 @@ def test_session_copies_view_groups_sources(store, archive):
     assert rows == [("codex", "codex-s1", 1)]
 
 
+def _add_copy(store, path, from_database, message_count, last_timestamp=None):
+    store.execute(
+        "INSERT INTO sessions (source, path, session_id, agent, from_database, message_count, "
+        "last_timestamp) VALUES ('laptop', ?, 'shared', 'copilot-cli', ?, ?, ?)",
+        (path, from_database, message_count, last_timestamp),
+    )
+
+
+def _longest_copy(store):
+    return _rows(store, "SELECT path FROM session_longest_copy WHERE session_id = 'shared'")
+
+
+def test_the_longest_copy_is_not_one_without_a_message_count(store):
+    with store.transaction():
+        _add_copy(store, "a.db", True, None)
+        _add_copy(store, "a.jsonl", False, 40)
+
+    assert _longest_copy(store) == [("a.jsonl",)]
+
+
+def test_the_longest_copy_is_a_session_file_rather_than_a_database_row(store):
+    # A database counts turns and a session file counts messages, so they do not compare.
+    with store.transaction():
+        _add_copy(store, "a.db", True, 50)
+        _add_copy(store, "a.jsonl", False, 40)
+
+    assert _longest_copy(store) == [("a.jsonl",)]
+
+
+def test_the_longest_copy_breaks_a_tie_by_the_latest_known_message(store):
+    with store.transaction():
+        _add_copy(store, "a.jsonl", False, 40, None)
+        _add_copy(store, "b.jsonl", False, 40, "2026-10-02T06:15:00+00:00")
+
+    assert _longest_copy(store) == [("b.jsonl",)]
+
+
+def test_opening_a_catalog_replaces_views_from_an_older_version(store_spec):
+    old = open_store(store_spec)
+    with old.transaction():
+        old.execute("DROP VIEW session_longest_copy")
+        old.execute(
+            "CREATE VIEW session_longest_copy AS SELECT * FROM (SELECT s.*, ROW_NUMBER() "
+            "OVER (PARTITION BY agent, session_id ORDER BY message_count DESC, "
+            "last_timestamp DESC, source, path) AS copy_rank FROM sessions s) ranked "
+            "WHERE copy_rank = 1"
+        )
+        _add_copy(old, "a.db", True, 50)
+        _add_copy(old, "a.jsonl", False, 40)
+    old.close()
+
+    reopened = open_store(store_spec)
+
+    try:
+        assert _longest_copy(reopened) == [("a.jsonl",)]
+    finally:
+        reopened.close()
+
+
 def test_rebuild_replays_every_manifest(store, archive):
     sync_catalog(store, archive["destination"])
     before = _rows(store, "SELECT COUNT(*) FROM files")
