@@ -316,6 +316,28 @@ def test_verify_problems_give_exit_code_2(setup, capsys):
     assert f"mismatched: {SESSION}" in capsys.readouterr().out
 
 
+def test_verify_reports_a_damaged_manifest_for_its_source_and_checks_the_rest(setup, capsys):
+    config = _two_sources(setup)
+    assert main(["archive", "collect", "--config", config]) == 0
+    manifests = setup["tmp"] / "archive" / "sources" / "laptop" / "manifests"
+    damaged = manifests / "20991231T000000Z-laptop-ffff.jsonl.zst"
+    damaged.write_bytes(b"\x28\xb5\x2f\xfd not a zstd frame")
+    capsys.readouterr()
+
+    assert main(["archive", "verify", "--config", config]) == 2
+    out = capsys.readouterr().out
+    assert "laptop: error: " in out
+    assert damaged.name in out
+    assert "other: checked 1, ok" in out
+
+    assert main(["archive", "verify", "--config", config, "--json"]) == 2
+    results = {item["source"]: item for item in json.loads(capsys.readouterr().out)}
+    assert results["laptop"]["ok"] is False
+    assert damaged.name in results["laptop"]["error"]
+    assert results["other"]["ok"] is True
+    assert results["other"]["checked"] == 1
+
+
 def test_verify_prints_files_that_could_not_be_read(setup, capsys, monkeypatch):
     from agent_history.archive import verify
 

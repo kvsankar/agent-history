@@ -183,22 +183,40 @@ def _summary_dict(summary) -> dict[str, Any]:
 
 
 def _verify(args: argparse.Namespace) -> int:
-    from agent_history.archive.verify import verify_source
-
+    """Verify each source in turn. A source that cannot be verified, for example because
+    one of its manifests is damaged, is reported with its error, and the next one runs."""
     config, names = _load(args)
     destination = _destination(args, config)
-    reports = {name: verify_source(destination, name, sample=args.sample) for name in names}
+    results = [_verify_one(destination, name, args.sample) for name in names]
     if args.json:
-        _print_json(
-            [{"source": name, "ok": report.ok, **vars(report)} for name, report in reports.items()]
-        )
+        _print_json(results)
     else:
-        for name, report in reports.items():
-            print(f"{name}: checked {report.checked}, {'ok' if report.ok else 'PROBLEMS'}")
-            for label in ("mismatched", "missing", "unlisted", "errors", "pending"):
-                for path in getattr(report, label):
-                    print(f"  {label}: {path}")
-    return EXIT_OK if all(report.ok for report in reports.values()) else EXIT_PROBLEMS
+        for result in results:
+            _print_verify(result)
+    return EXIT_OK if all(result["ok"] for result in results) else EXIT_PROBLEMS
+
+
+def _verify_one(destination, name: str, sample: int | None) -> dict[str, Any]:
+    from agent_history.archive.verify import verify_source
+
+    try:
+        report = verify_source(destination, name, sample=sample)
+    except (ArchiveError, OSError) as exc:
+        return {"source": name, "ok": False, "error": str(exc)}
+    except Exception as exc:  # a defect for one source must not stop the others
+        return {"source": name, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"source": name, "ok": report.ok, **vars(report)}
+
+
+def _print_verify(result: dict[str, Any]) -> None:
+    name = result["source"]
+    if "error" in result:
+        print(f"{name}: error: {result['error']}")
+        return
+    print(f"{name}: checked {result['checked']}, {'ok' if result['ok'] else 'PROBLEMS'}")
+    for label in ("mismatched", "missing", "unlisted", "errors", "pending"):
+        for path in result[label]:
+            print(f"  {label}: {path}")
 
 
 def _catalog(args: argparse.Namespace) -> int:
