@@ -153,6 +153,10 @@ def codex_get_home_dir() -> Path:
 # =============================================================================
 
 
+class ZstandardMissingError(OSError):
+    """A compressed rollout cannot be read because zstandard is not installed."""
+
+
 @contextmanager
 def _codex_open_text(
     jsonl_file: Path, encoding: str = "utf-8", errors: str = "strict"
@@ -162,7 +166,9 @@ def _codex_open_text(
         try:
             import zstandard as zstd
         except ImportError as exc:
-            raise OSError("Reading .jsonl.zst Codex rollouts requires zstandard") from exc
+            raise ZstandardMissingError(
+                "Reading .jsonl.zst Codex rollouts requires zstandard"
+            ) from exc
 
         with open(jsonl_file, "rb") as raw:
             reader = zstd.ZstdDecompressor().stream_reader(raw)

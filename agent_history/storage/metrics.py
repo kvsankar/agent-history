@@ -603,7 +603,7 @@ def _parse_codex_jsonl(
     pending_usage: Dict[str, int] = {}
     codex_identity = CodexSessionMeta()
 
-    from agent_history.backends.codex import _codex_open_text
+    from agent_history.backends.codex import ZstandardMissingError, _codex_open_text
 
     try:
         # Rollouts may be zstd-compressed; a stray invalid byte must not stop
@@ -679,6 +679,10 @@ def _parse_codex_jsonl(
                         session_info, messages, payload, token_counter, pending_usage
                     )
 
+    except ZstandardMissingError:
+        # Not readable here; a cached empty row would never be replaced,
+        # because an archived rollout's mtime does not change
+        raise
     except OSError:
         pass
 

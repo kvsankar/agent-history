@@ -1,7 +1,9 @@
 """The Codex stats reader handles zstd-compressed rollouts and bad bytes."""
 
 import json
+import sys
 
+import pytest
 import zstandard
 
 from agent_history.storage import metrics
@@ -50,3 +52,28 @@ def test_invalid_utf8_line_does_not_stop_the_rest_of_the_rollout(tmp_path):
 
     assert session_info["session_id"] == "c-1"
     assert [m["type"] for m in messages] == ["user", "assistant"]
+
+
+def _session_rows(conn):
+    return [
+        tuple(row)
+        for row in conn.execute("SELECT session_id, message_count FROM sessions").fetchall()
+    ]
+
+
+def test_without_zstandard_a_compressed_rollout_is_not_cached(tmp_path, monkeypatch):
+    """An empty row would stay: archived rollouts never change their mtime."""
+    rollout = tmp_path / "rollout-2026-09-29T12-00-00-c-1.jsonl.zst"
+    rollout.write_bytes(zstandard.ZstdCompressor().compress(b"".join(_lines())))
+    conn = metrics.init_metrics_db(tmp_path / "metrics.db")
+    try:
+        monkeypatch.setitem(sys.modules, "zstandard", None)
+        with pytest.raises(OSError, match="zstandard"):
+            metrics.sync_file_to_db(conn, rollout, agent="codex")
+        assert _session_rows(conn) == []
+
+        monkeypatch.undo()
+        assert metrics.sync_file_to_db(conn, rollout, agent="codex")
+        assert _session_rows(conn) == [("c-1", 2)]
+    finally:
+        conn.close()
