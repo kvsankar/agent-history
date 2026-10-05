@@ -9,7 +9,6 @@ spaces, so passing them separately would lose the quoting.
 
 from __future__ import annotations
 
-import io
 import shlex
 import subprocess
 import tarfile
@@ -29,6 +28,7 @@ from agent_history.archive.transport import (
 )
 
 _MISSING = 3
+_CHUNK = 1 << 20
 
 
 class SshDestination(Destination):
@@ -192,6 +192,52 @@ class SshDestination(Destination):
 
     @contextmanager
     def open_binary(self, rel: str) -> Iterator[IO[bytes]]:
-        result = self._run(f"cat {self._remote(rel)}")
-        self._check(result, f"Reading {rel}")
-        yield io.BytesIO(result.stdout)
+        """Stream a file from ``cat`` on the remote host, without holding it in memory.
+
+        A failure on the remote host or of the connection raises ArchiveError, also when
+        the reader stopped early because the stream was cut short.
+        """
+        process = subprocess.Popen(
+            self._command(f"cat {self._remote(rel)}"),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout: IO[bytes] = process.stdout  # type: ignore[assignment]
+        stderr: list[bytes] = []
+        reader = threading.Thread(target=lambda: stderr.append(process.stderr.read()))  # type: ignore[union-attr]
+        reader.start()
+        try:
+            yield stdout
+            if not stdout.closed:  # a decompressor may close it when its frame ends
+                while stdout.read(_CHUNK):  # read what the caller left, so cat can finish
+                    pass
+        except BaseException as exc:
+            status = _finished(process)
+            if status is None:
+                process.kill()
+            _close(process, stdout, reader)
+            if status not in (None, 0):
+                raise self._read_error(rel, stderr) from exc
+            raise
+        _close(process, stdout, reader)
+        if process.returncode != 0:
+            raise self._read_error(rel, stderr)
+
+    def _read_error(self, rel: str, stderr: list[bytes]) -> ArchiveError:
+        message = b"".join(stderr).decode("utf-8", "replace").strip()
+        return ArchiveError(f"Reading {rel} failed on {self.host}: {message}")
+
+
+def _close(process: subprocess.Popen, stdout: IO[bytes], reader: threading.Thread) -> None:
+    stdout.close()
+    process.wait()
+    reader.join()
+
+
+def _finished(process: subprocess.Popen, timeout: float = 0.5) -> int | None:
+    """The exit status, waiting briefly for a process whose output has just ended."""
+    try:
+        return process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None

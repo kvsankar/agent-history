@@ -7,6 +7,7 @@ import random
 from dataclasses import dataclass, field
 
 from agent_history.archive.codec import CHUNK_SIZE, _zstd
+from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import archive_file_path
 from agent_history.archive.manifest import read_manifests
 from agent_history.archive.transport import Destination
@@ -20,10 +21,13 @@ class VerifyReport:
     mismatched: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     unlisted: list[str] = field(default_factory=list)
+    # "<label>: <message>" for files that could not be read from the destination, for
+    # example because the connection dropped; such a file is neither checked nor mismatched
+    errors: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return not (self.mismatched or self.missing or self.unlisted)
+        return not (self.mismatched or self.missing or self.unlisted or self.errors)
 
 
 def expected_contents(destination: Destination, source: str) -> dict[str, tuple[str, int, str]]:
@@ -75,8 +79,13 @@ def verify_source(
         if rel not in present:
             report.missing.append(label)
             continue
+        try:
+            digest = _content_digest(destination, f"sources/{source}/{rel}")
+        except (ArchiveError, OSError) as exc:
+            report.errors.append(f"{label}: {exc}")
+            continue
         report.checked += 1
-        if _content_digest(destination, f"sources/{source}/{rel}") != (sha256, size):
+        if digest != (sha256, size):
             report.mismatched.append(label)
     return report
 
@@ -88,6 +97,10 @@ def _label(rel: str) -> str:
 
 
 def _content_digest(destination: Destination, rel: str) -> tuple[str, int]:
+    """SHA-256 and size of an archived file's content; ("", -1) when it does not decompress.
+
+    A failure to read the file from the destination raises ArchiveError or OSError.
+    """
     digest = hashlib.sha256()
     total = 0
     try:
@@ -99,6 +112,8 @@ def _content_digest(destination: Destination, rel: str) -> tuple[str, int]:
                         break
                     digest.update(chunk)
                     total += len(chunk)
-    except Exception:
+    except (ArchiveError, OSError):
+        raise
+    except Exception:  # not valid zstd: the content does not match
         return ("", -1)
     return digest.hexdigest(), total

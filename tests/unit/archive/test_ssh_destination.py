@@ -264,3 +264,77 @@ def test_remote_writes_are_flushed_before_the_commit(remote, tmp_path, monkeypat
     writes = [command for command in commands if "cat >" in command]
     for command in [tar, placing, commit, *writes]:
         assert command.rstrip().endswith("sync"), command
+
+
+# Like FAKE_SSH, but after a cat the connection stays open until $SSH_RELEASE exists.
+FAKE_SSH_LINGERING = FAKE_SSH.replace(
+    'exec sh -c "$*"',
+    'sh -c "$*"; status=$?\n'
+    'case "$*" in\n'
+    '  cat*) while [ ! -e "$SSH_RELEASE" ]; do sleep 0.05; done ;;\n'
+    "esac\n"
+    "exit $status",
+)
+
+
+def test_open_binary_streams_instead_of_reading_the_whole_file(remote, tmp_path, monkeypatch):
+    import threading
+    import time
+
+    dest, _root = remote
+    dest.write_bytes("big.bin", b"x" * 100_000)
+    lingering = tmp_path / "bin" / "ssh-lingering"
+    lingering.write_text(FAKE_SSH_LINGERING, encoding="utf-8")
+    lingering.chmod(lingering.stat().st_mode | stat.S_IEXEC)
+    release = tmp_path / "release"
+    monkeypatch.setenv("SSH_RELEASE", str(release))
+    timer = threading.Timer(3, release.touch)  # in case the read waits for the end
+    timer.start()
+    streaming = SshDestination("nas", dest.root, ssh=[str(lingering)])
+    try:
+        started = time.monotonic()
+        with streaming.open_binary("big.bin") as handle:
+            first = handle.read(10)
+            waited = time.monotonic() - started
+            release.touch()
+            rest = handle.read()
+    finally:
+        timer.cancel()
+
+    assert waited < 2, "open_binary waited for the whole transfer before returning data"
+    assert first + rest == b"x" * 100_000
+
+
+def test_open_binary_reports_a_failed_read(remote):
+    dest, _root = remote
+
+    with pytest.raises(ArchiveError, match=r"missing\.bin"):
+        with dest.open_binary("missing.bin") as handle:
+            handle.read()
+
+
+@pytest.mark.skipif(sys.platform != "win32" and os.geteuid() == 0, reason="root reads anything")
+def test_verify_reports_transport_errors_apart_from_mismatches(remote, tmp_path):
+    dest, root = remote
+    home = tmp_path / "home"
+    (home / SESSION).parent.mkdir(parents=True)
+    (home / SESSION).write_bytes(b"a\n")
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    collect_source(config, "src", state_dir=tmp_path / "state", now=T0, destination=dest)
+    archived = root / "sources" / "src" / "files" / f"{SESSION}.zst"
+    archived.chmod(0)  # unreadable: the read fails on the remote host
+
+    try:
+        report = verify_source(dest, "src")
+    finally:
+        archived.chmod(0o644)
+
+    assert report.mismatched == []
+    assert len(report.errors) == 1
+    assert report.errors[0].startswith(f"{SESSION}: ")
+    assert not report.ok
