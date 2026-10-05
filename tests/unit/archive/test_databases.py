@@ -250,6 +250,76 @@ def test_recreated_log_database_exports_from_the_start(env):
     assert [row["id"] for row in _exported_rows(env, entry)] == [1, 2]
 
 
+@pytest.mark.parametrize("lose_state", [False, True])
+def test_recreated_log_database_that_grew_past_the_last_key_is_a_reset(env, lose_state):
+    conn = _logs_db(env)
+    _add_logs(conn, [1, 2, 3])
+    conn.close()
+    _collect(env)
+    (env["home"] / ".codex" / "logs_2.sqlite").unlink()
+    conn = _logs_db(env)
+    rows = [(i, 9000 + i, f"after {i}") for i in range(1, 6)]
+    conn.executemany("INSERT INTO logs VALUES (?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+    _advance_mtime(env["home"] / ".codex" / "logs_2.sqlite")
+    if lose_state:  # the state is rebuilt from the manifests
+        for path in env["state"].rglob("*.json"):
+            path.unlink()
+
+    summary = _collect(env, hours=1)
+
+    (entry,) = _entries(env, summary.run_id)
+    assert entry["reset"] is True
+    assert entry["from_key"] is None
+    assert [row["body"] for row in _exported_rows(env, entry)] == [r[2] for r in rows]
+
+
+def test_log_table_starting_again_below_the_old_keys_is_a_reset(env):
+    conn = _logs_db(env)
+    _add_logs(conn, [5, 6, 7])
+    _collect(env)
+    conn.execute("DELETE FROM logs")
+    _add_logs(conn, range(1, 10))  # rows 5 to 7 even have the same content as before
+    conn.close()
+
+    summary = _collect(env, hours=1)
+
+    (entry,) = _entries(env, summary.run_id)
+    assert entry["reset"] is True
+    assert [row["id"] for row in _exported_rows(env, entry)] == list(range(1, 10))
+
+
+def test_pruned_log_rows_are_not_a_reset(env):
+    conn = _logs_db(env)
+    _add_logs(conn, [1, 2, 3])
+    _collect(env)
+    conn.execute("DELETE FROM logs WHERE id <= 2")
+    _add_logs(conn, [4, 5])
+    conn.close()
+
+    summary = _collect(env, hours=1)
+
+    (entry,) = _entries(env, summary.run_id)
+    assert (entry["reset"], entry["from_key"], entry["to_key"]) == (False, 3, 5)
+    assert [row["id"] for row in _exported_rows(env, entry)] == [4, 5]
+
+
+def test_log_rows_pruned_past_the_last_export_are_exported_once(env):
+    conn = _logs_db(env)
+    _add_logs(conn, [1, 2, 3])
+    _collect(env)
+    conn.execute("DELETE FROM logs WHERE id <= 4")
+    _add_logs(conn, [6, 7])
+    conn.close()
+
+    summary = _collect(env, hours=1)
+
+    (entry,) = _entries(env, summary.run_id)
+    assert entry["reset"] is False
+    assert [row["id"] for row in _exported_rows(env, entry)] == [6, 7]
+
+
 def test_new_log_file_name_starts_its_own_export(env):
     old = _logs_db(env)
     _add_logs(old, [1, 2])

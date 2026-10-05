@@ -11,6 +11,7 @@ key is above the last exported key, as JSON Lines.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_history.archive.codec import compress_file
 from agent_history.archive.manifest import run_stamp
+from agent_history.archive.state import IDENTITY_SUFFIX
 
 if TYPE_CHECKING:
     from agent_history.archive.collect import _Run
@@ -243,9 +245,10 @@ def _export_new_rows(
     table, key = str(rule.log_table), str(rule.log_key)
     state_key = f"{item.rel_path}::{table}"
     last = run.state.log_keys.get(state_key)
+    known = run.state.log_keys.get(state_key + IDENTITY_SUFFIX)
     with closing(sqlite3.connect(snapshot)) as conn:
         newest = conn.execute(f"SELECT MAX({_quote(key)}) FROM {_quote(table)}").fetchone()[0]
-        reset = last is not None and newest is not None and newest < last
+        reset = _was_recreated(conn, table, key, last, known, newest)
         start = None if reset else last
         entry: dict[str, Any] = {
             "type": "rows",
@@ -263,8 +266,12 @@ def _export_new_rows(
             entry["racy"] = True
         jsonl = snapshot.with_suffix(".jsonl")
         count = _write_rows(conn, table, key, start, jsonl)
+        if count == 0:
+            entry["to_key"] = last if not reset else newest
+        identity = _table_identity(conn, table, key, entry["to_key"])
+        if identity is not None:
+            entry["identity"] = identity
     if count == 0:
-        entry["to_key"] = last if not reset else newest
         return entry
     export_path = f"{item.rel_path}.rows/{run_stamp(run.now)}-{run.run_id[-4:]}.jsonl"
     result = compress_file(
@@ -280,6 +287,71 @@ def _export_new_rows(
         compressed_size=result.compressed_size,
     )
     return entry
+
+
+def _was_recreated(conn, table: str, key: str, last, identity, newest) -> bool:
+    """Whether a log table was recreated (or emptied) since the last export.
+
+    A recreated table can grow past the last exported key before the next run, so the
+    newest key alone does not show it. ``identity`` (from :func:`_table_identity`)
+    records the previous run's smallest key and hashes of the rows at that key and at
+    ``last``. The agent deletes its oldest rows and adds rows with larger keys, so the
+    smallest key never goes down unless the table starts again. If it has not gone
+    down, the table counts as recreated only when both recorded rows are still there
+    and both differ: one row can be updated in place, but every row is new in a
+    recreated table.
+    """
+    if last is None or newest is None:
+        return False
+    if newest < last:
+        return True
+    if not identity:  # state written before tables were identified
+        return False
+    first_key = identity.get("first_key")
+    if _min_key(conn, table, key) < first_key:
+        return True
+    if first_key == last:  # one row: an update in place would look the same
+        return False
+    first = _row_identity(conn, table, key, first_key)
+    latest = _row_identity(conn, table, key, last)
+    return (
+        first is not None
+        and latest is not None
+        and first != identity.get("first_sha256")
+        and latest != identity.get("last_sha256")
+    )
+
+
+def _table_identity(conn, table: str, key: str, last) -> dict[str, Any] | None:
+    """The smallest key, and hashes of the rows at it and at ``last``, for the next run."""
+    first_key = _min_key(conn, table, key)
+    if first_key is None or last is None:
+        return None
+    return {
+        "first_key": first_key,
+        "first_sha256": _row_identity(conn, table, key, first_key),
+        "last_sha256": _row_identity(conn, table, key, last),
+    }
+
+
+def _min_key(conn, table: str, key: str):
+    return conn.execute(f"SELECT MIN({_quote(key)}) FROM {_quote(table)}").fetchone()[0]
+
+
+def _row_identity(conn, table: str, key: str, value) -> str | None:
+    """SHA-256 of one row's values, leaving out credential columns; None if no such row."""
+    cursor = conn.execute(f"SELECT * FROM {_quote(table)} WHERE {_quote(key)} = ?", (value,))
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    names = [column[0] for column in cursor.description]
+    record = {
+        name: _json_value(cell)
+        for name, cell in zip(names, row)
+        if not _looks_like_credential(name)
+    }
+    text = json.dumps(record, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _write_rows(conn, table: str, key: str, start, out: Path) -> int:

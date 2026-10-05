@@ -17,6 +17,9 @@ from typing import Any, Iterator
 
 from agent_history.archive.errors import ArchiveError
 
+# log_keys["<path>::<table>" + IDENTITY_SUFFIX] identifies the log table's rows (see databases).
+IDENTITY_SUFFIX = "::identity"
+
 
 class CollectLockedError(ArchiveError):
     """Another run for the same source and destination is in progress."""
@@ -53,6 +56,8 @@ def _apply_entry(state: SourceState, entry: dict[str, Any]) -> None:
     racy = bool(entry.get("racy"))  # not trusted: the next run checks the file again
     if kind == "rows":
         state.log_keys[f"{path}::{entry['table']}"] = entry["to_key"]
+        if entry.get("identity"):  # lets the next run tell a recreated table
+            state.log_keys[f"{path}::{entry['table']}{IDENTITY_SUFFIX}"] = entry["identity"]
         state.files[path] = FileState(0, 0, "", signature=None if racy else entry.get("signature"))
         return
     if kind != "file":
