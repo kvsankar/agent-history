@@ -124,6 +124,12 @@ class AgentLayout:
         return self.roots.get(platform) or self.roots.get("*", ())
 
 
+# The rule for a SQLite database that a configuration include selects and no layout rule
+# names: a snapshot with credential-named columns blanked, never a raw copy.
+GENERIC_SNAPSHOT = DatabaseRule("*", "snapshot")
+_SQLITE_HEADER = b"SQLite format 3\x00"
+
+
 @dataclass(frozen=True)
 class SelectedFile:
     """A source file chosen for archiving, or a path that could not be read."""
@@ -172,6 +178,8 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="codex",
         roots={"*": (".codex",)},
         include=("sessions/**", "archived_sessions/**", "history.jsonl", "session_index.jsonl"),
+        # Built from the rollout files, recording how far into each one it has read.
+        exclude=("thread_history_*.sqlite",),
         databases=(
             DatabaseRule(
                 "state_*.sqlite",
@@ -211,6 +219,8 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="copilot-cli",
         roots={"*": (".copilot",)},
         include=("session-state/**", "chats/**", "history-session-state/**"),
+        # A cache of repository details that Copilot rebuilds.
+        exclude=("repo-metadata-cache.db",),
         databases=(
             DatabaseRule("session-state/*/session.db", "snapshot"),
             DatabaseRule(
@@ -253,6 +263,15 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="cagelens",
         roots={"*": (".agent-history", ".cagelens")},
         include=("config.json", "aliases*.json", "project_tags*"),
+        # Caches, which hold copies of other machines' sessions or data rebuilt from
+        # sessions, and the collector's own work folder.
+        exclude=(
+            "remote_*/**",
+            "remote-cache/**",
+            "**/metrics.db*",
+            "*_index.json",
+            "archive-work/**",
+        ),
     ),
 )
 
@@ -423,8 +442,9 @@ def _iter_config_includes(part: SourcePart, platform: str) -> Iterator[SelectedF
 
     A file inside an agent's folder gets that agent's rules, as if the layout had
     selected it: its exclusions apply and a database is snapshotted, blanked or exported
-    by rows. So an include can add files to an agent folder but never copy a database
-    raw or bring back what the layout leaves out.
+    by rows. Any other SQLite database, inside an agent's folder or not, is snapshotted
+    with :data:`GENERIC_SNAPSHOT`. So an include can add files to an agent folder but
+    never copy a database raw or bring back what the layout leaves out.
     """
     home = part.home
     if home is None:
@@ -442,12 +462,38 @@ def _iter_config_includes(part: SourcePart, platform: str) -> Iterator[SelectedF
             continue
         if not _name_allowed(found) or not _folders_allowed(found):
             continue
-        if _matches_any(found, part.exclude):
+        if _matches_any(found, part.exclude) or _matches_any(inner, layout_exclude):
             continue
-        if layout is None:
-            yield SelectedFile(found, home / found, agent)
-        elif not _matches_any(inner, layout_exclude):
-            yield SelectedFile(found, home / found, agent, _database_rule(layout, inner))
+        rule = _database_rule(layout, inner) if layout is not None else None
+        if rule is None and _is_sqlite_database(home / found):
+            rule = GENERIC_SNAPSHOT
+        yield SelectedFile(found, home / found, agent, rule)
+
+
+def _is_sqlite_database(path: Path) -> bool:
+    """Whether a file is a SQLite database, judged by its header, not its name.
+
+    A WAL database can be empty on disk until its first checkpoint, with every row in
+    its ``-wal`` file; an empty file with a non-empty ``-wal`` file beside it counts too.
+    """
+    header = _read_header(path)
+    if header == _SQLITE_HEADER:
+        return True
+    if header != b"":  # not empty, or not readable: the collector reports the latter
+        return False
+    try:
+        return os.lstat(f"{path}-wal").st_size > 0
+    except OSError:
+        return False
+
+
+def _read_header(path: Path) -> bytes | None:
+    """The first bytes of a file, as many as a SQLite header has; None if unreadable."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(len(_SQLITE_HEADER))
+    except OSError:
+        return None
 
 
 def _excludes_folder(inner: str, layout_exclude, rel_path: str, part_exclude) -> bool:

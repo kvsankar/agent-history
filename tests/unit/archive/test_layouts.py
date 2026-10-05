@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -602,3 +603,74 @@ def test_an_entry_with_no_agents_selects_only_its_includes(tmp_path):
     source = parse_config({"archive": {"destination": "/d"}, "sources": [entry]}).sources[0]
 
     assert set(_selected(source)) == {"notes/n.md"}
+
+
+def _sqlite(root: Path, rel: str, wal: bool = False) -> Path:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    if wal:
+        conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_includes_follow_the_databases_that_layouts_leave_out(tmp_path):
+    _sqlite(tmp_path, ".codex/thread_history_1.sqlite")
+    _sqlite(tmp_path, ".copilot/repo-metadata-cache.db")
+    _sqlite(tmp_path, ".cagelens/metrics.db")
+    _sqlite(tmp_path, ".cagelens/backups/metrics.db.20260108-175254")
+    _touch(tmp_path, ".cagelens/codex_index.json")
+    _touch(tmp_path, ".cagelens/remote_u1_codex/s.jsonl")
+    _touch(tmp_path, ".cagelens/remote-cache/h/claude/x.jsonl")
+    _touch(tmp_path, ".cagelens/archive-work/staging/f.zst")
+    _touch(tmp_path, ".cagelens/config.json")
+    _touch(tmp_path, ".codex/history.jsonl")
+    _touch(tmp_path, ".copilot/chats/c.json")
+    include = [".codex/**", ".copilot/**", ".cagelens/**"]
+
+    selected = _selected(_source(tmp_path, agents=[], include=include))
+
+    assert set(selected) == {
+        ".cagelens/config.json",
+        ".codex/history.jsonl",
+        ".copilot/chats/c.json",
+    }
+
+
+def test_includes_snapshot_any_sqlite_database_no_rule_names(tmp_path):
+    _sqlite(tmp_path, ".codex/sqlite/codex-dev.db", wal=True)
+    _sqlite(tmp_path, ".copilot/store/index.bin")
+    _sqlite(tmp_path, "tools/app/state.sqlite")
+    _touch(tmp_path, ".codex/sqlite/notes.db", "not a database")
+    _touch(tmp_path, "tools/app/plain.txt", "text")
+    include = [".codex/**", ".copilot/**", "tools/**"]
+
+    selected = _selected(_source(tmp_path, agents=[], include=include))
+
+    assert set(selected) == {
+        ".codex/sqlite/codex-dev.db",
+        ".copilot/store/index.bin",
+        "tools/app/state.sqlite",
+        ".codex/sqlite/notes.db",
+        "tools/app/plain.txt",
+    }
+    for rel in (".codex/sqlite/codex-dev.db", ".copilot/store/index.bin", "tools/app/state.sqlite"):
+        rule = selected[rel].database
+        assert rule is not None, rel
+        assert (rule.mode, rule.blank_columns) == ("snapshot", ())
+    assert selected[".codex/sqlite/notes.db"].database is None
+    assert selected["tools/app/plain.txt"].database is None
+
+
+def test_an_include_snapshots_a_database_whose_rows_are_only_in_its_wal(tmp_path):
+    # A new WAL database can be empty on disk until its first checkpoint.
+    _touch(tmp_path, "tools/app/state.db", "")
+    (tmp_path / "tools/app/state.db-wal").write_bytes(b"\x37\x7f\x06\x82" + b"\0" * 28)
+
+    selected = _selected(_source(tmp_path, agents=[], include=["tools/**"]))
+
+    assert set(selected) == {"tools/app/state.db"}
+    assert selected["tools/app/state.db"].database.mode == "snapshot"

@@ -169,3 +169,40 @@ def test_an_include_over_an_agent_folder_still_blanks_its_database(env):
     assert token.encode() not in restored.read_bytes()
     with sqlite3.connect(restored) as check:
         assert check.execute("SELECT COUNT(*) FROM accounts").fetchone() == (1,)
+
+
+def test_an_include_snapshots_a_database_that_no_layout_names(env):
+    key = "sk-" + "y" * 40
+    db = env["home"] / "tools" / "app" / "store.bin"
+    db.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, name TEXT, api_key TEXT)")
+    conn.execute("INSERT INTO providers (name, api_key) VALUES ('main', ?)", (key,))
+    conn.commit()  # the row stays in store.bin-wal while the connection is open
+    entry = {
+        "name": "src",
+        "kind": "live",
+        "platform": "linux",
+        "home": str(env["home"]),
+        "agents": [],
+        "include": ["tools/**"],
+    }
+    config = parse_config(
+        {"archive": {"destination": str(env["dest"]), "compression_level": 3}, "sources": [entry]}
+    )
+    try:
+        summary = _collect(env, config=config)
+    finally:
+        conn.close()
+
+    entries = {entry["path"]: entry for entry in _run_entries(env, summary.run_id)}
+    assert set(entries) == {"tools/app/store.bin"}
+    assert entries["tools/app/store.bin"]["kind"] == "sqlite-snapshot"
+    assert entries["tools/app/store.bin"]["blanked"] == ["providers.api_key"]
+    restored = env["tmp"] / "restored.db"
+    archived = env["dest"] / "sources/src/files/tools/app/store.bin.zst"
+    restored.write_bytes(zstandard.ZstdDecompressor().decompress(archived.read_bytes()))
+    assert key.encode() not in restored.read_bytes()
+    with sqlite3.connect(restored) as check:
+        assert check.execute("SELECT name, api_key FROM providers").fetchall() == [("main", None)]
