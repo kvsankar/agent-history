@@ -26,6 +26,7 @@ from agent_history.utils.paths import (
     is_cached_workspace,
     normalize_workspace_name,
 )
+from agent_history.utils.session_identity import claude_subagent_files
 
 __all__ = [
     "_count_file_messages",
@@ -865,11 +866,7 @@ def get_workspace_sessions(
         )
 
         session_files = list(workspace_dir.glob("*.jsonl"))
-        session_files.extend(
-            path
-            for path in workspace_dir.glob("*/subagents/agent-*.jsonl")
-            if not path.name.startswith("agent-acompact-")
-        )
+        session_files.extend(claude_subagent_files(workspace_dir, session_folders="*"))
         for jsonl_file in session_files:
             session = _get_session_from_file(
                 jsonl_file,

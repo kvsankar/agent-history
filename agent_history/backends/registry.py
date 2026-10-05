@@ -24,6 +24,10 @@ from agent_history.utils.platform import (
     AGENT_GEMINI,
     AGENT_PI,
 )
+from agent_history.utils.session_identity import (
+    CLAUDE_COMPACTION_PREFIX,
+    CLAUDE_SUBAGENT_PATTERNS,
+)
 
 DEFAULT_AGENT = "auto"
 DEFAULT_BACKEND_ID = AGENT_CLAUDE
@@ -318,9 +322,10 @@ def decode_workspace(name):
 
 def iter_session_files(workspace_dir):
     yield from workspace_dir.glob("*.jsonl")
-    for path in workspace_dir.glob("*/subagents/agent-*.jsonl"):
-        if not path.name.startswith("agent-acompact-"):
-            yield path
+    for pattern in {CLAUDE_SUBAGENT_PATTERNS!r}:
+        for path in workspace_dir.glob("*/" + pattern):
+            if not path.name.startswith({CLAUDE_COMPACTION_PREFIX!r}):
+                yield path
 
 
 encoded = encode_workspace(workspace)

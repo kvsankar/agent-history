@@ -11,7 +11,11 @@ from typing import Any
 from agent_history.types import SessionDict
 from agent_history.utils.jsonl import json_objects, open_transcript
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
-from agent_history.utils.session_identity import CodexSessionMeta, claude_session_identity
+from agent_history.utils.session_identity import (
+    CodexSessionMeta,
+    claude_session_identity,
+    claude_subagent_files,
+)
 
 LineageRecord = dict[str, Any]
 
@@ -735,12 +739,10 @@ def _claude_notifications_from_entry(
 def _discover_claude_nested_subagents(session_file: Path) -> list[Path]:
     if session_file.name.startswith("agent-") or "subagents" in session_file.parts:
         return []
-    nested_dir = session_file.with_suffix("") / "subagents"
-    if not nested_dir.is_dir():
+    session_dir = session_file.with_suffix("")
+    if not (session_dir / "subagents").is_dir():
         return []
-    return sorted(
-        path for path in nested_dir.glob("agent-*.jsonl") if _is_claude_task_subagent_file(path)
-    )
+    return sorted(claude_subagent_files(session_dir))
 
 
 def _is_gemini_subagent_tool(tool_call: dict[str, Any]) -> bool:
@@ -865,10 +867,6 @@ def _pi_result_content(content: Any) -> str | None:
     if isinstance(content, str):
         return content
     return json.dumps(content, ensure_ascii=False)
-
-
-def _is_claude_task_subagent_file(path: Path) -> bool:
-    return path.name.startswith("agent-") and not path.name.startswith("agent-acompact-")
 
 
 def _main_record_for_session(jsonl_file: Path, agent: str) -> LineageRecord:

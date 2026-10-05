@@ -21,9 +21,31 @@ forked rollout later repeats the session_meta of the thread it came from.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Iterator, Optional, Sequence
 
 _AGENT_PREFIX = "agent-"
+
+# Sub-agent transcripts below a Claude session folder. A workflow's folder
+# also holds journal.jsonl, which records workflow steps and is no session.
+CLAUDE_SUBAGENT_PATTERNS = (
+    "subagents/agent-*.jsonl",
+    "subagents/workflows/*/agent-*.jsonl",
+)
+# Transcripts of context compaction, which are not sub-agent sessions.
+CLAUDE_COMPACTION_PREFIX = "agent-acompact-"
+
+
+def claude_subagent_files(directory: Path, session_folders: str = "") -> Iterator[Path]:
+    """Sub-agent transcripts below ``directory``, without compaction transcripts.
+
+    ``directory`` is a session folder, or a workspace folder with
+    ``session_folders="*"``.
+    """
+    for pattern in CLAUDE_SUBAGENT_PATTERNS:
+        full_pattern = f"{session_folders}/{pattern}" if session_folders else pattern
+        for path in directory.glob(full_pattern):
+            if not path.name.startswith(CLAUDE_COMPACTION_PREFIX):
+                yield path
 
 
 def claude_file_stem(jsonl_file: Path) -> str:
