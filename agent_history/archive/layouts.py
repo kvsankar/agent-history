@@ -44,6 +44,10 @@ CREDENTIAL_DENYLIST = (
     "*mcp*config*",
     "mcp.json*",
     ".mcp.json*",
+    # Sign-in status and logs, such as Claude's daemon-auth-status.json and Codex's
+    # codex-login.log.
+    "*auth-status*",
+    "*login*.log",
     # SSH and other private keys and certificate stores.
     "id_rsa*",
     "id_dsa*",
@@ -165,6 +169,8 @@ LAYOUTS: tuple[AgentLayout, ...] = (
             "file-history/**",
             "usage-data/**",
         ),
+        # The background daemon's sign-in state.
+        exclude=("daemon-auth-*",),
         backend="claude",
         sessions=(
             "projects/*/*.jsonl",
@@ -178,8 +184,16 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="codex",
         roots={"*": (".codex",)},
         include=("sessions/**", "archived_sessions/**", "history.jsonl", "session_index.jsonl"),
-        # Built from the rollout files, recording how far into each one it has read.
-        exclude=("thread_history_*.sqlite",),
+        exclude=(
+            # Built from the rollout files, recording how far into each one it has read.
+            "thread_history_*.sqlite",
+            # Copies of config.toml, which can hold MCP server keys and bearer tokens:
+            # backups, editor backups and undo files.
+            "config.toml?*",
+            ".config.toml.*",
+            "backups/**/config.toml*",
+            "computer-use/config.json",
+        ),
         databases=(
             DatabaseRule(
                 "state_*.sqlite",
@@ -212,6 +226,8 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="pi",
         roots={"*": (".pi/agent",)},
         include=("sessions/**",),
+        # Custom model providers keep their API keys in models.json.
+        exclude=("models.json", "models.json.*"),
         backend="pi",
         sessions=("sessions/**/*.jsonl",),
     ),
@@ -219,8 +235,15 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="copilot-cli",
         roots={"*": (".copilot",)},
         include=("session-state/**", "chats/**", "history-session-state/**"),
-        # A cache of repository details that Copilot rebuilds.
-        exclude=("repo-metadata-cache.db",),
+        exclude=(
+            # A cache of repository details that Copilot rebuilds.
+            "repo-metadata-cache.db",
+            # Settings that can hold signed-in users' tokens, and logs that can record
+            # request headers.
+            "config.json",
+            "settings.json",
+            "logs/**",
+        ),
         databases=(
             DatabaseRule("session-state/*/session.db", "snapshot"),
             DatabaseRule(

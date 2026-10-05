@@ -665,6 +665,41 @@ def test_includes_snapshot_any_sqlite_database_no_rule_names(tmp_path):
     assert selected["tools/app/plain.txt"].database is None
 
 
+def test_includes_leave_out_agent_configuration_that_holds_tokens(tmp_path):
+    left_out = [
+        ".codex/config.toml.bak-20260928-150907",
+        ".codex/config.toml~",
+        ".codex/.config.toml.un~",
+        ".codex/backups/removal-20260827/config.toml",
+        ".codex/computer-use/config.json",
+        ".codex/log/codex-login.log",
+        ".copilot/config.json",
+        ".copilot/settings.json",
+        ".copilot/logs/process-1790254081843-19836.log",
+        ".copilot/logs/extensions/canvas-1790254081843-10532.log",
+        ".pi/agent/models.json",
+        ".pi/agent/models.json.bak-20260623-140738",
+        ".claude/daemon-auth-status.json",
+        ".claude/daemon-auth-cooldown",
+        "tools/app/auth-status.json",
+        "tools/app/login.log",
+    ]
+    kept = [
+        ".codex/hooks.json",
+        ".codex/backups/removal-20260827/hooks.json",
+        ".copilot/command-history-state.json",
+        ".pi/agent/settings.json",
+        ".claude/settings.json",
+        ".claude/daemon.status.json",
+        "tools/app/app.log",
+    ]
+    for rel in left_out + kept:
+        _touch(tmp_path, rel)
+    include = [".codex/**", ".copilot/**", ".pi/**", ".claude/**", "tools/**"]
+
+    assert set(_selected(_source(tmp_path, agents=[], include=include))) == set(kept)
+
+
 def test_an_include_snapshots_a_database_whose_rows_are_only_in_its_wal(tmp_path):
     # A new WAL database can be empty on disk until its first checkpoint.
     _touch(tmp_path, "tools/app/state.db", "")
