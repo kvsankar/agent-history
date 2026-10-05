@@ -153,7 +153,9 @@ def codex_get_home_dir() -> Path:
 
 
 @contextmanager
-def _codex_open_text(jsonl_file: Path) -> Iterator[TextIO]:
+def _codex_open_text(
+    jsonl_file: Path, encoding: str = "utf-8", errors: str = "strict"
+) -> Iterator[TextIO]:
     """Open plain or zstd-compressed Codex rollout files as text."""
     if jsonl_file.name.endswith(".jsonl.zst"):
         try:
@@ -163,7 +165,7 @@ def _codex_open_text(jsonl_file: Path) -> Iterator[TextIO]:
 
         with open(jsonl_file, "rb") as raw:
             reader = zstd.ZstdDecompressor().stream_reader(raw)
-            wrapper = io.TextIOWrapper(reader, encoding="utf-8")
+            wrapper = io.TextIOWrapper(reader, encoding=encoding, errors=errors)
             try:
                 yield wrapper
             finally:
@@ -171,7 +173,7 @@ def _codex_open_text(jsonl_file: Path) -> Iterator[TextIO]:
                 reader.close()
         return
 
-    with open(jsonl_file, encoding="utf-8") as f:
+    with open(jsonl_file, encoding=encoding, errors=errors) as f:
         yield f
 
 

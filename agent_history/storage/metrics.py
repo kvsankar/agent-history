@@ -604,8 +604,12 @@ def _parse_codex_jsonl(
     turn_model: Optional[str] = None
     token_counter = CodexTokenCounter()
 
+    from agent_history.backends.codex import _codex_open_text
+
     try:
-        with open(jsonl_file, encoding="utf-8-sig") as f:
+        # Rollouts may be zstd-compressed; a stray invalid byte must not stop
+        # the read, so undecodable bytes become U+FFFD.
+        with _codex_open_text(jsonl_file, encoding="utf-8-sig", errors="replace") as f:
             for raw_line in f:
                 line = raw_line.strip()
                 if not line:
