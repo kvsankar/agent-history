@@ -29,13 +29,13 @@ class CodexTokenCounter:
         repeats the previous one.
         """
         total = info.get("total_token_usage")
-        if not total:
+        if not total or not isinstance(total, dict):
             return None
         if total == self._previous_total:
             return None
 
         last = info.get("last_token_usage")
-        if last:
+        if last and isinstance(last, dict):
             usage = {field: last.get(field, 0) or 0 for field in _FIELDS}
         else:
             previous = self._previous_total or {}

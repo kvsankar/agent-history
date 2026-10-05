@@ -136,17 +136,21 @@ def _collect_codex_lineage_parts(
     invocations_by_agent_id: dict[str, dict[str, Any]] = {}
 
     try:
-        with _codex_open_text(jsonl_file) as handle:
+        with _codex_open_text(jsonl_file, encoding="utf-8-sig", errors="replace") as handle:
             for raw_line in handle:
                 try:
                     entry = json.loads(raw_line)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(entry, dict):
+                    continue
                 timestamp = entry.get("timestamp")
                 parts["first_ts"] = parts["first_ts"] or timestamp
                 parts["last_ts"] = timestamp or parts["last_ts"]
                 entry_type = entry.get("type")
-                payload = entry.get("payload") or {}
+                payload = entry.get("payload")
+                if not isinstance(payload, dict):
+                    payload = {}
                 if entry_type == "session_meta":
                     parts["identity"].add(payload)
                 elif entry_type == "response_item":
@@ -277,11 +281,13 @@ def _collect_claude_lineage_parts(
     }
 
     try:
-        with open(jsonl_file, encoding="utf-8") as handle:
+        with open(jsonl_file, encoding="utf-8-sig", errors="replace") as handle:
             for raw_line in handle:
                 try:
                     entry = json.loads(raw_line)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
                     continue
                 state["has_records"] = True
                 _update_claude_lineage_state(state, entry)

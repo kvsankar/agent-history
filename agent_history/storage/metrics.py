@@ -350,6 +350,11 @@ def _read_claude_session_fields(
             session_info[key] = entry.get(field)
 
 
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """``value`` when it is a JSON object, else an empty one."""
+    return value if isinstance(value, dict) else {}
+
+
 def _set_claude_session_identity(
     session_info: Dict[str, Any], identity: Dict[str, Any], jsonl_file: Path
 ) -> None:
@@ -398,7 +403,8 @@ def _parse_claude_jsonl(
     identity: Dict[str, Any] = {"session_ids": [], "agent_id": None}
 
     try:
-        with open(jsonl_file, encoding="utf-8-sig") as f:
+        # A stray invalid byte must not stop the read
+        with open(jsonl_file, encoding="utf-8-sig", errors="replace") as f:
             for raw_line in f:
                 line = raw_line.strip()
                 if not line:
@@ -406,6 +412,8 @@ def _parse_claude_jsonl(
                 try:
                     entry = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
                     continue
 
                 entry_type = entry.get("type")
@@ -424,8 +432,8 @@ def _parse_claude_jsonl(
                         timestamps.append(timestamp)
 
                     # Extract token usage
-                    message_obj = entry.get("message", {})
-                    usage = message_obj.get("usage", {})
+                    message_obj = _as_dict(entry.get("message"))
+                    usage = _as_dict(message_obj.get("usage"))
                     input_tokens = usage.get("input_tokens", 0) or 0
                     output_tokens = usage.get("output_tokens", 0) or 0
                     cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
@@ -532,7 +540,7 @@ def _apply_codex_token_count(
     held in ``pending`` until ``_add_pending_codex_usage`` adds it to the
     first assistant message.
     """
-    delta = counter.add(payload.get("info") or {})
+    delta = counter.add(_as_dict(payload.get("info")))
     if delta is None:
         return
 
@@ -617,10 +625,12 @@ def _parse_codex_jsonl(
                     entry = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(entry, dict):
+                    continue
 
                 entry_type = entry.get("type")
                 timestamp = entry.get("timestamp", "")
-                payload = entry.get("payload", {})
+                payload = _as_dict(entry.get("payload"))
 
                 # Extract session metadata
                 if entry_type == "session_meta":
