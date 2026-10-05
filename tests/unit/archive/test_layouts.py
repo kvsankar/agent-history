@@ -329,6 +329,38 @@ def test_browser_profiles_are_never_archived(tmp_path):
     assert set(_selected(_source(tmp_path))) == {f"{base}/screenshot.png"}
 
 
+@pytest.mark.parametrize(
+    "markers",
+    [
+        ["Login Data"],
+        ["Cookies"],
+        ["Network/Cookies"],
+        ["Preferences", "Secure Preferences"],
+        ["Web Data"],
+    ],
+)
+def test_a_lone_browser_profile_folder_is_skipped(tmp_path, markers):
+    base = ".copilot/session-state/abc/files"
+    for marker in markers:
+        _touch(tmp_path, f"{base}/Default/{marker}")
+    _touch(tmp_path, f"{base}/Default/History")
+    _touch(tmp_path, f"{base}/Default/Sessions/Session_1")
+    _touch(tmp_path, f"{base}/notes.md")
+
+    assert set(_selected(_source(tmp_path))) == {f"{base}/notes.md"}
+
+
+def test_a_folder_with_only_preferences_is_not_a_profile(tmp_path):
+    base = ".copilot/session-state/abc/files"
+    _touch(tmp_path, f"{base}/tool/Preferences")
+    _touch(tmp_path, f"{base}/tool/Network/settings.json")
+
+    assert set(_selected(_source(tmp_path))) == {
+        f"{base}/tool/Preferences",
+        f"{base}/tool/Network/settings.json",
+    }
+
+
 def _refuse_folder(monkeypatch, folder: Path):
     """Make listing ``folder`` fail as it does for an unreadable folder."""
     from agent_history.archive import layouts

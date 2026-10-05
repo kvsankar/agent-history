@@ -61,8 +61,22 @@ CREDENTIAL_DENYLIST = (
 )
 
 # A folder holding any of these is a browser profile: cookies, saved logins and caches,
-# never session content. Such folders are not descended into.
-BROWSER_PROFILE_MARKERS = ("Local State", "cookies.sqlite", "logins.json", "key4.db")
+# never session content. Such folders are not descended into. "Local State" marks the
+# top folder of a Chromium user-data directory; the others mark one profile folder (such
+# as "Default"), which can also be found on its own. Compared case-insensitively.
+BROWSER_PROFILE_MARKERS = (
+    "Local State",
+    "Login Data",
+    "Cookies",
+    "Web Data",
+    "cookies.sqlite",
+    "logins.json",
+    "key4.db",
+)
+# A Chromium profile keeps both of these; either alone is too common a name.
+BROWSER_PROFILE_MARKER_PAIR = ("Preferences", "Secure Preferences")
+# Newer Chromium versions keep cookies in this subfolder of a profile.
+BROWSER_PROFILE_COOKIES = ("Network", "Cookies")
 
 # Matched against file names only, in every layout.
 COMMON_EXCLUDES = ("*.tmp", "*.part", "*-wal", "*-shm", "*-journal", "*.lock")
@@ -477,8 +491,20 @@ def _entry_kind(entry: os.DirEntry) -> str:
 
 
 def _is_browser_profile(entries: list[os.DirEntry]) -> bool:
-    names = {entry.name.lower() for entry in entries}
-    return any(marker.lower() in names for marker in BROWSER_PROFILE_MARKERS)
+    names = {entry.name.lower(): entry for entry in entries}
+    if any(marker.lower() in names for marker in BROWSER_PROFILE_MARKERS):
+        return True
+    if all(marker.lower() in names for marker in BROWSER_PROFILE_MARKER_PAIR):
+        return True
+    folder, cookies = BROWSER_PROFILE_COOKIES
+    network = names.get(folder.lower())
+    if network is None or _entry_kind(network) != "dir":
+        return False
+    try:
+        with os.scandir(network.path) as inner:
+            return any(entry.name.lower() == cookies.lower() for entry in inner)
+    except OSError:
+        return False  # the walk reports the folder when it tries to read it
 
 
 def _scan(root: Path, rel_dir: str) -> list[os.DirEntry] | _Unreadable:
