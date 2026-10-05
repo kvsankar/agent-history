@@ -16,6 +16,7 @@ import json
 import shutil
 import sqlite3
 import tempfile
+import time
 from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -44,6 +45,7 @@ def process_database(run: _Run, item: SelectedFile, staging: Path) -> dict[str, 
     """Archive one database for a collector run; None when it has not changed."""
     rule = item.database
     assert rule is not None
+    read_ns = time.time_ns()  # before reading: a slow copy must not hide a recent write
     signature = database_signature(item.path)
     previous = run.state.files.get(item.rel_path)
     if previous is not None and previous.signature == signature:
@@ -52,14 +54,14 @@ def process_database(run: _Run, item: SelectedFile, staging: Path) -> dict[str, 
         snapshot = Path(tmp) / "snapshot.db"
         backup_database(item.path, snapshot)
         if rule.mode == "log":
-            return _export_new_rows(run, item, rule, snapshot, staging, signature)
+            return _export_new_rows(run, item, rule, snapshot, staging, signature, read_ns)
         blanked = blank_credentials(snapshot, rule)
         extra: dict[str, Any] = {
             "kind": "sqlite-snapshot",
             "blanked": blanked,
             "signature": signature,
         }
-        if signature_is_racy(signature):
+        if signature_is_racy(signature, read_ns):
             extra["racy"] = True
         return run.stage_file(
             item,
@@ -69,6 +71,7 @@ def process_database(run: _Run, item: SelectedFile, staging: Path) -> dict[str, 
             item.path.stat().st_mtime_ns,
             previous,
             extra,
+            read_ns=read_ns,
         )
 
 
@@ -90,10 +93,11 @@ def database_signature(path: Path) -> list[int]:
     ]
 
 
-def signature_is_racy(signature: list[int]) -> bool:
+def signature_is_racy(signature: list[int], read_ns: int) -> bool:
+    """True when the database or its WAL was modified just before ``read_ns``."""
     from agent_history.archive.collect import is_racy
 
-    return is_racy(signature[1]) or (signature[3] >= 0 and is_racy(signature[3]))
+    return is_racy(signature[1], read_ns) or (signature[3] >= 0 and is_racy(signature[3], read_ns))
 
 
 def backup_database(src: Path, dst: Path) -> None:
@@ -241,6 +245,7 @@ def _export_new_rows(
     snapshot: Path,
     staging: Path,
     signature: list[int],
+    read_ns: int,
 ) -> dict[str, Any]:
     table, key = str(rule.log_table), str(rule.log_key)
     state_key = f"{item.rel_path}::{table}"
@@ -262,7 +267,7 @@ def _export_new_rows(
             "signature": signature,
             "rows": 0,
         }
-        if signature_is_racy(signature):
+        if signature_is_racy(signature, read_ns):
             entry["racy"] = True
         jsonl = snapshot.with_suffix(".jsonl")
         count, blanked = _write_rows(conn, rule, start, jsonl)

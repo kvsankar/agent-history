@@ -391,15 +391,19 @@ class _Run:
             from agent_history.archive.databases import process_database
 
             return process_database(self, item, staging)
+        read_ns = time.time_ns()  # before reading: a slow read must not hide a recent write
         stat = item.path.stat()
         previous = self.state.files.get(item.rel_path)
         if previous and (previous.size, previous.mtime_ns) == (stat.st_size, stat.st_mtime_ns):
             if previous.gone:
-                return self._file_entry(
+                entry = self._file_entry(
                     item, "returned", stat.st_size, stat.st_mtime_ns, previous.sha256
                 )
+                return _mark_racy(entry, stat.st_mtime_ns, read_ns)
             return None
-        return self.stage_file(item, item.path, staging, stat.st_size, stat.st_mtime_ns, previous)
+        return self.stage_file(
+            item, item.path, staging, stat.st_size, stat.st_mtime_ns, previous, read_ns=read_ns
+        )
 
     def stage_file(
         self,
@@ -410,8 +414,13 @@ class _Run:
         mtime_ns: int,
         previous: FileState | None,
         extra: dict[str, Any] | None = None,
+        *,
+        read_ns: int,
     ) -> dict[str, Any] | None:
-        """Compress ``content`` as the new version of ``item`` and decide its action."""
+        """Compress ``content`` as the new version of ``item`` and decide its action.
+
+        ``read_ns`` is the time just before the file was read, for the racy check.
+        """
         archived = archive_file_path(self.source.name, item.rel_path)
         staged = self.staged_path(staging, archived)
         prefix_length = previous.size if previous else None
@@ -424,12 +433,15 @@ class _Run:
             os.utime(staged, ns=(mtime_ns, mtime_ns))
         if previous and result.sha256 == previous.sha256:
             staged.unlink(missing_ok=True)
-            return self._file_entry(item, "touched", size, mtime_ns, result.sha256, extra)
+            entry = self._file_entry(item, "touched", size, mtime_ns, result.sha256, extra)
+            return _mark_racy(entry, mtime_ns, read_ns)
         action = "added"
         if previous:
             appended = result.size >= previous.size and result.prefix_sha256 == previous.sha256
             action = "updated" if appended and not (extra and extra.get("kind")) else "versioned"
-        entry = self._file_entry(item, action, size, mtime_ns, result.sha256, extra)
+        entry = _mark_racy(
+            self._file_entry(item, action, size, mtime_ns, result.sha256, extra), mtime_ns, read_ns
+        )
         entry["compressed_size"] = result.compressed_size
         if action == "versioned" and previous is not None:
             version = f"versions/{item.rel_path}.{run_stamp(self.now)}-{self.run_id[-4:]}.zst"
@@ -471,8 +483,6 @@ class _Run:
             "sha256": sha256,
         }
         entry.update(extra or {})
-        if is_racy(mtime_ns):
-            entry["racy"] = True
         return entry
 
     # -- committing -------------------------------------------------------------------
@@ -571,8 +581,15 @@ class _Run:
             sys.stderr.write(f"Warning: health ping failed: {exc}\n")
 
 
-def is_racy(mtime_ns: int) -> bool:
-    return time.time_ns() - mtime_ns < RACY_WINDOW_NS
+def is_racy(mtime_ns: int, read_ns: int) -> bool:
+    """True when a file was modified within the racy window before it was read."""
+    return read_ns - mtime_ns < RACY_WINDOW_NS
+
+
+def _mark_racy(entry: dict[str, Any], mtime_ns: int, read_ns: int) -> dict[str, Any]:
+    if is_racy(mtime_ns, read_ns):
+        entry["racy"] = True
+    return entry
 
 
 def _hostname() -> str:

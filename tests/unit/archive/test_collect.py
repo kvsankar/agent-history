@@ -112,6 +112,30 @@ def test_recently_modified_file_is_checked_again(env):
     assert _archived(env, SESSION) == b"xyz\n"
 
 
+def test_racy_check_uses_the_time_the_file_was_read(env, monkeypatch):
+    """Slow compression must not hide that the file was modified just before it was read."""
+    import time as time_module
+
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"abc\n")  # modified just now
+    real_time_ns = time_module.time_ns
+    offset = [0]
+    monkeypatch.setattr(time_module, "time_ns", lambda: real_time_ns() + offset[0])
+    real_compress = collect_module.compress_file
+
+    def slow_compress(*args, **kwargs):
+        result = real_compress(*args, **kwargs)
+        offset[0] = 10_000_000_000  # compression took ten seconds
+        return result
+
+    monkeypatch.setattr(collect_module, "compress_file", slow_compress)
+
+    summary = _collect(env)
+
+    assert _entries(env, summary.run_id)[SESSION]["racy"] is True
+
+
 def test_appended_file_is_updated_in_place(env):
     _write(env, SESSION, b"a\n", mtime=1_790_000_000)
     _collect(env)

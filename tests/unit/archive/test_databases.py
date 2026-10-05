@@ -436,6 +436,37 @@ def test_recently_modified_database_is_checked_again(env):
     assert entry2["action"] == "versioned"
 
 
+@pytest.mark.parametrize("kind", ["snapshot", "log"])
+def test_racy_check_uses_the_time_the_database_was_read(env, monkeypatch, kind):
+    """A slow copy must not hide that the database was modified just before it was read."""
+    import time as time_module
+
+    from agent_history.archive import databases as databases_module
+
+    if kind == "snapshot":
+        _copilot_data_db(env).close()  # modified just now
+    else:
+        conn = _logs_db(env)
+        conn.executemany("INSERT INTO logs VALUES (?, ?, ?)", [(1, 1, "a")])
+        conn.commit()
+        conn.close()
+    real_time_ns = time_module.time_ns
+    offset = [0]
+    monkeypatch.setattr(time_module, "time_ns", lambda: real_time_ns() + offset[0])
+    real_backup = databases_module.backup_database
+
+    def slow_backup(*args, **kwargs):
+        real_backup(*args, **kwargs)
+        offset[0] = 10_000_000_000  # the copy took ten seconds
+
+    monkeypatch.setattr(databases_module, "backup_database", slow_backup)
+
+    summary = _collect(env)
+
+    (entry,) = _entries(env, summary.run_id)
+    assert entry["racy"] is True
+
+
 def test_database_that_cannot_be_opened_read_only_is_copied_first(env, monkeypatch):
     """Network filesystems (WSL's /mnt/c) cannot open WAL databases read-only."""
     from agent_history.archive import databases
