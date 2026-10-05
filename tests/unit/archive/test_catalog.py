@@ -547,6 +547,25 @@ def test_versions_and_gone_files_are_recorded(store, archive):
     ]
 
 
+def test_a_versioned_entry_without_a_version_path_is_an_error_naming_it(store, archive):
+    from agent_history.archive.manifest import decode_manifest, encode_manifest
+
+    archive["claude_file"].write_text('{"type":"summary"}\n', encoding="utf-8")
+    _settle(archive["claude_file"])
+    archive["collect"](hours=1)
+    manifests = sorted((archive["path"] / "archive/sources/laptop/manifests").iterdir())
+    run, entries = decode_manifest(manifests[-1].read_bytes())
+    (versioned,) = [entry for entry in entries if entry.get("action") == "versioned"]
+    del versioned["version_path"]  # a hand-edited or foreign manifest
+    manifests[-1].write_bytes(encode_manifest(run, entries, 3))
+
+    with pytest.raises(ArchiveError) as raised:
+        sync_catalog(store, archive["destination"])
+
+    assert run["run_id"] in str(raised.value)
+    assert versioned["path"] in str(raised.value)
+
+
 def test_session_copies_view_groups_sources(store, archive):
     sync_catalog(store, archive["destination"])
 

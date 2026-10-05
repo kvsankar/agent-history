@@ -260,7 +260,7 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
     )
     if action not in _WRITTEN:
         return
-    kept = f"sources/{source}/{entry['version_path']}" if action == "versioned" else None
+    kept = f"sources/{source}/{_version_path(run_id, entry)}" if action == "versioned" else None
     store.execute(
         "UPDATE file_versions SET superseded_run_id = ?, archive_path = ? "
         "WHERE source = ? AND path = ? AND superseded_run_id IS NULL",
@@ -271,6 +271,16 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
         "superseded_run_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
         (source, path, run_id, entry["sha256"], entry["size"], entry["mtime_ns"], archive_path),
     )
+
+
+def _version_path(run_id: str, entry: dict) -> str:
+    """Where a versioned entry's earlier content was kept, as its manifest says."""
+    version_path = entry.get("version_path")
+    if not isinstance(version_path, str) or not version_path:
+        raise ArchiveError(
+            f"Run {run_id} versions {entry['path']} but its manifest gives no version_path"
+        )
+    return version_path
 
 
 def _record_rows(store, source: str, run_id: str, entry: dict) -> None:
