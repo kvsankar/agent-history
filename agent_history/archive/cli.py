@@ -180,9 +180,13 @@ def _catalog(args: argparse.Namespace) -> int:
             else:
                 _print_status(rows)
             return EXIT_OK
-        config, names = _load(args)
+        # The archive's sources, not the configuration's: the archive can also hold
+        # another machine's sources and retired ones.
         summary = sync_catalog(
-            store, _destination(args, config), names, rebuild=args.action == "rebuild"
+            store,
+            _destination(args, _catalog_config(args)),
+            args.sources,
+            rebuild=args.action == "rebuild",
         )
     finally:
         store.close()
@@ -196,6 +200,14 @@ def _catalog(args: argparse.Namespace) -> int:
         for error in summary.errors:
             print(f"  error {error}")
     return EXIT_PROBLEMS if summary.errors else EXIT_OK
+
+
+def _catalog_config(args: argparse.Namespace):
+    from agent_history.archive.config import load_config
+    from agent_history.storage.config import get_config_dir
+
+    path = Path(args.config).expanduser() if args.config else get_config_dir() / "archive.json"
+    return load_config(path)
 
 
 def _print_status(rows: list[dict[str, Any]]) -> None:

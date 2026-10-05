@@ -430,6 +430,51 @@ def test_opening_a_catalog_replaces_views_from_an_older_version(store_spec):
         reopened.close()
 
 
+def _collect_second_source(archive, name="desktop"):
+    home = archive["path"] / name
+    claude = ClaudeSessionBuilder(workspace="-home-alex-site", session_id=f"{name}-s1")
+    claude.add_user_message("hello")
+    claude.add_assistant_message("hi")
+    _settle(claude.write_to(home / ".claude" / "projects"))
+    config = parse_config(
+        {
+            "archive": {"destination": str(archive["path"] / "archive"), "compression_level": 3},
+            "sources": [{"name": name, "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    collect_source(config, name, state_dir=archive["path"] / f"state-{name}", now=T0)
+
+
+_COUNTS_BY_SOURCE = (
+    "SELECT source, COUNT(*) FROM {} GROUP BY source ORDER BY source",
+    ("sessions", "files", "file_versions", "runs"),
+)
+
+
+def _counts(store):
+    sql, tables = _COUNTS_BY_SOURCE
+    counts = {table: _rows(store, sql.format(table)) for table in tables}
+    counts["sources"] = _rows(store, "SELECT name FROM sources ORDER BY name")
+    return counts
+
+
+def test_rebuilding_one_source_keeps_the_other_sources(store, archive):
+    _collect_second_source(archive)
+    sync_catalog(store, archive["destination"])
+    before = _counts(store)
+    assert [row[0] for row in before["sources"]] == ["desktop", "laptop"]
+
+    summary = sync_catalog(store, archive["destination"], sources=["laptop"], rebuild=True)
+
+    assert summary.runs == 1
+    assert _counts(store) == before
+
+
+def test_sync_with_a_source_that_is_not_in_the_archive_is_an_error(store, archive):
+    with pytest.raises(ArchiveError, match="nope"):
+        sync_catalog(store, archive["destination"], sources=["nope"])
+
+
 def test_rebuild_replays_every_manifest(store, archive):
     sync_catalog(store, archive["destination"])
     before = _rows(store, "SELECT COUNT(*) FROM files")

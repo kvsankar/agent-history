@@ -21,6 +21,7 @@ from typing import Any
 
 from agent_history.archive.catalog.store import CatalogStore
 from agent_history.archive.codec import CHUNK_SIZE, _zstd
+from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import SessionTarget, archive_file_path, session_target
 from agent_history.archive.manifest import read_manifests
 from agent_history.archive.transport import Destination
@@ -53,20 +54,25 @@ def sync_catalog(
     rebuild: bool = False,
     work_dir: Path | None = None,
 ) -> SyncSummary:
-    """Ingest new manifests of each source; ``rebuild`` first empties the catalog.
+    """Ingest new manifests of ``sources`` (default: every source in the archive).
 
+    ``rebuild`` first deletes those sources' rows, or every row when no sources are named.
     Session files are decompressed into ``work_dir`` (default: under the cagelens config
     folder, not the system temp folder, which is often a small tmpfs).
     """
+    available = list_sources(destination)
+    unknown = sorted(set(sources or ()) - set(available))
+    if unknown:
+        raise ArchiveError(f"Not in the archive: {', '.join(unknown)}")
     if work_dir is None:
         from agent_history.storage.config import get_config_dir
 
         work_dir = get_config_dir() / "archive-work"
     Path(work_dir).mkdir(parents=True, exist_ok=True)
     if rebuild:
-        store.clear()
+        store.clear(sources or None)
     summary = SyncSummary()
-    for name in sources or list_sources(destination):
+    for name in sources or available:
         _sync_source(store, destination, name, summary, Path(work_dir))
         summary.sources += 1
     return summary

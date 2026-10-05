@@ -51,6 +51,50 @@ def test_collect_verify_and_catalog(setup, capsys):
     assert (setup["tmp"] / "cagelens" / "archive-catalog.db").exists()
 
 
+def _rename_configured_source(setup, name):
+    config = json.loads(open(setup["config"], encoding="utf-8").read())
+    config["sources"][0]["name"] = name
+    with open(setup["config"], "w", encoding="utf-8") as handle:
+        json.dump(config, handle)
+
+
+def _catalogued_sources(config, capsys):
+    capsys.readouterr()
+    assert main(["archive", "catalog", "status", "--config", config, "--json"]) == 0
+    return [row["source"] for row in json.loads(capsys.readouterr().out)]
+
+
+def test_catalog_sync_includes_archive_sources_missing_from_the_config(setup, capsys):
+    # The archive also holds a source this machine's configuration does not name, such
+    # as another machine's or a retired one's.
+    config = setup["config"]
+    assert main(["archive", "collect", "--config", config]) == 0
+    _rename_configured_source(setup, "desktop")
+
+    assert main(["archive", "catalog", "sync", "--config", config]) == 0
+
+    assert _catalogued_sources(config, capsys) == ["laptop"]
+
+
+def test_catalog_source_may_name_an_archive_source_missing_from_the_config(setup, capsys):
+    config = setup["config"]
+    assert main(["archive", "collect", "--config", config]) == 0
+    _rename_configured_source(setup, "desktop")
+
+    assert main(["archive", "catalog", "rebuild", "--config", config, "--source", "laptop"]) == 0
+
+    assert _catalogued_sources(config, capsys) == ["laptop"]
+
+
+def test_catalog_source_that_is_not_in_the_archive_is_an_error(setup, capsys):
+    config = setup["config"]
+    assert main(["archive", "collect", "--config", config]) == 0
+    capsys.readouterr()
+
+    assert main(["archive", "catalog", "sync", "--config", config, "--source", "nope"]) == 1
+    assert "nope" in capsys.readouterr().err
+
+
 def test_dry_run_lists_actions_without_writing(setup, capsys):
     assert main(["archive", "collect", "--config", setup["config"], "--dry-run"]) == 0
 

@@ -55,10 +55,16 @@ class CatalogStore:
                     f"Catalog schema {found[0][0]} is not supported (expected {SCHEMA_VERSION})"
                 )
 
-    def clear(self) -> None:
+    def clear(self, sources: Sequence[str] | None = None) -> None:
+        """Delete every row, or only the rows of ``sources``."""
         with self.transaction():
             for table in DATA_TABLES:
-                self.execute(f"DELETE FROM {table}")
+                if sources is None:
+                    self.execute(f"DELETE FROM {table}")
+                    continue
+                column = "name" if table == "sources" else "source"
+                for name in sources:
+                    self.execute(f"DELETE FROM {table} WHERE {column} = ?", (name,))
 
 
 class SqliteStore(CatalogStore):
