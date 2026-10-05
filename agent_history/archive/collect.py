@@ -1,9 +1,10 @@
 """The collector: copy new and changed source files into the archive.
 
-A run walks the source, compresses changed files into a local staging folder, moves aside
-archived copies that a rewrite would overwrite, transfers the staging folder, and then
-writes the run's manifest. The manifest is written last, so an interrupted run leaves only
-files that no manifest lists; the next run writes them again.
+A run walks the source, compresses changed files into a local staging folder, and
+transfers the staging folder to the run's incoming folder in the archive. At the end it
+writes its manifest there, moves the archived copies that rewrites replace to versions/,
+moves the new copies into place, and commits the manifest. An interrupted run either
+changed no committed path or is finished by the next run (see "committing a run" below).
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from agent_history.archive.layouts import (
 )
 from agent_history.archive.manifest import (
     committed_run_ids,
+    decode_manifest,
     encode_manifest,
     manifest_path,
     new_run_id,
@@ -49,7 +51,7 @@ from agent_history.archive.state import (
     source_lock,
     state_path,
 )
-from agent_history.archive.transport import Destination, open_destination
+from agent_history.archive.transport import Destination, Keep, Put, open_destination
 
 __all__ = ["CollectLockedError", "RunSummary", "collect_source", "source_lock"]
 
@@ -66,6 +68,7 @@ LARGE_FILE_BYTES = 64 * 1024 * 1024
 # Only one large file at a time uses those threads, which bounds the memory they take.
 _LARGE_FILE_SLOT = threading.Lock()
 _FILE_ERRORS = (OSError, sqlite3.Error)
+_WRITTEN = ("added", "updated", "versioned")
 
 
 @dataclass
@@ -122,6 +125,89 @@ def check_archive_format(destination: Destination, create: bool) -> bool:
     return True
 
 
+# -- committing a run -------------------------------------------------------------------
+#
+# A run sends its files to sources/<source>/incoming/<run id>/, laid out like the source's
+# folder, so no committed path changes while files are in transit. To finish, it writes its
+# manifest there, moves the archived copies of rewritten files to versions/, moves the new
+# copies into place, and only then moves the manifest to manifests/, which commits the run.
+# Each step can be repeated, so a run that stopped after writing that manifest is finished
+# by the next run, and an incoming folder without one holds nothing committed.
+
+PENDING_MANIFEST = "manifest.jsonl.zst"
+
+
+def incoming_root(source: str) -> str:
+    return f"sources/{source}/incoming"
+
+
+def incoming_dir(source: str, run_id: str) -> str:
+    return f"{incoming_root(source)}/{run_id}"
+
+
+def placements(
+    source: str, run_id: str, entries: list[dict[str, Any]]
+) -> tuple[list[Keep], list[Put]]:
+    """The moves that put a run's files in place, from its manifest entries."""
+    prefix = f"sources/{source}/"
+    incoming = incoming_dir(source, run_id)
+    keeps: list[Keep] = []
+    puts: list[Put] = []
+    for entry in entries:
+        if entry.get("type") == "rows" and entry.get("export_path"):
+            current = f"{prefix}files/{entry['export_path']}.zst"
+        elif entry.get("type") == "file" and entry.get("action") in _WRITTEN:
+            current = archive_file_path(source, entry["path"])
+        else:
+            continue
+        staged = f"{incoming}/{current[len(prefix) :]}"
+        if entry.get("action") == "versioned" and entry.get("version_path"):
+            keeps.append((current, f"{prefix}{entry['version_path']}", staged))
+        puts.append((staged, current))
+    return keeps, puts
+
+
+def finish_run(
+    destination: Destination,
+    source: str,
+    run_id: str,
+    entries: list[dict[str, Any]],
+    discard: str,
+) -> None:
+    """Place a run's files, commit its manifest, then remove the discard folder.
+
+    Safe to repeat after an interruption.
+    """
+    destination.place(*placements(source, run_id, entries))
+    pending = f"{incoming_dir(source, run_id)}/{PENDING_MANIFEST}"
+    if not destination.move(pending, manifest_path(source, run_id)):
+        raise ArchiveError(f"The manifest of run {run_id} disappeared before it was committed")
+    destination.discard_tree(discard)
+
+
+def recover_incoming(destination: Destination, source: str) -> bool:
+    """Finish runs that stopped after writing their manifest; drop other incoming files.
+
+    Returns True when a run was finished. Called with the source's lock held, so no other
+    run of the source is writing to the incoming folder.
+    """
+    names = destination.list_files(incoming_root(source))
+    pending = sorted(
+        name.split("/")[0]
+        for name in names
+        if name.count("/") == 1 and name.endswith(f"/{PENDING_MANIFEST}")
+    )
+    for run_id in pending:
+        data = destination.read_bytes(f"{incoming_dir(source, run_id)}/{PENDING_MANIFEST}")
+        if data is None:
+            continue
+        _run, entries = decode_manifest(data)
+        sys.stderr.write(f"Finishing interrupted run {run_id}\n")
+        finish_run(destination, source, run_id, entries, incoming_dir(source, run_id))
+    destination.discard_tree(incoming_root(source))
+    return bool(pending)
+
+
 class _Run:
     def __init__(self, config, source: SourceConfig, destination, state_dir, now, dry_run):
         self.config = config
@@ -136,7 +222,9 @@ class _Run:
         if loaded is None:  # rebuilt from the manifests, so min_interval_hours can apply
             self._reconcile(committed_run_ids(destination, source.name))
         self.summary = RunSummary(self.run_id, source.name, dry_run=dry_run)
-        self.moves: list[tuple[str, str]] = []
+        self.incoming = incoming_dir(source.name, self.run_id)
+        # (manifest entry, archived copy, version path) for each rewrite
+        self.moves: list[tuple[dict[str, Any], str, str]] = []
         self.staged_bytes = 0
         # On disk next to the state, never the system temp folder (often a small tmpfs).
         self.work_root = self.state_file.parent / "work"
@@ -170,8 +258,11 @@ class _Run:
                 f"was restored on purpose, delete the state file {self.state_file}; it is "
                 f"then rebuilt from the archive's manifests."
             )
-        if not has_format and not self.dry_run:
-            check_archive_format(self.destination, create=True)
+        if not self.dry_run:
+            if not has_format:
+                check_archive_format(self.destination, create=True)
+            if recover_incoming(self.destination, self.source.name):
+                committed = committed_run_ids(self.destination, self.source.name)
         self._reconcile(committed)
 
     def _destination_has_history(self) -> bool:
@@ -322,7 +413,7 @@ class _Run:
     ) -> dict[str, Any] | None:
         """Compress ``content`` as the new version of ``item`` and decide its action."""
         archived = archive_file_path(self.source.name, item.rel_path)
-        staged = staging / archived
+        staged = self.staged_path(staging, archived)
         prefix_length = previous.size if previous else None
         if self.dry_run and previous is None:
             result = CompressResult(size=size, sha256="", compressed_size=0)  # always "added"
@@ -345,8 +436,15 @@ class _Run:
             entry["previous_sha256"] = previous.sha256
             entry["previous_size"] = previous.size
             entry["version_path"] = version
-            self.moves.append((archived, f"sources/{self.source.name}/{version}"))
+            self.moves.append((entry, archived, f"sources/{self.source.name}/{version}"))
         return entry
+
+    def staged_path(self, staging: Path, archived: str) -> Path:
+        """Where a file for archive path ``archived`` is staged: under the incoming folder."""
+        prefix = f"sources/{self.source.name}/"
+        if not archived.startswith(prefix):
+            raise ArchiveError(f"{archived} is outside source {self.source.name}")
+        return staging / self.incoming / archived[len(prefix) :]
 
     def _compress(self, content: Path, staged: Path, size: int, prefix_length: int | None):
         level = self.config.compression_level
@@ -380,16 +478,25 @@ class _Run:
     # -- committing -------------------------------------------------------------------
 
     def _flush(self, staging: Path) -> None:
-        """Move aside rewritten files, transfer what is staged, then empty the staging folder."""
-        self._apply_moves()
-        self.moves = []
+        """Transfer what is staged to the run's incoming folder, then empty the staging folder.
+
+        Nothing at a committed path changes here: files move into place only after the
+        run's manifest is written (see ``_commit``).
+        """
         if (staging / "sources").exists():
             self.destination.put_tree(staging)
             shutil.rmtree(staging / "sources")
         self.staged_bytes = 0
 
     def _commit(self, staging: Path) -> None:
+        """Finish the run: write its manifest to the incoming folder, place files, commit.
+
+        The manifest in the incoming folder records every move before any is made, so a run
+        that stops part way is finished by the next one (``recover_incoming``). A run that
+        stops before that manifest is written changed no committed path.
+        """
         self._flush(staging)
+        self._check_transfer()
         run = {
             "run_id": self.run_id,
             "source": self.source.name,
@@ -402,14 +509,48 @@ class _Run:
             "errors": self.summary.errors,
         }
         data = encode_manifest(run, self.summary.entries, self.config.compression_level)
-        self.destination.write_bytes(manifest_path(self.source.name, self.run_id), data)
+        self.destination.write_bytes(f"{self.incoming}/{PENDING_MANIFEST}", data)
+        # The incoming folder holds only this run's files: earlier ones were cleared at the start.
+        finish_run(
+            self.destination,
+            self.source.name,
+            self.run_id,
+            self.summary.entries,
+            incoming_root(self.source.name),
+        )
         self.state.apply_manifest(run, self.summary.entries)
         save_state(self.state_file, self.state)
 
-    def _apply_moves(self) -> None:
-        for src, dst in self.moves:
-            if not self.destination.move(src, dst):
-                sys.stderr.write(f"Warning: no archived copy to keep for {src}\n")
+    def _check_transfer(self) -> None:
+        """Before committing: every new copy arrived, and every copy to keep exists.
+
+        A rewritten file whose archived copy is missing (removed outside the collector)
+        cannot be kept, so its entry records no version and the run records an error.
+        """
+        _keeps, puts = placements(self.source.name, self.run_id, self.summary.entries)
+        sources = [current for _entry, current, _version in self.moves]
+        missing = set(self.destination.missing([incoming for incoming, _ in puts] + sources))
+        lost = sorted(incoming for incoming, _ in puts if incoming in missing)
+        if lost:
+            raise ArchiveError(f"{len(lost)} transferred files are missing, such as {lost[0]}")
+        for entry, current, _version in self.moves:
+            if current in missing:
+                self._drop_version(entry, current)
+        self.summary.entries.sort(key=lambda entry: (entry["path"], entry["type"]))
+
+    def _drop_version(self, entry: dict[str, Any], current: str) -> None:
+        for key in ("version_path", "previous_sha256", "previous_size"):
+            entry.pop(key, None)
+        entry["action"] = "added"
+        self.summary.versioned -= 1
+        self._record(
+            {
+                "type": "error",
+                "path": entry["path"],
+                "message": f"the previous archived copy {current} was missing, so it "
+                "could not be kept as a version",
+            }
+        )
 
     def _descriptor(self) -> bytes:
         data = {

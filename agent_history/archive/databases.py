@@ -281,7 +281,7 @@ def _export_new_rows(
     export_path = f"{item.rel_path}.rows/{run_stamp(run.now)}-{run.run_id[-4:]}.jsonl"
     result = compress_file(
         jsonl,
-        staging / f"sources/{run.source.name}/files/{export_path}.zst",
+        run.staged_path(staging, f"sources/{run.source.name}/files/{export_path}.zst"),
         run.config.compression_level,
     )
     entry.update(

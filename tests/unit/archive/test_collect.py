@@ -286,6 +286,200 @@ def test_crash_after_manifest_before_state_save_is_reconciled(env, monkeypatch):
     assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
 
 
+def _decompress(path: Path) -> bytes:
+    return zstandard.ZstdDecompressor().decompress(path.read_bytes())
+
+
+def _assert_archive_consistent(env, originals: dict[str, bytes]):
+    """verify is clean, and every listed version holds the content its manifest names."""
+    destination = open_destination(str(env["dest"]))
+    report = verify_source(destination, "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+    versions = {}
+    for _run, entries in read_manifests(destination, "src"):
+        for entry in entries:
+            if entry.get("version_path"):
+                versions[entry["path"]] = entry
+    for path, content in originals.items():
+        entry = versions[path]
+        kept = _decompress(env["dest"] / "sources" / "src" / entry["version_path"])
+        assert kept == content
+        assert entry["previous_sha256"] == hashlib.sha256(content).hexdigest()
+
+
+class _FailingDestination:
+    """A local destination that fails one kind of operation, like a dropped connection."""
+
+    @staticmethod
+    def make(env, fail_on: str):
+        from agent_history.archive.transport import LocalDestination
+
+        class Failing(LocalDestination):
+            def _maybe_fail(self, what: str):
+                if what == fail_on:
+                    raise OSError(f"connection dropped during {what}")
+
+            def put_tree(self, staging):
+                self._maybe_fail("put_tree")
+                return super().put_tree(staging)
+
+            def write_bytes(self, rel, data):
+                if "manifest" in rel:
+                    self._maybe_fail("manifest")
+                return super().write_bytes(rel, data)
+
+            def move(self, src, dst):
+                if "/manifests/" in dst:
+                    self._maybe_fail("commit")
+                return super().move(src, dst)
+
+        return Failing(env["dest"])
+
+
+@pytest.mark.parametrize("fail_on", ["put_tree", "manifest", "commit"])
+def test_interrupted_rewrite_keeps_versions_consistent(env, fail_on):
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            destination=_FailingDestination.make(env, fail_on),
+        )
+    _collect(env, now=T0 + timedelta(hours=2))
+
+    assert _archived(env, SESSION) == b"rewritten\n"
+    _assert_archive_consistent(env, {SESSION: b"original\n"})
+
+
+def test_run_stopped_while_placing_files_is_finished_by_the_next_run(env):
+    """Stopped after the version moves, before the new copies moved into place."""
+    from agent_history.archive.transport import LocalDestination
+
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _write(env, ".codex/history.jsonl", b"h\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+    _write(env, ".codex/history.jsonl", b"h\nmore\n", mtime=1_790_000_100)
+
+    class StopsWhilePlacing(LocalDestination):
+        def place(self, keeps, puts):
+            super().place(keeps, [])
+            raise OSError("connection dropped")
+
+    with pytest.raises(OSError):
+        _collect(env, now=T0 + timedelta(hours=1), destination=StopsWhilePlacing(env["dest"]))
+    third = _collect(env, now=T0 + timedelta(hours=2))
+
+    assert third.written == 0  # the interrupted run was finished, not repeated
+    assert _archived(env, SESSION) == b"rewritten\n"
+    assert _archived(env, ".codex/history.jsonl") == b"h\nmore\n"
+    _assert_archive_consistent(env, {SESSION: b"original\n"})
+    assert not (env["dest"] / "sources" / "src" / "incoming").exists()
+
+
+def test_dry_run_does_not_finish_an_interrupted_run(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            destination=_FailingDestination.make(env, "commit"),
+        )
+    incoming = env["dest"] / "sources" / "src" / "incoming"
+    before = sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*"))
+
+    _collect(env, now=T0 + timedelta(hours=2), dry_run=True)
+
+    assert incoming.exists()
+    assert sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*")) == before
+
+
+def test_interrupted_append_leaves_the_committed_copy(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            destination=_FailingDestination.make(env, "manifest"),
+        )
+
+    assert _archived(env, SESSION) == b"a\n"
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+
+
+def test_interrupted_multi_batch_run_keeps_versions_consistent(env, monkeypatch):
+    """Batches transfer long before the manifest exists; a later failure loses nothing."""
+    from agent_history.archive import collect as collect_module
+
+    originals = {}
+    for index in range(4):
+        rel = f".claude/projects/p/s{index}.jsonl"
+        originals[rel] = f"original {index}\n".encode() * 50
+        _write(env, rel, originals[rel], mtime=1_790_000_000)
+    config = _config(env, workers=1)
+    _collect(env, config=config)
+    for index, rel in enumerate(originals):
+        _write(env, rel, f"rewritten {index}\n".encode() * 50, mtime=1_790_000_100)
+    monkeypatch.setattr(collect_module, "BATCH_BYTES", 1)
+
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            config=config,
+            destination=_FailingDestination.make(env, "manifest"),
+        )
+    third = _collect(env, now=T0 + timedelta(hours=2), config=config)
+
+    assert third.versioned == 4
+    _assert_archive_consistent(env, originals)
+
+
+def test_interrupted_run_leaves_no_unlisted_files_after_the_next_run(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, ".claude/projects/p/new.jsonl", b"n\n", mtime=1_790_000_100)
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            destination=_FailingDestination.make(env, "manifest"),
+        )
+
+    _collect(env, now=T0 + timedelta(hours=2))
+
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+    leftovers = [p for p in (env["dest"] / "sources" / "src").rglob("*") if p.is_file()]
+    top = {p.relative_to(env["dest"] / "sources" / "src").parts[0] for p in leftovers}
+    assert top <= {"files", "versions", "manifests", "SOURCE.json"}
+
+
+def test_missing_archived_copy_is_not_listed_as_a_version(env):
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    (env["dest"] / "sources" / "src" / "files" / f"{SESSION}.zst").unlink()
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    entry = _entries(env, summary.run_id)[SESSION]
+    assert "version_path" not in entry
+    assert summary.errors == 1
+    assert _archived(env, SESSION) == b"rewritten\n"
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+
+
 def test_state_without_a_run_list_is_reconciled_by_run_order(env):
     """State files written before the run list existed still pick up newer manifests."""
     import json

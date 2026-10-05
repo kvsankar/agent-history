@@ -6,7 +6,7 @@ import os
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
-from typing import IO, Iterator
+from typing import IO, Iterator, Tuple
 
 from agent_history.archive.errors import ArchiveError
 
@@ -16,6 +16,21 @@ def _check_rel(rel: str) -> str:
     if rel.startswith("/") or any(part in ("", ".", "..") for part in parts):
         raise ArchiveError(f"Unsafe archive path: {rel!r}")
     return rel
+
+
+def _check_discardable(rel: str) -> str:
+    """Only a source's ``incoming`` folder, which holds no committed file, may be removed."""
+    parts = _check_rel(rel).split("/")
+    if len(parts) < 3 or parts[0] != "sources" or parts[2] != "incoming":
+        raise ArchiveError(f"Refusing to remove {rel!r}: only incoming folders can be removed")
+    return rel
+
+
+# A rewritten file's archived copy to keep as a version: (current path, version path,
+# incoming path of the new copy). The move is due while the new copy is still incoming.
+Keep = Tuple[str, str, str]
+# A new copy to move into place: (incoming path, current path).
+Put = Tuple[str, str]
 
 
 class Destination:
@@ -36,12 +51,33 @@ class Destination:
     def exists(self, rel: str) -> bool:
         raise NotImplementedError
 
+    def missing(self, rels: list[str]) -> list[str]:
+        """The paths among ``rels`` that do not exist."""
+        return [rel for rel in rels if not self.exists(rel)]
+
     def move(self, src: str, dst: str) -> bool:
         """Rename within the archive; False when ``src`` does not exist."""
         raise NotImplementedError
 
     def put_tree(self, staging: Path) -> None:
-        """Copy every file under ``staging`` to the same relative path, keeping times."""
+        """Copy every file under ``staging`` to the same relative path, keeping times.
+
+        A failed transfer can leave a partial file at its target path, so callers send
+        only to paths that no manifest lists (a run's incoming folder).
+        """
+        raise NotImplementedError
+
+    def place(self, keeps: list[Keep], puts: list[Put]) -> None:
+        """Move kept copies to their version paths, then move new copies into place.
+
+        Every step can be repeated: a keep is skipped once its version path exists or its
+        incoming copy has gone, and a put once its incoming copy has gone. So a run that
+        stopped part way is finished by calling this again with the same lists.
+        """
+        raise NotImplementedError
+
+    def discard_tree(self, rel: str) -> None:
+        """Remove a source's incoming folder and everything in it, if it exists."""
         raise NotImplementedError
 
     @contextmanager
@@ -103,6 +139,27 @@ class LocalDestination(Destination):
                 tmp = target.with_name(target.name + ".part")
                 shutil.copy2(src, tmp)
                 os.replace(tmp, target)
+
+    def place(self, keeps: list[Keep], puts: list[Put]) -> None:
+        for current, version, incoming in keeps:
+            if self.exists(version) or not self.exists(incoming):
+                continue
+            if not self.exists(current):
+                raise ArchiveError(f"The archived copy {current} to keep as {version} is missing")
+            self._rename(current, version)
+        for incoming, current in puts:
+            if self.exists(incoming):
+                self._rename(incoming, current)
+
+    def _rename(self, src: str, dst: str) -> None:
+        target = self._path(dst)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(self._path(src), target)
+
+    def discard_tree(self, rel: str) -> None:
+        path = self._path(_check_discardable(rel))
+        if path.exists():
+            shutil.rmtree(path)
 
     @contextmanager
     def open_binary(self, rel: str) -> Iterator[IO[bytes]]:

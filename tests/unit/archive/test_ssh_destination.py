@@ -13,6 +13,7 @@ import zstandard
 
 from agent_history.archive.collect import collect_source
 from agent_history.archive.config import parse_config
+from agent_history.archive.errors import ArchiveError
 from agent_history.archive.ssh_destination import SshDestination
 from agent_history.archive.transport import open_destination
 from agent_history.archive.verify import verify_source
@@ -132,6 +133,92 @@ def test_collect_and_verify_over_ssh(remote, tmp_path):
         config, "src", state_dir=state, now=T0 + timedelta(hours=2), destination=dest
     )
     assert third.written == 0
+
+
+# Like FAKE_SSH, but the connection drops part way through any tar stream.
+FAKE_SSH_DROPPING = FAKE_SSH.replace(
+    'exec sh -c "$*"',
+    'case "$*" in\n  *"tar -x"*) head -c 20000 | sh -c "$*" ;;\n  *) exec sh -c "$*" ;;\nesac',
+)
+
+
+def test_dropped_connection_leaves_the_committed_copy(remote, tmp_path):
+    """tar must never rewrite an archived file in place: a cut stream would truncate it."""
+    dest, root = remote
+    dropping = tmp_path / "bin" / "ssh-dropping"
+    dropping.write_text(FAKE_SSH_DROPPING, encoding="utf-8")
+    dropping.chmod(dropping.stat().st_mode | stat.S_IEXEC)
+    home = tmp_path / "home"
+    session = home / SESSION
+    session.parent.mkdir(parents=True)
+    first = os.urandom(100_000)  # incompressible, so the stream is long
+    session.write_bytes(first)
+    os.utime(session, (1_790_000_000, 1_790_000_000))
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    state = tmp_path / "state"
+    collect_source(config, "src", state_dir=state, now=T0, destination=dest)
+    with session.open("ab") as handle:
+        handle.write(os.urandom(100_000))
+    os.utime(session, (1_790_000_100, 1_790_000_100))
+    cut = SshDestination("nas", dest.root, ssh=[str(dropping)])
+
+    with pytest.raises((ArchiveError, OSError)):
+        collect_source(config, "src", state_dir=state, now=T0 + timedelta(hours=1), destination=cut)
+
+    archived = root / "sources" / "src" / "files" / f"{SESSION}.zst"
+    assert zstandard.ZstdDecompressor().decompress(archived.read_bytes()) == first
+    report = verify_source(dest, "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+    third = collect_source(
+        config, "src", state_dir=state, now=T0 + timedelta(hours=2), destination=dest
+    )
+    assert third.written == 1
+    assert zstandard.ZstdDecompressor().decompress(archived.read_bytes()) == session.read_bytes()
+    report = verify_source(dest, "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+
+
+def test_interrupted_rewrite_over_ssh_keeps_versions_consistent(remote, tmp_path):
+    dest, root = remote
+    home = tmp_path / "home"
+    session = home / SESSION
+    session.parent.mkdir(parents=True)
+    session.write_bytes(b"original\n")
+    os.utime(session, (1_790_000_000, 1_790_000_000))
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    state = tmp_path / "state"
+    collect_source(config, "src", state_dir=state, now=T0, destination=dest)
+    session.write_bytes(b"rewritten\n")
+    os.utime(session, (1_790_000_100, 1_790_000_100))
+
+    class FailingCommit(SshDestination):
+        def move(self, src, dst):
+            if "/manifests/" in dst:
+                raise ArchiveError("connection dropped")
+            return super().move(src, dst)
+
+    failing = FailingCommit("nas", dest.root, ssh=dest.ssh)
+    with pytest.raises(ArchiveError):
+        collect_source(
+            config, "src", state_dir=state, now=T0 + timedelta(hours=1), destination=failing
+        )
+    collect_source(config, "src", state_dir=state, now=T0 + timedelta(hours=2), destination=dest)
+
+    report = verify_source(dest, "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+    (version,) = (root / "sources" / "src" / "versions").rglob("*.zst")
+    assert zstandard.ZstdDecompressor().decompress(version.read_bytes()) == b"original\n"
+    assert not (root / "sources" / "src" / "incoming").exists()
 
 
 def test_unsafe_paths_are_refused(remote):

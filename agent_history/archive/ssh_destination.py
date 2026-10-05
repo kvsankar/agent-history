@@ -1,6 +1,7 @@
 """An archive destination on another host, reached over SSH.
 
-The remote host needs only ``sh``, ``cat``, ``mkdir``, ``mv``, ``find`` and ``tar``. Each
+The remote host needs only ``sh`` (with its ``test``/``[`` and ``echo``), ``cat``, ``mkdir``,
+``mv``, ``find``, ``tar`` and ``rm`` (which removes only a source's incoming folder). Each
 operation sends ssh one already-quoted command string: ssh joins its remote arguments with
 spaces, so passing them separately would lose the quoting.
 """
@@ -18,7 +19,13 @@ from typing import IO, Iterator
 from urllib.parse import urlsplit
 
 from agent_history.archive.errors import ArchiveError
-from agent_history.archive.transport import Destination, _check_rel
+from agent_history.archive.transport import (
+    Destination,
+    Keep,
+    Put,
+    _check_discardable,
+    _check_rel,
+)
 
 _MISSING = 3
 
@@ -109,7 +116,55 @@ class SshDestination(Destination):
         self._check(result, f"Moving {src}")
         return True
 
+    def missing(self, rels: list[str]) -> list[str]:
+        if not rels:
+            return []
+        script = "".join(
+            f"[ -e {self._remote(rel)} ] || echo {index}\n" for index, rel in enumerate(rels)
+        )
+        result = self._run_script(script)
+        self._check(result, "Checking archived files")
+        return [rels[int(line)] for line in result.stdout.decode("ascii").split()]
+
+    def place(self, keeps: list[Keep], puts: list[Put]) -> None:
+        """Run every move as one shell script, read from standard input.
+
+        The script is sent on standard input rather than as the command, because a first
+        run can move thousands of files, more than a command line can hold.
+        """
+        lines = []
+        for current, version, incoming in keeps:
+            cur, ver, inc = self._remote(current), self._remote(version), self._remote(incoming)
+            lines.append(
+                f"if [ ! -e {ver} ] && [ -e {inc} ]; then "
+                f"[ -e {cur} ] || {{ echo {shlex.quote(current)} is missing >&2; exit 1; }}; "
+                f"mkdir -p {self._parent(version)} && mv {cur} {ver} || exit 1; fi\n"
+            )
+        for incoming, current in puts:
+            inc, cur = self._remote(incoming), self._remote(current)
+            lines.append(
+                f"if [ -e {inc} ]; then "
+                f"mkdir -p {self._parent(current)} && mv {inc} {cur} || exit 1; fi\n"
+            )
+        if lines:
+            self._check(self._run_script("".join(lines)), "Moving files into place")
+
+    def discard_tree(self, rel: str) -> None:
+        path = self._remote(_check_discardable(rel))
+        self._check(self._run(f"rm -rf {path}"), f"Removing {rel}")
+
+    def _parent(self, rel: str) -> str:
+        return shlex.quote(f"{self.root}/{_check_rel(rel)}".rsplit("/", 1)[0])
+
+    def _run_script(self, script: str) -> subprocess.CompletedProcess:
+        return self._run("sh -s", script.encode("utf-8", "surrogateescape"))
+
     def put_tree(self, staging: Path) -> None:
+        """Stream the staging folder into ``tar -xf -`` on the remote host.
+
+        A dropped connection can leave the last file partial, so the collector sends only
+        to its run's incoming folder and moves files into place after the transfer.
+        """
         root = shlex.quote(self.root)
         process = subprocess.Popen(
             self._command(f"mkdir -p {root} && tar -xf - -C {root}"),
