@@ -899,6 +899,76 @@ def test_a_lock_left_by_a_killed_run_on_this_machine_is_taken_over(env, monkeypa
     assert not _lock_folder(env).exists()
 
 
+def _same_host_owner(env, kind):
+    """A lock owner of another machine with this host name and this local lock path.
+
+    For example a second WSL distribution on the same PC, whose state folder has the
+    same path. ``earlier`` is an owner file of an earlier version, which identified the
+    collector by a hash of the host name and the local lock path alone.
+    """
+    import hashlib
+    import socket
+
+    from agent_history.archive.state import lock_path
+
+    host = socket.gethostname()
+    local = lock_path(env["state"], str(env["dest"]), "src")
+    owner = {
+        "host": host,
+        "pid": 4242,
+        "started_at": (T0 + timedelta(minutes=50)).isoformat(),
+        "token": "0123456789abcdef",
+    }
+    if kind == "earlier":
+        digest = hashlib.sha256(f"{host}\n{local.resolve()}".encode()).hexdigest()
+        owner["collector"] = digest[:16]
+    else:
+        owner["collector_id"] = "f" * 32
+        owner["local_lock"] = f"{local.parent.name}/{local.name}"
+    return owner
+
+
+@pytest.mark.parametrize("kind", ["earlier", "other-state-folder"])
+def test_a_live_lock_of_a_machine_with_the_same_host_and_path_is_not_taken_over(env, kind):
+    import json
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _lock_folder(env).mkdir()
+    owner = json.dumps(_same_host_owner(env, kind))
+    (_lock_folder(env) / "owner.json").write_text(owner, encoding="utf-8")
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    with pytest.raises(CollectLockedError, match="process 4242"):
+        _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (_lock_folder(env) / "owner.json").read_text(encoding="utf-8") == owner
+    assert _archived(env, SESSION) == b"a\n"
+
+
+def test_the_collector_id_is_made_once_per_state_folder(tmp_path):
+    from agent_history.archive.state import collector_id
+
+    first = collector_id(tmp_path / "state")
+
+    assert re.fullmatch(r"[0-9a-f]{32}", first)
+    assert collector_id(tmp_path / "state") == first
+    assert collector_id(tmp_path / "other-state") != first
+    assert [p.name for p in (tmp_path / "state").iterdir()] == ["collector-id"]
+
+
+def test_a_damaged_collector_id_is_replaced(tmp_path):
+    from agent_history.archive.state import collector_id
+
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "collector-id").write_text("", encoding="utf-8")
+
+    made = collector_id(tmp_path / "state")
+
+    assert re.fullmatch(r"[0-9a-f]{32}", made)
+    assert collector_id(tmp_path / "state") == made
+
+
 def _foreign_lock(env):
     import json
 

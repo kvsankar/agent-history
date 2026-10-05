@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import secrets
 import socket
 import sys
@@ -216,16 +217,23 @@ def destination_lock_path(source: str) -> str:
 
 @contextmanager
 def destination_lock(
-    destination: Destination, source: str, local_lock: Path, break_lock: bool = False
+    destination: Destination,
+    source: str,
+    local_lock: Path,
+    collector: str,
+    break_lock: bool = False,
 ) -> Iterator[None]:
     """Hold the source's lock in the archive.
 
-    Raises CollectLockedError when another run holds it, and LockOwnerUnknownError when
-    its owner file stays empty or damaged, so no holder can be named. A lock that a
-    killed run of this collector left (same host and local lock file, whose lock this
-    process holds now) is taken over. ``break_lock`` first removes any lock.
+    ``collector`` is the state folder's id (collector_id), and ``local_lock`` the local
+    lock this process holds. Raises CollectLockedError when another run holds the lock,
+    and LockOwnerUnknownError when its owner file stays empty or damaged, so no holder
+    can be named. A lock that a killed run of this collector left is taken over: one
+    whose owner records this state folder's id, this local lock and this host. The id is
+    random, so another machine with the same host name and state path (a second WSL
+    distribution on one PC) is another holder. ``break_lock`` first removes any lock.
     """
-    ours = _lock_owner(local_lock)
+    ours = _lock_owner(local_lock, collector)
     if break_lock:
         _break_lock(destination, source)
     _take_lock(destination, source, ours)
@@ -243,7 +251,7 @@ def _take_lock(destination: Destination, source: str, ours: dict[str, Any]) -> N
         held = _settled_owner(destination, source)
         if held is None:
             continue  # released meanwhile
-        if held.get("collector") != ours["collector"]:
+        if not _same_collector(held, ours):
             raise CollectLockedError(_locked_message(destination, source, held))
         sys.stderr.write(
             f"Removing the lock of {source} left by an interrupted run on this machine "
@@ -292,16 +300,79 @@ def _parse_owner(data: bytes) -> dict[str, Any]:
     return owner if isinstance(owner, dict) else {}
 
 
-def _lock_owner(local_lock: Path) -> dict[str, Any]:
-    host = socket.gethostname()
-    collector = hashlib.sha256(f"{host}\n{Path(local_lock).resolve()}".encode()).hexdigest()
+def _lock_owner(local_lock: Path, collector: str) -> dict[str, Any]:
+    local_lock = Path(local_lock)
     return {
-        "host": host,
+        "host": socket.gethostname(),
         "pid": os.getpid(),
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "collector": collector[:16],  # this host and local lock file, without the path
+        "collector_id": collector,  # the state folder
+        "local_lock": f"{local_lock.parent.name}/{local_lock.name}",  # within it
         "token": secrets.token_hex(8),  # this run
     }
+
+
+_COLLECTOR_KEYS = ("collector_id", "local_lock", "host")
+
+
+def _same_collector(held: dict[str, Any], ours: dict[str, Any]) -> bool:
+    """True when ``held`` was written by a run of this state folder, local lock and host.
+
+    An owner file of an earlier version records no collector_id, so it is another
+    holder: its identity, a hash of the host name and the local lock path, is the same
+    for two machines with the same host name and state path.
+    """
+    return all(held.get(key) == ours[key] for key in _COLLECTOR_KEYS)
+
+
+COLLECTOR_ID_FILE = "collector-id"
+_COLLECTOR_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def collector_id(state_dir: Path) -> str:
+    """The state folder's random id, made on first use and kept in ``collector-id``.
+
+    A lock in the archive whose owner records this id was taken by a run of this state
+    folder. The file is made with a hard link from a complete temporary file, so of two
+    runs that make it at once both read the same id; a file that does not hold an id is
+    replaced.
+    """
+    state_dir = Path(state_dir)
+    path = state_dir / COLLECTOR_ID_FILE
+    found = _read_collector_id(path)
+    if found:
+        return found
+    state_dir.mkdir(parents=True, exist_ok=True)
+    made = secrets.token_hex(16)
+    tmp = state_dir / f"{COLLECTOR_ID_FILE}.{made}.tmp"
+    tmp.write_text(made + "\n", encoding="ascii")
+    fsync_file(tmp)
+    try:
+        _place_collector_id(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    fsync_dir(state_dir)
+    return _read_collector_id(path) or made
+
+
+def _place_collector_id(tmp: Path, path: Path) -> None:
+    if path.exists():  # damaged
+        os.replace(tmp, path)
+        return
+    try:
+        os.link(tmp, path)
+    except FileExistsError:
+        pass  # another run made it just now
+    except OSError:
+        os.replace(tmp, path)  # no hard links here
+
+
+def _read_collector_id(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding="ascii").strip()
+    except (OSError, ValueError):
+        return None
+    return text if _COLLECTOR_ID.fullmatch(text) else None
 
 
 def _describe_owner(owner: dict[str, Any]) -> str:

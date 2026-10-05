@@ -48,6 +48,7 @@ from agent_history.archive.state import (
     CollectLockedError,
     FileState,
     SourceState,
+    collector_id,
     destination_lock,
     load_state,
     save_state,
@@ -252,6 +253,7 @@ class _Run:
         self.now = now
         self.dry_run = dry_run
         self.run_id = ""  # named once the archive's runs are known (_set_run_id)
+        self.state_dir = Path(state_dir)
         self.state_file = state_path(state_dir, key, source.name)
         loaded = load_state(self.state_file)
         self.state = loaded or SourceState()
@@ -390,10 +392,7 @@ class _Run:
                     return RunSummary("", self.source.name, skipped_reason="min_interval")
                 has_format = self._check_destination()
                 if not self.dry_run:  # a dry run writes nothing, so it needs no lock
-                    local_lock = self.state_file.with_suffix(".lock")
-                    stack.enter_context(
-                        destination_lock(self.destination, self.source.name, local_lock, break_lock)
-                    )
+                    stack.enter_context(self._destination_lock(break_lock))
             except CollectLockedError:
                 raise
             except Exception:
@@ -401,6 +400,15 @@ class _Run:
                     self._ping("/fail")
                 raise
             return self._execute_locked(has_format)
+
+    def _destination_lock(self, break_lock: bool):
+        return destination_lock(
+            self.destination,
+            self.source.name,
+            self.state_file.with_suffix(".lock"),
+            collector_id(self.state_dir),
+            break_lock,
+        )
 
     def _execute_locked(self, has_format: bool) -> RunSummary:
         if not self.dry_run:
