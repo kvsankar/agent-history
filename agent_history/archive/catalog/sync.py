@@ -39,12 +39,10 @@ class SyncSummary:
 
 
 def list_sources(destination: Destination) -> list[str]:
-    names = set()
-    for rel in destination.list_files("sources"):
-        parts = rel.split("/")
-        if len(parts) == 2 and parts[1] == "SOURCE.json":
-            names.add(parts[0])
-    return sorted(names)
+    """The folders under sources/ that hold a SOURCE.json, without walking their files."""
+    descriptors = {f"sources/{name}/SOURCE.json": name for name in destination.list_dirs("sources")}
+    missing = set(destination.missing(list(descriptors)))
+    return sorted(name for rel, name in descriptors.items() if rel not in missing)
 
 
 def sync_catalog(

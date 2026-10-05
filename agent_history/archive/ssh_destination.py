@@ -114,6 +114,17 @@ class SshDestination(Destination):
         names = [raw.decode("utf-8", "surrogateescape") for raw in result.stdout.split(b"\0")]
         return sorted(name[2:] for name in names if name.startswith("./"))
 
+    def list_dirs(self, rel_dir: str) -> list[str]:
+        path = self._remote(rel_dir)
+        # POSIX find has no -maxdepth: -prune stops it below each entry of the folder.
+        result = self._run(
+            f"test -d {path} || exit 0; cd {path} && "
+            f"find . ! -name . -prune -type d -exec printf '%s\\0' {{}} +"
+        )
+        self._check(result, f"Listing {rel_dir}")
+        names = [raw.decode("utf-8", "surrogateescape") for raw in result.stdout.split(b"\0")]
+        return sorted(name[2:] for name in names if name.startswith("./"))
+
     def exists(self, rel: str) -> bool:
         return self._run(f"test -e {self._remote(rel)}").returncode == 0
 

@@ -149,6 +149,22 @@ def test_list_files_keeps_names_with_line_breaks(remote):
     assert dest.list_files("d") == sorted(f"sub/{name}" for name in names)
 
 
+def test_list_dirs_lists_only_the_folders_directly_inside(remote):
+    from agent_history.archive.catalog.sync import list_sources
+
+    dest, root = remote
+    for name in ("alpha", "new\nline", "beta"):
+        (root / "sources" / name / "files" / "deep").mkdir(parents=True)
+        (root / "sources" / name / "files" / "deep" / "x.zst").write_bytes(b"x")
+    for name in ("alpha", "new\nline"):
+        (root / "sources" / name / "SOURCE.json").write_text("{}", encoding="utf-8")
+    (root / "sources" / "stray.txt").write_text("not a source", encoding="utf-8")
+
+    assert dest.list_dirs("sources") == ["alpha", "beta", "new\nline"]
+    assert dest.list_dirs("missing") == []
+    assert list_sources(dest) == ["alpha", "new\nline"]
+
+
 def test_put_tree_keeps_times(remote, tmp_path):
     dest, root = remote
     staging = tmp_path / "staging"

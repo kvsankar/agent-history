@@ -89,6 +89,13 @@ class Destination:
         """Paths of all files under ``rel_dir``, relative to it, "/"-separated."""
         raise NotImplementedError
 
+    def list_dirs(self, rel_dir: str) -> list[str]:
+        """Names of the folders directly in ``rel_dir``, sorted; [] when it does not exist.
+
+        Unlike list_files, this does not walk what the folders hold.
+        """
+        raise NotImplementedError
+
     def exists(self, rel: str) -> bool:
         raise NotImplementedError
 
@@ -171,6 +178,13 @@ class LocalDestination(Destination):
             for filename in filenames:
                 found.append((Path(dirpath) / filename).relative_to(base).as_posix())
         return sorted(found)
+
+    def list_dirs(self, rel_dir: str) -> list[str]:
+        base = self._path(rel_dir)
+        if not base.is_dir():
+            return []
+        with os.scandir(base) as entries:  # like list_files, symbolic links are not followed
+            return sorted(entry.name for entry in entries if entry.is_dir(follow_symlinks=False))
 
     def exists(self, rel: str) -> bool:
         return self._path(rel).exists()

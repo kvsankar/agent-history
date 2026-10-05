@@ -985,6 +985,32 @@ def test_damaged_manifest_is_an_archive_error_naming_the_file(env, content):
         verify_source(open_destination(str(env["dest"])), "src")
 
 
+def _archive_with_sources(root):
+    for name in ("alpha", "beta"):
+        (root / "sources" / name / "files" / "deep").mkdir(parents=True)
+        (root / "sources" / name / "files" / "deep" / "x.zst").write_bytes(b"x")
+        (root / "sources" / name / "SOURCE.json").write_text("{}", encoding="utf-8")
+    (root / "sources" / "no-descriptor" / "files").mkdir(parents=True)
+    (root / "sources" / "stray.txt").write_text("not a source", encoding="utf-8")
+
+
+def test_catalog_lists_sources_without_walking_archived_files(env, monkeypatch):
+    from agent_history.archive.catalog.sync import list_sources
+    from agent_history.archive.transport import LocalDestination
+
+    _archive_with_sources(env["dest"])
+    destination = LocalDestination(env["dest"])
+
+    def no_walk(rel_dir):
+        raise AssertionError(f"walked {rel_dir}")
+
+    monkeypatch.setattr(destination, "list_files", no_walk)
+
+    assert destination.list_dirs("sources") == ["alpha", "beta", "no-descriptor"]
+    assert destination.list_dirs("missing") == []
+    assert list_sources(destination) == ["alpha", "beta"]
+
+
 def test_source_kind_is_recorded(env):
     import json
 
