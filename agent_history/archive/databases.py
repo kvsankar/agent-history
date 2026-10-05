@@ -275,6 +275,9 @@ def _export_new_rows(
             entry["identity"] = identity
     if count == 0:
         return entry
+    if run.dry_run:  # a dry run reports what it would export and compresses nothing
+        entry["rows"] = count
+        return entry
     export_path = f"{item.rel_path}.rows/{run_stamp(run.now)}-{run.run_id[-4:]}.jsonl"
     result = compress_file(
         jsonl,

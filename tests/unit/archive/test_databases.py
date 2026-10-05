@@ -344,6 +344,34 @@ def test_exported_log_rows_have_credential_columns_blanked(env):
     assert TOKEN.encode() not in zstandard.ZstdDecompressor().decompress(data)
 
 
+def test_dry_run_counts_new_log_rows_without_compressing(env, monkeypatch):
+    from agent_history.archive import databases
+
+    conn = _logs_db(env)
+    _add_logs(conn, [1, 2, 3])
+    conn.close()
+
+    def fail(*args, **kwargs):
+        raise AssertionError("dry run compressed rows")
+
+    monkeypatch.setattr(databases, "compress_file", fail)
+    config = parse_config(
+        {
+            "archive": {"destination": str(env["dest"]), "compression_level": 3},
+            "sources": [
+                {"name": "src", "kind": "live", "platform": "linux", "home": str(env["home"])}
+            ],
+        }
+    )
+
+    summary = collect_source(config, "src", state_dir=env["state"], now=T0, dry_run=True)
+
+    assert summary.errors == 0
+    (entry,) = summary.entries
+    assert (entry["type"], entry["rows"], entry["to_key"]) == ("rows", 3, 3)
+    assert "export_path" not in entry
+
+
 def test_new_log_file_name_starts_its_own_export(env):
     old = _logs_db(env)
     _add_logs(old, [1, 2])
