@@ -178,6 +178,22 @@ def test_verify_problems_give_exit_code_2(setup, capsys):
     assert f"mismatched: {SESSION}" in capsys.readouterr().out
 
 
+def test_verify_prints_files_that_could_not_be_read(setup, capsys, monkeypatch):
+    from agent_history.archive import verify
+
+    config = setup["config"]
+    main(["archive", "collect", "--config", config])
+    capsys.readouterr()
+    monkeypatch.setattr(
+        verify,
+        "verify_source",
+        lambda *args, **kwargs: verify.VerifyReport(errors=[f"{SESSION}: connection dropped"]),
+    )
+
+    assert main(["archive", "verify", "--config", config]) == 2
+    assert f"errors: {SESSION}: connection dropped" in capsys.readouterr().out
+
+
 def test_archive_is_listed_in_main_help(capsys):
     with pytest.raises(SystemExit):
         main(["--help"])
