@@ -86,6 +86,59 @@ def test_basic_operations(remote):
         assert handle.read() == b"hello"
 
 
+def test_lock_folder_is_created_once(remote):
+    dest, root = remote
+
+    assert dest.create_lock("sources/src/LOCK", b'{"host": "a"}')
+    assert not dest.create_lock("sources/src/LOCK", b'{"host": "b"}')
+    assert dest.read_bytes("sources/src/LOCK/owner.json") == b'{"host": "a"}'
+    dest.remove_lock("sources/src/LOCK")
+    dest.remove_lock("sources/src/LOCK")  # already gone
+    assert not (root / "sources" / "src" / "LOCK").exists()
+    assert (root / "sources" / "src").is_dir()
+    with pytest.raises(ArchiveError):
+        dest.remove_lock("sources/src/files")
+
+
+def test_overlapping_run_over_ssh_is_kept_out_by_the_destination_lock(
+    remote, tmp_path, monkeypatch
+):
+    from agent_history.archive import collect as collect_module
+    from agent_history.archive.state import CollectLockedError
+
+    dest, root = remote
+    home = tmp_path / "home"
+    (home / SESSION).parent.mkdir(parents=True)
+    (home / SESSION).write_bytes(b"a\n")
+    os.utime(home / SESSION, (1_790_000_000, 1_790_000_000))
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    real = collect_module._Run._check_transfer
+    refused = []
+
+    def check_then_overlap(self):
+        real(self)
+        if not refused:
+            with pytest.raises(CollectLockedError):
+                collect_source(
+                    config, "src", state_dir=tmp_path / "other-state", now=T0, destination=dest
+                )
+            refused.append(True)
+
+    monkeypatch.setattr(collect_module._Run, "_check_transfer", check_then_overlap)
+
+    summary = collect_source(config, "src", state_dir=tmp_path / "state", now=T0, destination=dest)
+
+    assert refused
+    assert summary.written == 1
+    assert verify_source(dest, "src").ok
+    assert not (root / "sources" / "src" / "LOCK").exists()
+
+
 def test_put_tree_keeps_times(remote, tmp_path):
     dest, root = remote
     staging = tmp_path / "staging"

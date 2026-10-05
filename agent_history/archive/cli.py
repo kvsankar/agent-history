@@ -41,6 +41,11 @@ def build_parser(prog: str = "cagelens archive") -> argparse.ArgumentParser:
     collect.add_argument("--force", action="store_true", help="Ignore min_interval_hours")
     collect.add_argument("--dry-run", action="store_true", help="List actions; write nothing")
     collect.add_argument("--state-dir", help="Collector state folder")
+    collect.add_argument(
+        "--break-lock",
+        action="store_true",
+        help="Remove each source's lock in the archive first; only when no run holds it",
+    )
 
     verify = sub.add_parser("verify", help="Decompress archived files and check their hashes")
     _common(verify)
@@ -117,8 +122,10 @@ def _collect(args: argparse.Namespace) -> int:
                 dry_run=args.dry_run,
                 # As written, so --destination keeps its own state and lock.
                 destination=args.destination or config.destination,
+                break_lock=args.break_lock,
             )
-        except collect_module.CollectLockedError:
+        except collect_module.CollectLockedError as exc:
+            sys.stderr.write(f"{name}: {exc}\n")
             summary = collect_module.RunSummary("", name, skipped_reason="locked")
         except (ArchiveError, OSError) as exc:
             failed = True

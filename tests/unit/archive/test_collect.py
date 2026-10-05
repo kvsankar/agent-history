@@ -7,6 +7,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import zstandard
@@ -258,7 +259,7 @@ def test_a_refused_destination_sends_the_failure_ping(env, monkeypatch):
     with pytest.raises(ArchiveError, match="mounted"):
         _collect(env, now=T0 + timedelta(hours=1), config=config)
 
-    assert pings == [f"{HEALTH}/start", f"{HEALTH}/fail"]
+    assert pings == [f"{HEALTH}/fail"]  # refused before the run started
 
 
 def test_a_successful_run_sends_start_and_success_pings(env, monkeypatch):
@@ -624,7 +625,9 @@ def test_runs_apply_in_the_order_they_ran(env, monkeypatch, step):
     from agent_history.archive import manifest as manifest_module
 
     suffixes = iter(["ffff", "0000", "8888"])
-    monkeypatch.setattr(manifest_module.secrets, "token_hex", lambda n: next(suffixes))
+    monkeypatch.setattr(
+        manifest_module, "secrets", SimpleNamespace(token_hex=lambda n: next(suffixes))
+    )
     _write(env, SESSION, b"v1\n", mtime=1_790_000_000)
     first = _collect(env)
     _write(env, SESSION, b"v2 rewritten\n", mtime=1_790_000_100)
@@ -658,7 +661,7 @@ def test_run_ids_follow_the_newest_collector_run_id():
 def test_versions_of_runs_in_the_same_second_do_not_collide(env, monkeypatch):
     from agent_history.archive import manifest as manifest_module
 
-    monkeypatch.setattr(manifest_module.secrets, "token_hex", lambda n: "abcd")
+    monkeypatch.setattr(manifest_module, "secrets", SimpleNamespace(token_hex=lambda n: "abcd"))
     _write(env, SESSION, b"v1\n", mtime=1_790_000_000)
     _collect(env)
     _write(env, SESSION, b"v2\n", mtime=1_790_000_100)
@@ -689,6 +692,125 @@ def test_a_held_lock_stops_a_second_run(env):
     with source_lock(env["state"], config.destination, "src"):
         with pytest.raises(CollectLockedError):
             _collect(env, config=config)
+
+
+def _lock_folder(env):
+    return env["dest"] / "sources" / "src" / "LOCK"
+
+
+def _overlap_after_transfer(monkeypatch, overlapping):
+    """Run ``overlapping`` once, after the first run's files arrived in its incoming folder."""
+    from agent_history.archive import collect as collect_module
+
+    real = collect_module._Run._check_transfer
+    calls = []
+
+    def check_then_overlap(self):
+        real(self)
+        if not calls:
+            calls.append(self.run_id)
+            overlapping()
+
+    monkeypatch.setattr(collect_module._Run, "_check_transfer", check_then_overlap)
+    return calls
+
+
+def test_a_run_with_another_state_folder_is_kept_out_by_the_destination_lock(env, monkeypatch):
+    """The local lock is per state folder; the destination lock keeps such runs apart."""
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    _write(env, ".claude/projects/p/new.jsonl", b"n\n", mtime=1_790_000_100)
+
+    def overlapping():
+        with pytest.raises(CollectLockedError, match="--break-lock"):
+            collect_source(
+                _config(env),
+                "src",
+                state_dir=env["state"].with_name("other-state"),
+                now=T0 + timedelta(hours=2),
+            )
+
+    calls = _overlap_after_transfer(monkeypatch, overlapping)
+    first = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert calls
+    assert first.written == 2
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+    assert not _lock_folder(env).exists()
+
+
+def test_the_destination_lock_is_released_when_a_run_fails(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+
+    with pytest.raises(OSError):
+        _collect(env, destination=_FailingDestination.make(env, "put_tree"))
+
+    assert (env["dest"] / "sources" / "src").is_dir()
+    assert not _lock_folder(env).exists()
+
+
+def test_a_lock_left_by_a_killed_run_on_this_machine_is_taken_over(env, monkeypatch, capsys):
+    from agent_history.archive.transport import LocalDestination
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    real = LocalDestination.remove_lock
+    monkeypatch.setattr(LocalDestination, "remove_lock", lambda self, rel: None)  # killed
+    _collect(env)
+    assert _lock_folder(env).is_dir()
+    monkeypatch.setattr(LocalDestination, "remove_lock", real)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    second = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert second.written == 1
+    assert "interrupted run" in capsys.readouterr().err
+    assert not _lock_folder(env).exists()
+
+
+def _foreign_lock(env):
+    import json
+
+    _lock_folder(env).mkdir(parents=True)
+    owner = {"host": "other-laptop", "pid": 4242, "started_at": "2026-10-01T00:00:00+00:00"}
+    (_lock_folder(env) / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
+
+
+def test_a_lock_held_by_another_machine_stops_the_run(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _foreign_lock(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    with pytest.raises(CollectLockedError, match="other-laptop"):
+        _collect(env, now=T0 + timedelta(hours=1))
+
+    assert _lock_folder(env).is_dir()
+    assert _archived(env, SESSION) == b"a\n"
+
+
+def test_break_lock_removes_another_machines_lock(env, capsys):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _foreign_lock(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1), break_lock=True)
+
+    assert summary.written == 1
+    assert "other-laptop" in capsys.readouterr().err
+    assert not _lock_folder(env).exists()
+
+
+def test_dry_run_ignores_the_destination_lock(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _foreign_lock(env)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1), dry_run=True)
+
+    assert summary.errors == 0
+    assert _lock_folder(env).is_dir()
 
 
 def test_unreadable_file_is_recorded_and_retried(env, monkeypatch):

@@ -133,6 +133,33 @@ def test_a_locked_source_is_skipped_and_the_rest_are_collected(setup, capsys):
     assert "other: 1 written" in out
 
 
+def _lock_at_destination(setup, source):
+    lock = setup["tmp"] / "archive" / "sources" / source / "LOCK"
+    lock.mkdir(parents=True)
+    owner = {"host": "other-laptop", "pid": 4242, "started_at": "2026-10-01T00:00:00+00:00"}
+    (lock / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
+    return lock
+
+
+def test_a_source_locked_at_the_destination_is_skipped_with_its_owner(setup, capsys):
+    config = _two_sources(setup)
+    assert main(["archive", "collect", "--config", config]) == 0
+    lock = _lock_at_destination(setup, "laptop")
+    capsys.readouterr()
+
+    code = main(["archive", "collect", "--config", config])
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "laptop: skipped (locked)" in captured.out
+    assert "other-laptop" in captured.err
+    assert lock.is_dir()
+
+    assert main(["archive", "collect", "--config", config, "--break-lock"]) == 0
+    assert "laptop: 0 written" in capsys.readouterr().out
+    assert not lock.exists()
+
+
 def test_a_failing_source_does_not_stop_the_others(setup, capsys, monkeypatch):
     from agent_history.archive import collect as collect_module
     from agent_history.archive.errors import ArchiveError

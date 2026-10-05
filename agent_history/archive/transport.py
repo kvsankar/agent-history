@@ -55,6 +55,18 @@ def _check_discardable(rel: str) -> str:
     return rel
 
 
+LOCK_FOLDER = "LOCK"
+LOCK_OWNER = "owner.json"
+
+
+def _check_lock(rel: str) -> str:
+    """Only a source's lock folder, ``sources/<source>/LOCK``, is created or removed as one."""
+    parts = _check_rel(rel).split("/")
+    if len(parts) != 3 or parts[0] != "sources" or parts[2] != LOCK_FOLDER:
+        raise ArchiveError(f"Refusing to use {rel!r} as a lock: only sources/<source>/LOCK is one")
+    return rel
+
+
 # A rewritten file's archived copy to keep as a version: (current path, version path,
 # incoming path of the new copy). The move is due while the new copy is still incoming.
 Keep = Tuple[str, str, str]
@@ -107,6 +119,18 @@ class Destination:
 
     def discard_tree(self, rel: str) -> None:
         """Remove a source's incoming folder and everything in it, if it exists."""
+        raise NotImplementedError
+
+    def create_lock(self, rel: str, owner: bytes) -> bool:
+        """Create the lock folder ``rel`` with ``owner`` in its owner.json.
+
+        False when the folder exists already. Creating a folder is atomic, so of two runs
+        that try at the same time only one succeeds.
+        """
+        raise NotImplementedError
+
+    def remove_lock(self, rel: str) -> None:
+        """Remove a lock folder and its owner.json, if it exists."""
         raise NotImplementedError
 
     @contextmanager
@@ -201,6 +225,25 @@ class LocalDestination(Destination):
         path = self._path(_check_discardable(rel))
         if path.exists():
             shutil.rmtree(path)
+
+    def create_lock(self, rel: str, owner: bytes) -> bool:
+        path = self._path(_check_lock(rel))
+        folders = _make_parent(path)
+        try:
+            path.mkdir()
+        except FileExistsError:
+            return False
+        _sync_dirs(folders)
+        self.write_bytes(f"{rel}/{LOCK_OWNER}", owner)
+        return True
+
+    def remove_lock(self, rel: str) -> None:
+        path = self._path(_check_lock(rel))
+        for name in (LOCK_OWNER, f"{LOCK_OWNER}.part"):
+            (path / name).unlink(missing_ok=True)
+        if path.exists():
+            path.rmdir()
+            fsync_dir(path.parent)
 
     @contextmanager
     def open_binary(self, rel: str) -> Iterator[IO[bytes]]:

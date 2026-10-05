@@ -12,13 +12,23 @@ import hashlib
 import json
 import os
 import platform
+import secrets
+import socket
+import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from agent_history.archive.errors import ArchiveError
-from agent_history.archive.transport import fsync_dir, fsync_file
+from agent_history.archive.transport import (
+    LOCK_FOLDER,
+    LOCK_OWNER,
+    Destination,
+    fsync_dir,
+    fsync_file,
+)
 
 # log_keys["<path>::<table>" + IDENTITY_SUFFIX] identifies the log table's rows (see databases).
 IDENTITY_SUFFIX = "::identity"
@@ -26,6 +36,9 @@ IDENTITY_SUFFIX = "::identity"
 
 class CollectLockedError(ArchiveError):
     """Another run for the same source and destination is in progress."""
+
+
+BREAK_LOCK_OPTION = "--break-lock"
 
 
 @dataclass
@@ -136,6 +149,10 @@ def save_state(path: Path, state: SourceState) -> None:
     fsync_dir(path.parent)
 
 
+def lock_path(state_dir: Path, destination: str, source: str) -> Path:
+    return state_path(state_dir, destination, source).with_suffix(".lock")
+
+
 @contextmanager
 def source_lock(state_dir: Path, destination: str, source: str) -> Iterator[None]:
     """Hold an exclusive, non-blocking lock for one source and destination."""
@@ -153,6 +170,113 @@ def source_lock(state_dir: Path, destination: str, source: str) -> Iterator[None
             _unlock(handle)
     finally:
         handle.close()
+
+
+# -- the lock in the archive ----------------------------------------------------------
+#
+# The local lock keeps apart runs that share a state folder and spell the destination the
+# same way. Runs with another state folder, another spelling of the destination, or on
+# another machine with the same source name share only the archive, so a run also holds
+# sources/<source>/LOCK there while it changes the source's folder.
+
+
+def destination_lock_path(source: str) -> str:
+    return f"sources/{source}/{LOCK_FOLDER}"
+
+
+@contextmanager
+def destination_lock(
+    destination: Destination, source: str, local_lock: Path, break_lock: bool = False
+) -> Iterator[None]:
+    """Hold the source's lock folder in the archive; CollectLockedError when another has it.
+
+    A lock that a killed run of this collector left (same host and local lock file, whose
+    lock this process holds now) is taken over. ``break_lock`` first removes any lock.
+    """
+    rel = destination_lock_path(source)
+    ours = _lock_owner(local_lock)
+    if break_lock:
+        _break_lock(destination, source)
+    if not destination.create_lock(rel, json.dumps(ours).encode("utf-8")):
+        held = read_lock_owner(destination, source)
+        if held.get("collector") != ours["collector"]:
+            raise CollectLockedError(_locked_message(destination, source, held))
+        sys.stderr.write(
+            f"Removing the lock of {source} left by an interrupted run on this machine "
+            f"(started {held.get('started_at', 'at an unknown time')})\n"
+        )
+        destination.remove_lock(rel)
+        if not destination.create_lock(rel, json.dumps(ours).encode("utf-8")):
+            raise CollectLockedError(
+                _locked_message(destination, source, read_lock_owner(destination, source))
+            )
+    try:
+        yield
+    finally:
+        _release_lock(destination, source, ours)
+
+
+def read_lock_owner(destination: Destination, source: str) -> dict[str, Any]:
+    """What a source's lock records about its holder; empty when unknown."""
+    data = destination.read_bytes(f"{destination_lock_path(source)}/{LOCK_OWNER}")
+    try:
+        owner = json.loads(data.decode("utf-8")) if data is not None else {}
+    except ValueError:
+        return {}
+    return owner if isinstance(owner, dict) else {}
+
+
+def _lock_owner(local_lock: Path) -> dict[str, Any]:
+    host = socket.gethostname()
+    collector = hashlib.sha256(f"{host}\n{Path(local_lock).resolve()}".encode()).hexdigest()
+    return {
+        "host": host,
+        "pid": os.getpid(),
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "collector": collector[:16],  # this host and local lock file, without the path
+        "token": secrets.token_hex(8),  # this run
+    }
+
+
+def _describe_owner(owner: dict[str, Any]) -> str:
+    if not owner:
+        return "holder unknown"
+    return (
+        f"host {owner.get('host', 'unknown')}, process {owner.get('pid', 'unknown')}, "
+        f"since {owner.get('started_at', 'an unknown time')}"
+    )
+
+
+def _locked_message(destination: Destination, source: str, held: dict[str, Any]) -> str:
+    return (
+        f"Another archive run for {source} holds its lock in {destination.description} "
+        f"({_describe_owner(held)}). If no such run is still going, for example because it "
+        f"was killed on another machine, run collect again with {BREAK_LOCK_OPTION}."
+    )
+
+
+def _break_lock(destination: Destination, source: str) -> None:
+    rel = destination_lock_path(source)
+    if destination.exists(rel):
+        held = read_lock_owner(destination, source)
+        sys.stderr.write(f"Removing the lock of {source} ({_describe_owner(held)})\n")
+        destination.remove_lock(rel)
+
+
+def _release_lock(destination: Destination, source: str, ours: dict[str, Any]) -> None:
+    """Remove the lock if this run still holds it; a failure here only warns."""
+    try:
+        if read_lock_owner(destination, source).get("token") != ours["token"]:
+            sys.stderr.write(
+                f"Warning: the lock of {source} was taken over by another run; left in place\n"
+            )
+            return
+        destination.remove_lock(destination_lock_path(source))
+    except (ArchiveError, OSError) as exc:
+        sys.stderr.write(
+            f"Warning: could not remove the lock of {source}: {exc}. The next run on this "
+            f"machine removes it.\n"
+        )
 
 
 def _lock(handle) -> None:

@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.request
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,6 +48,7 @@ from agent_history.archive.state import (
     CollectLockedError,
     FileState,
     SourceState,
+    destination_lock,
     load_state,
     save_state,
     source_lock,
@@ -100,12 +102,14 @@ def collect_source(
     force: bool = False,
     dry_run: bool = False,
     destination: Destination | str | None = None,
+    break_lock: bool = False,
 ) -> RunSummary:
     """Run the collector once for one source.
 
     ``destination`` overrides the configured one, as a path or URL or as an open
-    destination. The state and the lock are kept per destination: per path or URL as
-    written, or per description for an open destination.
+    destination. The state and the local lock are kept per destination: per path or URL
+    as written, or per description for an open destination. ``break_lock`` removes the
+    source's lock in the archive before the run takes it.
     """
     source = config.source(source_name)
     state_dir = Path(state_dir) if state_dir else default_state_dir()
@@ -117,9 +121,7 @@ def collect_source(
         key = destination.description
     with source_lock(state_dir, key, source_name):
         run = _Run(config, source, destination, state_dir, now, dry_run, key)
-        if not force and run.too_soon():
-            return RunSummary(run.run_id, source_name, skipped_reason="min_interval")
-        return run.execute()
+        return run.execute(force=force, break_lock=break_lock)
 
 
 def check_archive_format(destination: Destination, create: bool) -> bool:
@@ -249,8 +251,7 @@ class _Run:
         self.state_file = state_path(state_dir, key, source.name)
         loaded = load_state(self.state_file)
         self.state = loaded or SourceState()
-        if loaded is None:  # rebuilt from the manifests, so min_interval_hours can apply
-            self._reconcile(committed_run_ids(destination, source.name))
+        self.rebuild_state = loaded is None
         self.summary = RunSummary(self.run_id, source.name, dry_run=dry_run)
         self.incoming = ""
         # (manifest entry, archived copy, version path) for each rewrite
@@ -262,12 +263,13 @@ class _Run:
 
     # -- the state against the archive ------------------------------------------------
 
-    def _prepare_destination(self) -> None:
-        """Refuse a destination that does not hold what the state says, then catch up.
+    def _check_destination(self) -> bool:
+        """Refuse a destination that does not hold what the state says.
 
         A network mount that is not mounted looks like an empty folder, and a restored
         archive can be older than the state. Writing into either would record files as
-        archived that the real archive does not hold, so the run stops instead.
+        archived that the real archive does not hold, so the run stops instead. Writes
+        nothing. Returns whether ARCHIVE.json exists.
         """
         committed = committed_run_ids(self.destination, self.source.name)
         has_format = check_archive_format(self.destination, create=False)
@@ -289,11 +291,16 @@ class _Run:
                 f"was restored on purpose, delete the state file {self.state_file}; it is "
                 f"then rebuilt from the archive's manifests."
             )
+        return has_format
+
+    def _catch_up(self, has_format: bool) -> None:
+        """With the locks held: finish interrupted runs and apply the manifests the
+        state lacks, then name this run after the newest committed one."""
         if not self.dry_run:
             if not has_format:
                 check_archive_format(self.destination, create=True)
-            if recover_incoming(self.destination, self.source.name):
-                committed = committed_run_ids(self.destination, self.source.name)
+            recover_incoming(self.destination, self.source.name)
+        committed = committed_run_ids(self.destination, self.source.name)
         self._reconcile(committed)
         self._set_run_id(new_run_id(self.now, self.source.name, after=committed))
 
@@ -346,12 +353,37 @@ class _Run:
         last = datetime.fromisoformat(self.state.last_success)
         return self.now - last < timedelta(hours=hours)
 
-    def execute(self) -> RunSummary:
+    def execute(self, force: bool = False, break_lock: bool = False) -> RunSummary:
+        """Check the destination and take its lock, then run.
+
+        A failure before the run starts sends the failure request too, except that a
+        lock another run holds is not a failure: the run is skipped.
+        """
+        with ExitStack() as stack:
+            try:
+                if self.rebuild_state:  # before the interval check, which needs the state
+                    self._reconcile(committed_run_ids(self.destination, self.source.name))
+                if not force and self.too_soon():
+                    return RunSummary("", self.source.name, skipped_reason="min_interval")
+                has_format = self._check_destination()
+                if not self.dry_run:  # a dry run writes nothing, so it needs no lock
+                    local_lock = self.state_file.with_suffix(".lock")
+                    stack.enter_context(
+                        destination_lock(self.destination, self.source.name, local_lock, break_lock)
+                    )
+            except CollectLockedError:
+                raise
+            except Exception:
+                if not self.dry_run:
+                    self._ping("/fail")
+                raise
+            return self._execute_locked(has_format)
+
+    def _execute_locked(self, has_format: bool) -> RunSummary:
         if not self.dry_run:
             self._ping("/start")
         try:
-            # Inside the try, so a refused destination also sends the failure request.
-            self._prepare_destination()
+            self._catch_up(has_format)
             if not self.dry_run:
                 self.destination.write_bytes(
                     f"sources/{self.source.name}/SOURCE.json", self._descriptor()
