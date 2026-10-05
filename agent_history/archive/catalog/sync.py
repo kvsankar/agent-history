@@ -2,8 +2,10 @@
 
 Session metadata is extracted once per changed session file, with the same backend parsers
 the cagelens commands use; then each run's manifest is applied in one transaction. A session
-file that cannot be read, or whose content does not match its manifest's SHA-256, is kept
-in ``pending_sessions`` and read again by every later sync until it succeeds. When the
+file that cannot be read, whose content does not match its manifest's SHA-256, or whose
+rows the store refuses, is kept in ``pending_sessions`` and read again by every later
+sync until it succeeds; the source's other files and runs are recorded. Text values are
+stored as text without NUL characters, which PostgreSQL refuses. When the
 reader version recorded in ``schema_meta`` differs from the current one, every catalogued
 session file is queued there too, so rows written by an older reader are replaced.
 
@@ -188,18 +190,21 @@ def _sync_sessions(
             continue
         try:
             rows = _extract_sessions(destination, name, path, target, sha256, work_dir)
+            _replace_sessions(store, name, path, rows)
         except Exception as exc:  # one bad file must not stop the sync
             summary.errors.append(f"{name}:{path}: {exc}")
             _mark_pending(store, name, path, sha256, exc)
             continue
-        with store.transaction():
-            store.execute("DELETE FROM sessions WHERE source = ? AND path = ?", (name, path))
-            for row in rows:
-                _insert_session(store, row)
-            store.execute(
-                "DELETE FROM pending_sessions WHERE source = ? AND path = ?", (name, path)
-            )
         summary.sessions += len(rows)
+
+
+def _replace_sessions(store, source: str, path: str, rows: list[dict[str, Any]]) -> None:
+    """Replace a session file's rows and clear its pending entry, in one transaction."""
+    with store.transaction():
+        store.execute("DELETE FROM sessions WHERE source = ? AND path = ?", (source, path))
+        for row in rows:
+            _insert_session(store, row)
+        store.execute("DELETE FROM pending_sessions WHERE source = ? AND path = ?", (source, path))
 
 
 def _mark_pending(store, source: str, path: str, sha256: str, exc: Exception) -> None:
@@ -425,13 +430,13 @@ def _file_session(local: Path, backend_id: str, workspace: str | None) -> dict[s
         workspace = backend.resolve_stats_workspace(local, stats, workspace)
     except Exception:
         pass
-    models = sorted({str(m["model"]) for m in messages if m.get("model")})
+    models = sorted({_as_text(m["model"]) for m in messages if m.get("model")})
     return {
-        "session_id": stats.get("session_id") or local.name.split(".")[0],
+        "session_id": _clean_text(stats.get("session_id")) or local.name.split(".")[0],
         "from_database": False,
-        "workspace": workspace,
-        "cwd": stats.get("cwd"),
-        "git_branch": stats.get("git_branch"),
+        "workspace": _clean_text(workspace),
+        "cwd": _clean_text(stats.get("cwd")),
+        "git_branch": _clean_text(stats.get("git_branch")),
         "models": json.dumps(models),
         "first_timestamp": _timestamp(stats.get("first_timestamp")),
         "last_timestamp": _timestamp(stats.get("last_timestamp")),
@@ -443,7 +448,7 @@ def _file_session(local: Path, backend_id: str, workspace: str | None) -> dict[s
         "output_tokens": stats.get("output_tokens"),
         "cache_read_tokens": stats.get("cache_read_tokens"),
         "cache_creation_tokens": stats.get("cache_creation_tokens"),
-        "parent_session_id": stats.get("parent_session_id"),
+        "parent_session_id": _clean_text(stats.get("parent_session_id")),
         "is_subagent": bool(stats.get("is_agent")),
     }
 
@@ -453,10 +458,10 @@ def _database_sessions(local: Path, sql: str) -> list[dict[str, Any]]:
         rows = conn.execute(sql).fetchall()
     return [
         {
-            "session_id": str(session_id),
+            "session_id": _clean_text(session_id),
             "from_database": True,
-            "cwd": cwd,
-            "git_branch": branch,
+            "cwd": _clean_text(cwd),
+            "git_branch": _clean_text(branch),
             "first_timestamp": _timestamp(first),
             "last_timestamp": _timestamp(last),
             "message_count": count,
@@ -524,6 +529,27 @@ def _timestamp(value: Any) -> str | None:
 
 def _text(value: Any) -> str | None:
     return None if value is None else str(value)
+
+
+def _clean_text(value: Any) -> str | None:
+    """``value`` as text that both stores accept (see :func:`_as_text`), or None."""
+    return None if value is None else _as_text(value)
+
+
+def _as_text(value: Any) -> str:
+    """``value`` as text that both stores accept.
+
+    A transcript can hold any JSON value where a reader expects text, such as an object
+    as a session ID; such values are stored as their JSON text. NUL characters are
+    removed, because PostgreSQL text cannot hold them.
+    """
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, bytes):
+        text = value.decode("utf-8", "replace")
+    else:
+        text = json.dumps(value, sort_keys=True, default=str)
+    return text.replace("\x00", "")
 
 
 def catalog_status(store: CatalogStore, sources: list[str] | None = None) -> list[dict[str, Any]]:

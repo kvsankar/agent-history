@@ -407,6 +407,100 @@ def test_a_session_file_that_failed_is_read_at_its_newest_hash_after_another_run
     )
 
 
+def _add_claude_transcript(archive, name, **fields):
+    """Add a one-line Claude transcript to the -home-alex-shop project folder."""
+    path = archive["home"] / ".claude/projects/-home-alex-shop" / name
+    line = {
+        "type": "user",
+        "sessionId": "odd-1",
+        "uuid": "odd-u1",
+        "timestamp": "2025-01-03T10:06:00Z",
+        "message": {"role": "user", "content": "hello"},
+        **fields,
+    }
+    path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    _settle(path)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        ({"sessionId": {"x": 1}}, ('{"x": 1}', None, None)),
+        (
+            {"cwd": "/home/alex/a\u0000b", "gitBranch": "ma\u0000in"},
+            ("odd-1", "/home/alex/ab", "main"),
+        ),
+    ],
+    ids=["object-session-id", "nul-in-text"],
+)
+def test_a_transcript_with_values_a_store_cannot_take_is_catalogued_as_text(
+    store, archive, fields, expected
+):
+    _add_claude_transcript(archive, "odd-1.jsonl", **fields)
+    archive["collect"](hours=1)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert summary.runs == 2
+    assert _rows(
+        store,
+        "SELECT session_id, cwd, git_branch FROM sessions WHERE path LIKE ?",
+        ("%/odd-1.jsonl",),
+    ) == [expected]
+    assert "claude-s1" in _session_ids(store)
+
+
+def test_a_database_session_with_values_a_store_cannot_take_is_catalogued_as_text(store, archive):
+    state = archive["home"] / ".codex" / "state_5.sqlite"
+    with closing(sqlite3.connect(state)) as conn:
+        conn.execute("CREATE TABLE threads (id, cwd, created_at, updated_at)")
+        conn.execute(
+            "INSERT INTO threads VALUES (?, ?, 1767225600, 1767225660)",
+            (b"thread-1", "/home/alex/a\x00b"),
+        )
+        conn.commit()
+    _settle(state)
+    archive["collect"](hours=1)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _rows(
+        store, "SELECT session_id, cwd FROM sessions WHERE path = ?", (".codex/state_5.sqlite",)
+    ) == [("thread-1", "/home/alex/ab")]
+
+
+def test_a_session_file_the_store_refuses_is_retried_without_blocking_its_source(
+    store, archive, monkeypatch
+):
+    from agent_history.archive.catalog import sync
+
+    _, rel, _ = _codex_file(archive)
+    real_insert = sync._insert_session
+
+    def refuse_codex(target_store, row):
+        if row["path"] == rel:
+            raise ValueError("the store refused a value")
+        real_insert(target_store, row)
+
+    monkeypatch.setattr(sync, "_insert_session", refuse_codex)
+    first = sync_catalog(store, archive["destination"])
+
+    assert first.runs == 1
+    assert [error for error in first.errors if rel in error]
+    assert _session_ids(store) == ["claude-s1", "copilot-gone"]
+    assert _rows(store, "SELECT path, error_type FROM pending_sessions") == [(rel, "ValueError")]
+    monkeypatch.setattr(sync, "_insert_session", real_insert)
+
+    second = sync_catalog(store, archive["destination"])
+
+    assert second.errors == []
+    assert _session_ids(store) == ["claude-s1", "codex-s1", "copilot-gone"]
+    assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
+
+
 def test_a_version_1_catalog_is_upgraded_when_it_is_opened(store_spec):
     old = open_store(store_spec)
     with old.transaction():
