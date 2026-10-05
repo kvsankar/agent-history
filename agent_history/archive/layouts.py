@@ -380,27 +380,39 @@ def _iter_agent_root(
         rel_path = f"{rel_root}/{found}"
         if _matches_any(rel_path, part.exclude):
             continue
-        database = next(
-            (rule for rule in layout.databases if _compiled(rule.pattern).match(found)), None
-        )
-        yield SelectedFile(rel_path, abs_root / found, layout.name, database)
+        yield SelectedFile(rel_path, abs_root / found, layout.name, _database_rule(layout, found))
+
+
+def _database_rule(layout: AgentLayout, inner: str) -> DatabaseRule | None:
+    return next((rule for rule in layout.databases if _compiled(rule.pattern).match(inner)), None)
 
 
 def _iter_config_includes(part: SourcePart, platform: str) -> Iterator[SelectedFile]:
+    """Files matched by the configuration's own include patterns.
+
+    A file inside an agent's folder gets that agent's rules, as if the layout had
+    selected it: its exclusions apply and a database is snapshotted, blanked or exported
+    by rows. So an include can add files to an agent folder but never copy a database
+    raw or bring back what the layout leaves out.
+    """
     home = part.home
     if home is None:
         return
     for found in _walk_matching(home, list(part.include)):
+        rel_path = found.rel_path if isinstance(found, _Unreadable) else found
+        layout, inner = _layout_for(rel_path, platform)
+        layout_exclude = layout.exclude if layout is not None else ()
+        agent = layout.name if layout is not None else OTHER_AGENT
         if isinstance(found, _Unreadable):
-            if not _excludes_folder(found.rel_path, (), found.rel_path, part.exclude):
-                agent = _agent_for(found.rel_path, platform)
-                yield SelectedFile(
-                    found.rel_path, home / found.rel_path, agent, error=found.message
-                )
+            if not _excludes_folder(inner, layout_exclude, rel_path, part.exclude):
+                yield SelectedFile(rel_path, home / rel_path, agent, error=found.message)
             continue
         if not _name_allowed(found) or _matches_any(found, part.exclude):
             continue
-        yield SelectedFile(found, home / found, _agent_for(found, platform))
+        if layout is None:
+            yield SelectedFile(found, home / found, agent)
+        elif not _matches_any(inner, layout_exclude):
+            yield SelectedFile(found, home / found, agent, _database_rule(layout, inner))
 
 
 def _excludes_folder(inner: str, layout_exclude, rel_path: str, part_exclude) -> bool:
@@ -408,12 +420,13 @@ def _excludes_folder(inner: str, layout_exclude, rel_path: str, part_exclude) ->
     return _matches_any(inner + "/", layout_exclude) or _matches_any(rel_path + "/", part_exclude)
 
 
-def _agent_for(rel_path: str, platform: str) -> str:
+def _layout_for(rel_path: str, platform: str) -> tuple[AgentLayout | None, str]:
+    """The layout whose folder holds a home-relative path, and the path inside it."""
     for layout in LAYOUTS:
         for root in layout.roots_for(platform):
             if rel_path.startswith(root + "/"):
-                return layout.name
-    return OTHER_AGENT
+                return layout, rel_path[len(root) + 1 :]
+    return None, rel_path
 
 
 def _name_allowed(rel_path: str) -> bool:

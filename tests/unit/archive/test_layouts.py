@@ -451,3 +451,45 @@ def test_copilot_session_databases_are_snapshots(tmp_path):
     selected = _selected(_source(tmp_path))
 
     assert selected[".copilot/session-state/abc/session.db"].database.mode == "snapshot"
+
+
+def test_includes_under_an_agent_folder_keep_its_database_rules(tmp_path):
+    _touch(tmp_path, ".copilot/data.db")
+    _touch(tmp_path, ".codex/state_5.sqlite")
+    _touch(tmp_path, ".codex/logs_2.sqlite")
+    _touch(tmp_path, ".codex/config.toml")
+    source = _source(tmp_path, agents=["claude"], include=[".copilot/**", ".codex/**"])
+
+    selected = _selected(source)
+
+    assert set(selected) == {
+        ".copilot/data.db",
+        ".codex/state_5.sqlite",
+        ".codex/logs_2.sqlite",
+        ".codex/config.toml",
+    }
+    data_db = selected[".copilot/data.db"]
+    assert data_db.agent == "copilot-cli"
+    assert data_db.database is not None
+    assert "accounts.access_token" in data_db.database.blank_columns
+    assert selected[".codex/state_5.sqlite"].database.mode == "snapshot"
+    assert selected[".codex/logs_2.sqlite"].database.mode == "log"
+    assert selected[".codex/config.toml"].database is None
+
+
+def test_includes_under_an_agent_folder_keep_its_exclusions(tmp_path):
+    chat = ".config/Code/User/workspaceStorage/ws1/GitHub.copilot-chat"
+    _touch(tmp_path, ".gemini/tmp/abc/chats/session-1.json")
+    _touch(tmp_path, ".gemini/tmp/abc/tool-outputs/out.txt")
+    _touch(tmp_path, ".gemini/tmp/bin/rg")
+    _touch(tmp_path, f"{chat}/transcripts/t.jsonl")
+    _touch(tmp_path, f"{chat}/codebase-external.sqlite")
+    _touch(tmp_path, ".copilot/data.db-wal")
+    source = _source(
+        tmp_path, agents=["claude"], include=[".gemini/**", ".config/**", ".copilot/**"]
+    )
+
+    assert set(_selected(source)) == {
+        ".gemini/tmp/abc/chats/session-1.json",
+        f"{chat}/transcripts/t.jsonl",
+    }
