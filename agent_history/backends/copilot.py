@@ -11,6 +11,12 @@ from urllib.parse import unquote, urlparse
 
 from agent_history.export.markdown import MARKDOWN_DEFAULT_LEVEL, parse_jsonl_to_markdown
 from agent_history.utils.env import has_env
+from agent_history.utils.jsonl import (
+    TRANSCRIPT_ENCODING,
+    TRANSCRIPT_ERRORS,
+    json_objects,
+    open_transcript,
+)
 from agent_history.utils.platform import AGENT_COPILOT_CLI, AGENT_COPILOT_VSCODE
 from agent_history.utils.workspace_ref import apply_workspace_ref
 
@@ -87,22 +93,17 @@ def copilot_vscode_get_home_dir() -> Path:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
+    """The events of a transcript; bad bytes become U+FFFD, unusable lines are skipped."""
     try:
-        with path.open(encoding="utf-8-sig") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    value = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(value, dict):
-                    events.append(value)
+        with open_transcript(path) as handle:
+            return list(json_objects(handle))
     except OSError:
         return []
-    return events
+
+
+def _read_text(path: Path) -> str:
+    """A small side file's text, decoding bad bytes as U+FFFD."""
+    return path.read_text(encoding=TRANSCRIPT_ENCODING, errors=TRANSCRIPT_ERRORS)
 
 
 def _extract_text(content: Any) -> str:
@@ -360,7 +361,7 @@ def copilot_count_messages(session_file: Path) -> int:
 
 def _parse_simple_yaml_value(path: Path, key: str) -> str | None:
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in _read_text(path).splitlines():
             if not line.strip().startswith(f"{key}:"):
                 continue
             value = line.split(":", 1)[1].strip()
@@ -417,8 +418,8 @@ def copilot_vscode_get_workspace_from_session(transcript_file: Path) -> str:
     workspace_json = _workspace_json_for_transcript(transcript_file)
     if workspace_json:
         try:
-            data = json.loads(workspace_json.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            data = json.loads(_read_text(workspace_json))
+        except (OSError, ValueError, RecursionError):
             data = {}
         folder = data.get("folder") if isinstance(data, dict) else None
         if isinstance(folder, str) and folder:

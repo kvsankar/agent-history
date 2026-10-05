@@ -25,10 +25,19 @@ from agent_history.backends.codex import (
     codex_parse_jsonl_to_markdown,
     codex_read_jsonl_messages,
 )
+from agent_history.backends.copilot import (
+    copilot_cli_get_workspace_from_session,
+    copilot_cli_read_messages,
+    copilot_count_messages,
+    copilot_extract_stats,
+    copilot_render_markdown,
+    copilot_vscode_get_workspace_from_session,
+)
 from agent_history.backends.gemini import gemini_get_first_timestamp, gemini_read_json_messages
 from agent_history.backends.pi import pi_get_workspace_from_session, pi_read_jsonl_messages
 from agent_history.core.lineage import extract_gemini_lineage, extract_pi_lineage
 from agent_history.handlers.export import SessionExportHandler
+from agent_history.utils.platform import AGENT_COPILOT_CLI
 
 REPLACED = "caf�"
 START = "2026-05-01T04:29:00.000Z"
@@ -301,3 +310,66 @@ def test_pi_lineage_skips_lines_it_cannot_use(tmp_path: Path) -> None:
     records = extract_pi_lineage(_pi_session(tmp_path))
 
     assert [(record["kind"], record["session_id"]) for record in records] == [("main", "p-1")]
+
+
+def _copilot_event(event_type: str, data: Any, event_id: str) -> bytes:
+    return _line({"type": event_type, "id": event_id, "timestamp": LATER, "data": data})
+
+
+def _copilot_cli_session(tmp_path: Path) -> Path:
+    """A Copilot CLI session with bad bytes, non-object lines and odd nested values."""
+    session_dir = tmp_path / "session-state" / "cli-1"
+    session_dir.mkdir(parents=True)
+    (session_dir / "workspace.yaml").write_bytes(b"cwd: /home/alex/project\nname: caf\xff\n")
+    events_file = session_dir / "events.jsonl"
+    events_file.write_bytes(
+        _non_objects()
+        + b'{"type": "user.message", "id": "e-1", "timestamp": "'
+        + START.encode()
+        + b'", "data": {"content": "caf\xff"}}\n'
+        + _copilot_event("user.message", [1, 2], "e-2")
+        + _copilot_event("assistant.message", "text", "e-3")
+        + _copilot_event(
+            "assistant.message",
+            {"content": "ok", "model": "model-1", "outputTokens": 4, "toolRequests": [3, None]},
+            "e-4",
+        )
+        + _copilot_event("tool.execution_start", {"toolCallId": "k", "toolName": "shell"}, "e-5")
+        + _copilot_event("session.shutdown", [5], "e-6")
+    )
+    return events_file
+
+
+def test_copilot_readers_read_past_a_bad_byte(tmp_path: Path) -> None:
+    events_file = _copilot_cli_session(tmp_path)
+
+    messages = copilot_cli_read_messages(events_file)
+    session_info, db_messages, tool_uses = copilot_extract_stats(events_file, AGENT_COPILOT_CLI)
+
+    visible = [m for m in messages if m["role"] in ("user", "assistant")]
+    assert [(m["role"], m["content"]) for m in visible] == [
+        ("user", REPLACED),
+        ("user", ""),
+        ("assistant", ""),
+        ("assistant", "ok"),
+    ]
+    assert copilot_count_messages(events_file) == 4
+    assert copilot_cli_get_workspace_from_session(events_file) == "/home/alex/project"
+    assert (session_info["message_count"], session_info["output_tokens"]) == (4, 4)
+    assert session_info["first_timestamp"] == START
+    assert [m["model"] for m in db_messages] == [None, None, None, "model-1"]
+    assert [t["tool_name"] for t in tool_uses] == ["shell"]
+    assert "ok" in copilot_render_markdown(events_file, False, messages, 4, AGENT_COPILOT_CLI)
+
+
+def test_copilot_vscode_workspace_reader_reads_past_a_bad_byte(tmp_path: Path) -> None:
+    storage = tmp_path / "workspaceStorage" / "abc"
+    transcript = storage / "GitHub.copilot-chat" / "transcripts" / "t-1.jsonl"
+    transcript.parent.mkdir(parents=True)
+    (storage / "workspace.json").write_bytes(
+        b'{"folder": "file:///home/alex/project", "note": "caf\xff"}'
+    )
+    transcript.write_bytes(_copilot_event("user.message", {"content": "hi"}, "e-1"))
+
+    assert copilot_vscode_get_workspace_from_session(transcript) == "/home/alex/project"
+    assert copilot_count_messages(transcript) == 1
