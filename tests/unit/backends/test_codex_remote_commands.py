@@ -10,12 +10,19 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 from agent_history.backends.registry import get_backend
 
 SHELLS = [shell for shell in ("dash", "zsh", "bash") if shutil.which(shell)]
+
+# These commands run on POSIX remotes. On a Windows runner, MSYS shells rewrite
+# the paths they print, so the comparison would test the shell, not the command.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="remote commands target POSIX hosts"
+)
 
 
 def _write_session(home, cwd):
