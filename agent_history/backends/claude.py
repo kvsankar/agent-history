@@ -20,6 +20,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
 from agent_history.utils.env import get_bool_env, has_env
+from agent_history.utils.jsonl import dict_field, json_objects, open_transcript
 from agent_history.utils.paths import (
     encode_workspace_path,
     is_cached_workspace,
@@ -270,7 +271,7 @@ def _extract_text_from_result_item(item) -> str:
         Text content as string
     """
     if isinstance(item, dict):
-        return item.get("text", "")
+        return str(item.get("text") or "")
     return str(item)
 
 
@@ -284,7 +285,7 @@ def _format_tool_result_block(block: dict) -> list:
     if isinstance(result_content, list):
         result_text = "\n".join(_extract_text_from_result_item(item) for item in result_content)
     else:
-        result_text = result_content
+        result_text = str(result_content or "")
 
     status = "ERROR" if is_error else "Success"
     lines = [f"\n**[Tool Result: {status}]**"]
@@ -322,9 +323,11 @@ def extract_content(message_obj: dict) -> str:
 
     content_parts = []
     for block in content:
+        if not isinstance(block, dict):
+            continue
         block_type = block.get("type")
         if block_type == "text":
-            content_parts.append(block.get("text", ""))
+            content_parts.append(str(block.get("text") or ""))
         elif block_type == "tool_use":
             content_parts.extend(_format_tool_use_block(block))
         elif block_type == "tool_result":
@@ -398,17 +401,21 @@ def read_jsonl_messages(jsonl_file: Path, quiet: bool = False):
     """
     messages = []
 
-    def handle_entry(entry: dict) -> None:
+    def handle_entry(entry: Any) -> None:
+        if not isinstance(entry, dict):
+            return
         entry_type = entry.get("type")
         if entry_type in ("user", "assistant"):
-            message_obj = entry.get("message", {})
-            role = message_obj.get("role", entry_type)
+            message_obj = dict_field(entry, "message")
+            role = message_obj.get("role")
+            if not isinstance(role, str):
+                role = entry_type
             timestamp = entry.get("timestamp", "")
             content = extract_content(message_obj)
 
             messages.append(_build_message_dict(entry, message_obj, role, content, timestamp))
 
-    with open(jsonl_file, encoding="utf-8-sig") as f:
+    with open_transcript(jsonl_file) as f:
         for line in f:
             try:
                 handle_entry(json.loads(line))
@@ -444,10 +451,12 @@ def get_first_timestamp(jsonl_file: Path) -> Optional[str]:
         ISO 8601 timestamp string or None if not found or file cannot be read.
     """
     try:
-        with open(jsonl_file, encoding="utf-8-sig") as f:
+        with open_transcript(jsonl_file) as f:
             for line_num, line in enumerate(f, 1):
                 try:
                     entry = json.loads(line)
+                    if not isinstance(entry, dict):
+                        continue
                     entry_type = entry.get("type")
                     if entry_type in ("user", "assistant"):
                         timestamp = entry.get("timestamp", "")
@@ -667,19 +676,12 @@ def _count_file_messages(
             return cached
     count = 0
     try:
-        with open(jsonl_file, encoding="utf-8-sig") as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    data = json.loads(stripped)
-                    # Count only user/assistant messages
-                    msg_type = data.get("type") or data.get("role")
-                    if msg_type in ("user", "assistant", "model"):
-                        count += 1
-                except json.JSONDecodeError:
-                    continue
+        with open_transcript(jsonl_file) as f:
+            for data in json_objects(f):
+                # Count only user/assistant messages
+                msg_type = data.get("type") or data.get("role")
+                if msg_type in ("user", "assistant", "model"):
+                    count += 1
     except OSError:
         pass
     return count

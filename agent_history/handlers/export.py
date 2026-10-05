@@ -392,16 +392,12 @@ class SessionExportHandler(VerbHandler):
         not a sub-agent, and only sub-agents link to a parent here, so the
         rest of the file is not read.
         """
-        from agent_history.backends.codex import _codex_open_text
+        from agent_history.backends.codex import _codex_open_entries
 
         identity = CodexSessionMeta()
         try:
-            with _codex_open_text(session_file) as handle:
-                for raw_line in handle:
-                    try:
-                        entry = json.loads(raw_line)
-                    except json.JSONDecodeError:
-                        continue
+            with _codex_open_entries(session_file) as entries:
+                for entry in entries:
                     if entry.get("type") == "session_meta":
                         identity.add(entry.get("payload"))
                         if identity.session_id:

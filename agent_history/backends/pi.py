@@ -13,6 +13,7 @@ from agent_history.export.markdown import (
     MARKDOWN_DEFAULT_LEVEL,
     parse_jsonl_to_markdown,
 )
+from agent_history.utils.jsonl import dict_field, json_objects, open_transcript
 from agent_history.utils.platform import AGENT_PI
 
 PI_WRAPPED_WORKSPACE_MARKER_LEN = len("----")
@@ -142,7 +143,7 @@ def _pi_extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
                     }
                 )
 
-    metadata_calls = (message.get("metadata") or {}).get("toolCalls")
+    metadata_calls = dict_field(message, "metadata").get("toolCalls")
     if isinstance(metadata_calls, list):
         for call in metadata_calls:
             if not isinstance(call, dict):
@@ -311,12 +312,8 @@ def pi_read_jsonl_messages(
     """Read messages from a Pi JSONL session file."""
     messages: list[dict[str, Any]] = []
     session_meta = None
-    with open(jsonl_file, encoding="utf-8") as f:
-        for line in f:
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    with open_transcript(jsonl_file) as f:
+        for entry in json_objects(f):
             entry_type = entry.get("type")
             if entry_type in ("session", "tree"):
                 session_meta = entry
@@ -349,15 +346,14 @@ def _pi_decode_workspace_dir(name: str) -> str:
 def pi_get_workspace_from_session(jsonl_file: Path) -> str:
     """Extract workspace path from Pi session header or encoded parent folder."""
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
-            for line in f:
-                entry = json.loads(line)
+        with open_transcript(jsonl_file) as f:
+            for entry in json_objects(f):
                 if entry.get("type") in ("session", "tree"):
                     cwd = entry.get("cwd") or entry.get("workspace")
                     if cwd:
                         return str(cwd)
                     break
-    except (OSError, json.JSONDecodeError):
+    except OSError:
         pass
     try:
         return _pi_decode_workspace_dir(jsonl_file.parent.name)

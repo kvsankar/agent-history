@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional, TypedDict
 
 from ..storage.config import get_config_dir
+from ..utils.jsonl import dict_field, json_objects, open_transcript
 from ..utils.platform import AGENT_GEMINI
 
 __all__ = [
@@ -224,26 +225,26 @@ def _extract_gemini_content_part(part) -> str:
         return ""
 
     if "text" in part:
-        return part["text"]
+        return str(part["text"] or "")
     if "functionCall" in part:
-        call = part["functionCall"]
+        call = dict_field(part, "functionCall")
         name = call.get("name", "unknown")
         args = call.get("args", {})
         return f"**[Function Call: {name}]**\n```json\n{json.dumps(args, indent=2)}\n```"
     if "functionResponse" in part:
-        response = part["functionResponse"]
+        response = dict_field(part, "functionResponse")
         name = response.get("name", "unknown")
         payload = response.get("response", response)
         return f"**[Function Response: {name}]**\n```json\n{json.dumps(payload, indent=2)}\n```"
     if "inlineData" in part:
-        mime = part["inlineData"].get("mimeType", "unknown")
+        mime = dict_field(part, "inlineData").get("mimeType", "unknown")
         return f"[Inline data: {mime}]"
     if "executableCode" in part:
-        code = part["executableCode"]
+        code = dict_field(part, "executableCode")
         lang = code.get("language", "")
         return f"```{lang}\n{code.get('code', '')}\n```"
     if "codeExecutionResult" in part:
-        result = part["codeExecutionResult"]
+        result = dict_field(part, "codeExecutionResult")
         return f"**Output:**\n```\n{result.get('output', '')}\n```"
     return ""
 
@@ -286,19 +287,12 @@ def _gemini_read_jsonl_messages(jsonl_file: Path) -> tuple[list[dict], dict | No
     messages: list[dict] = []
 
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
+        with open_transcript(jsonl_file) as f:
+            for record in json_objects(f):
                 if "$rewindTo" in record:
                     rewind_id = record.get("$rewindTo")
                     for index, msg in enumerate(messages):
-                        if msg.get("id") == rewind_id:
+                        if isinstance(msg, dict) and msg.get("id") == rewind_id:
                             messages = messages[: index + 1]
                             break
                     continue
@@ -330,13 +324,7 @@ def _gemini_read_jsonl_messages(jsonl_file: Path) -> tuple[list[dict], dict | No
     except OSError:
         return [], None
 
-    normalized_messages = []
-    for msg in messages:
-        content = _extract_gemini_content(msg.get("content", ""))
-        normalized = _build_gemini_message(msg, content)
-        if normalized:
-            normalized_messages.append(normalized)
-
+    normalized_messages = _gemini_normalize_messages(messages)
     meta = {
         "sessionId": session_meta.get("sessionId") or session_meta.get("id"),
         "projectHash": session_meta.get("projectHash") or session_meta.get("cwd"),
@@ -368,10 +356,8 @@ def gemini_read_json_messages(json_file: Path) -> tuple:
     if json_file.name.endswith(".jsonl"):
         return _gemini_read_jsonl_messages(json_file)
 
-    try:
-        with open(json_file, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    data = _gemini_load_json_session(json_file)
+    if data is None:
         return [], None
 
     session_meta = {
@@ -381,15 +367,31 @@ def gemini_read_json_messages(json_file: Path) -> tuple:
         "lastUpdated": data.get("lastUpdated"),
         "summary": data.get("summary"),
     }
+    return _gemini_normalize_messages(data.get("messages")), session_meta
 
-    messages = []
-    for msg in data.get("messages", []):
-        content = _extract_gemini_content(msg.get("content", ""))
-        normalized = _build_gemini_message(msg, content)
+
+def _gemini_load_json_session(json_file: Path) -> dict[str, Any] | None:
+    """The object in a legacy single-JSON session file, or None."""
+    try:
+        with open_transcript(json_file) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _gemini_normalize_messages(messages: Any) -> list[dict]:
+    """Normalized messages of a session; entries that are not objects are skipped."""
+    if not isinstance(messages, list):
+        return []
+    normalized_messages = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        normalized = _build_gemini_message(msg, _extract_gemini_content(msg.get("content", "")))
         if normalized:
-            messages.append(normalized)
-
-    return messages, session_meta
+            normalized_messages.append(normalized)
+    return normalized_messages
 
 
 # =============================================================================
@@ -478,14 +480,8 @@ def gemini_get_first_timestamp(json_file: Path) -> Optional[str]:
     """
     if json_file.name.endswith(".jsonl"):
         try:
-            with open(json_file, encoding="utf-8") as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
+            with open_transcript(json_file) as f:
+                for record in json_objects(f):
                     start_time = record.get("startTime")
                     if start_time:
                         return start_time
@@ -496,13 +492,8 @@ def gemini_get_first_timestamp(json_file: Path) -> Optional[str]:
             pass
         return None
 
-    try:
-        with open(json_file, encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("startTime", "")
-    except (OSError, json.JSONDecodeError):
-        pass
-    return None
+    data = _gemini_load_json_session(json_file)
+    return data.get("startTime", "") if data is not None else None
 
 
 # =============================================================================

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_history.types import SessionDict
+from agent_history.utils.jsonl import json_objects, open_transcript
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
 from agent_history.utils.session_identity import CodexSessionMeta, claude_session_identity
 
@@ -352,9 +353,9 @@ def extract_gemini_lineage(json_file: Path) -> list[LineageRecord]:
     if json_file.name.endswith(".jsonl"):
         return _extract_gemini_jsonl_lineage(json_file)
     try:
-        with open(json_file, encoding="utf-8") as handle:
+        with open_transcript(json_file) as handle:
             data = json.load(handle) if json_file.suffix == ".json" else None
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return []
 
     if not isinstance(data, dict):
@@ -385,12 +386,8 @@ def _extract_gemini_jsonl_lineage(jsonl_file: Path) -> list[LineageRecord]:
     first_ts = None
     last_ts = None
     try:
-        with open(jsonl_file, encoding="utf-8") as handle:
-            for raw_line in handle:
-                try:
-                    entry = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
+        with open_transcript(jsonl_file) as handle:
+            for entry in json_objects(handle):
                 timestamp = entry.get("timestamp")
                 first_ts = first_ts or timestamp
                 last_ts = timestamp or last_ts
@@ -457,7 +454,7 @@ def _collect_gemini_jsonl_record(
 
 def _rewind_gemini_messages(messages: list[dict[str, Any]], target_id: Any) -> None:
     for index, message in enumerate(messages):
-        if message.get("id") == target_id:
+        if isinstance(message, dict) and message.get("id") == target_id:
             del messages[index + 1 :]
             return
 
@@ -481,9 +478,14 @@ def _gemini_subagent_records(
     messages: list[dict[str, Any]],
 ) -> list[LineageRecord]:
     records: list[LineageRecord] = []
+    if not isinstance(messages, list):
+        return records
     for message_index, message in enumerate(messages):
-        for tool_call in message.get("toolCalls", []) or []:
-            if _is_gemini_subagent_tool(tool_call):
+        tool_calls = message.get("toolCalls") if isinstance(message, dict) else None
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if isinstance(tool_call, dict) and _is_gemini_subagent_tool(tool_call):
                 records.append(
                     _gemini_subagent_record(
                         json_file, session_id, message_index, message, tool_call
@@ -532,12 +534,8 @@ def extract_pi_lineage(jsonl_file: Path) -> list[LineageRecord]:
     pending_subagent_calls: dict[str, dict[str, Any]] = {}
 
     try:
-        with open(jsonl_file, encoding="utf-8") as handle:
-            for raw_line in handle:
-                try:
-                    entry = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
+        with open_transcript(jsonl_file) as handle:
+            for entry in json_objects(handle):
                 timestamp = entry.get("timestamp")
                 first_ts = first_ts or timestamp
                 last_ts = timestamp or last_ts
