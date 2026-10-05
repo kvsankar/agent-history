@@ -125,6 +125,14 @@ def test_credential_files_are_never_selected(tmp_path):
         "ws.token",
         "ws.release.token",
         "abc123.tokens.json",
+        # MCP server configurations carry API keys in env or headers.
+        "mcp_config.json",
+        "mcp-config.json",
+        ".mcp.json",
+        "mcp.json",
+        "MCP_Config.json",
+        "remote-mcp-server-config.json",
+        "mcp_config.json.bak",
     ],
 )
 def test_more_credential_files_are_never_selected(tmp_path, name):
@@ -132,6 +140,20 @@ def test_more_credential_files_are_never_selected(tmp_path, name):
     _touch(tmp_path, ".claude/projects/p/id_map.json")
 
     assert set(_selected(_source(tmp_path))) == {".claude/projects/p/id_map.json"}
+
+
+def test_mcp_configurations_are_never_selected_by_layouts_or_includes(tmp_path):
+    _touch(tmp_path, ".gemini/antigravity/mcp_config.json")
+    _touch(tmp_path, ".gemini/antigravity/conversations/c1.pb")
+    _touch(tmp_path, ".copilot/mcp-config.json")
+    _touch(tmp_path, ".claude/plugins/x/.mcp.json")
+    _touch(tmp_path, ".config/Code/User/mcp.json")
+    _touch(tmp_path, "notes/n.md")
+    include = [".copilot/**", ".claude/plugins/**", ".config/**", "notes/**"]
+
+    selected = _selected(_source(tmp_path, include=include))
+
+    assert set(selected) == {".gemini/antigravity/conversations/c1.pb", "notes/n.md"}
 
 
 def test_config_include_and_exclude(tmp_path):

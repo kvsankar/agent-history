@@ -40,6 +40,10 @@ CREDENTIAL_DENYLIST = (
     ".credentials.json",
     "credentials*",
     "google_accounts.json",
+    # MCP server configurations, which carry API keys in env or headers.
+    "*mcp*config*",
+    "mcp.json*",
+    ".mcp.json*",
     # SSH and other private keys and certificate stores.
     "id_rsa*",
     "id_dsa*",
