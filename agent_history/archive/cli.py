@@ -208,7 +208,7 @@ def _catalog(args: argparse.Namespace) -> int:
     store = open_store(args.store or f"sqlite:{get_config_dir() / 'archive-catalog.db'}")
     try:
         if args.action == "status":
-            rows = catalog_status(store)
+            rows = catalog_status(store, args.sources)
             if args.json:
                 _print_json(rows)
             else:
@@ -218,7 +218,7 @@ def _catalog(args: argparse.Namespace) -> int:
         # another machine's sources and retired ones.
         summary = sync_catalog(
             store,
-            _destination(args, _catalog_config(args)),
+            _catalog_destination(args),
             args.sources,
             rebuild=args.action == "rebuild",
         )
@@ -236,12 +236,20 @@ def _catalog(args: argparse.Namespace) -> int:
     return EXIT_PROBLEMS if summary.errors else EXIT_OK
 
 
-def _catalog_config(args: argparse.Namespace):
+def _catalog_destination(args: argparse.Namespace):
+    """``--destination``, or else the configured destination.
+
+    The configuration file is read only when it is needed, so a catalog of an archive
+    can be kept on a machine that has no archive configuration.
+    """
     from agent_history.archive.config import load_config
+    from agent_history.archive.transport import open_destination
     from agent_history.storage.config import get_config_dir
 
+    if args.destination:
+        return open_destination(args.destination)
     path = Path(args.config).expanduser() if args.config else get_config_dir() / "archive.json"
-    return load_config(path)
+    return open_destination(load_config(path).destination)
 
 
 def _print_status(rows: list[dict[str, Any]]) -> None:

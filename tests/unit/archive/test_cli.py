@@ -95,6 +95,30 @@ def test_catalog_source_that_is_not_in_the_archive_is_an_error(setup, capsys):
     assert "nope" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("action", ["sync", "rebuild"])
+def test_catalog_with_a_destination_needs_no_config_file(setup, capsys, action):
+    assert main(["archive", "collect", "--config", setup["config"]]) == 0
+    capsys.readouterr()
+    destination = str(setup["tmp"] / "archive")
+
+    # No --config, and the default configuration file does not exist.
+    code = main(["archive", "catalog", action, "--destination", destination])
+
+    assert code == 0, capsys.readouterr().err
+    assert _catalogued_sources(setup["config"], capsys) == ["laptop"]
+
+
+def test_catalog_status_shows_only_the_named_sources(setup, capsys):
+    config = _two_sources(setup)
+    assert main(["archive", "collect", "--config", config]) == 0
+    assert main(["archive", "catalog", "sync", "--config", config]) == 0
+    capsys.readouterr()
+
+    assert main(["archive", "catalog", "status", "--source", "other", "--json"]) == 0
+
+    assert [row["source"] for row in json.loads(capsys.readouterr().out)] == ["other"]
+
+
 def test_dry_run_lists_actions_without_writing(setup, capsys):
     assert main(["archive", "collect", "--config", setup["config"], "--dry-run"]) == 0
 

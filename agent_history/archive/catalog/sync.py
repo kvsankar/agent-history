@@ -468,8 +468,8 @@ def _text(value: Any) -> str | None:
     return None if value is None else str(value)
 
 
-def catalog_status(store: CatalogStore) -> list[dict[str, Any]]:
-    """Counts and the newest run per source."""
+def catalog_status(store: CatalogStore, sources: list[str] | None = None) -> list[dict[str, Any]]:
+    """Counts and the newest run per source, for ``sources`` (default: every source)."""
     rows = store.fetchall(
         "SELECT s.name, s.kind, "
         "(SELECT COUNT(*) FROM runs r WHERE r.source = s.name), "
@@ -490,4 +490,5 @@ def catalog_status(store: CatalogStore) -> list[dict[str, Any]]:
             "last_run_at": _timestamp(last if not isinstance(last, datetime) else last.isoformat()),
         }
         for name, kind, runs, files, gone, sessions, last in rows
+        if not sources or name in sources
     ]
