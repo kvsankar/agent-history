@@ -103,6 +103,60 @@ def test_dry_run_lists_actions_without_writing(setup, capsys):
     assert not (setup["tmp"] / "archive").exists()
 
 
+def _two_sources(setup) -> str:
+    other = setup["tmp"] / "other-home"
+    session = other / SESSION
+    session.parent.mkdir(parents=True)
+    session.write_text('{"type":"user"}\n', encoding="utf-8")
+    path = setup["tmp"] / "two.json"
+    config = json.loads((setup["tmp"] / "archive.json").read_text(encoding="utf-8"))
+    config["sources"].append(
+        {"name": "other", "kind": "live", "platform": "linux", "home": str(other)}
+    )
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return str(path)
+
+
+def test_a_locked_source_is_skipped_and_the_rest_are_collected(setup, capsys):
+    from agent_history.archive.state import source_lock
+
+    config = _two_sources(setup)
+    state_dir = setup["tmp"] / "cagelens" / "archive-state"
+    destination = str(setup["tmp"] / "archive")
+
+    with source_lock(state_dir, destination, "laptop"):
+        code = main(["archive", "collect", "--config", config])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "laptop: skipped (locked)" in out
+    assert "other: 1 written" in out
+
+
+def test_a_failing_source_does_not_stop_the_others(setup, capsys, monkeypatch):
+    from agent_history.archive import collect as collect_module
+    from agent_history.archive.errors import ArchiveError
+
+    config = _two_sources(setup)
+    real = collect_module.collect_source
+
+    def failing_for_laptop(config, name, **kwargs):
+        if name == "laptop":
+            raise ArchiveError("Copying files to nas failed: connection closed")
+        return real(config, name, **kwargs)
+
+    monkeypatch.setattr(collect_module, "collect_source", failing_for_laptop)
+
+    code = main(["archive", "collect", "--config", config, "--json"])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "laptop: Copying files to nas failed" in captured.err
+    results = {item["source"]: item for item in json.loads(captured.out)}
+    assert results["laptop"]["error"] == "Copying files to nas failed: connection closed"
+    assert results["other"]["written"] == 1
+
+
 def test_unknown_source_is_an_error(setup, capsys):
     assert main(["archive", "collect", "--config", setup["config"], "--source", "nope"]) == 1
     assert "Unknown source: nope" in capsys.readouterr().err

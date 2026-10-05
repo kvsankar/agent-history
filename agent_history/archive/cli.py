@@ -95,26 +95,43 @@ def _destination(args, config):
 
 
 def _collect(args: argparse.Namespace) -> int:
-    from agent_history.archive.collect import collect_source
+    """Collect each source in turn. A source that fails does not stop the others.
+
+    A source whose lock another run holds is skipped, as the design asks. Any other
+    failure is reported and makes the exit code 1 once every source has been tried.
+    """
+    from agent_history.archive import collect as collect_module
 
     config, names = _load(args)
     destination = _destination(args, config)
-    summaries = []
+    results: list[dict[str, Any]] = []
+    failed = errors = False
     for name in names:
-        summary = collect_source(
-            config,
-            name,
-            state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
-            force=args.force,
-            dry_run=args.dry_run,
-            destination=destination,
-        )
-        summaries.append(summary)
+        try:
+            summary = collect_module.collect_source(
+                config,
+                name,
+                state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
+                force=args.force,
+                dry_run=args.dry_run,
+                destination=destination,
+            )
+        except collect_module.CollectLockedError:
+            summary = collect_module.RunSummary("", name, skipped_reason="locked")
+        except (ArchiveError, OSError) as exc:
+            failed = True
+            sys.stderr.write(f"Error: {name}: {exc}\n")
+            results.append({"source": name, "error": str(exc)})
+            continue
+        errors = errors or bool(summary.errors)
+        results.append(_summary_dict(summary))
         if not args.json:
             _print_collect(summary)
     if args.json:
-        _print_json([_summary_dict(summary) for summary in summaries])
-    return EXIT_PROBLEMS if any(summary.errors for summary in summaries) else EXIT_OK
+        _print_json(results)
+    if failed:
+        return EXIT_FAILED
+    return EXIT_PROBLEMS if errors else EXIT_OK
 
 
 def _print_collect(summary) -> None:
