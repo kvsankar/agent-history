@@ -131,12 +131,12 @@ class LocalDestination(Destination):
 
     def write_bytes(self, rel: str, data: bytes) -> None:
         path = self._path(rel)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        folders = _make_parent(path)
         tmp = path.with_name(path.name + ".part")
         tmp.write_bytes(data)
         fsync_file(tmp)
         os.replace(tmp, path)
-        self._sync_dirs({path.parent})
+        _sync_dirs(folders)
 
     def list_files(self, rel_dir: str) -> list[str]:
         base = self._path(rel_dir)
@@ -156,9 +156,9 @@ class LocalDestination(Destination):
         if not source.exists():
             return False
         target = self._path(dst)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        folders = _make_parent(target) | {source.parent}
         os.replace(source, target)
-        self._sync_dirs({source.parent, target.parent})
+        _sync_dirs(folders)
         return True
 
     def put_tree(self, staging: Path) -> None:
@@ -168,13 +168,12 @@ class LocalDestination(Destination):
                 src = Path(dirpath) / filename
                 rel = src.relative_to(staging).as_posix()
                 target = self._path(rel)
-                target.parent.mkdir(parents=True, exist_ok=True)
+                folders |= _make_parent(target)
                 tmp = target.with_name(target.name + ".part")
                 shutil.copy2(src, tmp)
                 fsync_file(tmp)
                 os.replace(tmp, target)
-                folders.add(target.parent)
-        self._sync_dirs(folders)
+        _sync_dirs(folders)
 
     def place(self, keeps: list[Keep], puts: list[Put]) -> None:
         folders: set[Path] = set()
@@ -191,24 +190,12 @@ class LocalDestination(Destination):
                 if self.exists(incoming):
                     self._rename(incoming, current, folders)
         finally:
-            self._sync_dirs(folders)
+            _sync_dirs(folders)
 
     def _rename(self, src: str, dst: str, folders: set[Path]) -> None:
         source, target = self._path(src), self._path(dst)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        folders |= _make_parent(target) | {source.parent}
         os.replace(source, target)
-        folders.update((source.parent, target.parent))
-
-    def _sync_dirs(self, folders: set[Path]) -> None:
-        """Flush folders and the folders above them up to the root, deepest first."""
-        every = set()
-        for start in folders:
-            folder = start
-            while folder not in every and (folder == self.root or self.root in folder.parents):
-                every.add(folder)
-                folder = folder.parent
-        for folder in sorted(every, key=lambda path: len(path.parts), reverse=True):
-            fsync_dir(folder)
 
     def discard_tree(self, rel: str) -> None:
         path = self._path(_check_discardable(rel))
@@ -219,6 +206,26 @@ class LocalDestination(Destination):
     def open_binary(self, rel: str) -> Iterator[IO[bytes]]:
         with self._path(rel).open("rb") as handle:
             yield handle
+
+
+def _make_parent(path: Path) -> set[Path]:
+    """Create ``path``'s folder; return the folders whose entries change and need a flush.
+
+    Those are the folder itself, and the parent of every folder that had to be created.
+    """
+    folder = path.parent
+    created = []
+    while not folder.exists():
+        created.append(folder)
+        folder = folder.parent
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return {path.parent, *(new.parent for new in created)}
+
+
+def _sync_dirs(folders: set[Path]) -> None:
+    """Flush folders, deepest first, so a new folder is on disk before its parent's entry."""
+    for folder in sorted(folders, key=lambda path: len(path.parts), reverse=True):
+        fsync_dir(folder)
 
 
 def open_destination(destination: str) -> Destination:
