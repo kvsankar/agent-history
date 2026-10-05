@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Iterator, NamedTuple, Pattern
 
 from agent_history.archive.errors import ArchiveError
+from agent_history.utils.session_identity import CLAUDE_COMPACTION_PREFIX
 
 if TYPE_CHECKING:
     from agent_history.archive.config import SourceConfig, SourcePart
@@ -331,7 +332,12 @@ class SessionTarget:
 
 
 def session_target(rel_path: str, platform: str) -> SessionTarget | None:
-    """The backend that reads sessions from a home-relative path, if it holds any."""
+    """The backend that reads sessions from a home-relative path, if it holds any.
+
+    A Claude compaction transcript (``agent-acompact-*``) is archived but holds no
+    session: it repeats most of its parent session, and the stats, list, export and
+    lineage commands leave it out too.
+    """
     for layout in LAYOUTS:
         if layout.backend is None:
             continue
@@ -339,12 +345,18 @@ def session_target(rel_path: str, platform: str) -> SessionTarget | None:
             if not rel_path.startswith(root + "/"):
                 continue
             inner = rel_path[len(root) + 1 :]
-            if _matches_any(inner, layout.sessions):
+            if _is_session_file(layout, inner):
                 return SessionTarget(layout.backend, workspace=_path_workspace(layout, inner))
             for rule in layout.databases:
                 if rule.sessions_sql and _compiled(rule.pattern).match(inner):
                     return SessionTarget(layout.backend, rule)
     return None
+
+
+def _is_session_file(layout: AgentLayout, inner: str) -> bool:
+    if layout.backend == "claude" and inner.rsplit("/", 1)[-1].startswith(CLAUDE_COMPACTION_PREFIX):
+        return False
+    return _matches_any(inner, layout.sessions)
 
 
 def _path_workspace(layout: AgentLayout, inner: str) -> str | None:

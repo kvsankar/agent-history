@@ -246,6 +246,24 @@ def test_a_claude_sub_agent_has_its_projects_folder_as_workspace(store, archive)
     ]
 
 
+@pytest.mark.parametrize("rel_folder", ["subagents", "subagents/workflows/wf_1"])
+def test_a_claude_compaction_transcript_is_archived_but_not_catalogued_as_a_session(
+    store, archive, rel_folder
+):
+    path = _add_claude_sub_agent(
+        archive, rel_folder, name="agent-acompact-1.jsonl", agent_id="acompact-1"
+    )
+    rel = path.relative_to(archive["home"]).as_posix()
+    archive["collect"](hours=1)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _rows(store, "SELECT kind FROM files WHERE path = ?", (rel,)) == [("file",)]
+    assert _rows(store, "SELECT COUNT(*) FROM sessions WHERE path = ?", (rel,)) == [(0,)]
+    assert _session_ids(store) == ["claude-s1", "codex-s1", "copilot-gone"]
+
+
 def test_a_claude_workflow_sub_agent_is_catalogued(store, archive):
     workflow = "subagents/workflows/wf_1"
     _add_claude_sub_agent(archive, workflow, name="agent-w1.jsonl", agent_id="w1")
@@ -650,6 +668,35 @@ def test_a_new_reader_deletes_sessions_of_paths_that_are_no_longer_session_files
     sync_catalog(store, archive["destination"])
 
     assert _session_ids(store) == ["claude-s1", "codex-s1", "copilot-gone"]
+
+
+def test_a_catalog_that_holds_compaction_sessions_loses_them_on_its_next_sync(store, archive):
+    # Catalogs written before compaction transcripts were left out hold their rows.
+    from agent_history.storage.metrics import METRICS_PARSER_VERSION
+
+    path = _add_claude_sub_agent(
+        archive, "subagents", name="agent-acompact-1.jsonl", agent_id="acompact-1"
+    )
+    rel = path.relative_to(archive["home"]).as_posix()
+    archive["collect"](hours=1)
+    sync_catalog(store, archive["destination"])
+    with store.transaction():
+        store.execute(
+            "INSERT INTO sessions (source, path, session_id, agent, from_database) "
+            "VALUES ('laptop', ?, 'claude-s1:acompact-1', 'claude', ?) "
+            "ON CONFLICT (source, path, session_id) DO NOTHING",
+            (rel, False),
+        )
+        store.execute(
+            "UPDATE schema_meta SET value = ? WHERE key = 'reader_version'",
+            (f"{METRICS_PARSER_VERSION}.3",),
+        )
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _session_ids(store) == ["claude-s1", "codex-s1", "copilot-gone"]
+    assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
 
 
 def test_a_catalog_with_an_unknown_schema_version_is_refused(store_spec):

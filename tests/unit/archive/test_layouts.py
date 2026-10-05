@@ -41,6 +41,24 @@ def test_a_claude_workflow_journal_is_not_read_for_sessions():
     assert session_target(rel, "linux") is None
 
 
+@pytest.mark.parametrize(
+    "rel_path",
+    [
+        ".claude/projects/-home-alex-shop/s1/subagents/agent-acompact-1.jsonl",
+        ".claude/projects/-home-alex-shop/s1/subagents/workflows/wf_1/agent-acompact-2.jsonl",
+    ],
+)
+def test_a_claude_compaction_transcript_is_not_read_for_sessions(rel_path):
+    assert session_target(rel_path, "linux") is None
+
+
+def test_a_claude_compaction_transcript_is_still_archived(tmp_path):
+    rel = ".claude/projects/-home-alex-shop/s1/subagents/agent-acompact-1.jsonl"
+    _touch(tmp_path, rel)
+
+    assert rel in _selected(_source(tmp_path))
+
+
 def _touch(root: Path, rel: str, text: str = "x") -> None:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
