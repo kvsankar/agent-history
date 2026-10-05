@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agent_history.storage.config import get_config_dir
+from agent_history.utils.codex_tokens import CodexTokenCounter
 
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
@@ -454,28 +455,28 @@ def _parse_claude_jsonl(
 
 
 def _apply_codex_token_count(
-    session_info: Dict[str, Any], messages: List[Dict[str, Any]], payload: Dict[str, Any]
+    session_info: Dict[str, Any],
+    messages: List[Dict[str, Any]],
+    payload: Dict[str, Any],
+    counter: CodexTokenCounter,
 ) -> None:
-    """Record the running token totals from a Codex token_count event."""
-    info = payload.get("info") or {}
-    total_usage = info.get("total_token_usage", {})
-    input_tokens = total_usage.get("input_tokens", 0)
-    output_tokens = total_usage.get("output_tokens", 0) + total_usage.get(
-        "reasoning_output_tokens", 0
-    )
-    cache_read = total_usage.get("cached_input_tokens", 0)
+    """Add one Codex token_count event's per-response usage.
 
-    session_info["input_tokens"] = input_tokens
-    session_info["output_tokens"] = output_tokens
-    session_info["cache_read_tokens"] = cache_read
+    The usage goes to the session totals and to the latest assistant message,
+    so sums over the messages table match the session.
+    """
+    delta = counter.add(payload.get("info") or {})
+    if delta is None:
+        return
 
-    # Store tokens on the last assistant message for DB queries
-    # that sum from messages table
+    session_info["input_tokens"] = counter.input_tokens
+    session_info["output_tokens"] = counter.output_tokens
+    session_info["cache_read_tokens"] = counter.cache_read_tokens
+
     for msg in reversed(messages):
         if msg["type"] == "assistant":
-            msg["input_tokens"] = input_tokens
-            msg["output_tokens"] = output_tokens
-            msg["cache_read_tokens"] = cache_read
+            for field, value in delta.items():
+                msg[field] = (msg.get(field) or 0) + value
             break
 
 
@@ -517,6 +518,7 @@ def _parse_codex_jsonl(
     tool_uses: List[Dict[str, Any]] = []
     timestamps: List[str] = []
     turn_model: Optional[str] = None
+    token_counter = CodexTokenCounter()
 
     try:
         with open(jsonl_file, encoding="utf-8-sig") as f:
@@ -590,7 +592,7 @@ def _parse_codex_jsonl(
 
                 # Extract token usage from event_msg
                 elif entry_type == "event_msg" and payload.get("type") == "token_count":
-                    _apply_codex_token_count(session_info, messages, payload)
+                    _apply_codex_token_count(session_info, messages, payload, token_counter)
 
     except OSError:
         pass

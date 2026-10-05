@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, TextIO, TypedDict
 
 from agent_history.storage.config import get_config_dir
+from agent_history.utils.codex_tokens import CodexTokenCounter
 from agent_history.utils.paths import normalize_workspace_name
 
 __all__ = [
@@ -531,8 +532,8 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
         "tool_uses": [],
     }
 
-    # Extract model and token usage (latest total_token_usage) from event stream.
-    last_token_usage = None
+    # Extract model and per-response token usage from the event stream.
+    token_counter = CodexTokenCounter()
     last_token_timestamp = None
     try:
         with _codex_open_text(jsonl_file) as f:
@@ -550,20 +551,16 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
                     continue
 
                 if entry_type == "event_msg" and payload.get("type") == "token_count":
-                    info = payload.get("info") or {}
-                    total_usage = info.get("total_token_usage")
-                    if total_usage:
-                        last_token_usage = total_usage
+                    if token_counter.add(payload.get("info") or {}) is not None:
                         last_token_timestamp = entry.get("timestamp")
     except OSError:
         pass
 
-    if last_token_usage:
+    if last_token_timestamp is not None:
         metrics["tokens_summary"] = {
-            "input_tokens": last_token_usage.get("input_tokens", 0),
-            "output_tokens": last_token_usage.get("output_tokens", 0)
-            + last_token_usage.get("reasoning_output_tokens", 0),
-            "cache_read_tokens": last_token_usage.get("cached_input_tokens", 0),
+            "input_tokens": token_counter.input_tokens,
+            "output_tokens": token_counter.output_tokens,
+            "cache_read_tokens": token_counter.cache_read_tokens,
             "timestamp": last_token_timestamp,
         }
 
