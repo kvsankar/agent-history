@@ -762,7 +762,7 @@ Caches computed metrics for fast querying. Parsing every message in every sessio
 
 Stats query cached metrics by default. Sync happens only when `--sync` is passed:
 - Syncs only the sessions in scope (homes + workspaces + agent filters)
-- Incremental: Skips files unchanged since last sync (by mtime)
+- Incremental: Skips a file whose mtime and home are unchanged since its last sync and whose row the current parser version wrote
 - Additive: Deleted sessions remain until explicit reset
 
 `--no-sync` is accepted as an explicit cache-only no-op. `--force` re-syncs all files in scope when combined with `--sync`.
@@ -778,8 +778,8 @@ Stats query cached metrics by default. Sync happens only when `--sync` is passed
 | home | TEXT | Home identifier |
 | agent | TEXT | Agent type |
 | file_mtime | REAL | Source file mtime (Unix epoch) |
-| is_agent | INTEGER | Claude agent session flag |
-| parent_session_id | TEXT | Claude parent session id |
+| is_agent | INTEGER | Sub-agent session flag (Claude sub-agent files; Codex rollouts whose session_meta source is a sub-agent) |
+| parent_session_id | TEXT | Session that spawned this one (sub-agents) or that a Codex rollout was forked from |
 | message_count | INTEGER | Total messages |
 | user_messages | INTEGER | User message count |
 | assistant_messages | INTEGER | Assistant message count |
@@ -791,6 +791,7 @@ Stats query cached metrics by default. Sync happens only when `--sync` is passed
 | last_timestamp | TEXT | Last message timestamp (ISO 8601) |
 | work_period_seconds | REAL | Active time (gap-based) |
 | num_work_periods | INTEGER | Number of work periods |
+| parser_version | INTEGER | Parser version that wrote the row; rows from another version are parsed again |
 
 **tool_uses table:**
 | Column | Type | Description |

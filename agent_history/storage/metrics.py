@@ -37,7 +37,12 @@ __all__ = [
 ]
 
 # Schema version for migrations
-METRICS_DB_VERSION = 7
+METRICS_DB_VERSION = 8
+
+# Version of the transcript parsers that fill a session row. A sync parses a
+# file again when its row was written by another version, even if the file
+# is unchanged. Raise it whenever a parser change alters stored values.
+METRICS_PARSER_VERSION = 1
 
 # Work period gap threshold in seconds (30 minutes per spec)
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60
@@ -133,7 +138,8 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
             num_work_periods INTEGER DEFAULT 1,
             git_remote_url TEXT,
             project TEXT,
-            project_short TEXT
+            project_short TEXT,
+            parser_version INTEGER DEFAULT 0
         );
 
         -- Messages table (aggregated stats per message)
@@ -300,6 +306,14 @@ def _run_migrations(conn: sqlite3.Connection, current_version: int, is_new: bool
         # Backfill home from source
         try:
             conn.execute("UPDATE sessions SET home = source WHERE home IS NULL OR home = ''")
+        except sqlite3.OperationalError:
+            pass
+
+    # Version 8: record the parser version of each row. Existing rows get 0,
+    # so the next sync parses their files again.
+    if current_version < 8:
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN parser_version INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
 
@@ -922,6 +936,29 @@ def _calculate_work_periods(
     return total_seconds, num_periods
 
 
+def _session_row_is_current(
+    conn: sqlite3.Connection, file_path_str: str, current_mtime: float, source_key: str
+) -> bool:
+    """Whether a file's stored row can be kept without parsing the file again.
+
+    The row is kept only when the file is unchanged, it was reached through
+    the same home, and the current parsers wrote it. An unchanged file reached
+    through a different home is synced again, so one file is never left under
+    the home of an older sync.
+    """
+    row = conn.execute(
+        "SELECT file_mtime, home, parser_version FROM sessions WHERE file_path = ?",
+        (file_path_str,),
+    ).fetchone()
+    return bool(
+        row
+        and row["file_mtime"]
+        and row["file_mtime"] >= current_mtime
+        and row["home"] == source_key
+        and row["parser_version"] == METRICS_PARSER_VERSION
+    )
+
+
 def sync_file_to_db(
     conn: sqlite3.Connection,
     jsonl_file: Path,
@@ -952,20 +989,8 @@ def sync_file_to_db(
     except OSError:
         return False
 
-    if not force:
-        cursor = conn.execute(
-            "SELECT file_mtime, home FROM sessions WHERE file_path = ?", (file_path_str,)
-        )
-        row = cursor.fetchone()
-        # An unchanged file reached through a different home is synced again, so
-        # one file is never left under the home of an older sync.
-        if (
-            row
-            and row["file_mtime"]
-            and row["file_mtime"] >= current_mtime
-            and row["home"] == source_key
-        ):
-            return False
+    if not force and _session_row_is_current(conn, file_path_str, current_mtime, source_key):
+        return False
 
     from agent_history.backends.registry import require_backend
 
@@ -994,8 +1019,8 @@ def sync_file_to_db(
             cache_creation_tokens, cache_read_tokens,
             first_timestamp, last_timestamp,
             git_branch, claude_version, cwd,
-            work_period_seconds, num_work_periods
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            work_period_seconds, num_work_periods, parser_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             file_path_str,
@@ -1023,6 +1048,7 @@ def sync_file_to_db(
             session_info.get("cwd"),
             work_seconds,
             num_periods,
+            METRICS_PARSER_VERSION,
         ),
     )
 

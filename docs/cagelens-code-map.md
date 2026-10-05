@@ -225,7 +225,8 @@ synced_files (incremental tracking)
 |----------|-------|---------|
 | `__version__` | 1.5.1 | Script version |
 | `UNIFIED_SCHEMA_VERSION` | 2.0 | Schema version for exports |
-| `METRICS_DB_VERSION` | 7 | Database schema version |
+| `METRICS_DB_VERSION` | 8 | Database schema version |
+| `METRICS_PARSER_VERSION` | 1 | Version of the stats transcript parsers stored on each session row |
 | `DEFAULT_MAX_JOBS` | 2 | Parallel worker threads |
 
 ---
