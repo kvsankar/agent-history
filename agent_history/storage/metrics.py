@@ -842,10 +842,17 @@ def sync_file_to_db(
 
     if not force:
         cursor = conn.execute(
-            "SELECT file_mtime FROM sessions WHERE file_path = ?", (file_path_str,)
+            "SELECT file_mtime, home FROM sessions WHERE file_path = ?", (file_path_str,)
         )
         row = cursor.fetchone()
-        if row and row["file_mtime"] and row["file_mtime"] >= current_mtime:
+        # An unchanged file reached through a different home is synced again, so
+        # one file is never left under the home of an older sync.
+        if (
+            row
+            and row["file_mtime"]
+            and row["file_mtime"] >= current_mtime
+            and row["home"] == source_key
+        ):
             return False
 
     from agent_history.backends.registry import require_backend
