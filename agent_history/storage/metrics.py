@@ -43,7 +43,7 @@ METRICS_DB_VERSION = 8
 # Version of the transcript parsers that fill a session row. A sync parses a
 # file again when its row was written by another version, even if the file
 # is unchanged. Raise it whenever a parser change alters stored values.
-METRICS_PARSER_VERSION = 3
+METRICS_PARSER_VERSION = 4
 
 # Work period gap threshold in seconds (30 minutes per spec)
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60
@@ -738,20 +738,23 @@ def _lookup_gemini_hash(project_hash: str) -> Optional[str]:
 def _parse_gemini_json(
     json_file: Path,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Parse a Gemini JSON file and extract session info, messages, and tool uses.
+    """Parse a Gemini chat file and extract session info, messages, and tool uses.
 
-    Gemini uses a single JSON file format:
-    - Session metadata at root level (sessionId, projectHash, startTime, lastUpdated)
-    - Messages in messages array with type="user" or type="gemini"
+    Gemini chats are legacy single JSON files or current append-only JSONL
+    files; ``gemini_session_records`` reads both into the same form:
+    - Session metadata (sessionId, projectHash, startTime, lastUpdated)
+    - Messages with type="user" or type="gemini"
     - Token usage in tokens object within each gemini message
     - Tool calls in toolCalls array within gemini messages
 
     Args:
-        json_file: Path to the JSON file
+        json_file: Path to the .json or .jsonl chat file
 
     Returns:
         Tuple of (session_info, messages_list, tool_uses_list)
     """
+    from agent_history.backends.gemini import gemini_session_records
+
     session_info: Dict[str, Any] = {
         "session_id": None,
         "message_count": 0,
@@ -774,15 +777,17 @@ def _parse_gemini_json(
     timestamps: List[str] = []
 
     try:
-        with open(json_file, encoding="utf-8-sig") as f:
-            data = json.load(f)
+        records = gemini_session_records(json_file)
+        if records is None:
+            return session_info, messages, tool_uses
+        chat_messages, data = records
 
         session_info["session_id"] = data.get("sessionId")
         session_info["cwd"] = data.get("projectHash")
         session_info["first_timestamp"] = data.get("startTime")
         session_info["last_timestamp"] = data.get("lastUpdated")
 
-        for msg in data.get("messages", []):
+        for msg in chat_messages:
             msg_type = msg.get("type", "")
             timestamp = msg.get("timestamp", "")
 
