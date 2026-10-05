@@ -227,3 +227,40 @@ def test_unsafe_paths_are_refused(remote):
     dest, _root = remote
     with pytest.raises(ArchiveError):
         dest.write_bytes("../escape", b"x")
+
+
+# Like FAKE_SSH, but each command (and a script read from standard input) is logged.
+FAKE_SSH_LOGGING = FAKE_SSH.replace(
+    'exec sh -c "$*"',
+    'printf "%s\\n" "--- $*" >> "$SSH_LOG"\n'
+    'case "$*" in\n  "sh -s") tee -a "$SSH_LOG" | sh -s ;;\n  *) exec sh -c "$*" ;;\nesac',
+)
+
+
+def test_remote_writes_are_flushed_before_the_commit(remote, tmp_path, monkeypatch):
+    dest, _root = remote
+    logging_ssh = tmp_path / "bin" / "ssh-logging"
+    logging_ssh.write_text(FAKE_SSH_LOGGING, encoding="utf-8")
+    logging_ssh.chmod(logging_ssh.stat().st_mode | stat.S_IEXEC)
+    log = tmp_path / "ssh.log"
+    monkeypatch.setenv("SSH_LOG", str(log))
+    home = tmp_path / "home"
+    (home / SESSION).parent.mkdir(parents=True)
+    (home / SESSION).write_bytes(b"a\n")
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    logged = SshDestination("nas", dest.root, ssh=[str(logging_ssh)])
+
+    collect_source(config, "src", state_dir=tmp_path / "state", now=T0, destination=logged)
+
+    commands = log.read_text(encoding="utf-8").split("--- ")[1:]
+    tar = next(command for command in commands if "tar -xf" in command)
+    placing = next(c for c in commands if c.startswith("sh -s") and " mv " in c)
+    commit = next(command for command in commands if "/manifests/" in command)
+    writes = [command for command in commands if "cat >" in command]
+    for command in [tar, placing, commit, *writes]:
+        assert command.rstrip().endswith("sync"), command

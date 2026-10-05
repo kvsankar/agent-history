@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from agent_history.archive.errors import ArchiveError
+from agent_history.archive.transport import fsync_dir, fsync_file
 
 # log_keys["<path>::<table>" + IDENTITY_SUFFIX] identifies the log table's rows (see databases).
 IDENTITY_SUFFIX = "::identity"
@@ -130,7 +131,9 @@ def save_state(path: Path, state: SourceState) -> None:
     }
     tmp = path.with_name(path.name + ".part")
     tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+    fsync_file(tmp)
     os.replace(tmp, path)
+    fsync_dir(path.parent)
 
 
 @contextmanager

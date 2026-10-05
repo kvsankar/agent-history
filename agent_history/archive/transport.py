@@ -18,6 +18,35 @@ def _check_rel(rel: str) -> str:
     return rel
 
 
+def fsync_file(path: Path) -> None:
+    """Flush a file's content to disk, so a rename that follows cannot expose an empty file."""
+    fd = os.open(path, os.O_RDWR)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def fsync_dir(path: Path) -> None:
+    """Flush a folder's entries (renames and new names) to disk.
+
+    Windows cannot open a folder for flushing, and some network filesystems refuse it;
+    there the rename is as durable as the filesystem makes it.
+    """
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _check_discardable(rel: str) -> str:
     """Only a source's ``incoming`` folder, which holds no committed file, may be removed."""
     parts = _check_rel(rel).split("/")
@@ -105,7 +134,9 @@ class LocalDestination(Destination):
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".part")
         tmp.write_bytes(data)
+        fsync_file(tmp)
         os.replace(tmp, path)
+        self._sync_dirs({path.parent})
 
     def list_files(self, rel_dir: str) -> list[str]:
         base = self._path(rel_dir)
@@ -127,9 +158,11 @@ class LocalDestination(Destination):
         target = self._path(dst)
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(source, target)
+        self._sync_dirs({source.parent, target.parent})
         return True
 
     def put_tree(self, staging: Path) -> None:
+        folders = set()
         for dirpath, _dirnames, filenames in os.walk(staging):
             for filename in sorted(filenames):
                 src = Path(dirpath) / filename
@@ -138,23 +171,44 @@ class LocalDestination(Destination):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 tmp = target.with_name(target.name + ".part")
                 shutil.copy2(src, tmp)
+                fsync_file(tmp)
                 os.replace(tmp, target)
+                folders.add(target.parent)
+        self._sync_dirs(folders)
 
     def place(self, keeps: list[Keep], puts: list[Put]) -> None:
-        for current, version, incoming in keeps:
-            if self.exists(version) or not self.exists(incoming):
-                continue
-            if not self.exists(current):
-                raise ArchiveError(f"The archived copy {current} to keep as {version} is missing")
-            self._rename(current, version)
-        for incoming, current in puts:
-            if self.exists(incoming):
-                self._rename(incoming, current)
+        folders: set[Path] = set()
+        try:
+            for current, version, incoming in keeps:
+                if self.exists(version) or not self.exists(incoming):
+                    continue
+                if not self.exists(current):
+                    raise ArchiveError(
+                        f"The archived copy {current} to keep as {version} is missing"
+                    )
+                self._rename(current, version, folders)
+            for incoming, current in puts:
+                if self.exists(incoming):
+                    self._rename(incoming, current, folders)
+        finally:
+            self._sync_dirs(folders)
 
-    def _rename(self, src: str, dst: str) -> None:
-        target = self._path(dst)
+    def _rename(self, src: str, dst: str, folders: set[Path]) -> None:
+        source, target = self._path(src), self._path(dst)
         target.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(self._path(src), target)
+        os.replace(source, target)
+        folders.update((source.parent, target.parent))
+
+    def _sync_dirs(self, folders: set[Path]) -> None:
+        """Flush folders and the folders above them up to the root, deepest first."""
+        every = set()
+        for start in folders:
+            folder = start
+            while folder not in every and (folder == self.root or self.root in folder.parents):
+                every.add(folder)
+                folder = folder.parent
+        for folder in sorted(every, key=lambda path: len(path.parts), reverse=True):
+            fsync_dir(folder)
 
     def discard_tree(self, rel: str) -> None:
         path = self._path(_check_discardable(rel))

@@ -1,7 +1,8 @@
 """An archive destination on another host, reached over SSH.
 
 The remote host needs only ``sh`` (with its ``test``/``[`` and ``echo``), ``cat``, ``mkdir``,
-``mv``, ``find``, ``tar`` and ``rm`` (which removes only a source's incoming folder). Each
+``mv``, ``find``, ``tar``, ``rm`` (which removes only a source's incoming folder) and
+``sync`` (which flushes each write to disk before the run goes on). Each
 operation sends ssh one already-quoted command string: ssh joins its remote arguments with
 spaces, so passing them separately would lose the quoting.
 """
@@ -92,7 +93,7 @@ class SshDestination(Destination):
         path = self._remote(rel)
         part = self._remote(rel + ".part")
         parent = shlex.quote(f"{self.root}/{rel}".rsplit("/", 1)[0])
-        script = f"mkdir -p {parent} && cat > {part} && mv {part} {path}"
+        script = f"mkdir -p {parent} && cat > {part} && mv {part} {path} && sync"
         self._check(self._run(script, data), f"Writing {rel}")
 
     def list_files(self, rel_dir: str) -> list[str]:
@@ -109,7 +110,7 @@ class SshDestination(Destination):
         source, target = self._remote(src), self._remote(dst)
         parent = shlex.quote(f"{self.root}/{_check_rel(dst)}".rsplit("/", 1)[0])
         result = self._run(
-            f"test -e {source} || exit {_MISSING}; mkdir -p {parent} && mv {source} {target}"
+            f"test -e {source} || exit {_MISSING}; mkdir -p {parent} && mv {source} {target} && sync"
         )
         if result.returncode == _MISSING:
             return False
@@ -147,6 +148,7 @@ class SshDestination(Destination):
                 f"mkdir -p {self._parent(current)} && mv {inc} {cur} || exit 1; fi\n"
             )
         if lines:
+            lines.append("sync\n")
             self._check(self._run_script("".join(lines)), "Moving files into place")
 
     def discard_tree(self, rel: str) -> None:
@@ -167,7 +169,7 @@ class SshDestination(Destination):
         """
         root = shlex.quote(self.root)
         process = subprocess.Popen(
-            self._command(f"mkdir -p {root} && tar -xf - -C {root}"),
+            self._command(f"mkdir -p {root} && tar -xf - -C {root} && sync"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -757,3 +757,65 @@ def test_only_one_large_file_uses_extra_threads_at_a_time(env, monkeypatch):
 
     assert summary.written == 4
     assert peak[0] == 1
+
+
+def _durability_events(monkeypatch):
+    """Record os.fsync (by path) and os.replace calls, in order."""
+    events: list[tuple[str, str]] = []
+    paths: dict[int, str] = {}
+    real_open, real_fsync, real_replace = os.open, os.fsync, os.replace
+
+    def tracking_open(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        paths[fd] = os.path.abspath(os.fspath(path))
+        return fd
+
+    def tracking_fsync(fd):
+        events.append(("fsync", paths.get(fd, f"fd {fd}")))
+        return real_fsync(fd)
+
+    def tracking_replace(src, dst, *args, **kwargs):
+        events.append(("replace", f"{os.path.abspath(src)} -> {os.path.abspath(dst)}"))
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(os, "fsync", tracking_fsync)
+    monkeypatch.setattr(os, "replace", tracking_replace)
+    return events
+
+
+def _index(events, kind, predicate):
+    for index, (event_kind, detail) in enumerate(events):
+        if event_kind == kind and predicate(detail):
+            return index
+    raise AssertionError(f"no {kind} event matched in {events}")
+
+
+def test_files_are_flushed_before_they_are_renamed_into_place(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    events = _durability_events(monkeypatch)
+
+    _collect(env)
+
+    replaces = [detail for kind, detail in events if kind == "replace"]
+    assert replaces
+    for index, (kind, detail) in enumerate(events):
+        if kind == "replace" and detail.split(" -> ")[0].endswith(".part"):
+            source = detail.split(" -> ")[0]
+            assert ("fsync", source) in events[:index], f"{source} replaced before fsync"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="directories cannot be flushed on Windows")
+def test_folders_are_flushed_before_the_commit_and_the_state(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    events = _durability_events(monkeypatch)
+
+    _collect(env)
+
+    source_dir = str(env["dest"] / "sources" / "src")
+    placed_dir = os.path.dirname(f"{source_dir}/files/{SESSION}.zst")
+    commit = _index(events, "replace", lambda d: "/manifests/" in d.split(" -> ")[1])
+    assert ("fsync", placed_dir) in events[:commit]
+    save = _index(events, "replace", lambda d: d.endswith("src.json"))
+    assert ("fsync", f"{source_dir}/manifests") in events[commit:save]
+    assert ("fsync", str(next(env["state"].rglob("src.json")).parent)) in events[save:]
