@@ -221,6 +221,34 @@ def test_unmounted_destination_is_refused(env):
     assert list(env["dest"].iterdir()) == []
 
 
+@pytest.mark.parametrize("state", ["kept", "rebuilt"])
+def test_run_with_errors_does_not_delay_the_next_run(env, monkeypatch, state):
+    """min_interval_hours counts from the last run without errors, so failures are retried."""
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    config = _config(env, min_interval_hours=20)
+    real = collect_module.compress_file
+
+    def failing(src, *args, **kwargs):
+        raise OSError("device busy")
+
+    monkeypatch.setattr(collect_module, "compress_file", failing)
+    first = _collect(env, config=config)
+    monkeypatch.setattr(collect_module, "compress_file", real)
+    if state == "rebuilt":
+        for state_file in env["state"].rglob("*.json"):
+            state_file.unlink()
+
+    second = _collect(env, now=T0 + timedelta(hours=1), config=config)
+
+    assert first.errors == 1
+    assert second.skipped_reason is None
+    assert second.written == 1
+    third = _collect(env, now=T0 + timedelta(hours=2), config=config)
+    assert third.skipped_reason == "min_interval"
+
+
 def test_new_source_is_refused_when_another_source_has_history(env):
     import shutil
 

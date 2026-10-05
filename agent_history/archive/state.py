@@ -41,7 +41,7 @@ class FileState:
 class SourceState:
     files: dict[str, FileState] = field(default_factory=dict)
     log_keys: dict[str, Any] = field(default_factory=dict)  # "<path>::<table>" -> last key
-    last_success: str | None = None
+    last_success: str | None = None  # start of the last run that recorded no errors
     last_run_id: str | None = None
     # Ids of the runs whose manifests this state includes. None for a state file written
     # before the list existed; such a state includes every run up to ``last_run_id``.
@@ -54,8 +54,8 @@ class SourceState:
         self.last_run_id = run.get("run_id")
         if self.runs is not None and self.last_run_id and self.last_run_id not in self.runs:
             self.runs.append(self.last_run_id)
-        if run.get("started_at"):
-            self.last_success = run["started_at"]
+        if run.get("started_at") and not run.get("errors"):
+            self.last_success = run["started_at"]  # a run with errors is retried sooner
 
     def has_history(self) -> bool:
         """True when the state records any run to its destination."""
