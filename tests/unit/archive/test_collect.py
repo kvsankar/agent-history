@@ -1027,11 +1027,11 @@ def test_a_damaged_collector_id_is_replaced(tmp_path):
     assert collector_id(tmp_path / "state") == made
 
 
-def _foreign_lock(env):
+def _foreign_lock(env, started_at=T0.isoformat()):
     import json
 
     _lock_folder(env).mkdir(parents=True)
-    owner = {"host": "other-laptop", "pid": 4242, "started_at": "2026-10-01T00:00:00+00:00"}
+    owner = {"host": "other-laptop", "pid": 4242, "started_at": started_at}
     (_lock_folder(env) / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
 
 
@@ -1046,6 +1046,42 @@ def test_a_lock_held_by_another_machine_stops_the_run(env):
 
     assert _lock_folder(env).is_dir()
     assert _archived(env, SESSION) == b"a\n"
+
+
+@pytest.mark.parametrize(
+    "started_at",
+    [(T0 - timedelta(hours=24, minutes=1)).isoformat(), "at some point", None],
+    ids=["over-a-day", "unreadable-time", "no-time"],
+)
+def test_a_foreign_lock_older_than_a_day_fails_the_run(env, monkeypatch, started_at):
+    """A lock that a killed run of another state folder left is reported, not skipped forever."""
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env, now=T0 - timedelta(days=2))
+    _foreign_lock(env, started_at)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    pings = _pings(monkeypatch)
+
+    with pytest.raises(ArchiveError, match=r"other-laptop.*--break-lock") as raised:
+        _collect(env)
+
+    assert not isinstance(raised.value, CollectLockedError)
+    assert pings == ["/fail"]
+    assert _lock_folder(env).is_dir()
+    assert _archived(env, SESSION) == b"a\n"
+
+
+def test_a_foreign_lock_younger_than_a_day_is_a_skip(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env, now=T0 - timedelta(days=2))
+    _foreign_lock(env, (T0 - timedelta(hours=23, minutes=59)).isoformat())
+    pings = _pings(monkeypatch)
+
+    with pytest.raises(CollectLockedError, match="other-laptop"):
+        _collect(env)
+
+    assert pings == []
 
 
 def test_break_lock_removes_another_machines_lock(env, capsys):
@@ -1147,7 +1183,7 @@ def test_an_owner_file_being_written_is_read_again(env, monkeypatch):
     _lock_folder(env).mkdir()
     owner = _lock_folder(env) / "owner.json"
     owner.write_bytes(b"")
-    finished = {"host": "other-laptop", "pid": 4242, "started_at": "2026-10-01T00:00:00+00:00"}
+    finished = {"host": "other-laptop", "pid": 4242, "started_at": T0.isoformat()}
     monkeypatch.setattr(state.time, "sleep", lambda seconds: owner.write_text(json.dumps(finished)))
 
     with pytest.raises(CollectLockedError, match="other-laptop"):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -157,12 +158,30 @@ def test_a_locked_source_is_skipped_and_the_rest_are_collected(setup, capsys):
     assert "other: 1 written" in out
 
 
-def _lock_at_destination(setup, source):
+def _lock_at_destination(setup, source, age=timedelta(minutes=5)):
+    """A lock of another machine's run that started ``age`` ago."""
     lock = setup["tmp"] / "archive" / "sources" / source / "LOCK"
     lock.mkdir(parents=True)
-    owner = {"host": "other-laptop", "pid": 4242, "started_at": "2026-10-01T00:00:00+00:00"}
+    started_at = (datetime.now(timezone.utc) - age).isoformat(timespec="seconds")
+    owner = {"host": "other-laptop", "pid": 4242, "started_at": started_at}
     (lock / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
     return lock
+
+
+def test_a_lock_left_for_over_a_day_fails_its_source(setup, capsys):
+    config = _two_sources(setup)
+    assert main(["archive", "collect", "--config", config]) == 0
+    lock = _lock_at_destination(setup, "laptop", age=timedelta(hours=25))
+    capsys.readouterr()
+
+    code = main(["archive", "collect", "--config", config])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "skipped" not in captured.out
+    assert "other-laptop" in captured.err
+    assert "--break-lock" in captured.err
+    assert lock.is_dir()
 
 
 def test_a_source_locked_at_the_destination_is_skipped_with_its_owner(setup, capsys):

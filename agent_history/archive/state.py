@@ -19,7 +19,7 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -238,10 +238,18 @@ def source_lock(state_dir: Path, destination: str, source: str) -> Iterator[None
 # run that created it may be writing it at this moment.
 LOCK_SETTLE_SECONDS = 2.0
 _LOCK_ATTEMPTS = 3
+# A lock of another holder that started longer ago than this, or at a time its owner file
+# does not tell, fails the run instead of skipping it: its run was most likely stopped,
+# and only --break-lock removes it, so skipping would skip every run from then on.
+STALE_LOCK_HOURS = 24
 
 
 class LockOwnerUnknownError(ArchiveError):
     """A source's lock in the archive exists, but its owner file names no holder."""
+
+
+class StaleLockError(ArchiveError):
+    """A source's lock in the archive names another holder whose run looks stopped."""
 
 
 def destination_lock_path(source: str) -> str:
@@ -255,28 +263,31 @@ def destination_lock(
     local_lock: Path,
     collector: str,
     break_lock: bool = False,
+    now: datetime | None = None,
 ) -> Iterator[None]:
     """Hold the source's lock in the archive.
 
     ``collector`` is the state folder's id (collector_id), and ``local_lock`` the local
     lock this process holds. Raises CollectLockedError when another run holds the lock,
-    and LockOwnerUnknownError when its owner file stays empty or damaged, so no holder
-    can be named. A lock that a killed run of this collector left is taken over: one
-    whose owner records this state folder's id, this local lock and this host. The id is
-    random, so another machine with the same host name and state path (a second WSL
-    distribution on one PC) is another holder. ``break_lock`` first removes any lock.
+    StaleLockError when that run started more than STALE_LOCK_HOURS before ``now`` or at
+    an unknown time, and LockOwnerUnknownError when the owner file stays empty or
+    damaged, so no holder can be named. A lock that a killed run of this collector left
+    is taken over: one whose owner records this state folder's id, this local lock and
+    this host. The id is random, so another machine with the same host name and state
+    path (a second WSL distribution on one PC) is another holder. ``break_lock`` first
+    removes any lock.
     """
     ours = _lock_owner(local_lock, collector)
     if break_lock:
         _break_lock(destination, source)
-    _take_lock(destination, source, ours)
+    _take_lock(destination, source, ours, now or datetime.now(timezone.utc))
     try:
         yield
     finally:
         _release_lock(destination, source, ours)
 
 
-def _take_lock(destination: Destination, source: str, ours: dict[str, Any]) -> None:
+def _take_lock(destination: Destination, source: str, ours: dict[str, Any], now: datetime) -> None:
     rel = destination_lock_path(source)
     for _ in range(_LOCK_ATTEMPTS):
         if destination.create_lock(rel, json.dumps(ours).encode("utf-8")):
@@ -285,7 +296,7 @@ def _take_lock(destination: Destination, source: str, ours: dict[str, Any]) -> N
         if held is None:
             continue  # released meanwhile
         if not _same_collector(held, ours):
-            raise CollectLockedError(_locked_message(destination, source, held))
+            raise _foreign_lock_error(destination, source, held, now)
         sys.stderr.write(
             f"Removing the lock of {source} left by an interrupted run on this machine "
             f"(started {held.get('started_at', 'at an unknown time')})\n"
@@ -423,6 +434,36 @@ def _locked_message(destination: Destination, source: str, held: dict[str, Any])
         f"({_describe_owner(held)}). If no such run is still going, for example because it "
         f"was killed on another machine, run collect again with {BREAK_LOCK_OPTION}."
     )
+
+
+def _foreign_lock_error(
+    destination: Destination, source: str, held: dict[str, Any], now: datetime
+) -> ArchiveError:
+    """CollectLockedError for a lock taken recently, StaleLockError otherwise."""
+    started = _started_at(held)
+    if started is not None and now - started <= timedelta(hours=STALE_LOCK_HOURS):
+        return CollectLockedError(_locked_message(destination, source, held))
+    when = (
+        f"more than {STALE_LOCK_HOURS} hours ago" if started is not None else "at an unknown time"
+    )
+    return StaleLockError(
+        f"The lock of {source} in {destination.description} names another run "
+        f"({_describe_owner(held)}), which started {when}, so it was probably stopped "
+        f"without releasing the lock. If no archive run of {source} is going on any "
+        f"machine, run collect again with {BREAK_LOCK_OPTION}."
+    )
+
+
+def _started_at(owner: dict[str, Any]) -> datetime | None:
+    """When the owner's run started; None when the owner file does not tell."""
+    value = owner.get("started_at")
+    if not isinstance(value, str):
+        return None
+    try:
+        started = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return started if started.tzinfo is not None else None
 
 
 def _break_lock(destination: Destination, source: str) -> None:

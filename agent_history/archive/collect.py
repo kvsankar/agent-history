@@ -382,7 +382,8 @@ class _Run:
 
         A failure before the run starts sends the failure request too, except that a
         lock another run holds is not a failure: the run is skipped. A lock whose owner
-        file names no holder is a failure (LockOwnerUnknownError).
+        file names no holder (LockOwnerUnknownError), or another holder whose run started
+        over a day ago or at an unknown time (StaleLockError), is a failure.
         """
         with ExitStack() as stack:
             try:
@@ -408,6 +409,7 @@ class _Run:
             self.state_file.with_suffix(".lock"),
             collector_id(self.state_dir),
             break_lock,
+            self.now,
         )
 
     def _execute_locked(self, has_format: bool) -> RunSummary:
