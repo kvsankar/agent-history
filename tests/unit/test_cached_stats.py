@@ -363,6 +363,8 @@ def test_top_level_stats_rollup_uses_cached_db(tmp_path, monkeypatch, capsys) ->
             "time_seconds": None,
             "time_hms": None,
             "time_hours": None,
+            "cost_usd": 0,
+            "unpriced_tokens": 20,
             "workspace": "/tmp/project",
             "model": "claude-test",
         }
@@ -428,6 +430,8 @@ def test_time_month_rollup_omits_untimestamped_zero_time_bucket(
             "time_seconds": 300,
             "time_hms": "0h 5m 0s",
             "time_hours": 300 / 3600,
+            "cost_usd": 0,
+            "unpriced_tokens": 20,
             "month": "2026-06",
         }
     ]
@@ -549,6 +553,8 @@ def test_project_rollup_uses_configured_project_membership(tmp_path, monkeypatch
             "time_seconds": 300,
             "time_hms": "0h 5m 0s",
             "time_hours": 300 / 3600,
+            "cost_usd": 0,
+            "unpriced_tokens": 20,
             "project": "sample",
         }
     ]
@@ -650,6 +656,8 @@ def test_cached_stats_rollup_by_tag_duplicates_multi_tag_projects_and_untagged(
             "time_seconds": 300,
             "time_hms": "0h 5m 0s",
             "time_hours": 300 / 3600,
+            "cost_usd": 0,
+            "unpriced_tokens": 20,
             "tag": "client",
         },
         {
@@ -662,6 +670,8 @@ def test_cached_stats_rollup_by_tag_duplicates_multi_tag_projects_and_untagged(
             "time_seconds": 0,
             "time_hms": "0h 0m 0s",
             "time_hours": 0,
+            "cost_usd": 0,
+            "unpriced_tokens": 0,
             "tag": "untagged",
         },
         {
@@ -674,6 +684,8 @@ def test_cached_stats_rollup_by_tag_duplicates_multi_tag_projects_and_untagged(
             "time_seconds": 300,
             "time_hms": "0h 5m 0s",
             "time_hours": 300 / 3600,
+            "cost_usd": 0,
+            "unpriced_tokens": 20,
             "tag": "work",
         },
     ]
@@ -728,6 +740,8 @@ def test_cached_token_rollup_by_tag_model_preserves_null_time(
             "time_seconds": None,
             "time_hms": None,
             "time_hours": None,
+            "cost_usd": 0,
+            "unpriced_tokens": 20,
             "tag": "work",
             "model": "claude-test",
         }
@@ -770,6 +784,8 @@ def test_synced_project_rollup_uses_passed_project_membership(tmp_path, monkeypa
             "time_seconds": 300,
             "time_hms": "0h 5m 0s",
             "time_hours": 300 / 3600,
+            "cost_usd": 0,
+            "unpriced_tokens": 20,
             "project": "sample",
         }
     ]
@@ -810,6 +826,8 @@ def test_token_month_rollup_omits_untimestamped_zero_token_bucket(
             "time_seconds": 300,
             "time_hms": "0h 5m 0s",
             "time_hours": 300 / 3600,
+            "cost_usd": 0,
+            "unpriced_tokens": 20,
             "workspace": "/tmp/project",
             "month": "2026-06",
         }

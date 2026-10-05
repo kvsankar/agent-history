@@ -72,6 +72,9 @@ def overlay_metrics(stats: dict[str, Any], metrics: dict[str, Any]) -> dict[str,
     if "by_model" in metrics:
         stats["by_model"] = metrics["by_model"]
 
+    if "cost" in metrics:
+        stats["cost"] = metrics["cost"]
+
     for breakdown_key in ("by_agent", "by_home", "by_workspace"):
         if breakdown_key not in metrics:
             continue

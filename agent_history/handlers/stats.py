@@ -623,6 +623,8 @@ class SessionStatsHandler(VerbHandler):
             "output_tokens",
             "cache_read_tokens",
             "cache_creation_tokens",
+            "cost_usd",
+            "unpriced_tokens",
         ):
             existing[field] = (existing.get(field) or 0) + (item.get(field) or 0)
         existing_time = existing.get("time_seconds")

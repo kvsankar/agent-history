@@ -1678,7 +1678,7 @@ class CLIParser:
         if rollup:
             parser.add_argument(
                 "--metric",
-                choices=["time", "tokens", "all"],
+                choices=["time", "tokens", "cost", "all"],
                 default="all",
                 help="Rollup metric family (default: all)",
             )
@@ -1693,7 +1693,7 @@ class CLIParser:
                 metavar="FIELDS",
                 help=(
                     "Sort rollup rows by comma-separated fields: metric, tokens, time, "
-                    "sessions, messages, input, output, cache-read, or dimensions"
+                    "sessions, messages, input, output, cache-read, cost, or dimensions"
                 ),
             )
             sort_direction = parser.add_mutually_exclusive_group()

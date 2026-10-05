@@ -28,6 +28,9 @@ build-backend = "setuptools.build_meta"
 include = ["agent_history*"]
 exclude = ["tests*", "docs*", "docker*", "scripts*", "poc*", "reviews*"]
 
+[tool.setuptools.package-data]
+"agent_history.pricing" = ["model_prices.json"]
+
 [tool.ruff]
 target-version = "py38"
 line-length = 100

@@ -549,7 +549,7 @@ commands remain supported as convenience aliases:
   is time-only (`day`/`month`), which sorts chronologically.
 - `--sort <fields>` overrides default sorting. It accepts comma-separated
   dimensions and metric fields: `metric`, `tokens`, `time`, `sessions`,
-  `messages`, `input`, `output`, `cache-read`, `cache-create`, plus active
+  `messages`, `input`, `output`, `cache-read`, `cache-create`, `cost`, plus active
   dimensions such as `month`, `agent`, or `workspace`.
 - `--asc` and `--desc` set sort direction. Without an explicit direction,
   explicit `--sort` fields sort ascending; default metric sorting remains
@@ -561,6 +561,26 @@ commands remain supported as convenience aliases:
   - `cagelens stats rollup --metric time --by workspace,day`
   - `cagelens stats rollup --metric tokens --by project,agent,model`
   - `cagelens stats rollup --metric all --by project`
+  - `cagelens stats rollup --metric cost --by agent,model`
+
+**Estimated API cost (metrics DB):**
+- Each assistant message is priced with its model's pay-as-you-go API list
+  price on the message's date. Subscription plans are not reflected.
+- Prices come from `agent_history/pricing/model_prices.json`, built by
+  `scripts/update_model_prices.py` from monthly snapshots of LiteLLM's price
+  list. The file records the commit, date and SHA-256 of each snapshot. A
+  model keeps its last listed price after the list drops it.
+- Uncached input, output, cache-read and cache-write tokens are priced
+  separately. Codex input counts include cached tokens, so the cached part is
+  priced at the cache-read rate only. Long-context tiers apply when a
+  message's whole prompt exceeds the tier's threshold.
+- Batch, flex and priority rates, Anthropic's one-hour cache-write rate and
+  fast-mode surcharges are not applied.
+- Messages with tokens but no known price are reported as unpriced, with
+  their token count and model names, rather than counted as zero.
+- The dashboard shows `Estimated API cost` and an unpriced line when needed;
+  `--by model` adds each model's cost; rollups add `COST_USD`
+  (`--metric all`) or `COST_USD` and `UNPRICED_TOKENS` (`--metric cost`).
 
 **Time tracking algorithm (metrics DB):**
 - **Gap threshold:** 30 minutes of inactivity marks end of a work period
@@ -590,7 +610,7 @@ commands remain supported as convenience aliases:
 | `--by-day` | Compatibility alias for `--by day` |
 | `--by-workspace` | Compatibility alias for `--by workspace` |
 | `--time` | Expand work-period time details, including daily time totals |
-| `--metric <name>` | Rollup metric: `time`, `tokens`, or `all` |
+| `--metric <name>` | Rollup metric: `time`, `tokens`, `cost`, or `all` |
 | `--top <N>` | Rollup row limit |
 | `--sort <fields>` | Sort rollup rows by comma-separated fields |
 | `--asc` | Sort rollup rows ascending |

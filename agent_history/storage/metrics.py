@@ -19,6 +19,7 @@ from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from agent_history import pricing
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.codex_tokens import CodexTokenCounter
 
@@ -88,6 +89,7 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
     conn = sqlite3.connect(str(db_path), timeout=30.0)
     conn.create_function("REGEXP", 2, _sqlite_regexp)
+    conn.create_function("ESTIMATE_COST", 7, _sqlite_estimate_cost)
 
     # Enable foreign key enforcement (disabled by default in SQLite)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -219,6 +221,52 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
     conn.commit()
     return conn
+
+
+def _sqlite_estimate_cost(
+    agent: Optional[str],
+    model: Optional[str],
+    timestamp: Optional[str],
+    input_tokens: Optional[int],
+    output_tokens: Optional[int],
+    cache_read_tokens: Optional[int],
+    cache_creation_tokens: Optional[int],
+) -> Optional[float]:
+    """SQLite ESTIMATE_COST: API list-price cost of one message, NULL if unpriced."""
+    return pricing.estimate_cost(
+        agent,
+        model,
+        timestamp,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+    )
+
+
+# Per-message cost and token total over messages m joined to sessions s.
+_MESSAGE_COST_SQL = (
+    "ESTIMATE_COST(s.agent, m.model, m.timestamp, m.input_tokens, m.output_tokens, "
+    "m.cache_read_tokens, m.cache_creation_tokens)"
+)
+_MESSAGE_TOKENS_SQL = (
+    "(COALESCE(m.input_tokens, 0) + COALESCE(m.output_tokens, 0) + "
+    "COALESCE(m.cache_read_tokens, 0) + COALESCE(m.cache_creation_tokens, 0))"
+)
+
+
+def _priced_messages_sql(where_sql: str, columns: str = "", join_sql: str = "") -> str:
+    """Return a derived table of messages with their cost and token total."""
+    extra = f", {columns}" if columns else ""
+    return f"""
+        SELECT m.file_path, m.model{extra},
+               {_MESSAGE_COST_SQL} AS cost_usd,
+               {_MESSAGE_TOKENS_SQL} AS tokens
+        FROM messages m
+        JOIN sessions s ON s.file_path = m.file_path
+        {join_sql}
+        {where_sql}
+    """
 
 
 def _sqlite_regexp(pattern: str, value: str | None) -> int:
@@ -1287,6 +1335,7 @@ def get_scoped_stats_from_db(
         by_workspace = _stats_group_query(conn, "workspace", where_sql, params)
         by_model = _model_stats_query(conn, filters)
         by_tool = _tool_stats_query(conn, filters)
+        cost = _cost_query(conn, *_where_sql(filters, "s"))
 
         stats: Dict[str, Any] = {
             "sessions": row["sessions"] if row else 0,
@@ -1303,6 +1352,7 @@ def get_scoped_stats_from_db(
                 "cache_creation": row["cache_creation_tokens"] if row else 0,
                 "cache_read": row["cache_read_tokens"] if row else 0,
             },
+            "cost": cost,
             "by_agent": by_agent,
             "by_home": by_home,
             "by_workspace": by_workspace,
@@ -1385,6 +1435,9 @@ ROLLUP_SORT_ALIASES: Dict[str, str] = {
     "cache_create": "cache_creation_tokens",
     "cache_creation": "cache_creation_tokens",
     "cache_creation_tokens": "cache_creation_tokens",
+    "cost": "cost_usd",
+    "usd": "cost_usd",
+    "cost_usd": "cost_usd",
 }
 
 
@@ -1403,7 +1456,7 @@ def get_stats_rollup_from_db(
     invalid = [dimension for dimension in dimensions if dimension not in dimension_map]
     if invalid:
         raise ValueError(f"Unsupported rollup dimension(s): {', '.join(invalid)}")
-    if metric not in {"time", "tokens", "all"}:
+    if metric not in {"time", "tokens", "cost", "all"}:
         raise ValueError(f"Unsupported rollup metric: {metric}")
     if metric == "time" and "model" in dimensions:
         raise ValueError(
@@ -1532,12 +1585,21 @@ def _session_stats_rollup(
             COALESCE(SUM(output_tokens), 0) as output_tokens,
             COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
             COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
-            COALESCE(SUM(work_period_seconds), 0) as time_seconds
+            COALESCE(SUM(work_period_seconds), 0) as time_seconds,
+            COALESCE(SUM(file_cost.cost_usd), 0) as cost_usd,
+            COALESCE(SUM(file_cost.unpriced_tokens), 0) as unpriced_tokens
         FROM sessions
+        LEFT JOIN (
+            SELECT file_path,
+                   SUM(cost_usd) as cost_usd,
+                   SUM(CASE WHEN cost_usd IS NULL THEN tokens ELSE 0 END) as unpriced_tokens
+            FROM ({_priced_messages_sql(_where_sql(filters, "s")[0])})
+            GROUP BY file_path
+        ) file_cost ON file_cost.file_path = sessions.file_path
         {where_sql}
         GROUP BY {", ".join(group_parts)}
     """
-    cursor = conn.execute(sql, params)
+    cursor = conn.execute(sql, params + params)
     rows = [
         item
         for row in cursor.fetchall()
@@ -1564,6 +1626,8 @@ def _rollup_item_from_session_row(
         "time_seconds": row["time_seconds"],
         "time_hms": _format_seconds_hms(row["time_seconds"]),
         "time_hours": row["time_seconds"] / 3600 if row["time_seconds"] else 0,
+        "cost_usd": row["cost_usd"],
+        "unpriced_tokens": row["unpriced_tokens"],
     }
     for index, dimension in enumerate(dimensions):
         item[dimension] = row[f"dim_{index}"] or "(none)"
@@ -1606,7 +1670,11 @@ def _message_stats_rollup(
             COALESCE(SUM(m.output_tokens), 0) as output_tokens,
             COALESCE(SUM(m.cache_read_tokens), 0) as cache_read_tokens,
             COALESCE(SUM(m.cache_creation_tokens), 0) as cache_creation_tokens,
-            0 as time_seconds
+            0 as time_seconds,
+            COALESCE(SUM({_MESSAGE_COST_SQL}), 0) as cost_usd,
+            COALESCE(
+                SUM(CASE WHEN {_MESSAGE_COST_SQL} IS NULL THEN {_MESSAGE_TOKENS_SQL} ELSE 0 END), 0
+            ) as unpriced_tokens
         FROM messages m
         JOIN sessions s ON s.file_path = m.file_path
         {where_sql}
@@ -1627,6 +1695,8 @@ def _message_stats_rollup(
             "time_seconds": None,
             "time_hms": None,
             "time_hours": None,
+            "cost_usd": row["cost_usd"],
+            "unpriced_tokens": row["unpriced_tokens"],
         }
         for index, dimension in enumerate(dimensions):
             item[dimension] = row[f"dim_{index}"] or "(none)"
@@ -1640,6 +1710,8 @@ def _skip_rollup_row(row: sqlite3.Row, dimensions: list[str], metric: str) -> bo
         return True
     if metric == "tokens" and _rollup_metric_total(row, metric) == 0:
         return True
+    if metric == "cost" and not row["cost_usd"] and not row["unpriced_tokens"]:
+        return True
     if (
         any(
             dimension in {"day", "month"} and not row[f"dim_{index}"]
@@ -1652,6 +1724,8 @@ def _skip_rollup_row(row: sqlite3.Row, dimensions: list[str], metric: str) -> bo
 
 
 def _rollup_metric_total(row: sqlite3.Row, metric: str) -> float:
+    if metric == "cost":
+        return float(row["cost_usd"] or 0) + float(row["unpriced_tokens"] or 0)
     if metric == "time":
         return float(row["time_seconds"] or 0)
     if metric == "tokens":
@@ -1751,12 +1825,15 @@ def _rollup_sort_value(row: Dict[str, Any], field: str, metric: str) -> Any:
         "output_tokens",
         "cache_read_tokens",
         "cache_creation_tokens",
+        "cost_usd",
     }:
         return float(value or 0)
     return "" if value is None else str(value)
 
 
 def _row_metric_total(row: Dict[str, Any], metric: str) -> float:
+    if metric == "cost":
+        return float(row.get("cost_usd") or 0)
     if metric == "time":
         return float(row.get("time_seconds") or 0)
     if metric == "tokens":
@@ -1823,29 +1900,62 @@ def _stats_group_query(
 
 def _model_stats_query(
     conn: sqlite3.Connection, filters: Optional[Dict[str, Any]]
-) -> Dict[str, Dict[str, int]]:
-    where_sql, params = _where_sql(filters, "s")
+) -> Dict[str, Dict[str, Any]]:
+    return _priced_model_stats(conn, *_where_sql(filters, "s"))
+
+
+def _priced_model_stats(
+    conn: sqlite3.Connection, where_sql: str, params: list[Any], join_sql: str = ""
+) -> Dict[str, Dict[str, Any]]:
     if where_sql:
         where_sql += " AND m.model IS NOT NULL AND m.model != ''"
     else:
         where_sql = " WHERE m.model IS NOT NULL AND m.model != ''"
     cursor = conn.execute(
         f"""
-        SELECT m.model,
+        SELECT model,
                COUNT(*) as messages,
-               COALESCE(SUM(m.output_tokens), 0) as tokens
-        FROM messages m
-        JOIN sessions s ON s.file_path = m.file_path
-        {where_sql}
-        GROUP BY m.model
+               COALESCE(SUM(output_tokens), 0) as tokens,
+               SUM(cost_usd) as cost_usd
+        FROM ({_priced_messages_sql(where_sql, "m.output_tokens", join_sql)})
+        GROUP BY model
         ORDER BY messages DESC
         """,
         params,
     )
     return {
-        row["model"]: {"messages": row["messages"], "tokens": row["tokens"]}
+        row["model"]: {
+            "messages": row["messages"],
+            "tokens": row["tokens"],
+            "cost_usd": row["cost_usd"],
+        }
         for row in cursor.fetchall()
         if row["model"]
+    }
+
+
+def _cost_query(
+    conn: sqlite3.Connection, where_sql: str, params: list[Any], join_sql: str = ""
+) -> Dict[str, Any]:
+    """Return the estimated API cost and what could not be priced."""
+    rows = conn.execute(
+        f"""
+        SELECT model,
+               COALESCE(SUM(cost_usd), 0) as cost_usd,
+               SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) as unpriced_messages,
+               SUM(CASE WHEN cost_usd IS NULL THEN tokens ELSE 0 END) as unpriced_tokens
+        FROM ({_priced_messages_sql(where_sql, join_sql=join_sql)})
+        GROUP BY model
+        """,
+        params,
+    ).fetchall()
+    return {
+        "usd": sum(row["cost_usd"] for row in rows),
+        "unpriced_messages": sum(row["unpriced_messages"] for row in rows),
+        "unpriced_tokens": sum(row["unpriced_tokens"] for row in rows),
+        "unpriced_models": sorted(
+            row["model"] or "(unknown)" for row in rows if row["unpriced_messages"]
+        ),
     }
 
 
@@ -2079,24 +2189,13 @@ def get_session_stats_from_db(
             GROUP BY workspace
             ORDER BY sessions DESC
         """)
-        by_model_cursor = conn.execute(
-            """
-            SELECT model,
-                   COUNT(*) as messages,
-                   COALESCE(SUM(output_tokens), 0) as tokens
-            FROM messages
-            """
-            + (
-                " JOIN metric_file_scope fs ON fs.file_path = messages.file_path"
-                if file_paths is not None
-                else ""
-            )
-            + """
-            WHERE model IS NOT NULL AND model != ''
-            GROUP BY model
-            ORDER BY messages DESC
-            """
+        message_scope = (
+            " JOIN metric_file_scope fs ON fs.file_path = m.file_path"
+            if file_paths is not None
+            else ""
         )
+        by_model = _priced_model_stats(conn, "", [], message_scope)
+        cost = _cost_query(conn, "", [], message_scope)
         return {
             "input_tokens": row["input_tokens"],
             "output_tokens": row["output_tokens"],
@@ -2121,11 +2220,8 @@ def get_session_stats_from_db(
                 for row in by_workspace_cursor.fetchall()
                 if row["workspace"]
             },
-            "by_model": {
-                row["model"]: {"messages": row["messages"], "tokens": row["tokens"]}
-                for row in by_model_cursor.fetchall()
-                if row["model"]
-            },
+            "by_model": by_model,
+            "cost": cost,
         }
     finally:
         conn.close()

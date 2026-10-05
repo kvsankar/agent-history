@@ -276,6 +276,14 @@ def _append_scope_summary(
     lines.append("")
 
 
+def _format_usd(value: Any) -> str:
+    """Format a dollar amount, e.g. $1,234.50."""
+    try:
+        return f"${float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
 def _format_stat_number(value: Any, *, human: bool = False) -> str:
     try:
         number = float(value)
@@ -361,7 +369,11 @@ def _append_model_stats_group(lines: list[str], stats: StatsDict, *, human: bool
         if isinstance(value, dict):
             messages = _format_stat_number(value.get("messages", 0), human=human)
             tokens = _format_stat_number(value.get("tokens", 0), human=human)
-            lines.append(f"  {model}: {messages} messages, {tokens} tokens")
+            line = f"  {model}: {messages} messages, {tokens} tokens"
+            if "cost_usd" in value:
+                cost = value["cost_usd"]
+                line += ", " + ("not priced" if cost is None else _format_usd(cost))
+            lines.append(line)
         else:
             lines.append(f"  {model}: {value}")
     lines.append("")
@@ -431,6 +443,7 @@ def _append_stats_dashboard(lines: list[str], stats: StatsDict, *, human: bool =
             f"cache read {_format_stat_number(tokens.get('cache_read', 0), human=human)}, "
             f"cache create {_format_stat_number(tokens.get('cache_creation', 0), human=human)}"
         )
+    _append_cost_dashboard(lines, stats, human=human)
 
     by_tool = stats.get("by_tool", {})
     if isinstance(by_tool, dict) and by_tool:
@@ -465,6 +478,21 @@ def _append_stats_dashboard(lines: list[str], stats: StatsDict, *, human: bool =
         )
 
     lines.append("")
+
+
+def _append_cost_dashboard(lines: list[str], stats: StatsDict, *, human: bool = False) -> None:
+    cost = stats.get("cost")
+    if not isinstance(cost, dict):
+        return
+    lines.append(f"Estimated API cost: {_format_usd(cost.get('usd', 0))} (at API list prices)")
+    unpriced_tokens = cost.get("unpriced_tokens") or 0
+    if unpriced_tokens:
+        models = ", ".join(str(model) for model in cost.get("unpriced_models", []))
+        lines.append(
+            f"Not priced: {_format_stat_number(unpriced_tokens, human=human)} tokens in "
+            f"{_format_stat_number(cost.get('unpriced_messages', 0), human=human)} messages"
+            + (f" ({models})" if models else "")
+        )
 
 
 def _append_stats_guidance(
@@ -513,8 +541,10 @@ def _rollup_columns(metadata: dict[str, Any]) -> list[str]:
         columns.extend(["TIME_HMS", "TIME_HOURS", "TIME_SECONDS"])
     if metric in ("tokens", "all"):
         columns.extend(["INPUT_TOKENS", "OUTPUT_TOKENS", "CACHE_READ", "CACHE_CREATE"])
+    if metric == "cost":
+        columns.extend(["COST_USD", "UNPRICED_TOKENS"])
     if metric == "all":
-        columns.extend(["SESSIONS", "MESSAGES"])
+        columns.extend(["COST_USD", "SESSIONS", "MESSAGES"])
     return columns
 
 
@@ -541,6 +571,10 @@ def _rollup_row_values(row: dict[str, Any], metadata: dict[str, Any]) -> list[st
                 _format_stat_number(row.get("cache_creation_tokens", 0), human=human),
             ]
         )
+    if metric in ("cost", "all"):
+        values.append(f"{_numeric_value(row.get('cost_usd')):.2f}")
+    if metric == "cost":
+        values.append(_format_stat_number(row.get("unpriced_tokens", 0), human=human))
     if metric == "all":
         values.extend([str(row.get("sessions", 0)), str(row.get("messages", 0))])
     return values
@@ -560,9 +594,11 @@ def _rollup_total_row(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> d
         "cache_creation_tokens",
         "sessions",
         "messages",
+        "unpriced_tokens",
     ]
     for field in numeric_fields:
         total[field] = int(sum(_numeric_value(row.get(field)) for row in rows))
+    total["cost_usd"] = sum(_numeric_value(row.get("cost_usd")) for row in rows)
 
     total_time = metadata.get("total_time_seconds")
     if (metadata.get("metric") or "all") in {"time", "all"} and total_time is not None:
@@ -590,6 +626,8 @@ def _is_numeric_column(header: str) -> bool:
         "CACHE_CREATE",
         "SESSIONS",
         "MESSAGES",
+        "COST_USD",
+        "UNPRICED_TOKENS",
     }
 
 
@@ -1304,6 +1342,19 @@ class TsvFormatter(DataFormatter):
         for key in ("input", "output", "cache_read", "cache_creation"):
             lines.append(_tsv_row(["token", key, "", "", str(tokens.get(key, 0)), ""]))
 
+    def _append_cost_records(self, lines: list[str], stats: StatsDict) -> None:
+        cost = stats.get("cost")
+        if not isinstance(cost, dict):
+            return
+        usd = _numeric_value(cost.get("usd"))
+        models = ",".join(str(model) for model in cost.get("unpriced_models", []))
+        lines.append(_tsv_row(["cost", "usd", "", "", f"{usd:.2f}", ""]))
+        lines.append(
+            _tsv_row(
+                ["cost", "unpriced_tokens", "", "", str(cost.get("unpriced_tokens", 0)), models]
+            )
+        )
+
     def _stats_section_items(
         self, section: str, values: Any, metadata: dict[str, Any]
     ) -> list[tuple[Any, Any]]:
@@ -1396,6 +1447,7 @@ class TsvFormatter(DataFormatter):
         lines = [_tsv_row(headers)]
         self._append_stats_summary_records(lines, stats)
         self._append_token_records(lines, stats)
+        self._append_cost_records(lines, stats)
         self._append_section_records(lines, stats, metadata, workspace_display_map)
         self._append_time_records(lines, stats)
         return "\n".join(lines)

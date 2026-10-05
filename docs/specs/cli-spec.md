@@ -377,7 +377,7 @@ Stats Options:
   --quiet                         # Suppress sync progress
   --by <dimension>                # Group by (comma-separated): model, tool, day, workspace, home, agent
                                   # Rollup also supports: project, tag, month
-  --metric <metric>                # Rollup metric: time, tokens, all
+  --metric <metric>                # Rollup metric: time, tokens, cost, all
   --top <n>                       # Rollup row limit
   --models                        # Alias for --by model
   --tools                         # Alias for --by tool
@@ -402,10 +402,10 @@ stats [summary] [options]          # Cached dashboard summary
 stats rollup [options]             # Stable tabular rollups
 
 Rollup Options:
-  --metric <time|tokens|all>        # Metric family (default: all)
+  --metric <time|tokens|cost|all>   # Metric family (default: all)
   --by <dims>                      # project/proj, tag, workspace/ws, home, agent, model, day, month
   --top <n>                        # Limit rows
-  --sort <fields>                  # metric/tokens/time/sessions/messages/input/output/cache-read/dims
+  --sort <fields>                  # metric/tokens/time/sessions/messages/input/output/cache-read/cost/dims
   --asc | --desc                   # Sort direction
   -c, --total, --totals            # Explicitly include the default totals row
   --no-total, --no-totals          # Suppress the default totals row
@@ -415,6 +415,10 @@ Time rollup columns:
   TIME_HMS                         # Human-readable total, e.g. 170h 6m 45s
   TIME_HOURS                       # Decimal hours for quick spreadsheet math
   TIME_SECONDS                     # Raw seconds for scripts and exact calculations
+
+Cost rollup columns:
+  COST_USD                         # Estimated cost at API list prices on each message's date
+  UNPRICED_TOKENS                  # Tokens from models with no known price (--metric cost)
 
 Human-readable rollups:
   -H, --human                      # Explicit default: compact token columns with K/M/B
@@ -442,6 +446,9 @@ Discoverability examples:
 
   cagelens stats rollup --metric tokens --by agent,month --sort month,agent --asc
       Sort grouped token rows chronologically, then by agent.
+
+  cagelens stats rollup --metric cost --by month,model
+      Show estimated API cost per model and month.
 ```
 
 ### project
