@@ -107,6 +107,8 @@ def _queue_for_new_reader(store: CatalogStore) -> None:
     So every session file in ``files`` goes to ``pending_sessions`` at its current
     SHA-256, unless it is pending already, and the new version is recorded in the same
     transaction: a sync that stops part way leaves the rest queued for the next sync.
+    Session rows of paths that the current layouts no longer read sessions from are
+    deleted in that transaction too, since no later read would replace them.
     """
     with store.transaction():
         found = store.fetchall(
@@ -125,11 +127,22 @@ def _queue_for_new_reader(store: CatalogStore) -> None:
                     "ON CONFLICT (source, path) DO NOTHING",
                     (source, path, sha256),
                 )
+        _delete_rows_of_non_session_paths(store)
         store.execute(
             "INSERT INTO schema_meta (key, value) VALUES (?, ?) "
             "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
             (_READER_VERSION_KEY, READER_VERSION),
         )
+
+
+def _delete_rows_of_non_session_paths(store: CatalogStore) -> None:
+    rows = store.fetchall(
+        "SELECT DISTINCT x.source, x.path, s.platform FROM sessions x "
+        "JOIN sources s ON s.name = x.source"
+    )
+    for source, path, platform in rows:
+        if session_target(path, platform) is None:
+            store.execute("DELETE FROM sessions WHERE source = ? AND path = ?", (source, path))
 
 
 def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: Path) -> None:

@@ -541,6 +541,23 @@ def test_a_new_reader_keeps_a_pending_files_newer_hash(store, archive):
     assert _rows(store, "SELECT sha256 FROM pending_sessions") == [("newer",)]
 
 
+def test_a_new_reader_deletes_sessions_of_paths_that_are_no_longer_session_files(store, archive):
+    # An older layout read sessions from a path that the current layout does not.
+    journal = ".claude/projects/-home-alex-shop/claude-s1/subagents/workflows/wf_1/journal.jsonl"
+    sync_catalog(store, archive["destination"])
+    with store.transaction():
+        store.execute(
+            "INSERT INTO sessions (source, path, session_id, agent, from_database) "
+            "VALUES ('laptop', ?, 'journal', 'claude', ?)",
+            (journal, False),
+        )
+    _make_rows_stale(store)
+
+    sync_catalog(store, archive["destination"])
+
+    assert _session_ids(store) == ["claude-s1", "codex-s1", "copilot-gone"]
+
+
 def test_a_catalog_with_an_unknown_schema_version_is_refused(store_spec):
     newer = open_store(store_spec)
     with newer.transaction():
