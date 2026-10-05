@@ -6,9 +6,8 @@
 the same way on both whatever the database's locale.
 The catalog holds metadata only, never message text.
 
-Views hold no data, so changing one needs no new schema version: every open replaces them
-(SQLite drops and creates each view; PostgreSQL uses ``CREATE OR REPLACE VIEW``, which
-accepts a changed query as long as the view's columns stay the same).
+Views hold no data, so changing one needs no new schema version: every open drops and
+creates each view, so a view's query and columns can both change.
 """
 
 from __future__ import annotations
@@ -137,11 +136,15 @@ TABLES = (
     )""",
     """CREATE INDEX IF NOT EXISTS sessions_by_id ON sessions (agent, session_id)""",
     """CREATE INDEX IF NOT EXISTS runs_by_source ON runs (source)""",
+    # Session files count messages and a database may count turns, so the largest count
+    # of each kind has its own column.
     """CREATE VIEW IF NOT EXISTS session_copies AS
         SELECT agent, session_id,
                COUNT(DISTINCT source) AS sources,
                COUNT(*) AS copies,
-               MAX(message_count) AS max_messages,
+               MAX(CASE WHEN from_database THEN NULL ELSE message_count END)
+                   AS max_file_messages,
+               MAX(CASE WHEN from_database THEN message_count END) AS max_database_count,
                MAX(last_timestamp) AS last_timestamp
         FROM sessions
         GROUP BY agent, session_id""",
@@ -187,10 +190,7 @@ def statements(dialect: str) -> list[str]:
             sql = sql.replace("{" + name + "}", value)
         if sql.startswith(_CREATE_VIEW):
             view = sql[len(_CREATE_VIEW) :].split()[0]
-            if dialect == "postgres":
-                sql = "CREATE OR REPLACE VIEW " + sql[len(_CREATE_VIEW) :]
-            else:
-                result.append(f"DROP VIEW IF EXISTS {view}")
-                sql = "CREATE VIEW " + sql[len(_CREATE_VIEW) :]
+            result.append(f"DROP VIEW IF EXISTS {view}")
+            sql = "CREATE VIEW " + sql[len(_CREATE_VIEW) :]
         result.append(sql)
     return result

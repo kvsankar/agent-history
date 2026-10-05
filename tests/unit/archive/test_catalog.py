@@ -564,6 +564,44 @@ def _add_copy(store, path, from_database, message_count, last_timestamp=None):
     )
 
 
+def _copies(store):
+    return _rows(
+        store,
+        "SELECT copies, max_file_messages, max_database_count FROM session_copies "
+        "WHERE session_id = 'shared'",
+    )
+
+
+def test_session_copies_keeps_file_message_counts_apart_from_database_counts(store):
+    # A database may count turns and a session file counts messages.
+    with store.transaction():
+        _add_copy(store, "a.db", True, 50)
+        _add_copy(store, "a.jsonl", False, 40)
+
+    assert _copies(store) == [(2, 40, 50)]
+
+
+def test_opening_a_catalog_replaces_a_session_copies_view_with_other_columns(store_spec):
+    old = open_store(store_spec)
+    with old.transaction():
+        old.execute("DROP VIEW session_copies")
+        old.execute(
+            "CREATE VIEW session_copies AS SELECT agent, session_id, "
+            "COUNT(DISTINCT source) AS sources, COUNT(*) AS copies, "
+            "MAX(message_count) AS max_messages, MAX(last_timestamp) AS last_timestamp "
+            "FROM sessions GROUP BY agent, session_id"
+        )
+        _add_copy(old, "a.db", True, 50)
+    old.close()
+
+    reopened = open_store(store_spec)
+
+    try:
+        assert _copies(reopened) == [(1, None, 50)]
+    finally:
+        reopened.close()
+
+
 def _longest_copy(store):
     return _rows(store, "SELECT path FROM session_longest_copy WHERE session_id = 'shared'")
 
