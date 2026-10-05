@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_history.backends.codex import codex_message_to_unified, codex_read_jsonl_messages
+from agent_history.storage import metrics
 
 
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
@@ -265,3 +266,56 @@ def test_codex_unified_tool_records_preserve_call_ids() -> None:
     assert tool_result["tool_result"] == {"tool_call_id": "call-1"}
     assert tool_result["id"] == "item-output-1"
     assert tool_result["parent_id"] == "item-call-1"
+
+
+def _meta(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"timestamp": "2026-06-09T10:00:00.000Z", "type": "session_meta", "payload": payload}
+
+
+def _message(role: str, text: str) -> dict[str, Any]:
+    return {
+        "timestamp": "2026-06-09T10:00:01.000Z",
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": role,
+            "content": [{"type": "input_text", "text": text}],
+        },
+    }
+
+
+SPAWNED = {
+    "id": "thread-child",
+    "source": {"subagent": {"thread_spawn": {"parent_thread_id": "thread-parent"}}},
+}
+REVIEW = {"id": "thread-child", "source": {"subagent": {"other": "guardian"}}}
+
+
+def test_codex_export_names_the_parent_the_stats_reader_names(tmp_path: Path) -> None:
+    """Each message carries the session's parent, however the rollout names it.
+
+    A spawned sub-agent names its parent in source.subagent.thread_spawn;
+    another sub-agent names it only in a later session_meta, which repeats
+    the parent's.
+    """
+    cases = {
+        "spawn source": [_meta(SPAWNED), _message("user", "Go"), _message("assistant", "Done")],
+        "later session_meta": [
+            _meta(REVIEW),
+            _message("user", "Go"),
+            _meta({"id": "thread-parent"}),
+            _message("assistant", "Done"),
+        ],
+    }
+    for name, records in cases.items():
+        session_file = tmp_path / f"rollout-{name.replace(' ', '-')}.jsonl"
+        _write_jsonl(session_file, records)
+
+        messages, _meta_payload = codex_read_jsonl_messages(session_file)
+        session_info, _, _ = metrics._parse_codex_jsonl(session_file)
+
+        assert session_info["parent_session_id"] == "thread-parent", name
+        assert [
+            codex_message_to_unified(message).get("parent_session_id") for message in messages
+        ] == ["thread-parent", "thread-parent"], name
+        assert {message["session_id"] for message in messages} == {"thread-child"}, name

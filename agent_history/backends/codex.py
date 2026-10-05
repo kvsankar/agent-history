@@ -307,24 +307,30 @@ def _codex_has_any(mapping: dict[str, Any], *keys: str) -> bool:
     return any(key in mapping for key in keys)
 
 
+def _codex_session_linkage(identity: CodexSessionMeta) -> dict[str, Any]:
+    """Session-level linkage that every message of a rollout carries.
+
+    ``CodexSessionMeta`` names the parent as the stats reader does: from
+    the first session_meta's parent fields or spawn source, or else from a
+    later session_meta that repeats the parent's.
+    """
+    payload = identity.payload or {}
+    linkage = {
+        "session_id": identity.session_id,
+        "parent_session_id": identity.parent_session_id,
+        "forked_from_id": payload.get("forked_from_id"),
+        "thread_source": payload.get("thread_source"),
+    }
+    return {key: value for key, value in linkage.items() if value}
+
+
 def _codex_record_linkage(
     entry: dict[str, Any],
     payload: dict[str, Any],
-    session_meta: dict[str, Any] | None,
     current_turn_id: str | None,
 ) -> dict[str, Any]:
     """Extract optional Codex linkage metadata from a rollout record."""
     linkage: dict[str, Any] = {}
-
-    if session_meta:
-        if session_id := session_meta.get("id"):
-            linkage["session_id"] = session_id
-        if parent_session_id := session_meta.get("parent_thread_id"):
-            linkage["parent_session_id"] = parent_session_id
-        if forked_from_id := session_meta.get("forked_from_id"):
-            linkage["forked_from_id"] = forked_from_id
-        if thread_source := session_meta.get("thread_source"):
-            linkage["thread_source"] = thread_source
 
     if _codex_has_any(payload, "id"):
         linkage["id"] = payload.get("id")
@@ -378,15 +384,18 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                 elif entry_type in ("turn_context", "event_msg"):
                     current_turn_id = _codex_turn_id(entry_type, payload) or current_turn_id
                 elif entry_type == "response_item":
-                    linkage = _codex_record_linkage(
-                        entry, payload, identity.payload, current_turn_id
-                    )
+                    linkage = _codex_record_linkage(entry, payload, current_turn_id)
                     message = _codex_response_message(entry, payload, linkage, identity)
                     if message is not None:
                         messages.append(message)
     except OSError:
         return [], None
 
+    # The parent can be named after the first messages, so the session's
+    # linkage is added once the whole rollout is read
+    session_linkage = _codex_session_linkage(identity)
+    for message in messages:
+        message.update(session_linkage)
     return messages, identity.payload
 
 
