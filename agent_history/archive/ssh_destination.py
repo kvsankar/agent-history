@@ -1,7 +1,7 @@
 """An archive destination on another host, reached over SSH.
 
 The remote host needs only ``sh`` (with its ``test``/``[`` and ``echo``), ``cat``, ``mkdir``,
-``mv``, ``find``, ``tar``, ``rm`` (which removes only a source's incoming folder and the
+``mv``, ``find``, ``printf``, ``tar``, ``rm`` (which removes only a source's incoming folder and the
 owner file of its lock), ``rmdir`` (which removes the lock folder) and
 ``sync`` (which flushes each write to disk before the run goes on). Each
 operation sends ssh one already-quoted command string: ssh joins its remote arguments with
@@ -104,9 +104,12 @@ class SshDestination(Destination):
 
     def list_files(self, rel_dir: str) -> list[str]:
         path = self._remote(rel_dir)
-        result = self._run(f"test -d {path} || exit 0; cd {path} && find . -type f")
+        # NUL-separated, because a file name can hold a line break of any kind.
+        result = self._run(
+            f"test -d {path} || exit 0; cd {path} && find . -type f -exec printf '%s\\0' {{}} +"
+        )
         self._check(result, f"Listing {rel_dir}")
-        names = result.stdout.decode("utf-8", "surrogateescape").splitlines()
+        names = [raw.decode("utf-8", "surrogateescape") for raw in result.stdout.split(b"\0")]
         return sorted(name[2:] for name in names if name.startswith("./"))
 
     def exists(self, rel: str) -> bool:

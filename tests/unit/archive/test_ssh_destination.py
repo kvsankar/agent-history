@@ -139,6 +139,16 @@ def test_overlapping_run_over_ssh_is_kept_out_by_the_destination_lock(
     assert not (root / "sources" / "src" / "LOCK").exists()
 
 
+def test_list_files_keeps_names_with_line_breaks(remote):
+    dest, root = remote
+    names = ["plain.jsonl", "new\nline.jsonl", "sep\u2028arator.jsonl", "cr\rhere.jsonl"]
+    for name in names:
+        (root / "d" / "sub").mkdir(parents=True, exist_ok=True)
+        (root / "d" / "sub" / name).write_bytes(b"x")
+
+    assert dest.list_files("d") == sorted(f"sub/{name}" for name in names)
+
+
 def test_put_tree_keeps_times(remote, tmp_path):
     dest, root = remote
     staging = tmp_path / "staging"
