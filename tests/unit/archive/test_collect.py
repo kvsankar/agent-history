@@ -203,6 +203,34 @@ def test_missing_state_is_rebuilt_from_manifests(env):
     assert summary.written == 0
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not json",
+        '{"files": {"a.jsonl": {"size": 2, "mtime_ns": 1, "sha256": "", "added_later": 1}}}',
+        '{"files": {"a.jsonl": {"size": 2}}}',
+        '{"files": {"a.jsonl": 5}}',
+        '{"files": []}',
+        '{"log_keys": 5}',
+        "[]",
+    ],
+    ids=["not-json", "new-field", "missing-field", "number", "list", "log-keys", "not-object"],
+)
+def test_a_state_file_of_another_shape_is_rebuilt_with_a_warning(env, capsys, content):
+    from agent_history.archive.state import state_path
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    path = state_path(env["state"], str(env["dest"]), "src")
+    path.write_text(content, encoding="utf-8")
+    capsys.readouterr()
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (summary.written, summary.errors) == (0, 0)
+    assert str(path) in capsys.readouterr().err
+
+
 def test_unmounted_destination_is_refused(env):
     """An empty mount point must not be taken for the archive the state describes."""
     import shutil

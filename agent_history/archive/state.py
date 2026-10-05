@@ -118,19 +118,37 @@ def state_path(state_dir: Path, destination: str, source: str) -> Path:
 
 
 def load_state(path: Path) -> SourceState | None:
+    """The state in ``path``; None when it is missing or cannot be used.
+
+    A state file that cannot be read, is not JSON, or has another shape (for example a
+    field from a newer version) is a damaged cache: the caller rebuilds the state from
+    the manifests, and a warning names the file.
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
-    except (OSError, ValueError):
-        return None  # a damaged cache is rebuilt from the manifests
-    files = {rel: FileState(**value) for rel, value in data.get("files", {}).items()}
-    return SourceState(
-        files=files,
-        log_keys=dict(data.get("log_keys", {})),
-        last_success=data.get("last_success"),
-        last_run_id=data.get("last_run_id"),
-        runs=list(data["runs"]) if isinstance(data.get("runs"), list) else None,
+    except (OSError, ValueError) as exc:
+        _warn_unusable_state(path, exc)
+        return None
+    try:
+        files = {rel: FileState(**value) for rel, value in data.get("files", {}).items()}
+        return SourceState(
+            files=files,
+            log_keys=dict(data.get("log_keys", {})),
+            last_success=data.get("last_success"),
+            last_run_id=data.get("last_run_id"),
+            runs=list(data["runs"]) if isinstance(data.get("runs"), list) else None,
+        )
+    except (TypeError, KeyError, AttributeError, ValueError) as exc:
+        _warn_unusable_state(path, exc)
+        return None
+
+
+def _warn_unusable_state(path: Path, exc: Exception) -> None:
+    sys.stderr.write(
+        f"Warning: the state file {path} cannot be used ({type(exc).__name__}: {exc}); "
+        f"rebuilding it from the archive's manifests\n"
     )
 
 
