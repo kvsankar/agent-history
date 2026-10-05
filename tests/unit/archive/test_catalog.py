@@ -571,25 +571,6 @@ def test_versions_and_gone_files_are_recorded(store, archive):
     ]
 
 
-def test_a_versioned_entry_without_a_version_path_is_an_error_naming_it(store, archive):
-    from agent_history.archive.manifest import decode_manifest, encode_manifest
-
-    archive["claude_file"].write_text('{"type":"summary"}\n', encoding="utf-8")
-    _settle(archive["claude_file"])
-    archive["collect"](hours=1)
-    manifests = sorted((archive["path"] / "archive/sources/laptop/manifests").iterdir())
-    run, entries = decode_manifest(manifests[-1].read_bytes())
-    (versioned,) = [entry for entry in entries if entry.get("action") == "versioned"]
-    del versioned["version_path"]  # a hand-edited or foreign manifest
-    manifests[-1].write_bytes(encode_manifest(run, entries, 3))
-
-    with pytest.raises(ArchiveError) as raised:
-        sync_catalog(store, archive["destination"])
-
-    assert run["run_id"] in str(raised.value)
-    assert versioned["path"] in str(raised.value)
-
-
 def test_session_copies_view_groups_sources(store, archive):
     sync_catalog(store, archive["destination"])
 
@@ -885,3 +866,84 @@ def test_a_catalog_opened_read_only_refuses_writes(store_spec):
                 reader.execute("DELETE FROM sources")
     finally:
         reader.close()
+
+
+# -- a bad manifest stops only its own source ------------------------------------------
+
+
+def _manifests(archive, source="laptop"):
+    return sorted((archive["path"] / f"archive/sources/{source}/manifests").iterdir())
+
+
+def _remove_version_path(entries):
+    (entry,) = [entry for entry in entries if entry.get("action") == "versioned"]
+    del entry["version_path"]
+    return entry["path"]
+
+
+def _remove_file_field(name):
+    def edit(entries):
+        (entry,) = [entry for entry in entries if entry.get("path", "").startswith(".codex/")]
+        del entry[name]
+        return entry["path"]
+
+    return edit
+
+
+def _add_rows_entry_without_table(entries):
+    entries.append({"type": "rows", "path": ".agent/log.db", "export_path": "x", "rows": 3})
+    return ".agent/log.db"
+
+
+# (how to damage a manifest entry, the field it then lacks, which of two runs to damage)
+_MISSING_FIELDS = [
+    (_remove_version_path, "version_path", 1),
+    (_remove_file_field("size"), "size", 0),
+    (_remove_file_field("mtime_ns"), "mtime_ns", 0),
+    (_remove_file_field("sha256"), "sha256", 0),
+    (_add_rows_entry_without_table, "table", 1),
+]
+
+
+@pytest.mark.parametrize(
+    "edit, field, run_index", _MISSING_FIELDS, ids=[case[1] for case in _MISSING_FIELDS]
+)
+def test_a_manifest_entry_without_a_field_is_an_error_for_its_source_only(
+    store, archive, edit, field, run_index
+):
+    from agent_history.archive.manifest import decode_manifest, encode_manifest
+
+    archive["claude_file"].write_text('{"type":"summary"}\n', encoding="utf-8")
+    _settle(archive["claude_file"])
+    archive["collect"](hours=1)
+    _collect_second_source(archive, "nas")  # sorts after laptop
+    manifest = _manifests(archive)[run_index]
+    original = manifest.read_bytes()
+    run, entries = decode_manifest(original)
+    path = edit(entries)  # a hand-edited or foreign manifest
+    manifest.write_bytes(encode_manifest(run, entries, 3))
+
+    summary = sync_catalog(store, archive["destination"])
+
+    (error,) = summary.errors
+    assert all(part in error for part in ("laptop", run["run_id"], path, field))
+    assert _rows(store, "SELECT source, COUNT(*) FROM runs GROUP BY source") == [("nas", 1)]
+    manifest.write_bytes(original)
+
+    fixed = sync_catalog(store, archive["destination"])
+
+    assert fixed.errors == []
+    assert fixed.runs == 2
+    assert _rows(store, "SELECT COUNT(*) FROM runs WHERE source = 'laptop'") == [(2,)]
+
+
+def test_a_damaged_manifest_is_an_error_for_its_source_only(store, archive):
+    _collect_second_source(archive, "nas")
+    (manifest,) = _manifests(archive)
+    manifest.write_bytes(b"not a manifest")
+
+    summary = sync_catalog(store, archive["destination"])
+
+    (error,) = summary.errors
+    assert "laptop" in error and manifest.name in error
+    assert _rows(store, "SELECT source FROM runs") == [("nas",)]

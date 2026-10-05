@@ -6,6 +6,9 @@ file that cannot be read, or whose content does not match its manifest's SHA-256
 in ``pending_sessions`` and read again by every later sync until it succeeds. When the
 reader version recorded in ``schema_meta`` differs from the current one, every catalogued
 session file is queued there too, so rows written by an older reader are replaced.
+
+A source whose manifests cannot be read, or lack a field the catalog records, is
+reported in the summary's errors and left unrecorded; the other sources are synced.
 """
 
 from __future__ import annotations
@@ -84,7 +87,14 @@ def sync_catalog(
     _queue_for_new_reader(store)
     summary = SyncSummary()
     for name in sources or available:
-        _sync_source(store, destination, name, summary, Path(work_dir))
+        try:
+            _sync_source(store, destination, name, summary, Path(work_dir))
+        except ArchiveError as exc:
+            summary.errors.append(f"{name}: {exc}")
+            continue
+        except Exception as exc:  # a defect for one source must not stop the others
+            summary.errors.append(f"{name}: {type(exc).__name__}: {exc}")
+            continue
         summary.sources += 1
     return summary
 
@@ -126,6 +136,10 @@ def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: 
     descriptor = json.loads(destination.read_bytes(f"sources/{name}/SOURCE.json") or b"{}")
     done = {row[0] for row in store.fetchall("SELECT run_id FROM runs WHERE source = ?", (name,))}
     runs = list(read_manifests(destination, name, skip_run_ids=done))
+    # Before anything is written: a bad manifest leaves every new run of the source
+    # unrecorded, so the next sync reads them all again once it is fixed.
+    for run, entries in runs:
+        _check_manifest(run, entries)
     # Files that failed before, then this sync's runs: a newer run's hash replaces a
     # pending one.
     changed: dict[str, str] = dict(
@@ -226,6 +240,36 @@ def _record_run(store, source: str, run: dict, entries: list[dict]) -> None:
             _record_file(store, source, run_id, entry)
 
 
+def _check_manifest(run: dict, entries: list[dict]) -> None:
+    """Raise ArchiveError naming the run, path and field of an entry the catalog cannot record."""
+    run_id = run.get("run_id")
+    for entry in entries:
+        kind = entry.get("type")
+        if kind not in ("file", "rows"):
+            continue
+        path = entry.get("path")
+        if not isinstance(path, str) or not path:
+            raise ArchiveError(f"Run {run_id}'s manifest has a {kind} entry without a path")
+        if kind == "file" and entry.get("action") == "versioned":
+            version_path = entry.get("version_path")
+            if not isinstance(version_path, str) or not version_path:
+                raise ArchiveError(
+                    f"Run {run_id} versions {path} but its manifest gives no version_path"
+                )
+        for name in _required_fields(kind, entry):
+            if entry.get(name) is None:
+                raise ArchiveError(f"Run {run_id}'s manifest gives no {name} for {path}")
+
+
+def _required_fields(kind: str, entry: dict) -> tuple[str, ...]:
+    """The fields, besides the path, that the catalog reads from a manifest entry."""
+    if kind == "rows":
+        return ("export_path", "table") if entry.get("rows") else ()
+    if "action" not in entry:
+        return ("action",)
+    return ("size", "mtime_ns", "sha256") if entry["action"] in _PRESENT else ()
+
+
 def _record_file(store, source: str, run_id: str, entry: dict) -> None:
     path, action = entry["path"], entry["action"]
     if action == "gone":
@@ -261,7 +305,7 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
     )
     if action not in _WRITTEN:
         return
-    kept = f"sources/{source}/{_version_path(run_id, entry)}" if action == "versioned" else None
+    kept = f"sources/{source}/{entry['version_path']}" if action == "versioned" else None
     store.execute(
         "UPDATE file_versions SET superseded_run_id = ?, archive_path = ? "
         "WHERE source = ? AND path = ? AND superseded_run_id IS NULL",
@@ -272,16 +316,6 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
         "superseded_run_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
         (source, path, run_id, entry["sha256"], entry["size"], entry["mtime_ns"], archive_path),
     )
-
-
-def _version_path(run_id: str, entry: dict) -> str:
-    """Where a versioned entry's earlier content was kept, as its manifest says."""
-    version_path = entry.get("version_path")
-    if not isinstance(version_path, str) or not version_path:
-        raise ArchiveError(
-            f"Run {run_id} versions {entry['path']} but its manifest gives no version_path"
-        )
-    return version_path
 
 
 def _record_rows(store, source: str, run_id: str, entry: dict) -> None:
