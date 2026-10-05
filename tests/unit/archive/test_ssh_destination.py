@@ -284,6 +284,50 @@ def test_interrupted_rewrite_over_ssh_keeps_versions_consistent(remote, tmp_path
     assert not (root / "sources" / "src" / "incoming").exists()
 
 
+# Like FAKE_SSH, but the remote login shell is not sh (csh, tcsh or fish, say): it runs only
+# one simple command with single-quoted arguments, here `sh -c '<script>'`.
+FAKE_SSH_OTHER_LOGIN_SHELL = FAKE_SSH.replace(
+    'exec sh -c "$*"',
+    'case "$*" in\n'
+    '  "sh -c \'"*) eval "set -- $*" ;;\n'
+    '  *) echo "login shell cannot parse: $*" >&2; exit 127 ;;\n'
+    "esac\n"
+    '[ $# -eq 3 ] || { echo "not one script: $*" >&2; exit 127; }\n'
+    'exec sh -c "$3"',
+)
+
+
+def test_commands_do_not_depend_on_the_remote_login_shell(tmp_path):
+    ssh = tmp_path / "bin" / "ssh"
+    ssh.parent.mkdir()
+    ssh.write_text(FAKE_SSH_OTHER_LOGIN_SHELL, encoding="utf-8")
+    ssh.chmod(ssh.stat().st_mode | stat.S_IEXEC)
+    root = tmp_path / "remote archive"
+    dest = SshDestination("nas", str(root), ssh=[str(ssh)])
+    home = tmp_path / "home"
+    (home / SESSION).parent.mkdir(parents=True)
+    (home / SESSION).write_bytes(b"a\n")
+    os.utime(home / SESSION, (1_790_000_000, 1_790_000_000))
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    state = tmp_path / "state"
+
+    collect_source(config, "src", state_dir=state, now=T0, destination=dest)
+    (home / SESSION).write_bytes(b"rewritten\n")
+    os.utime(home / SESSION, (1_790_000_100, 1_790_000_100))
+    second = collect_source(
+        config, "src", state_dir=state, now=T0 + timedelta(hours=1), destination=dest
+    )
+
+    assert second.versioned == 1
+    assert verify_source(dest, "src").ok
+    assert not dest.exists("sources/src/LOCK")
+
+
 def test_unsafe_paths_are_refused(remote):
     from agent_history.archive.errors import ArchiveError
 
@@ -292,11 +336,14 @@ def test_unsafe_paths_are_refused(remote):
         dest.write_bytes("../escape", b"x")
 
 
-# Like FAKE_SSH, but each command (and a script read from standard input) is logged.
+# Every remote command is `sh -c '<script>'`; this sets $3 to the script.
+UNWRAP = 'eval "set -- $*"\n'
+
+# Like FAKE_SSH, but each script (and a script read from standard input) is logged.
 FAKE_SSH_LOGGING = FAKE_SSH.replace(
     'exec sh -c "$*"',
-    'printf "%s\\n" "--- $*" >> "$SSH_LOG"\n'
-    'case "$*" in\n  "sh -s") tee -a "$SSH_LOG" | sh -s ;;\n  *) exec sh -c "$*" ;;\nesac',
+    UNWRAP + 'printf "%s\\n" "--- $3" >> "$SSH_LOG"\n'
+    'case "$3" in\n  "sh -s") tee -a "$SSH_LOG" | sh -s ;;\n  *) exec sh -c "$3" ;;\nesac',
 )
 
 
@@ -351,8 +398,8 @@ def test_remote_write_is_flushed_before_the_rename(remote, tmp_path, monkeypatch
 # Like FAKE_SSH, but after a cat the connection stays open until $SSH_RELEASE exists.
 FAKE_SSH_LINGERING = FAKE_SSH.replace(
     'exec sh -c "$*"',
-    'sh -c "$*"; status=$?\n'
-    'case "$*" in\n'
+    UNWRAP + 'sh -c "$3"; status=$?\n'
+    'case "$3" in\n'
     '  cat*) while [ ! -e "$SSH_RELEASE" ]; do sleep 0.05; done ;;\n'
     "esac\n"
     "exit $status",

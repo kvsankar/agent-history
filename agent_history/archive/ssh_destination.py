@@ -5,7 +5,9 @@ The remote host needs only ``sh`` (with its ``test``/``[`` and ``echo``), ``cat`
 owner file of its lock), ``rmdir`` (which removes the lock folder) and
 ``sync`` (which flushes each write to disk before the run goes on). Each
 operation sends ssh one already-quoted command string: ssh joins its remote arguments with
-spaces, so passing them separately would lose the quoting.
+spaces, so passing them separately would lose the quoting. The remote login shell runs
+that string, and it need not be sh (csh, tcsh and fish parse differently), so the string
+is always ``sh -c '<script>'``, which any of them runs as one simple command.
 """
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ class SshDestination(Destination):
         args = [*self.ssh, "-o", "BatchMode=yes"]
         if self.port:
             args += ["-p", str(self.port)]
-        return [*args, self.host, script]
+        return [*args, self.host, f"sh -c {shlex.quote(script)}"]
 
     def _run(self, script: str, data: bytes | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
