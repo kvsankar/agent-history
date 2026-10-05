@@ -93,7 +93,9 @@ class SshDestination(Destination):
         path = self._remote(rel)
         part = self._remote(rel + ".part")
         parent = shlex.quote(f"{self.root}/{rel}".rsplit("/", 1)[0])
-        script = f"mkdir -p {parent} && cat > {part} && mv {part} {path} && sync"
+        # The content reaches the disk before the rename, so the name never shows an
+        # empty or partial file after a power loss.
+        script = f"mkdir -p {parent} && cat > {part} && sync && mv {part} {path} && sync"
         self._check(self._run(script, data), f"Writing {rel}")
 
     def list_files(self, rel_dir: str) -> list[str]:

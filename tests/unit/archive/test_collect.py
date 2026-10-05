@@ -500,6 +500,25 @@ def test_dry_run_does_not_finish_an_interrupted_run(env):
     assert sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*")) == before
 
 
+def test_an_undecodable_pending_manifest_is_discarded(env, capsys):
+    """Placing starts only after the manifest was written whole, so a damaged one placed
+    nothing; it is discarded with a warning instead of failing every later run."""
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    incoming = env["dest"] / "sources" / "src" / "incoming" / "20261002T070000Z-src-aaaa"
+    (incoming / "files").mkdir(parents=True)
+    (incoming / "files" / "stray.jsonl.zst").write_bytes(b"partial")
+    (incoming / "manifest.jsonl.zst").write_bytes(b"\x28\xb5\x2f\xfd cut short")
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert summary.written == 1
+    assert "20261002T070000Z-src-aaaa" in capsys.readouterr().err
+    assert not incoming.parent.exists()
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
 def test_interrupted_append_leaves_the_committed_copy(env):
     _write(env, SESSION, b"a\n", mtime=1_790_000_000)
     _collect(env)

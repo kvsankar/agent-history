@@ -266,6 +266,25 @@ def test_remote_writes_are_flushed_before_the_commit(remote, tmp_path, monkeypat
         assert command.rstrip().endswith("sync"), command
 
 
+def test_remote_write_is_flushed_before_the_rename(remote, tmp_path, monkeypatch):
+    """A rename that reaches the disk before the content can expose an empty file."""
+    dest, _root = remote
+    logging_ssh = tmp_path / "bin" / "ssh-logging"
+    logging_ssh.write_text(FAKE_SSH_LOGGING, encoding="utf-8")
+    logging_ssh.chmod(logging_ssh.stat().st_mode | stat.S_IEXEC)
+    log = tmp_path / "ssh.log"
+    monkeypatch.setenv("SSH_LOG", str(log))
+    logged = SshDestination("nas", dest.root, ssh=[str(logging_ssh)])
+
+    logged.write_bytes("a/b.txt", b"hello")
+
+    (command,) = [c for c in log.read_text(encoding="utf-8").split("--- ")[1:] if "cat >" in c]
+    _mkdir, rest = command.split("cat >", 1)
+    assert "&& sync && mv " in rest, command
+    assert rest.rstrip().endswith("sync"), command
+    assert logged.read_bytes("a/b.txt") == b"hello"
+
+
 # Like FAKE_SSH, but after a cat the connection stays open until $SSH_RELEASE exists.
 FAKE_SSH_LINGERING = FAKE_SSH.replace(
     'exec sh -c "$*"',

@@ -34,6 +34,7 @@ from agent_history.archive.layouts import (
     iter_source_files,
 )
 from agent_history.archive.manifest import (
+    ManifestError,
     committed_run_ids,
     decode_manifest,
     encode_manifest,
@@ -197,7 +198,9 @@ def recover_incoming(destination: Destination, source: str) -> bool:
     """Finish runs that stopped after writing their manifest; drop other incoming files.
 
     Returns True when a run was finished. Called with the source's lock held, so no other
-    run of the source is writing to the incoming folder.
+    run of the source is writing to the incoming folder. A manifest that does not decode
+    was cut short while it was written, and placing starts only after that write, so
+    such a run placed nothing and is dropped with the rest.
     """
     names = destination.list_files(incoming_root(source))
     pending = sorted(
@@ -205,17 +208,25 @@ def recover_incoming(destination: Destination, source: str) -> bool:
         for name in names
         if name.count("/") == 1 and name.endswith(f"/{PENDING_MANIFEST}")
     )
+    finished = False
     for run_id in pending:
         data = destination.read_bytes(f"{incoming_dir(source, run_id)}/{PENDING_MANIFEST}")
         if data is None:
             continue
-        _run, entries = decode_manifest(
-            data, f"The manifest of interrupted run {run_id} in {destination.description}"
-        )
+        try:
+            _run, entries = decode_manifest(
+                data, f"The manifest of interrupted run {run_id} in {destination.description}"
+            )
+        except ManifestError as exc:
+            sys.stderr.write(
+                f"Warning: discarding interrupted run {run_id}, which placed no files: {exc}\n"
+            )
+            continue
         sys.stderr.write(f"Finishing interrupted run {run_id}\n")
         finish_run(destination, source, run_id, entries, incoming_dir(source, run_id))
+        finished = True
     destination.discard_tree(incoming_root(source))
-    return bool(pending)
+    return finished
 
 
 class _Run:
