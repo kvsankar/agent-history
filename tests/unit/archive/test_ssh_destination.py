@@ -201,6 +201,57 @@ def test_a_lock_taken_over_ssh_keeps_out_a_run_on_a_mounted_share(remote):
     assert dest.read_bytes("sources/src/LOCK/owner.json") == b'{"token": "mount"}'
 
 
+# Like ln on a filesystem without hard links, such as exFAT.
+NO_LINKS = """#!/bin/sh
+echo "ln: failed to create hard link: Operation not permitted" >&2
+exit 1
+"""
+
+
+def _remote_with(tmp_path, name, tools=None, prelude=""):
+    """A remote host whose PATH starts with ``tools`` and whose scripts run after ``prelude``."""
+    folder = tmp_path / f"{name}-bin"
+    folder.mkdir()
+    for tool, script in (tools or {}).items():
+        (folder / tool).write_text(script, encoding="utf-8")
+        (folder / tool).chmod(0o755)
+    ssh = tmp_path / f"{name}-ssh"
+    ssh.write_text(
+        FAKE_SSH.replace('exec sh -c "$*"', f'{prelude}PATH={folder}:$PATH exec sh -c "$*"'),
+        encoding="utf-8",
+    )
+    ssh.chmod(0o755)
+    return SshDestination("nas", str(tmp_path / "remote archive"), ssh=[str(ssh)])
+
+
+@pytest.mark.parametrize("tools", [{}, {"ln": NO_LINKS}], ids=["hard-links", "no-hard-links"])
+def test_a_failed_owner_write_leaves_no_lock_over_ssh(tmp_path, tools):
+    """A full disk or quota lets the create succeed and the write fail; no lock remains."""
+    full = _remote_with(tmp_path, "full", tools, prelude="ulimit -f 0; ")
+    roomy = _remote_with(tmp_path, "roomy", tools)
+    lock = tmp_path / "remote archive" / "sources" / "src" / "LOCK"
+
+    with pytest.raises(ArchiveError):
+        full.create_lock("sources/src/LOCK", b'{"token": "a"}')
+
+    assert not (lock / "owner.json").exists()
+    assert roomy.create_lock("sources/src/LOCK", b'{"token": "b"}')
+    assert roomy.read_bytes("sources/src/LOCK/owner.json") == b'{"token": "b"}'
+    roomy.remove_lock("sources/src/LOCK")
+    assert not lock.exists()
+
+
+def test_only_one_run_gets_the_lock_where_the_remote_has_no_hard_links(tmp_path):
+    lax_mkdir = LAX_MKDIR.format(real=shutil.which("mkdir"))
+    dest = _remote_with(tmp_path, "nolinks", {"ln": NO_LINKS, "mkdir": lax_mkdir})
+
+    for _ in range(3):
+        winners, token = _contend(dest, "sources/src/LOCK", 6)
+        assert len(winners) == 1
+        assert token == str(winners[0])
+        dest.remove_lock("sources/src/LOCK")
+
+
 def test_overlapping_run_over_ssh_is_kept_out_by_the_destination_lock(
     remote, tmp_path, monkeypatch
 ):

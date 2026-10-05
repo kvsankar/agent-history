@@ -1,9 +1,10 @@
 """An archive destination on another host, reached over SSH.
 
 The remote host needs only ``sh`` (with its ``test``/``[``, ``echo`` and ``printf``, and
-``set -C``, whose exclusive create takes the lock), ``cat``, ``mkdir``, ``mv``, ``find``,
-``tar``, ``rm`` (which removes only a source's incoming folder and what its lock folder
-holds), ``rmdir`` (which removes the lock folder) and
+``set -C``, whose exclusive create takes the lock where ``ln`` cannot), ``cat``,
+``mkdir``, ``mv``, ``find``, ``tar``, ``ln`` (whose hard link takes the lock; optional),
+``rm`` (which removes only a source's incoming folder and what its lock folder holds),
+``rmdir`` (which removes the lock folder) and
 ``sync`` (which flushes each write to disk before the run goes on). Each
 operation sends ssh one already-quoted command string: ssh joins its remote arguments with
 spaces, so passing them separately would lose the quoting. The remote login shell runs
@@ -13,6 +14,7 @@ is always ``sh -c '<script>'``, which any of them runs as one simple command.
 
 from __future__ import annotations
 
+import secrets
 import shlex
 import subprocess
 import tarfile
@@ -181,26 +183,27 @@ class SshDestination(Destination):
         self._check(self._run(f"rm -rf {path}"), f"Removing {rel}")
 
     def create_lock(self, rel: str, owner: bytes) -> bool:
-        """Create the owner file with the shell's exclusive create, then read it back.
+        """Create the owner file with its whole content in one step, then read it back.
 
-        ``set -C`` makes ``>`` open the file with O_EXCL, so the remote ``mkdir`` need
-        not report a folder that exists (uutils mkdir does not, under a race). The owner
-        is written by the shell's own ``printf`` in the same step; it travels in the
-        script, not on standard input, so a dropped connection cannot cut it short.
+        The owner is written to a temporary file of this call's own, flushed, and linked
+        to the owner file's name with ``ln``. Creating a hard link is atomic and fails
+        when the name exists, so the remote ``mkdir`` need not report a folder that
+        exists (uutils mkdir does not, under a race), and the owner file never exists
+        empty or partial: a write that fails (a full disk or quota) or a run killed
+        during it leaves at most the temporary file, which is no lock.
+
+        Where ``ln`` fails although the name is free (a filesystem without hard links,
+        or no ``ln``), the owner file is created with the shell's exclusive create
+        (``set -C``) and written through the same descriptor, and removed if that write
+        fails. The owner travels in the script, not on standard input, so a dropped
+        connection cannot cut it short.
         """
-        path = self._remote(_check_lock(rel))
-        owner_path = self._remote(f"{rel}/{LOCK_OWNER}")
-        content = shlex.quote(owner.decode("utf-8"))
-        # A run releasing the lock can remove the folder between mkdir and the create.
-        script = (
-            "n=0; while :; do "
-            f"mkdir -p {path} || exit 1; "
-            f"[ -e {owner_path} ] && exit {_EXISTS}; "
-            f"if err=$( (set -C; printf '%s' {content} > {owner_path}) 2>&1 ); then break; fi; "
-            f"[ -e {owner_path} ] && exit {_EXISTS}; "
-            f'n=$((n + 1)); [ "$n" -lt 5 ] || {{ echo "$err" >&2; exit 1; }}; '
-            "done; "
-            f"sync; cat {owner_path}"
+        lock = _check_lock(rel)
+        script = _create_lock_script(
+            folder=self._remote(lock),
+            owner=self._remote(f"{lock}/{LOCK_OWNER}"),
+            tmp=self._remote(f"{lock}/{LOCK_OWNER}.{secrets.token_hex(8)}.tmp"),
+            content=shlex.quote(owner.decode("utf-8")),
         )
         result = self._run(script)
         if result.returncode == _EXISTS:
@@ -295,6 +298,37 @@ class SshDestination(Destination):
     def _read_error(self, rel: str, stderr: list[bytes]) -> ArchiveError:
         message = b"".join(stderr).decode("utf-8", "replace").strip()
         return ArchiveError(f"Reading {rel} failed on {self.host}: {message}")
+
+
+def _create_lock_script(folder: str, owner: str, tmp: str, content: str) -> str:
+    """The remote script of create_lock; every argument is already quoted.
+
+    A run that releases the lock can remove the folder, and the temporary file with it,
+    at any moment, so a failed step is tried again, up to 5 times, unless the owner file
+    exists. Exit status _EXISTS means another run holds the lock.
+    """
+    exclusive_create = (
+        f"(set -C; exec 3> {owner} || exit 1; "
+        f"printf '%s' {content} >&3 || {{ rm -f {owner}; exit 1; }})"
+    )
+    return (
+        "n=0; while :; do "
+        f"mkdir -p {folder} || exit 1; "
+        f"[ -e {owner} ] && exit {_EXISTS}; "
+        f"if err=$( {{ printf '%s' {content} > {tmp} && sync; }} 2>&1 ); then "
+        f"if ln {tmp} {owner} 2>/dev/null; then rm -f {tmp}; break; fi; "
+        f"if [ ! -e {owner} ] && [ -e {tmp} ]; then "  # ln failed, not the race
+        f"rm -f {tmp}; "
+        f"if err=$( {exclusive_create} 2>&1 ); then break; fi; "
+        "fi; "
+        "fi; "
+        f"rm -f {tmp}; "
+        f"[ -e {owner} ] && exit {_EXISTS}; "
+        'n=$((n + 1)); [ "$n" -lt 5 ] || '
+        '{ echo "${err:-could not write the owner file}" >&2; exit 1; }; '
+        "done; "
+        f"sync; cat {owner}"
+    )
 
 
 def _close(process: subprocess.Popen, stdout: IO[bytes], reader: threading.Thread) -> None:
