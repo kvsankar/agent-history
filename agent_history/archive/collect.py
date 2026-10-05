@@ -26,7 +26,12 @@ from typing import Any
 from agent_history.archive.codec import CompressResult, compress_file, hash_file
 from agent_history.archive.config import ArchiveConfig, SourceConfig
 from agent_history.archive.errors import ArchiveError
-from agent_history.archive.layouts import SelectedFile, archive_file_path, iter_source_files
+from agent_history.archive.layouts import (
+    SelectedFile,
+    archive_file_path,
+    is_within,
+    iter_source_files,
+)
 from agent_history.archive.manifest import (
     encode_manifest,
     manifest_path,
@@ -175,12 +180,17 @@ class _Run:
         sorted by path at the end, so manifests do not depend on timing.
         """
         seen = set()
+        unreadable: list[str] = []
         pending: set = set()
         window = self.config.workers * _IN_FLIGHT_PER_WORKER
         pool = ThreadPoolExecutor(max_workers=self.config.workers)
         try:
             for item in iter_source_files(self.source):
                 seen.add(item.rel_path)
+                if item.error is not None:
+                    unreadable.append(item.rel_path)
+                    self._record({"type": "error", "path": item.rel_path, "message": item.error})
+                    continue
                 pending.add(pool.submit(self._safe_process, item, staging))
                 if len(pending) >= window:
                     pending = self._record_done(pending, FIRST_COMPLETED)
@@ -195,7 +205,7 @@ class _Run:
         finally:
             pool.shutdown(wait=True)
         for rel_path, previous in sorted(self.state.files.items()):
-            if rel_path not in seen and not previous.gone:
+            if rel_path not in seen and not previous.gone and not is_within(rel_path, unreadable):
                 self._record({"type": "file", "path": rel_path, "action": "gone"})
         self.summary.entries.sort(key=lambda entry: (entry["path"], entry["type"]))
 

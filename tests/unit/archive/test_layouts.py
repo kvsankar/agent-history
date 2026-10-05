@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from agent_history.archive.config import parse_config
+from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import (
     archive_file_path,
     iter_source_files,
@@ -218,6 +221,90 @@ def test_browser_profiles_are_never_archived(tmp_path):
     _touch(tmp_path, ".copilot/session-state/abc/inuse.41364.lock")
 
     assert set(_selected(_source(tmp_path))) == {f"{base}/screenshot.png"}
+
+
+def _refuse_folder(monkeypatch, folder: Path):
+    """Make listing ``folder`` fail as it does for an unreadable folder."""
+    from agent_history.archive import layouts
+
+    real_scandir = layouts.os.scandir
+
+    def scandir(path):
+        if not isinstance(path, int) and Path(path) == folder:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(layouts.os, "scandir", scandir)
+
+
+def test_unreadable_folder_is_an_error_item_and_the_walk_goes_on(tmp_path, monkeypatch):
+    _touch(tmp_path, ".claude/projects/p/a.jsonl")
+    _touch(tmp_path, ".claude/projects/q/b.jsonl")
+    _touch(tmp_path, ".claude/history.jsonl")
+    _refuse_folder(monkeypatch, tmp_path / ".claude" / "projects" / "p")
+
+    selected = _selected(_source(tmp_path))
+
+    assert set(selected) == {
+        ".claude/projects/p",
+        ".claude/projects/q/b.jsonl",
+        ".claude/history.jsonl",
+    }
+    assert "Permission denied" in selected[".claude/projects/p"].error
+    assert selected[".claude/history.jsonl"].error is None
+
+
+def test_unreadable_agent_root_is_an_error_item(tmp_path, monkeypatch):
+    _touch(tmp_path, ".claude/history.jsonl")
+    _touch(tmp_path, ".codex/history.jsonl")
+    _refuse_folder(monkeypatch, tmp_path / ".claude")
+
+    selected = _selected(_source(tmp_path))
+
+    assert set(selected) == {".claude", ".codex/history.jsonl"}
+    assert selected[".claude"].error
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs POSIX permissions that apply to the user running the tests",
+)
+def test_folder_without_permissions_does_not_abort_the_walk(tmp_path):
+    _touch(tmp_path, ".claude/projects/p/a.jsonl")
+    _touch(tmp_path, ".claude/history.jsonl")
+    locked = tmp_path / ".claude" / "projects" / "p"
+    locked.chmod(0)
+    try:
+        selected = _selected(_source(tmp_path))
+    finally:
+        locked.chmod(0o755)
+
+    assert set(selected) == {".claude/projects/p", ".claude/history.jsonl"}
+    assert selected[".claude/projects/p"].error
+
+
+def test_missing_home_fails(tmp_path):
+    source = _source(tmp_path / "unmounted")
+
+    with pytest.raises(ArchiveError, match="unmounted"):
+        _selected(source)
+
+
+def test_missing_configured_root_fails(tmp_path):
+    _touch(tmp_path, "home/.codex/history.jsonl")
+    entry = {"name": "src", "kind": "live", "platform": "linux", "home": str(tmp_path / "home")}
+    old = {"name": "src", "kind": "live", "platform": "linux"}
+    old["roots"] = {"claude": str(tmp_path / "gone")}
+    source = parse_config({"archive": {"destination": "/d"}, "sources": [entry, old]}).sources[0]
+
+    with pytest.raises(ArchiveError, match="gone"):
+        _selected(source)
+
+
+def test_missing_default_agent_folders_are_skipped(tmp_path):
+    _touch(tmp_path, ".codex/history.jsonl")  # no .claude, .gemini, ... at all
+
+    assert set(_selected(_source(tmp_path))) == {".codex/history.jsonl"}
 
 
 def test_copilot_session_databases_are_snapshots(tmp_path):

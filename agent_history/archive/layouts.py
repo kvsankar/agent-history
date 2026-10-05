@@ -14,7 +14,9 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Pattern
+from typing import TYPE_CHECKING, Iterator, NamedTuple, Pattern
+
+from agent_history.archive.errors import ArchiveError
 
 if TYPE_CHECKING:
     from agent_history.archive.config import SourceConfig, SourcePart
@@ -80,12 +82,14 @@ class AgentLayout:
 
 @dataclass(frozen=True)
 class SelectedFile:
-    """A source file chosen for archiving."""
+    """A source file chosen for archiving, or a path that could not be read."""
 
     rel_path: str  # home-relative, "/"-separated
     path: Path
     agent: str
     database: DatabaseRule | None = None
+    # Set when this path could not be read; nothing at or below it can be judged deleted.
+    error: str | None = None
 
 
 _VSCODE_USER_DIRS = {
@@ -237,13 +241,40 @@ def session_target(rel_path: str, platform: str) -> SessionTarget | None:
 
 
 def iter_source_files(source: SourceConfig) -> Iterator[SelectedFile]:
-    """Yield every file of a source that should be archived, each path once."""
+    """Yield every file of a source that should be archived, each path once.
+
+    A configured home or agent root that is missing or cannot be read raises
+    :class:`ArchiveError`, because walking it would make every file look deleted. A
+    folder inside it that cannot be read is yielded as an item with ``error`` set, whose
+    ``rel_path`` is the folder; the walk goes on with the other folders.
+    """
+    _check_configured_folders(source)
     seen = set()
     for part in source.parts:
         for item in _iter_part(part, source.platform):
             if item.rel_path not in seen:
                 seen.add(item.rel_path)
                 yield item
+
+
+def is_within(rel_path: str, folders) -> bool:
+    """Whether ``rel_path`` is one of ``folders`` or lies inside one of them."""
+    return any(not f or rel_path == f or rel_path.startswith(f + "/") for f in folders)
+
+
+def _check_configured_folders(source: SourceConfig) -> None:
+    for part in source.parts:
+        agents = part.agents or AGENT_NAMES
+        folders = [part.home] if part.home is not None else []
+        folders += [root for agent, root in part.roots.items() if agent in agents]
+        for folder in folders:
+            try:
+                with os.scandir(folder):
+                    pass
+            except OSError as exc:
+                raise ArchiveError(
+                    f"Source {source.name}: cannot read {folder}: {exc.strerror or exc}"
+                ) from exc
 
 
 def _iter_part(part: SourcePart, platform: str) -> Iterator[SelectedFile]:
@@ -269,26 +300,45 @@ def _iter_agent_root(
     part: SourcePart, layout: AgentLayout, abs_root: Path, rel_root: str
 ) -> Iterator[SelectedFile]:
     patterns = list(layout.include) + [rule.pattern for rule in layout.databases]
-    for inner in _walk_matching(abs_root, patterns):
-        if _matches_any(inner, layout.exclude) or not _name_allowed(inner):
+    for found in _walk_matching(abs_root, patterns):
+        if isinstance(found, _Unreadable):
+            rel_path = f"{rel_root}/{found.rel_path}" if found.rel_path else rel_root
+            if not _excludes_folder(found.rel_path, layout.exclude, rel_path, part.exclude):
+                yield SelectedFile(
+                    rel_path, abs_root / found.rel_path, layout.name, error=found.message
+                )
             continue
-        rel_path = f"{rel_root}/{inner}"
+        if _matches_any(found, layout.exclude) or not _name_allowed(found):
+            continue
+        rel_path = f"{rel_root}/{found}"
         if _matches_any(rel_path, part.exclude):
             continue
         database = next(
-            (rule for rule in layout.databases if _compiled(rule.pattern).match(inner)), None
+            (rule for rule in layout.databases if _compiled(rule.pattern).match(found)), None
         )
-        yield SelectedFile(rel_path, abs_root / inner, layout.name, database)
+        yield SelectedFile(rel_path, abs_root / found, layout.name, database)
 
 
 def _iter_config_includes(part: SourcePart, platform: str) -> Iterator[SelectedFile]:
     home = part.home
     if home is None:
         return
-    for rel_path in _walk_matching(home, list(part.include)):
-        if not _name_allowed(rel_path) or _matches_any(rel_path, part.exclude):
+    for found in _walk_matching(home, list(part.include)):
+        if isinstance(found, _Unreadable):
+            if not _excludes_folder(found.rel_path, (), found.rel_path, part.exclude):
+                agent = _agent_for(found.rel_path, platform)
+                yield SelectedFile(
+                    found.rel_path, home / found.rel_path, agent, error=found.message
+                )
             continue
-        yield SelectedFile(rel_path, home / rel_path, _agent_for(rel_path, platform))
+        if not _name_allowed(found) or _matches_any(found, part.exclude):
+            continue
+        yield SelectedFile(found, home / found, _agent_for(found, platform))
+
+
+def _excludes_folder(inner: str, layout_exclude, rel_path: str, part_exclude) -> bool:
+    """Whether exclusions drop everything inside a folder, so it need not be read."""
+    return _matches_any(inner + "/", layout_exclude) or _matches_any(rel_path + "/", part_exclude)
 
 
 def _agent_for(rel_path: str, platform: str) -> str:
@@ -307,60 +357,86 @@ def _name_allowed(rel_path: str) -> bool:
     return not any(fnmatch.fnmatchcase(name, pattern) for pattern in COMMON_EXCLUDES)
 
 
-def _walk_matching(root: Path, patterns: list[str]) -> Iterator[str]:
+class _Unreadable(NamedTuple):
+    """A folder or entry under the walk root that could not be read."""
+
+    rel_path: str  # "/"-separated, relative to the walk root; "" for the root itself
+    message: str
+
+
+def _walk_matching(root: Path, patterns: list[str]) -> Iterator[str | _Unreadable]:
     """Yield "/"-separated paths under ``root`` that match any pattern, without symlinks.
 
     Each pattern is followed segment by segment, so a pattern only descends into folders
-    it can match; only a ``**`` segment walks a whole subtree.
+    it can match; only a ``**`` segment walks a whole subtree. A folder that cannot be
+    read is yielded once as :class:`_Unreadable`; a folder that does not exist is empty.
     """
     found = set()
     for pattern in patterns:
         regex = _compiled(pattern)
-        for rel_path in _walk_segments(root, "", pattern.split("/")):
-            if rel_path not in found and regex.match(rel_path):
-                found.add(rel_path)
-                yield rel_path
+        for item in _walk_segments(root, "", pattern.split("/"), top=True):
+            if isinstance(item, _Unreadable):
+                if item.rel_path not in found:
+                    found.add(item.rel_path)
+                    yield item
+            elif item not in found and regex.match(item):
+                found.add(item)
+                yield item
 
 
-def _walk_segments(root: Path, rel_dir: str, segments: list[str]) -> Iterator[str]:
+def _walk_segments(
+    root: Path, rel_dir: str, segments: list[str], top: bool = False
+) -> Iterator[str | _Unreadable]:
+    """Walk ``rel_dir`` for ``segments``; folders below the top are checked for profiles."""
+    entries = _scan(root, rel_dir)
+    if isinstance(entries, _Unreadable):
+        yield entries
+        return
+    if not top and _is_browser_profile(entries):
+        return
     segment, rest = segments[0], segments[1:]
     if segment == "**":
-        yield from _walk_tree(root, rel_dir)
-        return
-    matcher = _compiled(segment)
-    for entry in _scan(root / rel_dir if rel_dir else root):
-        if not matcher.match(entry.name) or entry.is_symlink():
+        rest = segments
+    matcher = None if segment == "**" else _compiled(segment)
+    for entry in entries:
+        if matcher is not None and not matcher.match(entry.name):
             continue
         rel_path = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
-        if rest and entry.is_dir(follow_symlinks=False):
-            if not _is_browser_profile(Path(entry.path)):
-                yield from _walk_segments(root, rel_path, rest)
-        elif not rest and entry.is_file(follow_symlinks=False):
+        kind = _entry_kind(entry)
+        if kind == "error":
+            yield _Unreadable(rel_path, f"cannot read {entry.path}")
+        elif kind == "dir" and rest:
+            yield from _walk_segments(root, rel_path, rest)
+        elif kind == "file" and (not rest or segment == "**"):
             yield rel_path
 
 
-def _walk_tree(root: Path, rel_dir: str) -> Iterator[str]:
-    for entry in _scan(root / rel_dir if rel_dir else root):
+def _entry_kind(entry: os.DirEntry) -> str:
+    """ "dir", "file", "other" (symbolic links too, which are never followed) or "error"."""
+    try:
         if entry.is_symlink():
-            continue
-        rel_path = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
+            return "other"
         if entry.is_dir(follow_symlinks=False):
-            if not _is_browser_profile(Path(entry.path)):
-                yield from _walk_tree(root, rel_path)
-        elif entry.is_file(follow_symlinks=False):
-            yield rel_path
+            return "dir"
+        return "file" if entry.is_file(follow_symlinks=False) else "other"
+    except OSError:
+        return "error"
 
 
-def _is_browser_profile(folder: Path) -> bool:
-    return any((folder / marker).exists() for marker in BROWSER_PROFILE_MARKERS)
+def _is_browser_profile(entries: list[os.DirEntry]) -> bool:
+    names = {entry.name.lower() for entry in entries}
+    return any(marker.lower() in names for marker in BROWSER_PROFILE_MARKERS)
 
 
-def _scan(folder: Path) -> list[os.DirEntry]:
+def _scan(root: Path, rel_dir: str) -> list[os.DirEntry] | _Unreadable:
+    folder = root / rel_dir if rel_dir else root
     try:
         with os.scandir(folder) as entries:
             return sorted(entries, key=lambda entry: entry.name)
-    except (FileNotFoundError, NotADirectoryError, PermissionError):
-        return []
+    except (FileNotFoundError, NotADirectoryError):
+        return []  # the agent has no such folder, or it was deleted during the walk
+    except OSError as exc:
+        return _Unreadable(rel_dir, str(exc))
 
 
 def _matches_any(rel_path: str, patterns) -> bool:
