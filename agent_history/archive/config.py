@@ -209,7 +209,9 @@ def _source_part(entry: dict[str, Any], name: str) -> SourcePart:
     for agent in list(roots) + list(entry.get("agents") or []):
         if agent not in AGENT_NAMES:
             raise ArchiveConfigError(f"Source {name}: unknown agent {agent}")
-    for pattern in list(entry.get("include") or ()) + list(entry.get("exclude") or ()):
+    include = _patterns(entry, "include", name)
+    exclude = _patterns(entry, "exclude", name)
+    for pattern in include + exclude:
         parts = pattern.replace("\\", "/").split("/")
         if pattern.startswith(("/", "\\")) or ".." in parts or ":" in parts[0]:
             raise ArchiveConfigError(
@@ -220,6 +222,22 @@ def _source_part(entry: dict[str, Any], name: str) -> SourcePart:
         home=Path(home).expanduser() if home else None,
         roots={agent: Path(root).expanduser() for agent, root in roots.items()},
         agents=None if agents is None else tuple(agents),
-        include=tuple(entry.get("include") or ()),
-        exclude=tuple(entry.get("exclude") or ()),
+        include=include,
+        exclude=exclude,
     )
+
+
+def _patterns(entry: dict[str, Any], key: str, name: str) -> tuple[str, ...]:
+    """The ``include`` or ``exclude`` patterns of an entry: a list of strings, or absent.
+
+    A single string is refused rather than read as a list of its characters.
+    """
+    value = entry.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ArchiveConfigError(
+            f'Source {name}: {key} must be a list of glob patterns, such as ["notes/**"]; '
+            f"got {json.dumps(value)}"
+        )
+    return tuple(value)

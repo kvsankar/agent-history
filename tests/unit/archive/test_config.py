@@ -103,6 +103,23 @@ def test_invalid_sources_are_rejected(source, message):
         parse_config(_config(sources=[source]))
 
 
+@pytest.mark.parametrize("key", ["include", "exclude"])
+@pytest.mark.parametrize("value", ["notes.md", ".claude/**", ["notes.md", 5], {"a": 1}, 5])
+def test_include_and_exclude_must_be_lists_of_patterns(key, value):
+    source = {"name": "x", "kind": "live", "platform": "linux", "home": "/a", key: value}
+
+    with pytest.raises(ArchiveConfigError, match=f"Source x: {key} must be a list of"):
+        parse_config(_config(sources=[source]))
+
+
+def test_include_and_exclude_may_be_empty_or_absent():
+    source = {"name": "x", "kind": "live", "platform": "linux", "home": "/a", "include": []}
+
+    (part,) = parse_config(_config(sources=[source])).sources[0].parts
+
+    assert (part.include, part.exclude) == ((), ())
+
+
 def test_destination_is_required():
     with pytest.raises(ArchiveConfigError, match="destination"):
         parse_config(_config(archive={}))
