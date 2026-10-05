@@ -199,6 +199,29 @@ def test_an_unexpected_failure_does_not_stop_the_other_sources(setup, capsys, mo
     assert results["other"]["written"] == 1
 
 
+def test_collect_to_another_destination_keeps_its_own_state(setup, capsys):
+    """--destination must not use, or change, the configured destination's state."""
+    config = setup["config"]
+    other = setup["tmp"] / "other-archive"
+    assert main(["archive", "collect", "--config", config]) == 0
+    capsys.readouterr()
+
+    assert main(["archive", "collect", "--config", config, "--destination", str(other)]) == 0
+    assert "laptop: 1 written" in capsys.readouterr().out
+    session = setup["home"] / SESSION
+    session.write_text('{"type":"user"}\n{"type":"assistant"}\n', encoding="utf-8")
+    assert main(["archive", "collect", "--config", config]) == 0
+    assert "laptop: 1 written" in capsys.readouterr().out
+
+    for destination in (setup["tmp"] / "archive", other):
+        assert (
+            main(["archive", "verify", "--config", config, "--destination", str(destination)]) == 0
+        )
+    manifests = setup["tmp"] / "archive" / "sources" / "laptop" / "manifests"
+    assert len(list(manifests.iterdir())) == 2
+    assert len(list((other / "sources" / "laptop" / "manifests").iterdir())) == 1
+
+
 def test_unknown_source_is_an_error(setup, capsys):
     assert main(["archive", "collect", "--config", setup["config"], "--source", "nope"]) == 1
     assert "Unknown source: nope" in capsys.readouterr().err

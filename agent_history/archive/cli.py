@@ -104,7 +104,7 @@ def _collect(args: argparse.Namespace) -> int:
     from agent_history.archive import collect as collect_module
 
     config, names = _load(args)
-    destination = _destination(args, config)
+    _destination(args, config)  # an invalid destination fails before any source runs
     results: list[dict[str, Any]] = []
     failed = errors = False
     for name in names:
@@ -115,7 +115,8 @@ def _collect(args: argparse.Namespace) -> int:
                 state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
                 force=args.force,
                 dry_run=args.dry_run,
-                destination=destination,
+                # As written, so --destination keeps its own state and lock.
+                destination=args.destination or config.destination,
             )
         except collect_module.CollectLockedError:
             summary = collect_module.RunSummary("", name, skipped_reason="locked")

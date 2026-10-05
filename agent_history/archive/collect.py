@@ -99,15 +99,24 @@ def collect_source(
     now: datetime | None = None,
     force: bool = False,
     dry_run: bool = False,
-    destination: Destination | None = None,
+    destination: Destination | str | None = None,
 ) -> RunSummary:
-    """Run the collector once for one source."""
+    """Run the collector once for one source.
+
+    ``destination`` overrides the configured one, as a path or URL or as an open
+    destination. The state and the lock are kept per destination: per path or URL as
+    written, or per description for an open destination.
+    """
     source = config.source(source_name)
     state_dir = Path(state_dir) if state_dir else default_state_dir()
     now = now or datetime.now(timezone.utc)
-    destination = destination or open_destination(config.destination)
-    with source_lock(state_dir, config.destination, source_name):
-        run = _Run(config, source, destination, state_dir, now, dry_run)
+    if destination is None or isinstance(destination, str):
+        key = destination or config.destination
+        destination = open_destination(key)
+    else:
+        key = destination.description
+    with source_lock(state_dir, key, source_name):
+        run = _Run(config, source, destination, state_dir, now, dry_run, key)
         if not force and run.too_soon():
             return RunSummary(run.run_id, source_name, skipped_reason="min_interval")
         return run.execute()
@@ -230,14 +239,14 @@ def recover_incoming(destination: Destination, source: str) -> bool:
 
 
 class _Run:
-    def __init__(self, config, source: SourceConfig, destination, state_dir, now, dry_run):
+    def __init__(self, config, source: SourceConfig, destination, state_dir, now, dry_run, key):
         self.config = config
         self.source = source
         self.destination = destination
         self.now = now
         self.dry_run = dry_run
         self.run_id = ""  # named once the archive's runs are known (_set_run_id)
-        self.state_file = state_path(state_dir, config.destination, source.name)
+        self.state_file = state_path(state_dir, key, source.name)
         loaded = load_state(self.state_file)
         self.state = loaded or SourceState()
         if loaded is None:  # rebuilt from the manifests, so min_interval_hours can apply
