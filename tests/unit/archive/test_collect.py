@@ -222,6 +222,54 @@ def test_unmounted_destination_is_refused(env):
     assert list(env["dest"].iterdir()) == []
 
 
+def _record_pings(monkeypatch) -> list[str]:
+    from agent_history.archive import collect as collect_module
+
+    pings: list[str] = []
+
+    class _Response:
+        def close(self):
+            pass
+
+    def urlopen(url, timeout=None):
+        pings.append(url)
+        return _Response()
+
+    monkeypatch.setattr(collect_module.urllib.request, "urlopen", urlopen)
+    return pings
+
+
+HEALTH = "https://health.example/ping/0000"
+
+
+def test_a_refused_destination_sends_the_failure_ping(env, monkeypatch):
+    import shutil
+
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    config = _config(env, health_url=HEALTH)
+    pings = _record_pings(monkeypatch)
+    _collect(env, config=config)
+    shutil.move(str(env["dest"]), str(env["dest"].with_name("real")))
+    env["dest"].mkdir()  # the mount point of an unmounted network share
+    pings.clear()
+
+    with pytest.raises(ArchiveError, match="mounted"):
+        _collect(env, now=T0 + timedelta(hours=1), config=config)
+
+    assert pings == [f"{HEALTH}/start", f"{HEALTH}/fail"]
+
+
+def test_a_successful_run_sends_start_and_success_pings(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    pings = _record_pings(monkeypatch)
+
+    _collect(env, config=_config(env, health_url=HEALTH))
+
+    assert pings == [f"{HEALTH}/start", HEALTH]
+
+
 @pytest.mark.parametrize("state", ["kept", "rebuilt"])
 def test_run_with_errors_does_not_delay_the_next_run(env, monkeypatch, state):
     """min_interval_hours counts from the last run without errors, so failures are retried."""

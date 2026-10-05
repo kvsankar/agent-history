@@ -320,14 +320,16 @@ class _Run:
         return self.now - last < timedelta(hours=hours)
 
     def execute(self) -> RunSummary:
-        self._prepare_destination()
         if not self.dry_run:
             self._ping("/start")
-            self.destination.write_bytes(
-                f"sources/{self.source.name}/SOURCE.json", self._descriptor()
-            )
-        self._clear_work()
         try:
+            # Inside the try, so a refused destination also sends the failure request.
+            self._prepare_destination()
+            if not self.dry_run:
+                self.destination.write_bytes(
+                    f"sources/{self.source.name}/SOURCE.json", self._descriptor()
+                )
+            self._clear_work()
             with tempfile.TemporaryDirectory(prefix="staging-", dir=self.work_root) as staging:
                 self._scan(Path(staging))
                 if not self.dry_run:
