@@ -109,8 +109,8 @@ def _queue_for_new_reader(store: CatalogStore) -> None:
     So every session file in ``files`` goes to ``pending_sessions`` at its current
     SHA-256, unless it is pending already, and the new version is recorded in the same
     transaction: a sync that stops part way leaves the rest queued for the next sync.
-    Session rows of paths that the current layouts no longer read sessions from are
-    deleted in that transaction too, since no later read would replace them.
+    Session and pending rows of paths that the current layouts no longer read sessions
+    from are deleted in that transaction too, since no later read would replace them.
     """
     with store.transaction():
         found = store.fetchall(
@@ -139,12 +139,19 @@ def _queue_for_new_reader(store: CatalogStore) -> None:
 
 def _delete_rows_of_non_session_paths(store: CatalogStore) -> None:
     rows = store.fetchall(
-        "SELECT DISTINCT x.source, x.path, s.platform FROM sessions x "
+        "SELECT x.source, x.path, s.platform FROM (SELECT source, path FROM sessions "
+        "UNION SELECT source, path FROM pending_sessions) x "
         "JOIN sources s ON s.name = x.source"
     )
     for source, path, platform in rows:
         if session_target(path, platform) is None:
-            store.execute("DELETE FROM sessions WHERE source = ? AND path = ?", (source, path))
+            _delete_path_rows(store, source, path)
+
+
+def _delete_path_rows(store: CatalogStore, source: str, path: str) -> None:
+    """Delete a path's session rows and its pending entry (call inside a transaction)."""
+    for table in ("pending_sessions", "sessions"):
+        store.execute(f"DELETE FROM {table} WHERE source = ? AND path = ?", (source, path))
 
 
 def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: Path) -> None:
@@ -157,9 +164,7 @@ def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: 
         _check_manifest(run, entries)
     # Files that failed before, then this sync's runs: a newer run's hash replaces a
     # pending one.
-    changed: dict[str, str] = dict(
-        store.fetchall("SELECT path, sha256 FROM pending_sessions WHERE source = ?", (name,))
-    )
+    changed = _pending_session_files(store, name, descriptor.get("platform", "linux"))
     for _run, entries in runs:
         for entry in entries:
             if entry.get("type") == "file" and entry.get("action") in _WRITTEN:
@@ -172,6 +177,23 @@ def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: 
             _upsert_source(store, name, descriptor, run)
             _record_run(store, name, run, entries)
         summary.runs += 1
+
+
+def _pending_session_files(store, source: str, platform: str) -> dict[str, str]:
+    """The source's pending session files and their SHA-256s.
+
+    A pending path that the current layouts read no sessions from is forgotten with its
+    session rows: no later read would replace them or clear it.
+    """
+    pending: dict[str, str] = {}
+    rows = store.fetchall("SELECT path, sha256 FROM pending_sessions WHERE source = ?", (source,))
+    for path, sha256 in rows:
+        if session_target(path, platform) is not None:
+            pending[path] = sha256
+            continue
+        with store.transaction():
+            _delete_path_rows(store, source, path)
+    return pending
 
 
 def _sync_sessions(

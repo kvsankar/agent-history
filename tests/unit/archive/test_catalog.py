@@ -700,6 +700,38 @@ def test_a_catalog_that_holds_compaction_sessions_loses_them_on_its_next_sync(st
     assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
 
 
+_JOURNAL = ".claude/projects/-home-alex-shop/claude-s1/subagents/workflows/wf_1/journal.jsonl"
+
+
+def _add_rows_of_a_former_session_file(store):
+    """Pending and session rows that an older layout wrote for a path it read sessions from."""
+    with store.transaction():
+        store.execute(
+            "INSERT INTO pending_sessions (source, path, sha256, error_type) "
+            "VALUES ('laptop', ?, 'abc', 'OSError')",
+            (_JOURNAL,),
+        )
+        store.execute(
+            "INSERT INTO sessions (source, path, session_id, agent, from_database) "
+            "VALUES ('laptop', ?, 'journal', 'claude', ?)",
+            (_JOURNAL, False),
+        )
+
+
+@pytest.mark.parametrize("new_reader", [True, False], ids=["new-reader", "same-reader"])
+def test_a_pending_path_that_is_no_longer_a_session_file_is_forgotten(store, archive, new_reader):
+    sync_catalog(store, archive["destination"])
+    _add_rows_of_a_former_session_file(store)
+    if new_reader:
+        _make_rows_stale(store)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
+    assert _session_ids(store) == ["claude-s1", "codex-s1", "copilot-gone"]
+
+
 def test_a_catalog_with_an_unknown_schema_version_is_refused(store_spec):
     newer = open_store(store_spec)
     with newer.transaction():
