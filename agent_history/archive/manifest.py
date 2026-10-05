@@ -49,16 +49,29 @@ def decode_manifest(data: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return records[0], records[1:]
 
 
+def committed_run_ids(destination: Destination, source: str) -> list[str]:
+    """Ids of the runs of a source that have a manifest in the archive, oldest first."""
+    return sorted(
+        name[: -len(MANIFEST_SUFFIX)]
+        for name in destination.list_files(manifests_dir(source))
+        if name.endswith(MANIFEST_SUFFIX) and "/" not in name
+    )
+
+
+def read_manifest(
+    destination: Destination, source: str, run_id: str
+) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    data = destination.read_bytes(manifest_path(source, run_id))
+    return decode_manifest(data) if data is not None else None
+
+
 def read_manifests(
     destination: Destination, source: str, skip_run_ids: Collection[str] = ()
 ) -> Iterator[tuple[dict[str, Any], list[dict[str, Any]]]]:
     """Yield (run, entries) for every manifest of a source, oldest first."""
-    names = sorted(
-        name
-        for name in destination.list_files(manifests_dir(source))
-        if name.endswith(MANIFEST_SUFFIX) and name[: -len(MANIFEST_SUFFIX)] not in skip_run_ids
-    )
-    for name in names:
-        data = destination.read_bytes(f"{manifests_dir(source)}/{name}")
-        if data is not None:
-            yield decode_manifest(data)
+    for run_id in committed_run_ids(destination, source):
+        if run_id in skip_run_ids:
+            continue
+        manifest = read_manifest(destination, source, run_id)
+        if manifest is not None:
+            yield manifest

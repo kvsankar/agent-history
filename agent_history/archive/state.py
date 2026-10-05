@@ -1,7 +1,9 @@
 """Per-source collector state and the lock that keeps runs of one source apart.
 
 The state file is a local cache of what the archive already holds for a source. The
-manifests in the archive are the authority; a missing state file is rebuilt from them.
+manifests in the archive are the authority: a missing state file is rebuilt from them, and
+each run applies the manifests the state does not include yet. The state lists the runs it
+includes, so a run can tell when the archive lacks one of them.
 """
 
 from __future__ import annotations
@@ -40,14 +42,30 @@ class SourceState:
     log_keys: dict[str, Any] = field(default_factory=dict)  # "<path>::<table>" -> last key
     last_success: str | None = None
     last_run_id: str | None = None
+    # Ids of the runs whose manifests this state includes. None for a state file written
+    # before the list existed; such a state includes every run up to ``last_run_id``.
+    runs: list[str] | None = field(default_factory=list)
 
     def apply_manifest(self, run: dict[str, Any], entries: list[dict[str, Any]]) -> None:
         """Update this state with one run's manifest."""
         for entry in entries:
             _apply_entry(self, entry)
         self.last_run_id = run.get("run_id")
+        if self.runs is not None and self.last_run_id and self.last_run_id not in self.runs:
+            self.runs.append(self.last_run_id)
         if run.get("started_at"):
             self.last_success = run["started_at"]
+
+    def has_history(self) -> bool:
+        """True when the state records any run to its destination."""
+        return bool(self.last_run_id or self.runs or self.files or self.log_keys)
+
+    def applied_runs(self, committed: list[str]) -> set[str]:
+        """The ids among ``committed`` that this state already includes."""
+        if self.runs is not None:
+            return set(self.runs)
+        last = self.last_run_id
+        return {run_id for run_id in committed if last and run_id <= last}
 
 
 def _apply_entry(state: SourceState, entry: dict[str, Any]) -> None:
@@ -97,6 +115,7 @@ def load_state(path: Path) -> SourceState | None:
         log_keys=dict(data.get("log_keys", {})),
         last_success=data.get("last_success"),
         last_run_id=data.get("last_run_id"),
+        runs=list(data["runs"]) if isinstance(data.get("runs"), list) else None,
     )
 
 
@@ -107,6 +126,7 @@ def save_state(path: Path, state: SourceState) -> None:
         "log_keys": state.log_keys,
         "last_success": state.last_success,
         "last_run_id": state.last_run_id,
+        "runs": state.runs,
     }
     tmp = path.with_name(path.name + ".part")
     tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")

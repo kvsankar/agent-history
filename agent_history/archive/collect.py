@@ -33,10 +33,11 @@ from agent_history.archive.layouts import (
     iter_source_files,
 )
 from agent_history.archive.manifest import (
+    committed_run_ids,
     encode_manifest,
     manifest_path,
     new_run_id,
-    read_manifests,
+    read_manifest,
     run_stamp,
 )
 from agent_history.archive.state import (
@@ -108,15 +109,17 @@ def collect_source(
         return run.execute()
 
 
-def check_archive_format(destination: Destination, create: bool) -> None:
+def check_archive_format(destination: Destination, create: bool) -> bool:
+    """Check ARCHIVE.json; create it when missing and ``create``. False when it is missing."""
     data = destination.read_bytes("ARCHIVE.json")
     if data is None:
         if create:
             destination.write_bytes("ARCHIVE.json", json.dumps({"format": ARCHIVE_FORMAT}).encode())
-        return
+        return False
     found = json.loads(data.decode("utf-8")).get("format")
     if found != ARCHIVE_FORMAT:
         raise ArchiveError(f"Archive format {found} is not supported (expected {ARCHIVE_FORMAT})")
+    return True
 
 
 class _Run:
@@ -128,18 +131,74 @@ class _Run:
         self.dry_run = dry_run
         self.run_id = new_run_id(now, source.name)
         self.state_file = state_path(state_dir, config.destination, source.name)
-        self.state = load_state(self.state_file) or self._rebuild_state()
+        loaded = load_state(self.state_file)
+        self.state = loaded or SourceState()
+        if loaded is None:  # rebuilt from the manifests, so min_interval_hours can apply
+            self._reconcile(committed_run_ids(destination, source.name))
         self.summary = RunSummary(self.run_id, source.name, dry_run=dry_run)
         self.moves: list[tuple[str, str]] = []
         self.staged_bytes = 0
         # On disk next to the state, never the system temp folder (often a small tmpfs).
         self.work_root = self.state_file.parent / "work"
 
-    def _rebuild_state(self) -> SourceState:
-        state = SourceState()
-        for run, entries in read_manifests(self.destination, self.source.name):
-            state.apply_manifest(run, entries)
-        return state
+    # -- the state against the archive ------------------------------------------------
+
+    def _prepare_destination(self) -> None:
+        """Refuse a destination that does not hold what the state says, then catch up.
+
+        A network mount that is not mounted looks like an empty folder, and a restored
+        archive can be older than the state. Writing into either would record files as
+        archived that the real archive does not hold, so the run stops instead.
+        """
+        committed = committed_run_ids(self.destination, self.source.name)
+        has_format = check_archive_format(self.destination, create=False)
+        if not has_format and (committed or self._destination_has_history()):
+            raise ArchiveError(
+                f"The archive at {self.destination.description} has no ARCHIVE.json, but "
+                f"earlier runs wrote to it. Check that the destination is mounted. If the "
+                f"archive was emptied on purpose, delete the state folder "
+                f"{self.state_file.parent} to start again."
+            )
+        lost = sorted(set(self.state.applied_runs(committed)) - set(committed))
+        if self.state.runs is None and self.state.last_run_id not in (None, *committed):
+            lost = [str(self.state.last_run_id)]
+        if lost:
+            raise ArchiveError(
+                f"The archive at {self.destination.description} lacks {len(lost)} run "
+                f"manifest(s) that the local state records, such as {lost[-1]}. The "
+                f"destination may not be mounted, or may be an older copy. If the archive "
+                f"was restored on purpose, delete the state file {self.state_file}; it is "
+                f"then rebuilt from the archive's manifests."
+            )
+        if not has_format and not self.dry_run:
+            check_archive_format(self.destination, create=True)
+        self._reconcile(committed)
+
+    def _destination_has_history(self) -> bool:
+        """True when this or another source's state records runs to this destination."""
+        if self.state.has_history():
+            return True
+        for path in self.state_file.parent.glob("*.json"):
+            other = load_state(path)
+            if other is not None and other.has_history():
+                return True
+        return False
+
+    def _reconcile(self, committed: list[str]) -> None:
+        """Apply manifests that the state does not include yet, oldest first.
+
+        They come from a run that stopped after writing its manifest but before saving
+        the state, or, when the state file is missing, from every earlier run.
+        """
+        applied = self.state.applied_runs(committed)
+        if self.state.runs is None:
+            self.state.runs = sorted(applied)
+        for run_id in committed:
+            if run_id in applied:
+                continue
+            manifest = read_manifest(self.destination, self.source.name, run_id)
+            if manifest is not None:
+                self.state.apply_manifest(*manifest)
 
     def too_soon(self) -> bool:
         hours = self.config.min_interval_hours
@@ -149,7 +208,7 @@ class _Run:
         return self.now - last < timedelta(hours=hours)
 
     def execute(self) -> RunSummary:
-        check_archive_format(self.destination, create=not self.dry_run)
+        self._prepare_destination()
         if not self.dry_run:
             self._ping("/start")
             self.destination.write_bytes(

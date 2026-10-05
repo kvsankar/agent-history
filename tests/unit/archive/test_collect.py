@@ -177,6 +177,132 @@ def test_missing_state_is_rebuilt_from_manifests(env):
     assert summary.written == 0
 
 
+def test_unmounted_destination_is_refused(env):
+    """An empty mount point must not be taken for the archive the state describes."""
+    import shutil
+
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    shutil.move(str(env["dest"]), str(env["dest"].with_name("real")))
+    env["dest"].mkdir()  # the mount point of an unmounted network share
+    _write(env, ".claude/projects/p/b2.jsonl", b"new\n", mtime=1_790_000_100)
+
+    with pytest.raises(ArchiveError, match="mounted"):
+        _collect(env, now=T0 + timedelta(hours=1))
+    with pytest.raises(ArchiveError, match="mounted"):
+        _collect(env, now=T0 + timedelta(hours=1), dry_run=True)
+
+    assert list(env["dest"].iterdir()) == []
+
+
+def test_new_source_is_refused_when_another_source_has_history(env):
+    import shutil
+
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    shutil.rmtree(env["dest"])
+    env["dest"].mkdir()
+    config = parse_config(
+        {
+            "archive": {"destination": str(env["dest"]), "compression_level": 3},
+            "sources": [
+                {"name": "other", "kind": "live", "platform": "linux", "home": str(env["home"])}
+            ],
+        }
+    )
+
+    with pytest.raises(ArchiveError, match="mounted"):
+        collect_source(config, "other", state_dir=env["state"], now=T0 + timedelta(hours=1))
+
+    assert list(env["dest"].iterdir()) == []
+
+
+def test_destination_restored_to_an_older_copy_is_refused(env):
+    import shutil
+
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    shutil.copytree(env["dest"], env["dest"].with_name("old-copy"))
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    _collect(env, now=T0 + timedelta(hours=1))
+    shutil.rmtree(env["dest"])
+    shutil.copytree(env["dest"].with_name("old-copy"), env["dest"])
+    before = sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*"))
+
+    with pytest.raises(ArchiveError, match="older copy"):
+        _collect(env, now=T0 + timedelta(hours=2))
+
+    assert sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*")) == before
+
+
+def test_restored_archive_is_accepted_after_the_state_is_removed(env):
+    import shutil
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    shutil.copytree(env["dest"], env["dest"].with_name("old-copy"))
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    _collect(env, now=T0 + timedelta(hours=1))
+    shutil.rmtree(env["dest"])
+    shutil.copytree(env["dest"].with_name("old-copy"), env["dest"])
+    for state_file in env["state"].rglob("*.json"):
+        state_file.unlink()
+
+    summary = _collect(env, now=T0 + timedelta(hours=2))
+
+    assert _entries(env, summary.run_id)[SESSION]["action"] == "updated"
+    assert _archived(env, SESSION) == b"a\nb\n"
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_crash_after_manifest_before_state_save_is_reconciled(env, monkeypatch):
+    """A manifest newer than the state is applied first, so nothing is versioned twice."""
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+    real = collect_module.save_state
+
+    def crash(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(collect_module, "save_state", crash)
+    with pytest.raises(KeyboardInterrupt):
+        _collect(env, now=T0 + timedelta(hours=1))
+    monkeypatch.setattr(collect_module, "save_state", real)
+
+    third = _collect(env, now=T0 + timedelta(hours=2))
+
+    assert third.versioned == 0
+    assert _entries(env, third.run_id) == {}
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+
+
+def test_state_without_a_run_list_is_reconciled_by_run_order(env):
+    """State files written before the run list existed still pick up newer manifests."""
+    import json
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    (state_file,) = env["state"].rglob("src.json")
+    data = json.loads(state_file.read_text(encoding="utf-8"))
+    data.pop("runs", None)
+    state_file.write_text(json.dumps(data), encoding="utf-8")
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert summary.written == 0
+    assert "runs" in json.loads(state_file.read_text(encoding="utf-8"))
+
+
 def test_dry_run_writes_nothing(env):
     _write(env, SESSION, b"a\n")
 
