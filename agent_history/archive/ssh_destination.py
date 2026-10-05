@@ -1,8 +1,9 @@
 """An archive destination on another host, reached over SSH.
 
-The remote host needs only ``sh`` (with its ``test``/``[`` and ``echo``), ``cat``, ``mkdir``,
-``mv``, ``find``, ``printf``, ``tar``, ``rm`` (which removes only a source's incoming folder and the
-owner file of its lock), ``rmdir`` (which removes the lock folder) and
+The remote host needs only ``sh`` (with its ``test``/``[``, ``echo`` and ``printf``, and
+``set -C``, whose exclusive create takes the lock), ``cat``, ``mkdir``, ``mv``, ``find``,
+``tar``, ``rm`` (which removes only a source's incoming folder and what its lock folder
+holds), ``rmdir`` (which removes the lock folder) and
 ``sync`` (which flushes each write to disk before the run goes on). Each
 operation sends ssh one already-quoted command string: ssh joins its remote arguments with
 spaces, so passing them separately would lose the quoting. The remote login shell runs
@@ -180,30 +181,46 @@ class SshDestination(Destination):
         self._check(self._run(f"rm -rf {path}"), f"Removing {rel}")
 
     def create_lock(self, rel: str, owner: bytes) -> bool:
+        """Create the owner file with the shell's exclusive create, then read it back.
+
+        ``set -C`` makes ``>`` open the file with O_EXCL, so the remote ``mkdir`` need
+        not report a folder that exists (uutils mkdir does not, under a race). The owner
+        is written by the shell's own ``printf`` in the same step; it travels in the
+        script, not on standard input, so a dropped connection cannot cut it short.
+        """
         path = self._remote(_check_lock(rel))
-        owner_path, part = (
-            self._remote(f"{rel}/{LOCK_OWNER}"),
-            self._remote(f"{rel}/{LOCK_OWNER}.part"),
-        )
+        owner_path = self._remote(f"{rel}/{LOCK_OWNER}")
+        content = shlex.quote(owner.decode("utf-8"))
+        # A run releasing the lock can remove the folder between mkdir and the create.
         script = (
-            f"mkdir -p {self._parent(rel)} || exit 1; "
-            f"if ! mkdir {path} 2>/dev/null; then [ -d {path} ] && exit {_EXISTS}; "
-            f"mkdir {path} || exit 1; fi; "
-            f"cat > {part} && sync && mv {part} {owner_path} && sync"
+            "n=0; while :; do "
+            f"mkdir -p {path} || exit 1; "
+            f"[ -e {owner_path} ] && exit {_EXISTS}; "
+            f"if err=$( (set -C; printf '%s' {content} > {owner_path}) 2>&1 ); then break; fi; "
+            f"[ -e {owner_path} ] && exit {_EXISTS}; "
+            f'n=$((n + 1)); [ "$n" -lt 5 ] || {{ echo "$err" >&2; exit 1; }}; '
+            "done; "
+            f"sync; cat {owner_path}"
         )
-        result = self._run(script, owner)
+        result = self._run(script)
         if result.returncode == _EXISTS:
             return False
         self._check(result, f"Creating the lock {rel}")
-        return True
+        return result.stdout == owner  # it holds another run's owner only if broken at once
 
     def remove_lock(self, rel: str) -> None:
         path = self._remote(_check_lock(rel))
-        owner_path, part = (
-            self._remote(f"{rel}/{LOCK_OWNER}"),
-            self._remote(f"{rel}/{LOCK_OWNER}.part"),
+        # Everything but the owner file first, then the owner file, which is the lock.
+        script = (
+            f"[ -d {path} ] || exit 0; cd {path} || exit 1; "
+            "for f in * .[!.]* ..?*; do "
+            f'[ "$f" = {LOCK_OWNER} ] && continue; '
+            '{ [ -e "$f" ] || [ -L "$f" ]; } || continue; '
+            'rm -rf -- "$f" || exit 1; '
+            "done; "
+            f"rm -rf -- {LOCK_OWNER} || exit 1; "
+            f"cd / && {{ rmdir {path} 2>/dev/null || :; }}; sync"
         )
-        script = f"rm -f {owner_path} {part} && {{ [ ! -e {path} ] || rmdir {path}; }} && sync"
         self._check(self._run(script), f"Removing the lock {rel}")
 
     def _parent(self, rel: str) -> str:

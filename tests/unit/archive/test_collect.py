@@ -884,6 +884,104 @@ def test_dry_run_ignores_the_destination_lock(env):
     assert _lock_folder(env).is_dir()
 
 
+@pytest.mark.parametrize(
+    "leftover",
+    [{}, {"owner.json.part": b'{"host": "x'}, {"._owner.json": b"AppleDouble"}],
+    ids=["empty", "partial-owner", "stray-file"],
+)
+def test_a_lock_folder_without_an_owner_file_is_no_lock(env, leftover):
+    """The owner file is the lock: a folder left without one does not block runs."""
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _lock_folder(env).mkdir()
+    for name, data in leftover.items():
+        (_lock_folder(env) / name).write_bytes(data)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert summary.written == 1
+    assert not _lock_folder(env).exists()
+
+
+def test_a_file_that_appears_in_the_lock_folder_does_not_outlive_the_run(env, monkeypatch):
+    """For example macOS writes ._owner.json next to owner.json on some network shares."""
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _overlap_after_transfer(
+        monkeypatch, lambda: (_lock_folder(env) / "._owner.json").write_bytes(b"AppleDouble")
+    )
+
+    first = _collect(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    second = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (first.written, second.written) == (1, 1)
+    assert not _lock_folder(env).exists()
+
+
+def _pings(monkeypatch):
+    from agent_history.archive import collect as collect_module
+
+    sent: list[str] = []
+    monkeypatch.setattr(collect_module._Run, "_ping", lambda self, suffix: sent.append(suffix))
+    return sent
+
+
+@pytest.mark.parametrize("content", [b"", b'{"host": "lap', b"[]", b"{}"])
+def test_a_lock_without_a_readable_owner_fails_the_run_and_names_break_lock(
+    env, monkeypatch, content
+):
+    from agent_history.archive import state
+    from agent_history.archive.errors import ArchiveError
+
+    monkeypatch.setattr(state, "LOCK_SETTLE_SECONDS", 0)
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _lock_folder(env).mkdir()
+    (_lock_folder(env) / "owner.json").write_bytes(content)
+    pings = _pings(monkeypatch)
+
+    with pytest.raises(ArchiveError, match="--break-lock") as raised:
+        _collect(env, now=T0 + timedelta(hours=1))
+
+    assert not isinstance(raised.value, CollectLockedError)
+    assert pings == ["/fail"]
+    assert (_lock_folder(env) / "owner.json").read_bytes() == content
+
+
+def test_an_owner_file_being_written_is_read_again(env, monkeypatch):
+    import json
+
+    from agent_history.archive import state
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _lock_folder(env).mkdir()
+    owner = _lock_folder(env) / "owner.json"
+    owner.write_bytes(b"")
+    finished = {"host": "other-laptop", "pid": 4242, "started_at": "2026-10-01T00:00:00+00:00"}
+    monkeypatch.setattr(state.time, "sleep", lambda seconds: owner.write_text(json.dumps(finished)))
+
+    with pytest.raises(CollectLockedError, match="other-laptop"):
+        _collect(env, now=T0 + timedelta(hours=1))
+
+
+def test_break_lock_removes_everything_in_the_lock_folder(env, capsys):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _foreign_lock(env)
+    (_lock_folder(env) / "._owner.json").write_bytes(b"AppleDouble")
+    (_lock_folder(env) / "nested").mkdir()
+    (_lock_folder(env) / "nested" / "file").write_bytes(b"x")
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1), break_lock=True)
+
+    assert summary.written == 1
+    assert "other-laptop" in capsys.readouterr().err
+    assert not _lock_folder(env).exists()
+
+
 def test_unreadable_file_is_recorded_and_retried(env, monkeypatch):
     from agent_history.archive import collect as collect_module
 

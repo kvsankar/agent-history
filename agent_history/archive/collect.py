@@ -379,7 +379,8 @@ class _Run:
         """Check the destination and take its lock, then run.
 
         A failure before the run starts sends the failure request too, except that a
-        lock another run holds is not a failure: the run is skipped.
+        lock another run holds is not a failure: the run is skipped. A lock whose owner
+        file names no holder is a failure (LockOwnerUnknownError).
         """
         with ExitStack() as stack:
             try:

@@ -57,6 +57,8 @@ def _check_discardable(rel: str) -> str:
 
 LOCK_FOLDER = "LOCK"
 LOCK_OWNER = "owner.json"
+# Tries to create the owner file when a run releasing the lock removes its folder meanwhile.
+_LOCK_ATTEMPTS = 5
 
 
 def _check_lock(rel: str) -> str:
@@ -129,15 +131,22 @@ class Destination:
         raise NotImplementedError
 
     def create_lock(self, rel: str, owner: bytes) -> bool:
-        """Create the lock folder ``rel`` with ``owner`` in its owner.json.
+        """Take the lock ``rel``: create its owner.json, holding ``owner``, exclusively.
 
-        False when the folder exists already. Creating a folder is atomic, so of two runs
-        that try at the same time only one succeeds.
+        The owner file is the lock; the folder around it only holds it. The file is
+        created with an exclusive create (O_EXCL), which fails when the file exists, so
+        of two runs that try at the same time only one succeeds, and the content is
+        written in the same step. False when the owner file exists already.
         """
         raise NotImplementedError
 
     def remove_lock(self, rel: str) -> None:
-        """Remove a lock folder and its owner.json, if it exists."""
+        """Remove a lock folder and everything in it, if it exists.
+
+        The owner file is removed last, so the lock is held until nothing else is left.
+        The folder itself is removed when it is then empty; a folder without an owner
+        file is no lock.
+        """
         raise NotImplementedError
 
     @contextmanager
@@ -241,23 +250,45 @@ class LocalDestination(Destination):
             shutil.rmtree(path)
 
     def create_lock(self, rel: str, owner: bytes) -> bool:
-        path = self._path(_check_lock(rel))
-        folders = _make_parent(path)
-        try:
-            path.mkdir()
-        except FileExistsError:
-            return False
-        _sync_dirs(folders)
-        self.write_bytes(f"{rel}/{LOCK_OWNER}", owner)
-        return True
+        target = self._path(_check_lock(rel)) / LOCK_OWNER
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        for _ in range(_LOCK_ATTEMPTS):
+            folders = _make_parent(target)
+            try:
+                fd = os.open(target, flags, 0o644)
+            except FileExistsError:
+                return False
+            except FileNotFoundError:
+                continue  # a run releasing the lock removed the folder just now
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(owner)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except BaseException:
+                target.unlink(missing_ok=True)  # never leave a lock without its owner
+                raise
+            _sync_dirs(folders)
+            return True
+        raise ArchiveError(f"Could not create {rel}/{LOCK_OWNER}: its folder kept disappearing")
 
     def remove_lock(self, rel: str) -> None:
         path = self._path(_check_lock(rel))
-        for name in (LOCK_OWNER, f"{LOCK_OWNER}.part"):
-            (path / name).unlink(missing_ok=True)
-        if path.exists():
+        if not path.is_dir():
+            return
+        owner = path / LOCK_OWNER
+        with os.scandir(path) as entries:
+            others = [Path(entry.path) for entry in entries if entry.name != LOCK_OWNER]
+        for item in [*others, owner]:
+            if item.is_dir() and not item.is_symlink():
+                shutil.rmtree(item)
+            else:
+                item.unlink(missing_ok=True)
+        try:
             path.rmdir()
-            fsync_dir(path.parent)
+        except OSError:
+            pass  # something appeared meanwhile; without an owner file it is no lock
+        fsync_dir(path.parent)
 
     @contextmanager
     def open_binary(self, rel: str) -> Iterator[IO[bytes]]:

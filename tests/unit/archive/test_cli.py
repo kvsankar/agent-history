@@ -184,6 +184,28 @@ def test_a_source_locked_at_the_destination_is_skipped_with_its_owner(setup, cap
     assert not lock.exists()
 
 
+def test_a_lock_without_a_readable_owner_fails_its_source(setup, capsys, monkeypatch):
+    from agent_history.archive import state
+
+    monkeypatch.setattr(state, "LOCK_SETTLE_SECONDS", 0)
+    config = _two_sources(setup)
+    assert main(["archive", "collect", "--config", config]) == 0
+    lock = setup["tmp"] / "archive" / "sources" / "laptop" / "LOCK"
+    lock.mkdir()
+    (lock / "owner.json").write_bytes(b"")
+    capsys.readouterr()
+
+    code = main(["archive", "collect", "--config", config])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "skipped" not in captured.out
+    assert "laptop:" in captured.err
+    assert "--break-lock" in captured.err
+    assert main(["archive", "collect", "--config", config, "--break-lock"]) == 0
+    assert not lock.exists()
+
+
 def test_a_failing_source_does_not_stop_the_others(setup, capsys, monkeypatch):
     from agent_history.archive import collect as collect_module
     from agent_history.archive.errors import ArchiveError

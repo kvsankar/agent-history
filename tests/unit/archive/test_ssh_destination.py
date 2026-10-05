@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -98,6 +100,105 @@ def test_lock_folder_is_created_once(remote):
     assert (root / "sources" / "src").is_dir()
     with pytest.raises(ArchiveError):
         dest.remove_lock("sources/src/files")
+
+
+# Like uutils coreutils mkdir 0.8.0 when another process creates the same folder at the
+# same time: it reports success although the folder was not its own.
+LAX_MKDIR = """#!/bin/sh
+{real} -p "$@" 2>/dev/null
+exit 0
+"""
+
+
+@pytest.fixture
+def lax_remote(tmp_path):
+    """A remote host whose ``mkdir`` succeeds even when the folder exists already."""
+    tools = tmp_path / "lax-bin"
+    tools.mkdir()
+    mkdir = tools / "mkdir"
+    mkdir.write_text(LAX_MKDIR.format(real=shutil.which("mkdir")), encoding="utf-8")
+    mkdir.chmod(mkdir.stat().st_mode | stat.S_IEXEC)
+    ssh = tmp_path / "lax-ssh"
+    ssh.write_text(
+        FAKE_SSH.replace('exec sh -c "$*"', f'PATH={tools}:$PATH exec sh -c "$*"'),
+        encoding="utf-8",
+    )
+    ssh.chmod(ssh.stat().st_mode | stat.S_IEXEC)
+    root = tmp_path / "remote archive"
+    return SshDestination("nas", str(root), ssh=[str(ssh)]), root
+
+
+def test_lock_does_not_rely_on_mkdir_reporting_an_existing_folder(lax_remote):
+    dest, _root = lax_remote
+
+    assert dest.create_lock("sources/src/LOCK", b'{"token": "a"}')
+    assert not dest.create_lock("sources/src/LOCK", b'{"token": "b"}')
+    assert dest.read_bytes("sources/src/LOCK/owner.json") == b'{"token": "a"}'
+
+
+def _contend(dest, rel, contenders):
+    """``contenders`` runs call create_lock at once; returns (winners, recorded token)."""
+    barrier = threading.Barrier(contenders)
+    results: dict[int, bool] = {}
+
+    def contend(number):
+        barrier.wait()
+        results[number] = dest.create_lock(rel, json.dumps({"token": str(number)}).encode())
+
+    threads = [threading.Thread(target=contend, args=(n,)) for n in range(contenders)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    owner = json.loads(dest.read_bytes(f"{rel}/owner.json"))
+    return [n for n, got in sorted(results.items()) if got], owner["token"]
+
+
+def test_only_one_of_many_concurrent_runs_gets_the_lock_over_ssh(lax_remote):
+    dest, _root = lax_remote
+
+    for _ in range(5):
+        winners, token = _contend(dest, "sources/src/LOCK", 6)
+        assert len(winners) == 1
+        assert token == str(winners[0])
+        dest.remove_lock("sources/src/LOCK")
+
+
+def test_only_one_of_many_concurrent_runs_gets_the_lock_in_a_local_archive(tmp_path):
+    dest = open_destination(str(tmp_path / "archive"))
+
+    for _ in range(5):
+        winners, token = _contend(dest, "sources/src/LOCK", 6)
+        assert len(winners) == 1
+        assert token == str(winners[0])
+        dest.remove_lock("sources/src/LOCK")
+
+
+def test_a_lock_folder_without_an_owner_file_is_taken_and_emptied_over_ssh(remote):
+    dest, root = remote
+    lock = root / "sources" / "src" / "LOCK"
+    (lock / "a folder").mkdir(parents=True)
+    (lock / "a folder" / "file").write_bytes(b"x")
+    for name in ("._owner.json", "owner.json.part", "..odd", "-dash"):
+        (lock / name).write_bytes(b"x")
+
+    assert dest.create_lock("sources/src/LOCK", b'{"token": "a"}')
+    dest.remove_lock("sources/src/LOCK")
+
+    assert not lock.exists()
+
+
+def test_a_lock_taken_over_ssh_keeps_out_a_run_on_a_mounted_share(remote):
+    """An archive reached over SSH by one machine and mounted by another has one lock."""
+    dest, root = remote
+    mounted = open_destination(str(root))
+
+    assert dest.create_lock("sources/src/LOCK", b'{"token": "ssh"}')
+    assert not mounted.create_lock("sources/src/LOCK", b'{"token": "mount"}')
+    dest.remove_lock("sources/src/LOCK")
+    assert mounted.create_lock("sources/src/LOCK", b'{"token": "mount"}')
+    assert not dest.create_lock("sources/src/LOCK", b'{"token": "ssh"}')
+    assert dest.read_bytes("sources/src/LOCK/owner.json") == b'{"token": "mount"}'
 
 
 def test_overlapping_run_over_ssh_is_kept_out_by_the_destination_lock(

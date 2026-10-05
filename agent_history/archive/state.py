@@ -15,6 +15,7 @@ import platform
 import secrets
 import socket
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -177,7 +178,18 @@ def source_lock(state_dir: Path, destination: str, source: str) -> Iterator[None
 # The local lock keeps apart runs that share a state folder and spell the destination the
 # same way. Runs with another state folder, another spelling of the destination, or on
 # another machine with the same source name share only the archive, so a run also holds
-# sources/<source>/LOCK there while it changes the source's folder.
+# sources/<source>/LOCK/owner.json there while it changes the source's folder. The owner
+# file is the lock: it is created exclusively with its content (Destination.create_lock),
+# and a LOCK folder without one is no lock.
+
+# Seconds to wait before reading again an owner file that is empty or does not parse: the
+# run that created it may be writing it at this moment.
+LOCK_SETTLE_SECONDS = 2.0
+_LOCK_ATTEMPTS = 3
+
+
+class LockOwnerUnknownError(ArchiveError):
+    """A source's lock in the archive exists, but its owner file names no holder."""
 
 
 def destination_lock_path(source: str) -> str:
@@ -188,17 +200,31 @@ def destination_lock_path(source: str) -> str:
 def destination_lock(
     destination: Destination, source: str, local_lock: Path, break_lock: bool = False
 ) -> Iterator[None]:
-    """Hold the source's lock folder in the archive; CollectLockedError when another has it.
+    """Hold the source's lock in the archive.
 
-    A lock that a killed run of this collector left (same host and local lock file, whose
-    lock this process holds now) is taken over. ``break_lock`` first removes any lock.
+    Raises CollectLockedError when another run holds it, and LockOwnerUnknownError when
+    its owner file stays empty or damaged, so no holder can be named. A lock that a
+    killed run of this collector left (same host and local lock file, whose lock this
+    process holds now) is taken over. ``break_lock`` first removes any lock.
     """
-    rel = destination_lock_path(source)
     ours = _lock_owner(local_lock)
     if break_lock:
         _break_lock(destination, source)
-    if not destination.create_lock(rel, json.dumps(ours).encode("utf-8")):
-        held = read_lock_owner(destination, source)
+    _take_lock(destination, source, ours)
+    try:
+        yield
+    finally:
+        _release_lock(destination, source, ours)
+
+
+def _take_lock(destination: Destination, source: str, ours: dict[str, Any]) -> None:
+    rel = destination_lock_path(source)
+    for _ in range(_LOCK_ATTEMPTS):
+        if destination.create_lock(rel, json.dumps(ours).encode("utf-8")):
+            return
+        held = _settled_owner(destination, source)
+        if held is None:
+            continue  # released meanwhile
         if held.get("collector") != ours["collector"]:
             raise CollectLockedError(_locked_message(destination, source, held))
         sys.stderr.write(
@@ -206,21 +232,43 @@ def destination_lock(
             f"(started {held.get('started_at', 'at an unknown time')})\n"
         )
         destination.remove_lock(rel)
-        if not destination.create_lock(rel, json.dumps(ours).encode("utf-8")):
-            raise CollectLockedError(
-                _locked_message(destination, source, read_lock_owner(destination, source))
-            )
-    try:
-        yield
-    finally:
-        _release_lock(destination, source, ours)
+    raise CollectLockedError(
+        _locked_message(destination, source, read_lock_owner(destination, source))
+    )
+
+
+def _settled_owner(destination: Destination, source: str) -> dict[str, Any] | None:
+    """The holder a lock records; None when the lock has gone.
+
+    An owner file that is empty or does not parse is read again after a pause, in case
+    its run is writing it. If it still names no holder, LockOwnerUnknownError.
+    """
+    for attempt in range(2):
+        if attempt:
+            time.sleep(LOCK_SETTLE_SECONDS)
+        data = destination.read_bytes(f"{destination_lock_path(source)}/{LOCK_OWNER}")
+        if data is None:
+            return None
+        owner = _parse_owner(data)
+        if owner:
+            return owner
+    raise LockOwnerUnknownError(
+        f"The lock of {source} in {destination.description} names no holder: its "
+        f"{LOCK_FOLDER}/{LOCK_OWNER} is empty or damaged, for example because a run was "
+        f"stopped while it took the lock. If no archive run of {source} is going on any "
+        f"machine, run collect again with {BREAK_LOCK_OPTION}."
+    )
 
 
 def read_lock_owner(destination: Destination, source: str) -> dict[str, Any]:
     """What a source's lock records about its holder; empty when unknown."""
     data = destination.read_bytes(f"{destination_lock_path(source)}/{LOCK_OWNER}")
+    return _parse_owner(data) if data is not None else {}
+
+
+def _parse_owner(data: bytes) -> dict[str, Any]:
     try:
-        owner = json.loads(data.decode("utf-8")) if data is not None else {}
+        owner = json.loads(data.decode("utf-8"))
     except ValueError:
         return {}
     return owner if isinstance(owner, dict) else {}
