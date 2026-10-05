@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent_history.archive.codec import compress_file
-from agent_history.archive.manifest import run_stamp
+from agent_history.archive.manifest import run_id_stamp
 from agent_history.archive.state import IDENTITY_SUFFIX
 
 if TYPE_CHECKING:
@@ -283,7 +283,7 @@ def _export_new_rows(
     if run.dry_run:  # a dry run reports what it would export and compresses nothing
         entry["rows"] = count
         return entry
-    export_path = f"{item.rel_path}.rows/{run_stamp(run.now)}-{run.run_id[-4:]}.jsonl"
+    export_path = f"{item.rel_path}.rows/{run_id_stamp(run.run_id)}-{run.run_id[-4:]}.jsonl"
     result = compress_file(
         jsonl,
         run.staged_path(staging, f"sources/{run.source.name}/files/{export_path}.zst"),

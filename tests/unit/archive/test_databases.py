@@ -233,6 +233,27 @@ def test_log_database_exports_only_new_rows(env):
     assert verify_source(open_destination(str(env["dest"])), "src").ok
 
 
+def test_log_exports_of_runs_in_the_same_second_do_not_collide(env, monkeypatch):
+    from types import SimpleNamespace
+
+    from agent_history.archive import manifest as manifest_module
+
+    monkeypatch.setattr(manifest_module, "secrets", SimpleNamespace(token_hex=lambda n: "abcd"))
+    conn = _logs_db(env)
+    _add_logs(conn, [1, 2])
+    first = _collect(env)
+    _add_logs(conn, [3])
+    conn.close()
+    second = _collect(env)
+
+    (entry1,) = _entries(env, first.run_id)
+    (entry2,) = _entries(env, second.run_id)
+    assert entry1["export_path"] != entry2["export_path"]
+    assert [row["id"] for row in _exported_rows(env, entry1)] == [1, 2]
+    assert [row["id"] for row in _exported_rows(env, entry2)] == [3]
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
 def test_recreated_log_database_exports_from_the_start(env):
     conn = _logs_db(env)
     _add_logs(conn, [1, 2, 3, 4])
