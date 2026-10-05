@@ -1,7 +1,9 @@
 """Loading and validating the archive configuration file.
 
 The configuration names the archive destination and the sources to collect. Entries in
-``sources`` that share a name merge into one source; each entry becomes one *part*.
+``sources`` that share a name merge into one source; each entry becomes one *part*. Two
+parts of one source may not cover the same agent, because its files would map to the
+same archive paths.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ class SourcePart:
 
     home: Path | None
     roots: dict[str, Path] = field(default_factory=dict)
-    agents: tuple[str, ...] | None = None
+    agents: tuple[str, ...] | None = None  # None: every agent; (): none, only includes
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
 
@@ -138,7 +140,32 @@ def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:
         merged[name] = SourceConfig(
             name, kind, platform, existing.note or note, (*existing.parts, part)
         )
+    for source in merged.values():
+        _reject_overlapping_parts(source)
     return tuple(merged.values())
+
+
+def _reject_overlapping_parts(source: SourceConfig) -> None:
+    """Refuse two parts that cover one agent: their files would share archive paths.
+
+    Include patterns can still overlap; the collector reports such files at run time.
+    """
+    first_part: dict[str, int] = {}
+    for number, part in enumerate(source.parts, start=1):
+        for agent in _covered_agents(part):
+            if agent in first_part:
+                raise ArchiveConfigError(
+                    f"Source {source.name}: entries {first_part[agent]} and {number} both "
+                    f"cover agent {agent}, so their files would share archive paths. Give the "
+                    'other copy its own source name, for example with kind "imported".'
+                )
+            first_part[agent] = number
+
+
+def _covered_agents(part: SourcePart) -> tuple[str, ...]:
+    """The agents whose folders a part reads, from its home or its root overrides."""
+    agents = AGENT_NAMES if part.agents is None else part.agents
+    return tuple(agent for agent in agents if part.home is not None or agent in part.roots)
 
 
 def _source_identity(entry: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -172,7 +199,7 @@ def _source_part(entry: dict[str, Any], name: str) -> SourcePart:
     return SourcePart(
         home=Path(home).expanduser() if home else None,
         roots={agent: Path(root).expanduser() for agent, root in roots.items()},
-        agents=tuple(agents) if agents else None,
+        agents=None if agents is None else tuple(agents),
         include=tuple(entry.get("include") or ()),
         exclude=tuple(entry.get("exclude") or ()),
     )

@@ -292,9 +292,10 @@ def iter_source_files(source: SourceConfig) -> Iterator[SelectedFile]:
     folder inside it that cannot be read is yielded as an item with ``error`` set, whose
     ``rel_path`` is the folder; the walk goes on with the other folders.
 
-    When parts of a merged source map two different files to one archive path, the
-    first part's file is archived. If the other file's content differs, it is yielded
-    as an item with ``error`` set, so the run reports it instead of dropping it.
+    Parts of one source never cover the same agent (the configuration refuses that),
+    but their include patterns can still map two different files to one archive path.
+    Then the first part's file is archived. If the other file's content differs, it is
+    yielded as an item with ``error`` set, so the run reports it instead of dropping it.
     """
     _check_configured_folders(source)
     seen: dict[str, SelectedFile] = {}
@@ -337,7 +338,7 @@ def is_within(rel_path: str, folders) -> bool:
 
 def _check_configured_folders(source: SourceConfig) -> None:
     for part in source.parts:
-        agents = part.agents or AGENT_NAMES
+        agents = AGENT_NAMES if part.agents is None else part.agents
         folders = [part.home] if part.home is not None else []
         folders += [root for agent, root in part.roots.items() if agent in agents]
         for folder in folders:
@@ -351,7 +352,7 @@ def _check_configured_folders(source: SourceConfig) -> None:
 
 
 def _iter_part(part: SourcePart, platform: str) -> Iterator[SelectedFile]:
-    agents = part.agents or AGENT_NAMES
+    agents = AGENT_NAMES if part.agents is None else part.agents
     for name in agents:
         layout = _LAYOUTS_BY_NAME[name]
         for abs_root, rel_root in _agent_roots(part, layout, platform):

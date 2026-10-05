@@ -172,9 +172,18 @@ def test_copilot_chat_index_databases_are_skipped(tmp_path):
 
 
 def _merged_source(home: Path, old: Path):
+    """A source whose second entry includes another home's ``.claude`` folder, ``old``."""
+    assert old.name == ".claude"
     entries = [
         {"name": "src", "kind": "live", "platform": "linux", "home": str(home)},
-        {"name": "src", "kind": "live", "platform": "linux", "roots": {"claude": str(old)}},
+        {
+            "name": "src",
+            "kind": "live",
+            "platform": "linux",
+            "home": str(old.parent),
+            "agents": [],
+            "include": [".claude/**"],
+        },
     ]
     return parse_config({"archive": {"destination": "/d"}, "sources": entries}).sources[0]
 
@@ -184,7 +193,7 @@ def _set_mtime(path: Path, stamp: int) -> None:
 
 
 def test_merged_parts_with_a_differing_copy_report_it(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old"
+    home, old = tmp_path / "home", tmp_path / "old" / ".claude"
     _touch(home, ".claude/projects/p/a.jsonl", "live\n")
     _touch(old, "projects/p/a.jsonl", "older and longer\n")
     _touch(old, "projects/p/only-old.jsonl")
@@ -202,7 +211,7 @@ def test_merged_parts_with_a_differing_copy_report_it(tmp_path):
 
 
 def test_merged_parts_with_the_same_content_are_not_reported(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old"
+    home, old = tmp_path / "home", tmp_path / "old" / ".claude"
     _touch(home, ".claude/history.jsonl", "same\n")
     _touch(old, "history.jsonl", "same\n")
     _touch(home, ".claude/projects/p/a.jsonl", "same size, other time\n")
@@ -221,7 +230,7 @@ def test_merged_parts_with_the_same_content_are_not_reported(tmp_path):
 
 
 def test_merged_parts_with_same_size_and_other_content_report_it(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old"
+    home, old = tmp_path / "home", tmp_path / "old" / ".claude"
     _touch(home, ".claude/history.jsonl", "aaaa\n")
     _touch(old, "history.jsonl", "bbbb\n")
     _set_mtime(home / ".claude/history.jsonl", 1_790_000_000)
@@ -434,6 +443,7 @@ def test_missing_home_fails(tmp_path):
 def test_missing_configured_root_fails(tmp_path):
     _touch(tmp_path, "home/.codex/history.jsonl")
     entry = {"name": "src", "kind": "live", "platform": "linux", "home": str(tmp_path / "home")}
+    entry["agents"] = ["codex"]
     old = {"name": "src", "kind": "live", "platform": "linux"}
     old["roots"] = {"claude": str(tmp_path / "gone")}
     source = parse_config({"archive": {"destination": "/d"}, "sources": [entry, old]}).sources[0]
@@ -538,3 +548,13 @@ def test_default_layouts_keep_project_folders_named_like_credentials(tmp_path):
         ".claude/projects/-home-alex-code-oauth-proxy/s.jsonl",
         ".claude/projects/-home-alex-code-credentials-api/s.jsonl",
     }
+
+
+def test_an_entry_with_no_agents_selects_only_its_includes(tmp_path):
+    _touch(tmp_path, "data/.claude/history.jsonl")
+    _touch(tmp_path, "data/notes/n.md")
+    entry = {"name": "src", "kind": "live", "platform": "linux", "home": str(tmp_path / "data")}
+    entry.update(agents=[], include=["notes/**"])
+    source = parse_config({"archive": {"destination": "/d"}, "sources": [entry]}).sources[0]
+
+    assert set(_selected(source)) == {"notes/n.md"}

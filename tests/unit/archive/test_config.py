@@ -46,7 +46,13 @@ def test_home_expands_user(monkeypatch, tmp_path):
 def test_entries_with_one_name_merge_into_one_source():
     data = _config(
         sources=[
-            {"name": "laptop", "kind": "live", "platform": "linux", "home": "/home/alex"},
+            {
+                "name": "laptop",
+                "kind": "live",
+                "platform": "linux",
+                "home": "/home/alex",
+                "agents": ["codex", "gemini"],
+            },
             {
                 "name": "laptop",
                 "kind": "live",
@@ -130,3 +136,46 @@ def test_workers_default_and_validation():
 def test_unknown_settings_are_rejected():
     with pytest.raises(ArchiveConfigError, match="worker"):
         parse_config(_config(archive={"destination": "/a", "worker": 3}))
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        {"roots": {"claude": "/old/raw/laptop/claude"}},
+        {"home": "/mnt/old-laptop/home/alex", "agents": ["claude", "pi"]},
+        {"home": "/home/alex", "agents": ["claude"], "include": ["notes/**"]},
+    ],
+)
+def test_entries_of_one_source_may_not_cover_the_same_agent(second):
+    first = {"name": "laptop", "kind": "live", "platform": "linux", "home": "/home/alex"}
+    data = _config(
+        sources=[first, {"name": "laptop", "kind": "live", "platform": "linux", **second}]
+    )
+
+    with pytest.raises(ArchiveConfigError, match="claude") as raised:
+        parse_config(data)
+
+    assert "entries 1 and 2" in str(raised.value)
+    assert "own source name" in str(raised.value)
+
+
+def test_a_roots_override_outside_the_agents_filter_does_not_count():
+    first = {"name": "laptop", "kind": "live", "platform": "linux", "home": "/home/alex"}
+    second = {"name": "laptop", "kind": "live", "platform": "linux", "home": "/data"}
+    second.update(agents=["cagelens"], roots={"claude": "/old/claude"})
+    data = _config(sources=[{**first, "agents": ["claude", "codex"]}, second])
+
+    (source,) = parse_config(data).sources
+
+    assert len(source.parts) == 2
+
+
+def test_an_entry_with_no_agents_adds_only_its_includes():
+    first = {"name": "laptop", "kind": "live", "platform": "linux", "home": "/home/alex"}
+    second = {"name": "laptop", "kind": "live", "platform": "linux", "home": "/data"}
+    second.update(agents=[], include=["notes/**"])
+
+    (source,) = parse_config(_config(sources=[first, second])).sources
+
+    assert source.parts[0].agents is None
+    assert source.parts[1].agents == ()
