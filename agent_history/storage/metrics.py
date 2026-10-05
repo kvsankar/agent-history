@@ -1032,6 +1032,79 @@ def sync_file_to_db(
     timestamps = [m.get("timestamp", "") for m in messages if m.get("timestamp")]
     work_seconds, num_periods = _calculate_work_periods(timestamps)
 
+    session_row = (
+        file_path_str,
+        session_info.get("session_id"),
+        workspace,
+        source_key,
+        source_key,
+        agent,
+        current_mtime,
+        1 if session_info.get("is_agent") else 0,
+        session_info.get("parent_session_id"),
+        session_info.get("first_timestamp"),
+        session_info.get("last_timestamp"),
+        session_info.get("message_count", 0),
+        session_info.get("user_messages", 0),
+        session_info.get("assistant_messages", 0),
+        session_info.get("input_tokens", 0),
+        session_info.get("output_tokens", 0),
+        session_info.get("cache_creation_tokens", 0),
+        session_info.get("cache_read_tokens", 0),
+        session_info.get("first_timestamp"),
+        session_info.get("last_timestamp"),
+        session_info.get("git_branch"),
+        session_info.get("claude_version"),
+        session_info.get("cwd"),
+        work_seconds,
+        num_periods,
+        METRICS_PARSER_VERSION,
+    )
+    _store_file_rows(conn, file_path_str, current_mtime, session_row, messages, tool_uses)
+    return True
+
+
+_FILE_SAVEPOINT = "sync_file"
+
+
+def _store_file_rows(
+    conn: sqlite3.Connection,
+    file_path_str: str,
+    current_mtime: float,
+    session_row: Tuple[Any, ...],
+    messages: List[Dict[str, Any]],
+    tool_uses: List[Dict[str, Any]],
+) -> None:
+    """Replace one file's rows, all or none.
+
+    The rows are written inside a savepoint. If one cannot be stored, the
+    savepoint is rolled back, so the file keeps its earlier rows (or has
+    none) and is read again by the next sync, even if the caller commits.
+    The savepoint does not commit: a sync of many files stays one
+    transaction that the caller commits.
+    """
+    if conn.isolation_level is not None and not conn.in_transaction:
+        # The transaction sqlite3 would open before the first DELETE; opened
+        # here so releasing the savepoint does not commit it
+        conn.execute("BEGIN")
+    conn.execute(f"SAVEPOINT {_FILE_SAVEPOINT}")
+    try:
+        _write_file_rows(conn, file_path_str, current_mtime, session_row, messages, tool_uses)
+    except BaseException:
+        conn.execute(f"ROLLBACK TO SAVEPOINT {_FILE_SAVEPOINT}")
+        conn.execute(f"RELEASE SAVEPOINT {_FILE_SAVEPOINT}")
+        raise
+    conn.execute(f"RELEASE SAVEPOINT {_FILE_SAVEPOINT}")
+
+
+def _write_file_rows(
+    conn: sqlite3.Connection,
+    file_path_str: str,
+    current_mtime: float,
+    session_row: Tuple[Any, ...],
+    messages: List[Dict[str, Any]],
+    tool_uses: List[Dict[str, Any]],
+) -> None:
     # Delete existing data for this file
     conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (file_path_str,))
     conn.execute("DELETE FROM messages WHERE file_path = ?", (file_path_str,))
@@ -1052,34 +1125,7 @@ def sync_file_to_db(
             work_period_seconds, num_work_periods, parser_version
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (
-            file_path_str,
-            session_info.get("session_id"),
-            workspace,
-            source_key,
-            source_key,
-            agent,
-            current_mtime,
-            1 if session_info.get("is_agent") else 0,
-            session_info.get("parent_session_id"),
-            session_info.get("first_timestamp"),
-            session_info.get("last_timestamp"),
-            session_info.get("message_count", 0),
-            session_info.get("user_messages", 0),
-            session_info.get("assistant_messages", 0),
-            session_info.get("input_tokens", 0),
-            session_info.get("output_tokens", 0),
-            session_info.get("cache_creation_tokens", 0),
-            session_info.get("cache_read_tokens", 0),
-            session_info.get("first_timestamp"),
-            session_info.get("last_timestamp"),
-            session_info.get("git_branch"),
-            session_info.get("claude_version"),
-            session_info.get("cwd"),
-            work_seconds,
-            num_periods,
-            METRICS_PARSER_VERSION,
-        ),
+        session_row,
     )
 
     # Insert message records
@@ -1136,8 +1182,6 @@ def sync_file_to_db(
         """,
         (file_path_str, current_mtime, datetime.now().isoformat()),
     )
-
-    return True
 
 
 def sync_sessions_to_db(
