@@ -2148,6 +2148,7 @@ def get_session_stats_from_db(
         - cache_creation_tokens: Total cache creation tokens
         - cache_read_tokens: Total cache read tokens
         - sessions: Total session count
+        - agent_sessions: Sessions marked as sub-agents (is_agent)
         - messages: Total message count
         - user_messages: Total user message count
         - assistant_messages: Total assistant message count
@@ -2163,6 +2164,7 @@ def get_session_stats_from_db(
                 COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
                 COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
                 COUNT(*) as sessions,
+                COALESCE(SUM(is_agent), 0) as agent_sessions,
                 COALESCE(SUM(message_count), 0) as messages,
                 COALESCE(SUM(user_messages), 0) as user_messages,
                 COALESCE(SUM(assistant_messages), 0) as assistant_messages
@@ -2216,6 +2218,7 @@ def get_session_stats_from_db(
             "cache_creation_tokens": row["cache_creation_tokens"],
             "cache_read_tokens": row["cache_read_tokens"],
             "sessions": row["sessions"],
+            "agent_sessions": row["agent_sessions"],
             "messages": row["messages"],
             "user_messages": row["user_messages"],
             "assistant_messages": row["assistant_messages"],
