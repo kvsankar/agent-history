@@ -122,8 +122,8 @@ def load_state(path: Path) -> SourceState | None:
     """The state in ``path``; None when it is missing or cannot be used.
 
     A state file that cannot be read, is not JSON, or has another shape (for example a
-    field from a newer version) is a damaged cache: the caller rebuilds the state from
-    the manifests, and a warning names the file.
+    field from a newer version, or a value of another type) is a damaged cache: the
+    caller rebuilds the state from the manifests, and a warning names the file.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -133,17 +133,50 @@ def load_state(path: Path) -> SourceState | None:
         _warn_unusable_state(path, exc)
         return None
     try:
-        files = {rel: FileState(**value) for rel, value in data.get("files", {}).items()}
-        return SourceState(
-            files=files,
-            log_keys=dict(data.get("log_keys", {})),
-            last_success=data.get("last_success"),
-            last_run_id=data.get("last_run_id"),
-            runs=list(data["runs"]) if isinstance(data.get("runs"), list) else None,
-        )
+        return _decode_state(data)
     except (TypeError, KeyError, AttributeError, ValueError) as exc:
         _warn_unusable_state(path, exc)
         return None
+
+
+def _decode_state(data: Any) -> SourceState:
+    """The state a decoded state file holds; TypeError or ValueError when it cannot."""
+    _expect(data, dict, "the state")
+    files = _expect(data.get("files", {}), dict, "files")
+    log_keys = _expect(data.get("log_keys", {}), dict, "log_keys")
+    last_success = _optional(data.get("last_success"), str, "last_success")
+    if last_success is not None and datetime.fromisoformat(last_success).tzinfo is None:
+        raise ValueError(f"last_success has no time zone: {last_success}")
+    runs = _optional(data.get("runs"), list, "runs")
+    for run_id in runs or ():
+        _expect(run_id, str, "a run id")
+    return SourceState(
+        files={_expect(rel, str, "a path"): _decode_file(value) for rel, value in files.items()},
+        log_keys=dict(log_keys),
+        last_success=last_success,
+        last_run_id=_optional(data.get("last_run_id"), str, "last_run_id"),
+        runs=None if runs is None else list(runs),
+    )
+
+
+def _decode_file(value: Any) -> FileState:
+    file = FileState(**_expect(value, dict, "a file's state"))
+    for name, kind in (("size", int), ("mtime_ns", int), ("sha256", str), ("gone", bool)):
+        _expect(getattr(file, name), kind, name)
+    for number in _optional(file.signature, list, "signature") or ():
+        _expect(number, int, "signature")
+    return file
+
+
+def _expect(value: Any, kind: type, what: str) -> Any:
+    # bool is an int in Python, but never a size or a time.
+    if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
+        raise TypeError(f"{what} is {type(value).__name__}, not {kind.__name__}")
+    return value
+
+
+def _optional(value: Any, kind: type, what: str) -> Any:
+    return None if value is None else _expect(value, kind, what)
 
 
 def _warn_unusable_state(path: Path, exc: Exception) -> None:

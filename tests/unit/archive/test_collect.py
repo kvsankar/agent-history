@@ -231,6 +231,64 @@ def test_a_state_file_of_another_shape_is_rebuilt_with_a_warning(env, capsys, co
     assert str(path) in capsys.readouterr().err
 
 
+def _first_file(state, **change):
+    (rel, value), *_ = state["files"].items()
+    return {"files": {**state["files"], rel: {**value, **change}}}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda state: {"last_success": "yesterday"},
+        lambda state: {"last_success": "2026-10-02T06:15:00"},
+        lambda state: {"last_success": 5},
+        lambda state: {"last_run_id": 5},
+        lambda state: {"runs": [1, 2]},
+        lambda state: {"log_keys": []},
+        lambda state: _first_file(state, size=str(state["files"][SESSION]["size"])),
+        lambda state: _first_file(state, mtime_ns=1.5),
+        lambda state: _first_file(state, sha256=7),
+        lambda state: _first_file(state, gone="no"),
+        lambda state: _first_file(state, signature="1,2"),
+        lambda state: _first_file(state, size=True),
+    ],
+    ids=[
+        "last-success-text",
+        "last-success-without-zone",
+        "last-success-number",
+        "last-run-id-number",
+        "run-ids-numbers",
+        "log-keys-list",
+        "size-text",
+        "mtime-fraction",
+        "hash-number",
+        "gone-text",
+        "signature-text",
+        "size-boolean",
+    ],
+)
+def test_a_state_file_with_values_of_another_type_is_rebuilt_with_a_warning(env, capsys, change):
+    import json
+
+    from agent_history.archive.state import state_path
+
+    config = _config(env, min_interval_hours=1)
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env, config=config)
+    path = state_path(env["state"], str(env["dest"]), "src")
+    good = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**good, **change(good)}), encoding="utf-8")
+    capsys.readouterr()
+
+    summary = _collect(env, config=config, now=T0 + timedelta(hours=2))
+
+    assert (summary.written, summary.errors) == (0, 0)
+    assert str(path) in capsys.readouterr().err
+    again = _collect(env, config=config, now=T0 + timedelta(hours=4))
+    assert (again.written, again.errors, again.skipped_reason) == (0, 0, None)
+    assert str(path) not in capsys.readouterr().err
+
+
 def test_unmounted_destination_is_refused(env):
     """An empty mount point must not be taken for the archive the state describes."""
     import shutil
