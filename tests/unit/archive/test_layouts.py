@@ -123,6 +123,20 @@ def test_roots_override_maps_to_home_relative_paths(tmp_path):
     assert selected[".claude/history.jsonl"].path == old / "history.jsonl"
 
 
+def test_copilot_chat_index_databases_are_skipped(tmp_path):
+    chat = ".config/Code/User/workspaceStorage/ws1/GitHub.copilot-chat"
+    _touch(tmp_path, f"{chat}/transcripts/t.jsonl")
+    _touch(tmp_path, f"{chat}/memory-tool/notes.md")
+    _touch(tmp_path, f"{chat}/codebase-external.sqlite")
+    _touch(tmp_path, f"{chat}/local-index.1.db")
+    _touch(tmp_path, f"{chat}/sub/workspace-chunks.sqlite3")
+
+    assert set(_selected(_source(tmp_path, agents=["copilot-vscode"]))) == {
+        f"{chat}/transcripts/t.jsonl",
+        f"{chat}/memory-tool/notes.md",
+    }
+
+
 def _merged_source(home: Path, old: Path):
     entries = [
         {"name": "src", "kind": "live", "platform": "linux", "home": str(home)},

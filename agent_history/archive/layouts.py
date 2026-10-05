@@ -189,6 +189,13 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="copilot-vscode",
         roots=_VSCODE_USER_DIRS,
         include=("workspaceStorage/*/GitHub.copilot-chat/**", "workspaceStorage/*/chatSessions/**"),
+        # SQLite files here are indexes of the workspace's files (path, size, time and
+        # hash per file) that Copilot rebuilds; they hold no chat content.
+        exclude=(
+            "workspaceStorage/*/GitHub.copilot-chat/**/*.sqlite",
+            "workspaceStorage/*/GitHub.copilot-chat/**/*.sqlite3",
+            "workspaceStorage/*/GitHub.copilot-chat/**/*.db",
+        ),
         backend="copilot-vscode",
         sessions=("workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl",),
     ),
