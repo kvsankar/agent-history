@@ -2,6 +2,8 @@
 
 ``{TS}``, ``{JSON}``, ``{BIG}`` and ``{BOOL}`` are replaced per store: PostgreSQL gets
 ``timestamptz``, ``jsonb``, ``bigint`` and ``boolean``; SQLite gets ``TEXT`` and ``INTEGER``.
+``{BYTES}`` names each store's byte-order collation (``"C"`` and ``BINARY``), so text sorts
+the same way on both whatever the database's locale.
 The catalog holds metadata only, never message text.
 
 Views hold no data, so changing one needs no new schema version: every open replaces them
@@ -19,8 +21,20 @@ SCHEMA_VERSION = "2"
 UPGRADABLE_VERSIONS = ("1",)
 
 TYPES = {
-    "sqlite": {"TS": "TEXT", "JSON": "TEXT", "BIG": "INTEGER", "BOOL": "INTEGER"},
-    "postgres": {"TS": "TIMESTAMPTZ", "JSON": "JSONB", "BIG": "BIGINT", "BOOL": "BOOLEAN"},
+    "sqlite": {
+        "TS": "TEXT",
+        "JSON": "TEXT",
+        "BIG": "INTEGER",
+        "BOOL": "INTEGER",
+        "BYTES": "BINARY",
+    },
+    "postgres": {
+        "TS": "TIMESTAMPTZ",
+        "JSON": "JSONB",
+        "BIG": "BIGINT",
+        "BOOL": "BOOLEAN",
+        "BYTES": '"C"',
+    },
 }
 
 TABLES = (
@@ -134,6 +148,7 @@ TABLES = (
     # Session files before database rows (a database may count turns, a file counts
     # messages), then the most messages, then the latest message. "x IS NULL" puts
     # NULLs last on both stores: they sort last in SQLite but first in PostgreSQL.
+    # The last tie-break compares bytes, as PostgreSQL would otherwise use its locale.
     """CREATE VIEW IF NOT EXISTS session_longest_copy AS
         SELECT * FROM (
             SELECT s.*, ROW_NUMBER() OVER (
@@ -141,7 +156,7 @@ TABLES = (
                 ORDER BY from_database,
                          message_count IS NULL, message_count DESC,
                          last_timestamp IS NULL, last_timestamp DESC,
-                         source, path
+                         source COLLATE {BYTES}, path COLLATE {BYTES}
             ) AS copy_rank
             FROM sessions s
         ) ranked

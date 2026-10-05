@@ -82,9 +82,7 @@ def pg_cluster():
 _DB_NAMES = itertools.count()
 
 
-@pytest.fixture(params=["sqlite", "postgres"])
-def store_spec(request, tmp_path):
-    """The ``--store`` value of an empty catalog database."""
+def _new_store_spec(request, tmp_path, create_options=""):
     if request.param == "sqlite":
         return f"sqlite:{tmp_path / 'catalog.db'}"
     import psycopg
@@ -92,8 +90,26 @@ def store_spec(request, tmp_path):
     conninfo = request.getfixturevalue("pg_cluster")
     name = f"catalog_{os.getpid()}_{next(_DB_NAMES)}"
     with psycopg.connect(conninfo + " dbname=postgres", autocommit=True) as conn:
-        conn.execute(f"CREATE DATABASE {name}")
+        conn.execute(f"CREATE DATABASE {name} {create_options}")
     return f"postgres:{conninfo} dbname={name}"
+
+
+@pytest.fixture(params=["sqlite", "postgres"])
+def store_spec(request, tmp_path):
+    """The ``--store`` value of an empty catalog database."""
+    return _new_store_spec(request, tmp_path)
+
+
+@pytest.fixture(params=["sqlite", "postgres"])
+def linguistic_store(request, tmp_path):
+    """An empty catalog whose PostgreSQL database sorts text by language rules ("a" < "B")."""
+    opened = open_store(
+        _new_store_spec(
+            request, tmp_path, "TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'und'"
+        )
+    )
+    yield opened
+    opened.close()
 
 
 @pytest.fixture
@@ -575,6 +591,15 @@ def test_the_longest_copy_breaks_a_tie_by_the_latest_known_message(store):
         _add_copy(store, "b.jsonl", False, 40, "2026-10-02T06:15:00+00:00")
 
     assert _longest_copy(store) == [("b.jsonl",)]
+
+
+def test_the_longest_copy_breaks_a_full_tie_by_byte_order_on_every_store(linguistic_store):
+    # Byte order puts "B" before "a"; a language collation puts "a" first.
+    with linguistic_store.transaction():
+        _add_copy(linguistic_store, "a.jsonl", False, 40, "2026-10-02T06:15:00+00:00")
+        _add_copy(linguistic_store, "B.jsonl", False, 40, "2026-10-02T06:15:00+00:00")
+
+    assert _longest_copy(linguistic_store) == [("B.jsonl",)]
 
 
 def test_opening_a_catalog_replaces_views_from_an_older_version(store_spec):
