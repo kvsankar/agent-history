@@ -1,7 +1,8 @@
 """Which files to archive for each agent, and where they go in the archive.
 
 Each agent has an allowlist of glob patterns relative to its root folder. A credential
-denylist applies to every file whatever the configuration says. Archived paths mirror the
+denylist applies to every file whatever the configuration says, and to every folder a
+configuration include passes through. Archived paths mirror the
 source's home directory, so ``.claude/history.jsonl`` is stored at
 ``sources/<source>/files/.claude/history.jsonl.zst``.
 """
@@ -25,10 +26,15 @@ if TYPE_CHECKING:
 ARCHIVE_SUFFIX = ".zst"
 OTHER_AGENT = "other"
 
-# Matched against file names only, everywhere. Never archived.
+# Matched against every file name, and against the folder names of files that a
+# configuration include selects. Never archived. Folder names in the default layouts are
+# not checked: a Claude project folder is named after any working folder, such as one
+# called "oauth-proxy", and the layouts never select a credential folder.
 CREDENTIAL_DENYLIST = (
     "auth.json",
     "*oauth*",
+    "*.token",
+    "*tokens.json",
     "*.pem",
     "*.key",
     ".credentials.json",
@@ -404,10 +410,14 @@ def _iter_config_includes(part: SourcePart, platform: str) -> Iterator[SelectedF
         layout_exclude = layout.exclude if layout is not None else ()
         agent = layout.name if layout is not None else OTHER_AGENT
         if isinstance(found, _Unreadable):
-            if not _excludes_folder(inner, layout_exclude, rel_path, part.exclude):
+            if _folders_allowed(rel_path + "/") and not _excludes_folder(
+                inner, layout_exclude, rel_path, part.exclude
+            ):
                 yield SelectedFile(rel_path, home / rel_path, agent, error=found.message)
             continue
-        if not _name_allowed(found) or _matches_any(found, part.exclude):
+        if not _name_allowed(found) or not _folders_allowed(found):
+            continue
+        if _matches_any(found, part.exclude):
             continue
         if layout is None:
             yield SelectedFile(found, home / found, agent)
@@ -431,10 +441,19 @@ def _layout_for(rel_path: str, platform: str) -> tuple[AgentLayout | None, str]:
 
 def _name_allowed(rel_path: str) -> bool:
     name = rel_path.rsplit("/", 1)[-1]
-    lowered = name.lower()
-    if any(fnmatch.fnmatchcase(lowered, pattern) for pattern in CREDENTIAL_DENYLIST):
+    if _is_credential_name(name):
         return False
     return not any(fnmatch.fnmatchcase(name, pattern) for pattern in COMMON_EXCLUDES)
+
+
+def _folders_allowed(rel_path: str) -> bool:
+    """Whether no folder on ``rel_path`` (every segment but the last) is a credential name."""
+    return not any(_is_credential_name(folder) for folder in rel_path.split("/")[:-1])
+
+
+def _is_credential_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(fnmatch.fnmatchcase(lowered, pattern) for pattern in CREDENTIAL_DENYLIST)
 
 
 class _Unreadable(NamedTuple):

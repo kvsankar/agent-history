@@ -100,6 +100,9 @@ def test_credential_files_are_never_selected(tmp_path):
         "Extension Cookies",
         "Safe Browsing Cookies",
         "cookies.txt",
+        "ws.token",
+        "ws.release.token",
+        "abc123.tokens.json",
     ],
 )
 def test_more_credential_files_are_never_selected(tmp_path, name):
@@ -492,4 +495,46 @@ def test_includes_under_an_agent_folder_keep_its_exclusions(tmp_path):
     assert set(_selected(source)) == {
         ".gemini/tmp/abc/chats/session-1.json",
         f"{chat}/transcripts/t.jsonl",
+    }
+
+
+def test_includes_never_select_files_inside_credential_folders(tmp_path):
+    _touch(tmp_path, ".copilot/mcp-oauth-config/abc123.json")
+    _touch(tmp_path, ".copilot/mcp-oauth-config/abc123.tokens.json")
+    _touch(tmp_path, ".copilot/run/ws.token")
+    _touch(tmp_path, ".copilot/run/ws.release.token")
+    _touch(tmp_path, ".config/tool/credentials/default.json")
+    _touch(tmp_path, ".copilot/session-state/abc/events.jsonl")
+    source = _source(tmp_path, agents=["cagelens"], include=[".copilot/**", ".config/**"])
+
+    assert set(_selected(source)) == {".copilot/session-state/abc/events.jsonl"}
+
+
+def test_unreadable_credential_folder_under_an_include_is_not_an_error(tmp_path, monkeypatch):
+    from agent_history.archive import layouts
+
+    _touch(tmp_path, ".copilot/mcp-oauth-config/abc123.json")
+    _touch(tmp_path, ".copilot/chats/c.json")
+    locked = tmp_path / ".copilot" / "mcp-oauth-config"
+    real_scandir = layouts.os.scandir
+
+    def scandir(path):
+        if Path(path) == locked:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(layouts.os, "scandir", scandir)
+    source = _source(tmp_path, agents=["cagelens"], include=[".copilot/**"])
+
+    assert set(_selected(source)) == {".copilot/chats/c.json"}
+
+
+def test_default_layouts_keep_project_folders_named_like_credentials(tmp_path):
+    # Claude names a project folder after its working folder, which can be any name.
+    _touch(tmp_path, ".claude/projects/-home-alex-code-oauth-proxy/s.jsonl")
+    _touch(tmp_path, ".claude/projects/-home-alex-code-credentials-api/s.jsonl")
+
+    assert set(_selected(_source(tmp_path))) == {
+        ".claude/projects/-home-alex-code-oauth-proxy/s.jsonl",
+        ".claude/projects/-home-alex-code-credentials-api/s.jsonl",
     }
