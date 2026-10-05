@@ -515,7 +515,7 @@ def test_includes_under_an_agent_folder_keep_its_database_rules(tmp_path):
     _touch(tmp_path, ".copilot/data.db")
     _touch(tmp_path, ".codex/state_5.sqlite")
     _touch(tmp_path, ".codex/logs_2.sqlite")
-    _touch(tmp_path, ".codex/config.toml")
+    _touch(tmp_path, ".codex/hooks.json")
     source = _source(tmp_path, agents=["claude"], include=[".copilot/**", ".codex/**"])
 
     selected = _selected(source)
@@ -524,7 +524,7 @@ def test_includes_under_an_agent_folder_keep_its_database_rules(tmp_path):
         ".copilot/data.db",
         ".codex/state_5.sqlite",
         ".codex/logs_2.sqlite",
-        ".codex/config.toml",
+        ".codex/hooks.json",
     }
     data_db = selected[".copilot/data.db"]
     assert data_db.agent == "copilot-cli"
@@ -532,7 +532,7 @@ def test_includes_under_an_agent_folder_keep_its_database_rules(tmp_path):
     assert "accounts.access_token" in data_db.database.blank_columns
     assert selected[".codex/state_5.sqlite"].database.mode == "snapshot"
     assert selected[".codex/logs_2.sqlite"].database.mode == "log"
-    assert selected[".codex/config.toml"].database is None
+    assert selected[".codex/hooks.json"].database is None
 
 
 def test_includes_under_an_agent_folder_keep_its_exclusions(tmp_path):
@@ -667,6 +667,7 @@ def test_includes_snapshot_any_sqlite_database_no_rule_names(tmp_path):
 
 def test_includes_leave_out_agent_configuration_that_holds_tokens(tmp_path):
     left_out = [
+        ".codex/config.toml",
         ".codex/config.toml.bak-20260928-150907",
         ".codex/config.toml~",
         ".codex/.config.toml.un~",

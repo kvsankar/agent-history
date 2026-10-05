@@ -188,8 +188,9 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         exclude=(
             # Built from the rollout files, recording how far into each one it has read.
             "thread_history_*.sqlite",
-            # Copies of config.toml, which can hold MCP server keys and bearer tokens:
+            # config.toml can hold MCP server keys and bearer tokens; so can its
             # backups, editor backups and undo files.
+            "config.toml",
             "config.toml?*",
             ".config.toml.*",
             "backups/**/config.toml*",
