@@ -9,6 +9,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -1013,6 +1014,48 @@ def test_status_reads_a_sqlite_catalog_it_cannot_write(tmp_path, archive, capsys
         assert [row["source"] for row in json.loads(capsys.readouterr().out)] == ["laptop"]
     finally:
         folder.chmod(0o755)
+
+
+# A sync killed part way through a transaction: its rollback journal stays behind.
+_INTERRUPTED_WRITE = """
+import os, sqlite3, sys
+conn = sqlite3.connect(sys.argv[1], isolation_level=None)
+conn.execute("PRAGMA cache_size = 10")
+conn.execute("BEGIN")
+for number in range(300):
+    conn.execute(
+        "INSERT INTO sources (name, kind, platform, note) VALUES (?, 'live', 'linux', ?)",
+        (f"s{number}", "n" * 1000),
+    )
+os._exit(0)
+"""
+
+
+def test_status_after_an_interrupted_sync_asks_for_a_sync_and_changes_nothing(
+    tmp_path, archive, capsys
+):
+    db = tmp_path / "catalog.db"
+    spec = f"sqlite:{db}"
+    catalog = open_store(spec)
+    sync_catalog(catalog, archive["destination"])
+    catalog.close()
+    subprocess.run([sys.executable, "-c", _INTERRUPTED_WRITE, str(db)], check=True)
+    journal = db.with_name(db.name + "-journal")
+    assert journal.stat().st_size > 0
+    before = [db.read_bytes(), journal.read_bytes()]
+    capsys.readouterr()
+
+    assert _status(spec) != 0
+
+    error = capsys.readouterr().err
+    assert "interrupted sync" in error
+    assert "cagelens archive catalog sync" in error
+    assert [db.read_bytes(), journal.read_bytes()] == before
+    catalog = open_store(spec)
+    sync_catalog(catalog, archive["destination"])
+    catalog.close()
+    assert _status(spec) == 0
+    assert [row["source"] for row in json.loads(capsys.readouterr().out)] == ["laptop"]
 
 
 def test_status_of_a_source_that_is_not_in_the_catalog_is_an_error(store_spec, archive, capsys):

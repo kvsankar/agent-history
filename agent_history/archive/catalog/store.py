@@ -22,6 +22,9 @@ from agent_history.archive.catalog.schema import (
 from agent_history.archive.errors import ArchiveError
 
 _SYNC_COMMAND = "cagelens archive catalog sync"
+# SQLite's extended result code for a read-only connection that meets a journal left by
+# an interrupted write: rolling it back would write, so it cannot read the database.
+_SQLITE_READONLY_ROLLBACK = 776
 
 
 class CatalogStore:
@@ -119,7 +122,21 @@ class SqliteStore(CatalogStore):
         try:
             super().check_schema()
         except sqlite3.Error as exc:  # such as a file that is not a SQLite database
+            if self._interrupted_write(exc):
+                raise ArchiveError(
+                    f"The catalog at {self.path} has a journal left by an interrupted sync, "
+                    f"which reading it without writing cannot undo: run {_SYNC_COMMAND} "
+                    "to recover it"
+                ) from exc
             raise ArchiveError(f"Cannot read the catalog at {self.path}: {exc}") from exc
+
+    def _interrupted_write(self, exc: sqlite3.Error) -> bool:
+        """Whether ``exc`` comes from a rollback journal that an interrupted write left."""
+        code = getattr(exc, "sqlite_errorcode", None)  # Python 3.11 and later
+        if code is not None:
+            return code == _SQLITE_READONLY_ROLLBACK
+        journal = self.path.with_name(self.path.name + "-journal")
+        return journal.is_file() and journal.stat().st_size > 0
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
