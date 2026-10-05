@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -629,6 +630,45 @@ def test_archive_with_unknown_format_is_refused(env):
 
     with pytest.raises(ArchiveError, match="format"):
         _collect(env)
+
+
+@pytest.mark.parametrize(
+    "content", [b"{not json", b"\xff\xfe", b"[1, 2]"], ids=["json", "utf-8", "not-an-object"]
+)
+def test_damaged_archive_json_is_an_archive_error(env, content):
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    (env["dest"] / "ARCHIVE.json").write_bytes(content)
+
+    with pytest.raises(ArchiveError, match=r"ARCHIVE\.json"):
+        _collect(env, now=T0 + timedelta(hours=1))
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"\x28\xb5\x2f\xfd not a zstd frame",
+        zstandard.ZstdCompressor().compress(b"not json\n"),
+        zstandard.ZstdCompressor().compress(b"\xff\xfe\n"),
+        zstandard.ZstdCompressor().compress(b'["a list"]\n'),
+        zstandard.ZstdCompressor().compress(b'{"type": "file"}\n'),
+    ],
+    ids=["zstd", "json", "utf-8", "not-an-object", "no-run-record"],
+)
+def test_damaged_manifest_is_an_archive_error_naming_the_file(env, content):
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    name = "20991231T000000Z-src-ffff.jsonl.zst"
+    (env["dest"] / "sources" / "src" / "manifests" / name).write_bytes(content)
+
+    with pytest.raises(ArchiveError, match=re.escape(name)):
+        _collect(env, now=T0 + timedelta(hours=1))
+    with pytest.raises(ArchiveError, match=re.escape(name)):
+        verify_source(open_destination(str(env["dest"])), "src")
 
 
 def test_source_kind_is_recorded(env):

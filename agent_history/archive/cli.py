@@ -98,7 +98,8 @@ def _collect(args: argparse.Namespace) -> int:
     """Collect each source in turn. A source that fails does not stop the others.
 
     A source whose lock another run holds is skipped, as the design asks. Any other
-    failure is reported and makes the exit code 1 once every source has been tried.
+    failure, including an unexpected exception, is reported and makes the exit code 1
+    once every source has been tried.
     """
     from agent_history.archive import collect as collect_module
 
@@ -120,8 +121,11 @@ def _collect(args: argparse.Namespace) -> int:
             summary = collect_module.RunSummary("", name, skipped_reason="locked")
         except (ArchiveError, OSError) as exc:
             failed = True
-            sys.stderr.write(f"Error: {name}: {exc}\n")
-            results.append({"source": name, "error": str(exc)})
+            results.append(_source_failure(name, str(exc)))
+            continue
+        except Exception as exc:  # a defect for one source must not stop the others
+            failed = True
+            results.append(_source_failure(name, f"{type(exc).__name__}: {exc}"))
             continue
         errors = errors or bool(summary.errors)
         results.append(_summary_dict(summary))
@@ -132,6 +136,11 @@ def _collect(args: argparse.Namespace) -> int:
     if failed:
         return EXIT_FAILED
     return EXIT_PROBLEMS if errors else EXIT_OK
+
+
+def _source_failure(name: str, message: str) -> dict[str, Any]:
+    sys.stderr.write(f"Error: {name}: {message}\n")
+    return {"source": name, "error": message}
 
 
 def _print_collect(summary) -> None:

@@ -13,11 +13,16 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Collection, Iterator
 
 from agent_history.archive.codec import compress_bytes, decompress_bytes
+from agent_history.archive.errors import ArchiveError
 
 if TYPE_CHECKING:
     from agent_history.archive.transport import Destination
 
 MANIFEST_SUFFIX = ".jsonl.zst"
+
+
+class ManifestError(ArchiveError):
+    """A manifest that cannot be decoded."""
 
 
 def new_run_id(now: datetime, source: str) -> str:
@@ -42,10 +47,19 @@ def encode_manifest(run: dict[str, Any], entries: list[dict[str, Any]], level: i
     return compress_bytes(("\n".join(lines) + "\n").encode("utf-8"), level)
 
 
-def decode_manifest(data: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    records = [json.loads(line) for line in decompress_bytes(data).decode("utf-8").splitlines()]
-    if not records or records[0].get("type") != "run":
-        raise ValueError("Manifest does not start with a run record")
+def decode_manifest(
+    data: bytes, name: str = "The manifest"
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """The run record and the entries of a manifest; ManifestError names ``name``."""
+    try:
+        text = decompress_bytes(data).decode("utf-8")
+        records = [json.loads(line) for line in text.splitlines()]
+    except Exception as exc:  # zstd, UTF-8 and JSON errors alike: the file is damaged
+        raise ManifestError(f"{name} cannot be decoded: {exc}") from exc
+    if not records or not all(isinstance(record, dict) for record in records):
+        raise ManifestError(f"{name} does not hold one JSON object per line")
+    if records[0].get("type") != "run":
+        raise ManifestError(f"{name} does not start with a run record")
     return records[0], records[1:]
 
 
@@ -61,8 +75,11 @@ def committed_run_ids(destination: Destination, source: str) -> list[str]:
 def read_manifest(
     destination: Destination, source: str, run_id: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
-    data = destination.read_bytes(manifest_path(source, run_id))
-    return decode_manifest(data) if data is not None else None
+    path = manifest_path(source, run_id)
+    data = destination.read_bytes(path)
+    if data is None:
+        return None
+    return decode_manifest(data, f"The manifest {path} in {destination.description}")
 
 
 def read_manifests(

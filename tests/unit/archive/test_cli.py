@@ -157,6 +157,48 @@ def test_a_failing_source_does_not_stop_the_others(setup, capsys, monkeypatch):
     assert results["other"]["written"] == 1
 
 
+def test_a_damaged_manifest_fails_its_source_and_the_rest_are_collected(setup, capsys):
+    config = _two_sources(setup)
+    assert main(["archive", "collect", "--config", config]) == 0
+    manifests = setup["tmp"] / "archive" / "sources" / "laptop" / "manifests"
+    damaged = manifests / "20991231T000000Z-laptop-ffff.jsonl.zst"
+    damaged.write_bytes(b"\x28\xb5\x2f\xfd not a zstd frame")
+    other = setup["tmp"] / "other-home" / SESSION
+    other.write_text('{"type":"user"}\n{"type":"assistant"}\n', encoding="utf-8")
+    capsys.readouterr()
+
+    code = main(["archive", "collect", "--config", config])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "laptop:" in captured.err
+    assert "20991231T000000Z-laptop-ffff.jsonl.zst" in captured.err
+    assert "other: 1 written" in captured.out
+
+
+def test_an_unexpected_failure_does_not_stop_the_other_sources(setup, capsys, monkeypatch):
+    from agent_history.archive import collect as collect_module
+
+    config = _two_sources(setup)
+    real = collect_module.collect_source
+
+    def failing_for_laptop(config, name, **kwargs):
+        if name == "laptop":
+            raise RuntimeError("something unforeseen")
+        return real(config, name, **kwargs)
+
+    monkeypatch.setattr(collect_module, "collect_source", failing_for_laptop)
+
+    code = main(["archive", "collect", "--config", config, "--json"])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "laptop: RuntimeError: something unforeseen" in captured.err
+    results = {item["source"]: item for item in json.loads(captured.out)}
+    assert results["laptop"]["error"] == "RuntimeError: something unforeseen"
+    assert results["other"]["written"] == 1
+
+
 def test_unknown_source_is_an_error(setup, capsys):
     assert main(["archive", "collect", "--config", setup["config"], "--source", "nope"]) == 1
     assert "Unknown source: nope" in capsys.readouterr().err

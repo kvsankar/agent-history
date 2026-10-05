@@ -119,7 +119,15 @@ def check_archive_format(destination: Destination, create: bool) -> bool:
         if create:
             destination.write_bytes("ARCHIVE.json", json.dumps({"format": ARCHIVE_FORMAT}).encode())
         return False
-    found = json.loads(data.decode("utf-8")).get("format")
+    try:
+        found = json.loads(data.decode("utf-8"))
+    except ValueError as exc:  # not UTF-8 or not JSON
+        raise ArchiveError(
+            f"ARCHIVE.json in {destination.description} cannot be read: {exc}"
+        ) from exc
+    if not isinstance(found, dict):
+        raise ArchiveError(f"ARCHIVE.json in {destination.description} is not a JSON object")
+    found = found.get("format")
     if found != ARCHIVE_FORMAT:
         raise ArchiveError(f"Archive format {found} is not supported (expected {ARCHIVE_FORMAT})")
     return True
@@ -201,7 +209,9 @@ def recover_incoming(destination: Destination, source: str) -> bool:
         data = destination.read_bytes(f"{incoming_dir(source, run_id)}/{PENDING_MANIFEST}")
         if data is None:
             continue
-        _run, entries = decode_manifest(data)
+        _run, entries = decode_manifest(
+            data, f"The manifest of interrupted run {run_id} in {destination.description}"
+        )
         sys.stderr.write(f"Finishing interrupted run {run_id}\n")
         finish_run(destination, source, run_id, entries, incoming_dir(source, run_id))
     destination.discard_tree(incoming_root(source))
