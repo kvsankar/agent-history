@@ -78,6 +78,37 @@ def test_credential_files_are_never_selected(tmp_path):
     assert set(_selected(source)) == set()
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "id_rsa",
+        "id_rsa.pub",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_dsa",
+        "id_ed25519_sk",
+        ".netrc",
+        "_netrc",
+        ".git-credentials",
+        ".pgpass",
+        ".npmrc",
+        ".pypirc",
+        "client.p12",
+        "client.PFX",
+        "server.pem",
+        "putty.ppk",
+        "Extension Cookies",
+        "Safe Browsing Cookies",
+        "cookies.txt",
+    ],
+)
+def test_more_credential_files_are_never_selected(tmp_path, name):
+    _touch(tmp_path, f".claude/projects/p/{name}")
+    _touch(tmp_path, ".claude/projects/p/id_map.json")
+
+    assert set(_selected(_source(tmp_path))) == {".claude/projects/p/id_map.json"}
+
+
 def test_config_include_and_exclude(tmp_path):
     _touch(tmp_path, "notes/agent-log.md")
     _touch(tmp_path, ".claude/projects/p/a.jsonl")
