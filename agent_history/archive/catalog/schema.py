@@ -7,7 +7,12 @@ The catalog holds metadata only, never message text.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
+
+# Older versions that opening upgrades in place. Each later version only added tables
+# (created by the CREATE ... IF NOT EXISTS statements below), so upgrading only records
+# the new version. Version 2 added ``pending_sessions``.
+UPGRADABLE_VERSIONS = ("1",)
 
 TYPES = {
     "sqlite": {"TS": "TEXT", "JSON": "TEXT", "BIG": "INTEGER", "BOOL": "INTEGER"},
@@ -102,6 +107,16 @@ TABLES = (
         file_sha256 TEXT,
         PRIMARY KEY (source, path, session_id)
     )""",
+    # Session files whose last read failed, with the SHA-256 the manifest gave them;
+    # every sync retries them. ``error_type`` is the exception's class name only, so
+    # no file content can reach the catalog.
+    """CREATE TABLE IF NOT EXISTS pending_sessions (
+        source TEXT NOT NULL,
+        path TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        error_type TEXT,
+        PRIMARY KEY (source, path)
+    )""",
     """CREATE INDEX IF NOT EXISTS sessions_by_id ON sessions (agent, session_id)""",
     """CREATE INDEX IF NOT EXISTS runs_by_source ON runs (source)""",
     """CREATE VIEW IF NOT EXISTS session_copies AS
@@ -124,7 +139,15 @@ TABLES = (
 )
 
 # Deleted in this order when the catalog is rebuilt.
-DATA_TABLES = ("sessions", "row_exports", "file_versions", "files", "runs", "sources")
+DATA_TABLES = (
+    "pending_sessions",
+    "sessions",
+    "row_exports",
+    "file_versions",
+    "files",
+    "runs",
+    "sources",
+)
 
 
 def statements(dialect: str) -> list[str]:

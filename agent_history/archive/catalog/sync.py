@@ -1,13 +1,15 @@
 """Bring a catalog up to date with an archive by replaying manifests it has not ingested.
 
-Each run's manifest is applied in one transaction. Session metadata is then extracted once
-per changed session file, with the same backend parsers the cagelens commands use.
+Session metadata is extracted once per changed session file, with the same backend parsers
+the cagelens commands use; then each run's manifest is applied in one transaction. A session
+file that cannot be read, or whose content does not match its manifest's SHA-256, is kept
+in ``pending_sessions`` and read again by every later sync until it succeeds.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-import shutil
 import sqlite3
 import sys
 import tempfile
@@ -18,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_history.archive.catalog.store import CatalogStore
-from agent_history.archive.codec import _zstd
+from agent_history.archive.codec import CHUNK_SIZE, _zstd
 from agent_history.archive.layouts import SessionTarget, archive_file_path, session_target
 from agent_history.archive.manifest import read_manifests
 from agent_history.archive.transport import Destination
@@ -74,7 +76,11 @@ def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: 
     descriptor = json.loads(destination.read_bytes(f"sources/{name}/SOURCE.json") or b"{}")
     done = {row[0] for row in store.fetchall("SELECT run_id FROM runs WHERE source = ?", (name,))}
     runs = list(read_manifests(destination, name, skip_run_ids=done))
-    changed: dict[str, str] = {}
+    # Files that failed before, then this sync's runs: a newer run's hash replaces a
+    # pending one.
+    changed: dict[str, str] = dict(
+        store.fetchall("SELECT path, sha256 FROM pending_sessions WHERE source = ?", (name,))
+    )
     for _run, entries in runs:
         for entry in entries:
             if entry.get("type") == "file" and entry.get("action") in _WRITTEN:
@@ -107,12 +113,26 @@ def _sync_sessions(
             rows = _extract_sessions(destination, name, path, target, sha256, work_dir)
         except Exception as exc:  # one bad file must not stop the sync
             summary.errors.append(f"{name}:{path}: {exc}")
+            _mark_pending(store, name, path, sha256, exc)
             continue
         with store.transaction():
             store.execute("DELETE FROM sessions WHERE source = ? AND path = ?", (name, path))
             for row in rows:
                 _insert_session(store, row)
+            store.execute(
+                "DELETE FROM pending_sessions WHERE source = ? AND path = ?", (name, path)
+            )
         summary.sessions += len(rows)
+
+
+def _mark_pending(store, source: str, path: str, sha256: str, exc: Exception) -> None:
+    with store.transaction():
+        store.execute(
+            "INSERT INTO pending_sessions (source, path, sha256, error_type) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (source, path) DO UPDATE SET "
+            "sha256 = excluded.sha256, error_type = excluded.error_type",
+            (source, path, sha256, type(exc).__name__),
+        )
 
 
 def _upsert_source(store, name: str, descriptor: dict, run: dict) -> None:
@@ -246,11 +266,7 @@ def _extract_sessions(
     with tempfile.TemporaryDirectory(prefix="session-", dir=work_dir) as tmp:
         local = Path(tmp) / path  # keep folder names: some parsers read them
         local.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open_binary(archive_file_path(source, path)) as raw, local.open(
-            "wb"
-        ) as out:
-            with _zstd().ZstdDecompressor().stream_reader(raw) as reader:
-                shutil.copyfileobj(reader, out)
+        _decompress_checked(destination, archive_file_path(source, path), local, sha256)
         base = {"source": source, "path": path, "agent": target.backend, "file_sha256": sha256}
         if target.database is not None:
             return [
@@ -258,6 +274,29 @@ def _extract_sessions(
                 for row in _database_sessions(local, str(target.database.sessions_sql))
             ]
         return [{**base, **_file_session(local, target.backend)}]
+
+
+class ContentMismatchError(Exception):
+    """An archived file's content differs from the SHA-256 its manifest records."""
+
+
+def _decompress_checked(destination: Destination, archived: str, local: Path, sha256: str):
+    """Decompress ``archived`` into ``local``, checking the content's SHA-256.
+
+    A mismatch usually means a collect is rewriting the file and has not yet written the
+    manifest that describes the new content.
+    """
+    digest = hashlib.sha256()
+    with destination.open_binary(archived) as raw, local.open("wb") as out:
+        with _zstd().ZstdDecompressor().stream_reader(raw) as reader:
+            while chunk := reader.read(CHUNK_SIZE):
+                digest.update(chunk)
+                out.write(chunk)
+    if digest.hexdigest() != sha256:
+        raise ContentMismatchError(
+            f"content does not match the manifest's SHA-256 {sha256[:12]}; "
+            "a collect may be rewriting it"
+        )
 
 
 def _file_session(local: Path, backend_id: str) -> dict[str, Any]:

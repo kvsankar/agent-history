@@ -11,7 +11,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
-from agent_history.archive.catalog.schema import DATA_TABLES, SCHEMA_VERSION, statements
+from agent_history.archive.catalog.schema import (
+    DATA_TABLES,
+    SCHEMA_VERSION,
+    UPGRADABLE_VERSIONS,
+    statements,
+)
 from agent_history.archive.errors import ArchiveError
 
 
@@ -40,6 +45,10 @@ class CatalogStore:
             if not found:
                 self.execute(
                     "INSERT INTO schema_meta (key, value) VALUES ('version', ?)", (SCHEMA_VERSION,)
+                )
+            elif found[0][0] in UPGRADABLE_VERSIONS:
+                self.execute(
+                    "UPDATE schema_meta SET value = ? WHERE key = 'version'", (SCHEMA_VERSION,)
                 )
             elif found[0][0] != SCHEMA_VERSION:
                 raise ArchiveError(

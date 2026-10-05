@@ -15,8 +15,12 @@ from pathlib import Path
 import pytest
 
 from agent_history.archive.catalog import catalog_status, open_store, sync_catalog
+from agent_history.archive.catalog.schema import SCHEMA_VERSION
+from agent_history.archive.codec import compress_bytes, decompress_bytes
 from agent_history.archive.collect import collect_source
 from agent_history.archive.config import parse_config
+from agent_history.archive.errors import ArchiveError
+from agent_history.archive.layouts import archive_file_path
 from agent_history.archive.transport import open_destination
 from tests.helpers.session_builders import ClaudeSessionBuilder, CodexSessionBuilder
 
@@ -73,17 +77,22 @@ _DB_NAMES = itertools.count()
 
 
 @pytest.fixture(params=["sqlite", "postgres"])
-def store(request, tmp_path):
+def store_spec(request, tmp_path):
+    """The ``--store`` value of an empty catalog database."""
     if request.param == "sqlite":
-        opened = open_store(f"sqlite:{tmp_path / 'catalog.db'}")
-    else:
-        import psycopg
+        return f"sqlite:{tmp_path / 'catalog.db'}"
+    import psycopg
 
-        conninfo = request.getfixturevalue("pg_cluster")
-        name = f"catalog_{os.getpid()}_{next(_DB_NAMES)}"
-        with psycopg.connect(conninfo + " dbname=postgres", autocommit=True) as conn:
-            conn.execute(f"CREATE DATABASE {name}")
-        opened = open_store(f"postgres:{conninfo} dbname={name}")
+    conninfo = request.getfixturevalue("pg_cluster")
+    name = f"catalog_{os.getpid()}_{next(_DB_NAMES)}"
+    with psycopg.connect(conninfo + " dbname=postgres", autocommit=True) as conn:
+        conn.execute(f"CREATE DATABASE {name}")
+    return f"postgres:{conninfo} dbname={name}"
+
+
+@pytest.fixture
+def store(store_spec):
+    opened = open_store(store_spec)
     yield opened
     opened.close()
 
@@ -142,6 +151,17 @@ def archive(tmp_path):
 
 def _rows(store, sql, params=()):
     return [tuple(row) for row in store.fetchall(sql, params)]
+
+
+def _session_ids(store):
+    return sorted(row[0] for row in _rows(store, "SELECT session_id FROM sessions"))
+
+
+def _codex_file(archive):
+    """The Codex session file's path in the source and its compressed copy in the archive."""
+    (local,) = (archive["home"] / ".codex").rglob("*.jsonl")
+    rel = local.relative_to(archive["home"]).as_posix()
+    return local, rel, archive["path"] / "archive" / archive_file_path("laptop", rel)
 
 
 # -- tests ---------------------------------------------------------------------------
@@ -223,6 +243,103 @@ def test_sync_interrupted_while_reading_sessions_finishes_on_the_next_sync(
         "codex-s1",
         "copilot-gone",
     ]
+
+
+def test_a_session_file_that_could_not_be_read_is_read_on_the_next_sync(store, archive):
+    # A running collect moves the archived copy aside before the new copy arrives.
+    _, rel, archived = _codex_file(archive)
+    aside = archived.with_name(archived.name + ".aside")
+    archived.rename(aside)
+
+    first = sync_catalog(store, archive["destination"])
+
+    assert [error for error in first.errors if rel in error]
+    assert "codex-s1" not in _session_ids(store)
+    aside.rename(archived)
+
+    second = sync_catalog(store, archive["destination"])
+
+    assert second.errors == []
+    assert second.runs == 0
+    assert _session_ids(store) == ["claude-s1", "codex-s1", "copilot-gone"]
+    assert sync_catalog(store, archive["destination"]).sessions == 0
+
+
+def test_a_session_file_that_still_cannot_be_read_is_reported_on_every_sync(store, archive):
+    _, rel, archived = _codex_file(archive)
+    archived.rename(archived.with_name(archived.name + ".aside"))
+    sync_catalog(store, archive["destination"])
+
+    again = sync_catalog(store, archive["destination"])
+
+    assert again.runs == 0
+    assert [error for error in again.errors if rel in error]
+
+
+def test_sync_does_not_read_a_session_file_that_differs_from_its_manifest(store, archive):
+    # A running collect has rewritten the archived copy and not yet written its manifest.
+    _, rel, archived = _codex_file(archive)
+    original = archived.read_bytes()
+    archived.write_bytes(compress_bytes(decompress_bytes(original) + b"\n", 3))
+
+    first = sync_catalog(store, archive["destination"])
+
+    assert [error for error in first.errors if rel in error and "SHA-256" in error]
+    assert "codex-s1" not in _session_ids(store)
+    archived.write_bytes(original)
+
+    second = sync_catalog(store, archive["destination"])
+
+    assert second.errors == []
+    assert _rows(store, "SELECT file_sha256 FROM sessions WHERE session_id = 'codex-s1'") == (
+        _rows(store, "SELECT sha256 FROM files WHERE path = ?", (rel,))
+    )
+
+
+def test_a_session_file_that_failed_is_read_at_its_newest_hash_after_another_run(store, archive):
+    local, rel, archived = _codex_file(archive)
+    aside = archived.with_name(archived.name + ".aside")
+    archived.rename(aside)
+    assert sync_catalog(store, archive["destination"]).errors
+    aside.rename(archived)
+    with local.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+    _settle(local)
+    archive["collect"](hours=1)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert summary.runs == 1
+    assert _rows(store, "SELECT file_sha256 FROM sessions WHERE session_id = 'codex-s1'") == (
+        _rows(store, "SELECT sha256 FROM files WHERE path = ?", (rel,))
+    )
+
+
+def test_a_version_1_catalog_is_upgraded_when_it_is_opened(store_spec):
+    old = open_store(store_spec)
+    with old.transaction():
+        old.execute("DROP TABLE pending_sessions")
+        old.execute("UPDATE schema_meta SET value = '1' WHERE key = 'version'")
+    old.close()
+
+    upgraded = open_store(store_spec)
+
+    try:
+        assert _rows(upgraded, "SELECT value FROM schema_meta") == [(SCHEMA_VERSION,)]
+        assert _rows(upgraded, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
+    finally:
+        upgraded.close()
+
+
+def test_a_catalog_with_an_unknown_schema_version_is_refused(store_spec):
+    newer = open_store(store_spec)
+    with newer.transaction():
+        newer.execute("UPDATE schema_meta SET value = '99' WHERE key = 'version'")
+    newer.close()
+
+    with pytest.raises(ArchiveError, match="schema 99"):
+        open_store(store_spec)
 
 
 def test_versions_and_gone_files_are_recorded(store, archive):
