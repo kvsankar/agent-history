@@ -23,6 +23,7 @@ DEFAULT_COMPRESSION_LEVEL = 19
 SOURCE_KINDS = ("live", "imported", "restored")
 PLATFORMS = ("linux", "darwin", "windows")
 _SOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_TOP_KEYS = {"archive", "sources"}
 _ARCHIVE_KEYS = {"destination", "compression_level", "min_interval_hours", "health_url", "workers"}
 _SOURCE_KEYS = {"name", "kind", "platform", "note", "home", "roots", "agents", "include", "exclude"}
 
@@ -84,6 +85,7 @@ def parse_config(data: dict[str, Any]) -> ArchiveConfig:
     """Validate configuration data already loaded from JSON."""
     if not isinstance(data, dict):
         raise ArchiveConfigError("Archive configuration must be a JSON object")
+    _reject_unknown(data, _TOP_KEYS, "the configuration")
     archive = data.get("archive") or {}
     _reject_unknown(archive, _ARCHIVE_KEYS, "archive")
     destination = archive.get("destination")

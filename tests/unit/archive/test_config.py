@@ -152,6 +152,14 @@ def test_unknown_settings_are_rejected():
         parse_config(_config(archive={"destination": "/a", "worker": 3}))
 
 
+def test_unknown_top_level_settings_are_rejected():
+    data = _config()
+    data["source"] = data.pop("sources")  # misspelt: would load with no sources
+
+    with pytest.raises(ArchiveConfigError, match=r"Unknown setting in the configuration: source$"):
+        parse_config(data)
+
+
 @pytest.mark.parametrize(
     "second",
     [
