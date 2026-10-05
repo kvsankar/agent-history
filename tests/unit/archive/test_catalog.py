@@ -10,6 +10,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from agent_history.archive.config import parse_config
 from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import archive_file_path
 from agent_history.archive.transport import open_destination
+from agent_history.cli.orchestrator import main
 from tests.helpers.session_builders import (
     ClaudeSessionBuilder,
     CodexSessionBuilder,
@@ -768,3 +770,118 @@ def test_status_reports_counts_per_source(store, archive):
     assert status["files"] >= 3
     assert status["sessions"] >= 3
     assert status["last_run_at"].startswith("2026-10-02")
+
+
+# -- catalog status reads without changing the catalog -------------------------------
+
+
+def _raw(spec, sql):
+    """Column names and rows, read with a plain connection that never changes the schema."""
+    if spec.startswith("sqlite:"):
+        with closing(sqlite3.connect(spec[len("sqlite:") :])) as conn:
+            cursor = conn.execute(sql)
+            return [column[0] for column in cursor.description], cursor.fetchall()
+    import psycopg
+
+    with psycopg.connect(spec[len("postgres:") :]) as conn:
+        cursor = conn.execute(sql)
+        return [column.name for column in cursor.description or ()], cursor.fetchall()
+
+
+def _has_table(spec, name):
+    if spec.startswith("sqlite:"):
+        if not Path(spec[len("sqlite:") :]).exists():
+            return False
+        sql = f"SELECT name FROM sqlite_master WHERE name = '{name}'"
+    else:
+        sql = f"SELECT relname FROM pg_class WHERE relname = '{name}'"
+    return bool(_raw(spec, sql)[1])
+
+
+def _status(spec, *extra):
+    return main(["archive", "catalog", "status", "--store", spec, "--json", *extra])
+
+
+def test_status_reads_a_catalog_without_replacing_its_views(store_spec, archive, capsys):
+    catalog = open_store(store_spec)
+    sync_catalog(catalog, archive["destination"])
+    with catalog.transaction():
+        catalog.execute("DROP VIEW session_copies")
+        catalog.execute(
+            "CREATE VIEW session_copies AS SELECT agent, session_id, "
+            "MAX(message_count) AS max_messages FROM sessions GROUP BY agent, session_id"
+        )
+    catalog.close()
+    capsys.readouterr()
+
+    assert _status(store_spec) == 0
+
+    assert [row["source"] for row in json.loads(capsys.readouterr().out)] == ["laptop"]
+    columns, _ = _raw(store_spec, "SELECT * FROM session_copies")
+    assert columns == ["agent", "session_id", "max_messages"]
+
+
+def test_status_of_an_older_catalog_asks_for_a_sync_and_does_not_upgrade_it(store_spec, capsys):
+    old = open_store(store_spec)
+    with old.transaction():
+        old.execute("DROP TABLE pending_sessions")
+        old.execute("UPDATE schema_meta SET value = '1' WHERE key = 'version'")
+    old.close()
+
+    assert _status(store_spec) == 1
+
+    assert "archive catalog sync" in capsys.readouterr().err
+    assert _raw(store_spec, "SELECT value FROM schema_meta WHERE key = 'version'")[1] == [("1",)]
+    assert not _has_table(store_spec, "pending_sessions")
+
+
+def test_status_of_a_newer_catalog_is_refused_without_changing_it(store_spec, capsys):
+    newer = open_store(store_spec)
+    with newer.transaction():
+        newer.execute("UPDATE schema_meta SET value = '99' WHERE key = 'version'")
+        newer.execute("DROP VIEW session_copies")
+    newer.close()
+
+    assert _status(store_spec) == 1
+
+    assert "schema 99" in capsys.readouterr().err
+    assert _raw(store_spec, "SELECT value FROM schema_meta WHERE key = 'version'")[1] == [("99",)]
+    assert not _has_table(store_spec, "session_copies")
+
+
+def test_status_of_a_database_without_a_catalog_is_an_error_and_creates_nothing(store_spec, capsys):
+    assert _status(store_spec) == 1
+
+    assert "archive catalog sync" in capsys.readouterr().err
+    assert not _has_table(store_spec, "schema_meta")
+
+
+def test_status_reads_a_sqlite_catalog_it_cannot_write(tmp_path, archive, capsys):
+    folder = tmp_path / "shared"
+    spec = f"sqlite:{folder / 'catalog.db'}"
+    catalog = open_store(spec)
+    sync_catalog(catalog, archive["destination"])
+    catalog.close()
+    (folder / "catalog.db").chmod(0o444)
+    folder.chmod(0o555)
+    try:
+        if os.access(folder / "catalog.db", os.W_OK):
+            pytest.skip("this user can write read-only files")
+        capsys.readouterr()
+
+        assert _status(spec) == 0
+
+        assert [row["source"] for row in json.loads(capsys.readouterr().out)] == ["laptop"]
+    finally:
+        folder.chmod(0o755)
+
+
+def test_a_catalog_opened_read_only_refuses_writes(store_spec):
+    open_store(store_spec).close()
+    reader = open_store(store_spec, read_only=True)
+    try:
+        with pytest.raises(Exception, match=r"read-?only"):
+            with reader.transaction():
+                reader.execute("DELETE FROM sources")
+    finally:
+        reader.close()

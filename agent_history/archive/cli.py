@@ -202,18 +202,12 @@ def _verify(args: argparse.Namespace) -> int:
 
 
 def _catalog(args: argparse.Namespace) -> int:
-    from agent_history.archive.catalog import catalog_status, open_store, sync_catalog
-    from agent_history.storage.config import get_config_dir
+    from agent_history.archive.catalog import open_store, sync_catalog
 
-    store = open_store(args.store or f"sqlite:{get_config_dir() / 'archive-catalog.db'}")
+    if args.action == "status":
+        return _catalog_status(args)
+    store = open_store(_catalog_spec(args))
     try:
-        if args.action == "status":
-            rows = catalog_status(store, args.sources)
-            if args.json:
-                _print_json(rows)
-            else:
-                _print_status(rows)
-            return EXIT_OK
         # The archive's sources, not the configuration's: the archive can also hold
         # another machine's sources and retired ones.
         summary = sync_catalog(
@@ -234,6 +228,29 @@ def _catalog(args: argparse.Namespace) -> int:
         for error in summary.errors:
             print(f"  error {error}")
     return EXIT_PROBLEMS if summary.errors else EXIT_OK
+
+
+def _catalog_spec(args: argparse.Namespace) -> str:
+    from agent_history.storage.config import get_config_dir
+
+    return args.store or f"sqlite:{get_config_dir() / 'archive-catalog.db'}"
+
+
+def _catalog_status(args: argparse.Namespace) -> int:
+    """Print the catalog's counts, opening it read-only so that status changes nothing."""
+    from agent_history.archive.catalog import catalog_status, open_store
+
+    store = open_store(_catalog_spec(args), read_only=True)
+    try:
+        with store.transaction():
+            rows = catalog_status(store, args.sources)
+    finally:
+        store.close()
+    if args.json:
+        _print_json(rows)
+    else:
+        _print_status(rows)
+    return EXIT_OK
 
 
 def _catalog_destination(args: argparse.Namespace):

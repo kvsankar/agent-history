@@ -6,15 +6,16 @@
 the same way on both whatever the database's locale.
 The catalog holds metadata only, never message text.
 
-Views hold no data, so changing one needs no new schema version: every open drops and
-creates each view, so a view's query and columns can both change.
+Views hold no data, so changing one needs no new schema version: every open for
+writing (catalog sync and rebuild) drops and creates each view, so a view's query and
+columns can both change. Catalog status opens read-only and changes nothing.
 """
 
 from __future__ import annotations
 
 SCHEMA_VERSION = "2"
 
-# Older versions that opening upgrades in place. Each later version only added tables
+# Older versions that opening for writing upgrades in place. Each later version only added tables
 # (created by the CREATE ... IF NOT EXISTS statements below), so upgrading only records
 # the new version. Version 2 added ``pending_sessions``.
 UPGRADABLE_VERSIONS = ("1",)
