@@ -238,7 +238,10 @@ def test_a_claude_sub_agent_has_its_projects_folder_as_workspace(store, archive)
         store,
         "SELECT session_id, workspace, parent_session_id FROM sessions "
         "WHERE agent = 'claude' ORDER BY session_id",
-    ) == [("a1", "-home-alex-shop", "claude-s1"), ("claude-s1", "-home-alex-shop", None)]
+    ) == [
+        ("claude-s1", "-home-alex-shop", None),
+        ("claude-s1:a1", "-home-alex-shop", "claude-s1"),
+    ]
 
 
 def test_a_claude_workflow_sub_agent_is_catalogued(store, archive):
@@ -257,7 +260,7 @@ def test_a_claude_workflow_sub_agent_is_catalogued(store, archive):
         "SELECT session_id, workspace, parent_session_id, is_subagent FROM sessions "
         "WHERE path LIKE ?",
         ("%/workflows/%",),
-    ) == [("w1", "-home-alex-shop", "claude-s1", True)]
+    ) == [("claude-s1:w1", "-home-alex-shop", "claude-s1", True)]
 
 
 def test_a_gemini_chat_of_an_unknown_project_has_its_project_folder_as_workspace(
