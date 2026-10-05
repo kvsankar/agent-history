@@ -16,6 +16,7 @@ import pytest
 
 from agent_history.archive.catalog import catalog_status, open_store, sync_catalog
 from agent_history.archive.catalog.schema import SCHEMA_VERSION
+from agent_history.archive.catalog.sync import READER_VERSION
 from agent_history.archive.codec import compress_bytes, decompress_bytes
 from agent_history.archive.collect import collect_source
 from agent_history.archive.config import parse_config
@@ -330,6 +331,124 @@ def test_a_version_1_catalog_is_upgraded_when_it_is_opened(store_spec):
         assert _rows(upgraded, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
     finally:
         upgraded.close()
+
+
+def _reader_version(store):
+    return _rows(store, "SELECT value FROM schema_meta WHERE key = 'reader_version'")
+
+
+def _make_rows_stale(store, reader_version="old"):
+    """Make the session rows look written by an older reader."""
+    with store.transaction():
+        store.execute("UPDATE sessions SET workspace = 'stale', message_count = -1")
+        store.execute("DELETE FROM schema_meta WHERE key = 'reader_version'")
+        if reader_version is not None:
+            store.execute(
+                "INSERT INTO schema_meta (key, value) VALUES ('reader_version', ?)",
+                (reader_version,),
+            )
+
+
+def _stale_rows(store):
+    return _rows(
+        store, "SELECT COUNT(*) FROM sessions WHERE workspace = 'stale' OR message_count = -1"
+    )
+
+
+def test_sync_records_the_reader_version(store, archive):
+    sync_catalog(store, archive["destination"])
+
+    assert _reader_version(store) == [(READER_VERSION,)]
+
+
+def test_a_new_reader_reads_every_session_file_again(store, archive):
+    sync_catalog(store, archive["destination"])
+    _make_rows_stale(store)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.runs == 0
+    assert summary.sessions == 3
+    assert _stale_rows(store) == [(0,)]
+    assert _reader_version(store) == [(READER_VERSION,)]
+    assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
+    assert sync_catalog(store, archive["destination"]).sessions == 0
+
+
+def test_a_new_reader_also_reads_files_that_are_gone_from_the_source(store, archive):
+    codex_local, _, _ = _codex_file(archive)
+    codex_local.unlink()
+    archive["collect"](hours=1)
+    sync_catalog(store, archive["destination"])
+    _make_rows_stale(store)
+
+    sync_catalog(store, archive["destination"])
+
+    assert _stale_rows(store) == [(0,)]
+    assert "codex-s1" in _session_ids(store)
+
+
+def test_a_catalog_upgraded_from_version_1_reads_every_session_file_again(store_spec, archive):
+    old = open_store(store_spec)
+    sync_catalog(old, archive["destination"])
+    _make_rows_stale(old, reader_version=None)
+    with old.transaction():
+        old.execute("DROP TABLE pending_sessions")
+        old.execute("UPDATE schema_meta SET value = '1' WHERE key = 'version'")
+    old.close()
+
+    upgraded = open_store(store_spec)
+    try:
+        sync_catalog(upgraded, archive["destination"])
+
+        assert _stale_rows(upgraded) == [(0,)]
+        assert _reader_version(upgraded) == [(READER_VERSION,)]
+    finally:
+        upgraded.close()
+
+
+def test_reading_again_for_a_new_reader_finishes_after_an_interrupted_sync(
+    store, archive, monkeypatch
+):
+    from agent_history.archive.catalog import sync
+
+    sync_catalog(store, archive["destination"])
+    _make_rows_stale(store)
+    real_extract = sync._extract_sessions
+    calls = []
+
+    def interrupted(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return real_extract(*args, **kwargs)
+
+    monkeypatch.setattr(sync, "_extract_sessions", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        sync_catalog(store, archive["destination"])
+    monkeypatch.setattr(sync, "_extract_sessions", real_extract)
+
+    sync_catalog(store, archive["destination"])
+
+    assert _stale_rows(store) == [(0,)]
+    assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
+
+
+def test_a_new_reader_keeps_a_pending_files_newer_hash(store, archive):
+    sync_catalog(store, archive["destination"])
+    _, rel, _ = _codex_file(archive)
+    with store.transaction():
+        store.execute(
+            "INSERT INTO pending_sessions (source, path, sha256, error_type) "
+            "VALUES ('laptop', ?, 'newer', 'OSError')",
+            (rel,),
+        )
+    _make_rows_stale(store)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert [error for error in summary.errors if rel in error and "SHA-256" in error]
+    assert _rows(store, "SELECT sha256 FROM pending_sessions") == [("newer",)]
 
 
 def test_a_catalog_with_an_unknown_schema_version_is_refused(store_spec):

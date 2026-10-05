@@ -3,7 +3,9 @@
 Session metadata is extracted once per changed session file, with the same backend parsers
 the cagelens commands use; then each run's manifest is applied in one transaction. A session
 file that cannot be read, or whose content does not match its manifest's SHA-256, is kept
-in ``pending_sessions`` and read again by every later sync until it succeeds.
+in ``pending_sessions`` and read again by every later sync until it succeeds. When the
+reader version recorded in ``schema_meta`` differs from the current one, every catalogued
+session file is queued there too, so rows written by an older reader are replaced.
 """
 
 from __future__ import annotations
@@ -25,6 +27,15 @@ from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import SessionTarget, archive_file_path, session_target
 from agent_history.archive.manifest import read_manifests
 from agent_history.archive.transport import Destination
+from agent_history.storage.metrics import METRICS_PARSER_VERSION
+
+# The catalog's own part of how a session file becomes rows (such as how it derives the
+# workspace). Raise it when that changes; METRICS_PARSER_VERSION covers the parsers.
+_EXTRACTION_REVISION = 1
+# Recorded in schema_meta. A catalog whose rows were written under another version has
+# every session file read again on its next sync.
+READER_VERSION = f"{METRICS_PARSER_VERSION}.{_EXTRACTION_REVISION}"
+_READER_VERSION_KEY = "reader_version"
 
 _WRITTEN = ("added", "updated", "versioned")
 _PRESENT = (*_WRITTEN, "touched", "returned")
@@ -69,11 +80,45 @@ def sync_catalog(
     Path(work_dir).mkdir(parents=True, exist_ok=True)
     if rebuild:
         store.clear(sources or None)
+    _queue_for_new_reader(store)
     summary = SyncSummary()
     for name in sources or available:
         _sync_source(store, destination, name, summary, Path(work_dir))
         summary.sources += 1
     return summary
+
+
+def _queue_for_new_reader(store: CatalogStore) -> None:
+    """Queue every catalogued session file to be read again if the reader has changed.
+
+    A catalog written by another reader version (or by one that recorded none) holds
+    rows that the current reader would write differently, and syncs read only new runs.
+    So every session file in ``files`` goes to ``pending_sessions`` at its current
+    SHA-256, unless it is pending already, and the new version is recorded in the same
+    transaction: a sync that stops part way leaves the rest queued for the next sync.
+    """
+    with store.transaction():
+        found = store.fetchall(
+            "SELECT value FROM schema_meta WHERE key = ?", (_READER_VERSION_KEY,)
+        )
+        if found and found[0][0] == READER_VERSION:
+            return
+        rows = store.fetchall(
+            "SELECT f.source, f.path, f.sha256, s.platform FROM files f "
+            "JOIN sources s ON s.name = f.source WHERE f.sha256 IS NOT NULL"
+        )
+        for source, path, sha256, platform in rows:
+            if session_target(path, platform) is not None:
+                store.execute(
+                    "INSERT INTO pending_sessions (source, path, sha256) VALUES (?, ?, ?) "
+                    "ON CONFLICT (source, path) DO NOTHING",
+                    (source, path, sha256),
+                )
+        store.execute(
+            "INSERT INTO schema_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (_READER_VERSION_KEY, READER_VERSION),
+        )
 
 
 def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: Path) -> None:
