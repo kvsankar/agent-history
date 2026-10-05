@@ -2,7 +2,7 @@
 
 Each agent has an allowlist of glob patterns relative to its root folder. A credential
 denylist applies to every file whatever the configuration says, and to every folder a
-configuration include passes through. Archived paths mirror the
+configuration include passes through outside the agents' folders. Archived paths mirror the
 source's home directory, so ``.claude/history.jsonl`` is stored at
 ``sources/<source>/files/.claude/history.jsonl.zst``.
 """
@@ -27,9 +27,10 @@ ARCHIVE_SUFFIX = ".zst"
 OTHER_AGENT = "other"
 
 # Matched against every file name, and against the folder names of files that a
-# configuration include selects. Never archived. Folder names in the default layouts are
-# not checked: a Claude project folder is named after any working folder, such as one
-# called "oauth-proxy", and the layouts never select a credential folder.
+# configuration include selects outside every agent's folder. Never archived. Folder
+# names inside agent folders are not checked: a Claude project folder is named after any
+# working folder, such as one called "oauth-proxy". The layouts exclude the agents' own
+# credential folders instead.
 CREDENTIAL_DENYLIST = (
     "auth.json",
     "*oauth*",
@@ -193,6 +194,7 @@ LAYOUTS: tuple[AgentLayout, ...] = (
             ".config.toml.*",
             "backups/**/config.toml*",
             "computer-use/config.json",
+            "mcp-oauth-locks/**",
         ),
         databases=(
             DatabaseRule(
@@ -243,6 +245,8 @@ LAYOUTS: tuple[AgentLayout, ...] = (
             "config.json",
             "settings.json",
             "logs/**",
+            # MCP servers' OAuth clients and tokens.
+            "mcp-oauth-config/**",
         ),
         databases=(
             DatabaseRule("session-state/*/session.db", "snapshot"),
@@ -478,12 +482,12 @@ def _iter_config_includes(part: SourcePart, platform: str) -> Iterator[SelectedF
         layout_exclude = layout.exclude if layout is not None else ()
         agent = layout.name if layout is not None else OTHER_AGENT
         if isinstance(found, _Unreadable):
-            if _folders_allowed(rel_path + "/") and not _excludes_folder(
+            if _include_folders_allowed(layout, rel_path + "/") and not _excludes_folder(
                 inner, layout_exclude, rel_path, part.exclude
             ):
                 yield SelectedFile(rel_path, home / rel_path, agent, error=found.message)
             continue
-        if not _name_allowed(found) or not _folders_allowed(found):
+        if not _name_allowed(found) or not _include_folders_allowed(layout, found):
             continue
         if _matches_any(found, part.exclude) or _matches_any(inner, layout_exclude):
             continue
@@ -538,6 +542,16 @@ def _name_allowed(rel_path: str) -> bool:
     if _is_credential_name(name):
         return False
     return not any(fnmatch.fnmatchcase(name, pattern) for pattern in COMMON_EXCLUDES)
+
+
+def _include_folders_allowed(layout: AgentLayout | None, rel_path: str) -> bool:
+    """Whether an include may select a path, judged by the folder names on it.
+
+    Inside an agent's folder the layout's own rules decide, as for the files the layout
+    selects: folder names there are not checked, and the layout's ``exclude`` names the
+    agent's credential folders. Elsewhere no folder may have a credential name.
+    """
+    return layout is not None or _folders_allowed(rel_path)
 
 
 def _folders_allowed(rel_path: str) -> bool:

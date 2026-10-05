@@ -700,6 +700,27 @@ def test_includes_leave_out_agent_configuration_that_holds_tokens(tmp_path):
     assert set(_selected(_source(tmp_path, agents=[], include=include))) == set(kept)
 
 
+def test_includes_inside_agent_folders_follow_the_layouts_folder_rules(tmp_path):
+    # Claude names a project folder after its working folder, which can be any name.
+    _touch(tmp_path, ".claude/projects/-home-alex-oauth-proxy/s1.jsonl")
+    _touch(tmp_path, ".claude/projects/-home-alex-credentials-api/s2.jsonl")
+    _touch(tmp_path, ".codex/skills/oauth/SKILL.md")
+    # Credential folders that a layout names stay out.
+    _touch(tmp_path, ".copilot/mcp-oauth-config/abc123.json")
+    _touch(tmp_path, ".codex/mcp-oauth-locks/server-1")
+    # Outside agent folders, folder names are still checked.
+    _touch(tmp_path, "tools/oauth-proxy/notes.md")
+    _touch(tmp_path, "tools/app/notes.md")
+    include = [".claude/**", ".codex/**", ".copilot/**", "tools/**"]
+
+    assert set(_selected(_source(tmp_path, agents=[], include=include))) == {
+        ".claude/projects/-home-alex-oauth-proxy/s1.jsonl",
+        ".claude/projects/-home-alex-credentials-api/s2.jsonl",
+        ".codex/skills/oauth/SKILL.md",
+        "tools/app/notes.md",
+    }
+
+
 def test_an_include_snapshots_a_database_whose_rows_are_only_in_its_wal(tmp_path):
     # A new WAL database can be empty on disk until its first checkpoint.
     _touch(tmp_path, "tools/app/state.db", "")
