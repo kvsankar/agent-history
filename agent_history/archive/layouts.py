@@ -292,7 +292,7 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         roots={"*": (".agent-history", ".cagelens")},
         include=("config.json", "aliases*.json", "project_tags*"),
         # Caches, which hold copies of other machines' sessions or data rebuilt from
-        # sessions, and the collector's own work folder.
+        # sessions, and the work folder of catalog sync.
         exclude=(
             "remote_*/**",
             "remote-cache/**",
