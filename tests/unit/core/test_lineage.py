@@ -169,6 +169,7 @@ def test_codex_lineage_tolerates_non_dict_source_metadata(tmp_path: Path) -> Non
 
 
 def test_codex_lineage_tolerates_non_dict_nested_source_metadata(tmp_path: Path) -> None:
+    """Codex writes review and compaction threads as {'subagent': 'review'}."""
     session_file = tmp_path / "rollout-main.jsonl"
     _write_jsonl(
         session_file,
@@ -179,7 +180,7 @@ def test_codex_lineage_tolerates_non_dict_nested_source_metadata(tmp_path: Path)
                 "payload": {
                     "id": "main-thread",
                     "cwd": "/tmp/workspace",
-                    "source": {"subagent": "unexpected"},
+                    "source": {"subagent": "review"},
                 },
             }
         ],
@@ -188,7 +189,7 @@ def test_codex_lineage_tolerates_non_dict_nested_source_metadata(tmp_path: Path)
     lineage = build_timeline_lineage([_session(session_file, AGENT_CODEX)])
 
     assert lineage[0]["session_id"] == "main-thread"
-    assert lineage[0]["kind"] == "main"
+    assert lineage[0]["kind"] == "subagent"
 
 
 def test_claude_lineage_discovers_nested_subagent_and_notification(

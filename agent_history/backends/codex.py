@@ -32,6 +32,7 @@ from typing import Any, Callable, Iterator, TextIO, TypedDict
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.codex_tokens import CodexTokenCounter
 from agent_history.utils.paths import normalize_workspace_name
+from agent_history.utils.session_identity import CodexSessionMeta
 
 __all__ = [
     # Constants
@@ -339,6 +340,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
         is_tool_call or is_tool_result flags
     """
     messages = []
+    identity = CodexSessionMeta()
     session_meta = None
     current_turn_id = None
 
@@ -352,7 +354,10 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                     payload = entry.get("payload", {})
 
                     if entry_type == "session_meta":
-                        session_meta = payload
+                        # The first session_meta describes the rollout; a
+                        # sub-agent later repeats its parent's
+                        identity.add(payload)
+                        session_meta = identity.payload
                     elif entry_type == "turn_context":
                         if turn_id := payload.get("turn_id"):
                             current_turn_id = turn_id
@@ -375,9 +380,7 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
                             notification_fields = _codex_subagent_notification_fields(content)
                             parent_agent_fields = (
                                 {"is_parent_agent_message": True}
-                                if role == "user"
-                                and session_meta
-                                and session_meta.get("thread_source") == "subagent"
+                                if role == "user" and identity.is_subagent
                                 else {}
                             )
                             messages.append(

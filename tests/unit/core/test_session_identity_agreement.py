@@ -9,10 +9,13 @@ from typing import Any
 
 import pytest
 
+from agent_history.backends.codex import codex_read_jsonl_messages
 from agent_history.core.lineage import (
     build_timeline_lineage,
     extract_claude_lineage,
+    extract_codex_lineage,
 )
+from agent_history.handlers.export import SessionExportHandler
 from agent_history.storage import metrics
 from agent_history.utils.platform import AGENT_CLAUDE
 
@@ -149,3 +152,105 @@ def test_claude_notification_in_a_continued_parent_joins_its_sub_agent(tmp_path:
     assert child["parent_session_id"] == PARENT
     assert child["join_status"] == "joined"
     assert child["invocation_tool_call_id"] == "toolu-1"
+
+
+CHILD_THREAD = "child-thread"
+PARENT_THREAD = "parent-thread"
+
+
+def _codex_meta(session_id: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "timestamp": "2026-06-09T10:00:00.000Z",
+        "type": "session_meta",
+        "payload": {"id": session_id, "cwd": "/home/alex/project", **extra},
+    }
+
+
+def _codex_message(role: str, text: str) -> dict[str, Any]:
+    return {
+        "timestamp": "2026-06-09T10:00:01.000Z",
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": role,
+            "content": [{"type": "input_text", "text": text}],
+        },
+    }
+
+
+_SPAWN = {"subagent": {"thread_spawn": {"parent_thread_id": PARENT_THREAD, "depth": 1}}}
+_GUARDIAN = {"subagent": {"other": "guardian"}}
+
+# Each case: the session_meta payloads of the rollout, in order
+CODEX_CASES = {
+    "main": [_codex_meta(PARENT_THREAD, source="cli")],
+    "spawned sub-agent": [_codex_meta(CHILD_THREAD, source=_SPAWN, thread_source="subagent")],
+    "spawned sub-agent without thread_source": [_codex_meta(CHILD_THREAD, source=_SPAWN)],
+    "sub-agent that repeats its parent's session_meta": [
+        _codex_meta(CHILD_THREAD, source=_SPAWN, thread_source="subagent"),
+        _codex_meta(PARENT_THREAD, source="cli"),
+    ],
+    "review thread": [
+        _codex_meta(
+            CHILD_THREAD,
+            source=_GUARDIAN,
+            thread_source="guardian_review",
+            parent_thread_id=PARENT_THREAD,
+        )
+    ],
+    "forked rollout": [
+        _codex_meta(CHILD_THREAD, source="cli", forked_from_id=PARENT_THREAD),
+        _codex_meta(PARENT_THREAD, source="cli"),
+    ],
+}
+
+
+def _codex_rollout(tmp_path: Path, metas: list[dict[str, Any]]) -> Path:
+    session_file = tmp_path / "sessions" / "2026" / "06" / "09" / "rollout-1.jsonl"
+    entries = [metas[0], _codex_message("user", "Inspect this."), *metas[1:]]
+    entries.append(_codex_message("assistant", "Done."))
+    return _write_jsonl(session_file, entries)
+
+
+@pytest.mark.parametrize("case", sorted(CODEX_CASES))
+def test_codex_lineage_and_export_match_the_stats_reader(tmp_path: Path, case: str) -> None:
+    session_file = _codex_rollout(tmp_path, CODEX_CASES[case])
+
+    session_info, _messages, _tools = metrics._parse_codex_jsonl(session_file)
+    record, _invocations = extract_codex_lineage(session_file)
+    header = SessionExportHandler()._read_codex_lineage_header(session_file)
+
+    assert record is not None
+    assert header is not None
+    assert record["session_id"] == header["session_id"] == session_info["session_id"]
+    assert record.get("parent_session_id") == session_info["parent_session_id"]
+    assert header["parent_session_id"] == session_info["parent_session_id"]
+    assert (record["kind"] == "subagent") == session_info["is_agent"]
+    assert (header["kind"] == "subagent") == session_info["is_agent"]
+
+
+def test_codex_sub_agent_that_repeats_its_parent_meta_keeps_its_own_identity(
+    tmp_path: Path,
+) -> None:
+    session_file = _codex_rollout(
+        tmp_path, CODEX_CASES["sub-agent that repeats its parent's session_meta"]
+    )
+
+    record, _invocations = extract_codex_lineage(session_file)
+    messages, session_meta = codex_read_jsonl_messages(session_file)
+
+    assert record is not None
+    assert (record["session_id"], record["kind"]) == (CHILD_THREAD, "subagent")
+    assert record["parent_session_id"] == PARENT_THREAD
+    assert session_meta is not None
+    assert session_meta["id"] == CHILD_THREAD
+    assert [message["session_id"] for message in messages] == [CHILD_THREAD, CHILD_THREAD]
+
+
+def test_codex_review_thread_prompts_come_from_the_parent_agent(tmp_path: Path) -> None:
+    session_file = _codex_rollout(tmp_path, CODEX_CASES["review thread"])
+
+    messages, _session_meta = codex_read_jsonl_messages(session_file)
+
+    assert messages[0]["role"] == "user"
+    assert messages[0]["is_parent_agent_message"] is True

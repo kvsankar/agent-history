@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.codex_tokens import CodexTokenCounter
-from agent_history.utils.session_identity import claude_session_identity
+from agent_history.utils.session_identity import CodexSessionMeta, claude_session_identity
 
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
@@ -492,38 +492,24 @@ def _parse_claude_jsonl(
     return session_info, messages, tool_uses
 
 
-def _codex_meta_parent(payload: Dict[str, Any]) -> Optional[str]:
-    """Parent thread named in a Codex session_meta payload, if any."""
-    source = payload.get("source")
-    subagent = source.get("subagent") if isinstance(source, dict) else None
-    spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
-    spawn_parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
-    return payload.get("parent_thread_id") or spawn_parent or payload.get("forked_from_id")
-
-
-def _read_codex_session_meta(session_info: Dict[str, Any], payload: Dict[str, Any]) -> None:
+def _read_codex_session_meta(
+    session_info: Dict[str, Any], identity: CodexSessionMeta, payload: Any
+) -> None:
     """Fill session fields from a Codex session_meta line.
 
-    A rollout's first session_meta describes it. A spawned sub-agent or a
-    forked rollout later repeats the session_meta of the thread it came
-    from, so a later one only names the parent when the first did not.
+    ``CodexSessionMeta`` holds the rules: the rollout's first session_meta
+    describes it, and a later one only names a parent the first did not.
     """
-    if session_info["session_id"] is not None:
-        later_id = payload.get("id")
-        if session_info["parent_session_id"] is None and later_id != session_info["session_id"]:
-            session_info["parent_session_id"] = later_id
+    describes = identity.add(payload)
+    session_info["session_id"] = identity.session_id
+    session_info["parent_session_id"] = identity.parent_session_id
+    session_info["is_agent"] = identity.is_subagent
+    if not describes:
         return
-
-    session_info["session_id"] = payload.get("id")
     session_info["cwd"] = payload.get("cwd")
     git_info = payload.get("git") or {}
     session_info["git_branch"] = git_info.get("branch") if isinstance(git_info, dict) else None
     session_info["claude_version"] = payload.get("cli_version")
-    source = payload.get("source")
-    session_info["is_agent"] = (isinstance(source, dict) and "subagent" in source) or payload.get(
-        "thread_source"
-    ) == "subagent"
-    session_info["parent_session_id"] = _codex_meta_parent(payload)
 
 
 def _add_usage(target: Dict[str, Any], delta: Dict[str, int]) -> None:
@@ -615,6 +601,7 @@ def _parse_codex_jsonl(
     turn_model: Optional[str] = None
     token_counter = CodexTokenCounter()
     pending_usage: Dict[str, int] = {}
+    codex_identity = CodexSessionMeta()
 
     from agent_history.backends.codex import _codex_open_text
 
@@ -637,7 +624,7 @@ def _parse_codex_jsonl(
 
                 # Extract session metadata
                 if entry_type == "session_meta":
-                    _read_codex_session_meta(session_info, payload)
+                    _read_codex_session_meta(session_info, codex_identity, payload)
 
                 # Each turn names its model; assistant messages carry it
                 elif entry_type == "turn_context":

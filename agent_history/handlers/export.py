@@ -49,6 +49,7 @@ from agent_history.scope.types import ConcreteScope
 from agent_history.types import MessageDict, SessionDict
 from agent_history.utils.paths import decode_workspace_path, encode_workspace_path
 from agent_history.utils.platform import AGENT_CODEX
+from agent_history.utils.session_identity import CodexSessionMeta
 from agent_history.utils.workspace_ref import WorkspaceContext
 
 _INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
@@ -385,9 +386,15 @@ class SessionExportHandler(VerbHandler):
             return []
 
     def _read_codex_lineage_header(self, session_file: Path) -> dict[str, Any] | None:
+        """Session, parent and kind of a rollout from its first session_meta.
+
+        A later session_meta can only name a parent of a rollout that is
+        not a sub-agent, and only sub-agents link to a parent here, so the
+        rest of the file is not read.
+        """
         from agent_history.backends.codex import _codex_open_text
 
-        session_meta: dict[str, Any] = {}
+        identity = CodexSessionMeta()
         try:
             with _codex_open_text(session_file) as handle:
                 for raw_line in handle:
@@ -396,32 +403,18 @@ class SessionExportHandler(VerbHandler):
                     except json.JSONDecodeError:
                         continue
                     if entry.get("type") == "session_meta":
-                        payload = entry.get("payload")
-                        if isinstance(payload, dict):
-                            session_meta = payload
-                        break
+                        identity.add(entry.get("payload"))
+                        if identity.session_id:
+                            break
         except OSError:
             return None
 
-        session_id = session_meta.get("id")
+        session_id = identity.session_id
         if not session_id:
             return None
-
-        source = session_meta.get("source") if isinstance(session_meta.get("source"), dict) else {}
-        subagent_source = source.get("subagent")
-        if not isinstance(subagent_source, dict):
-            subagent_source = {}
-        spawn = subagent_source.get("thread_spawn")
-        if not isinstance(spawn, dict):
-            spawn = {}
-        parent_session_id = (
-            session_meta.get("parent_thread_id")
-            or spawn.get("parent_thread_id")
-            or session_meta.get("forked_from_id")
-        )
-        is_subagent = session_meta.get("thread_source") == "subagent" or bool(spawn)
+        parent_session_id = identity.parent_session_id
         return {
-            "kind": "subagent" if is_subagent else "main",
+            "kind": "subagent" if identity.is_subagent else "main",
             "session_id": str(session_id),
             "parent_session_id": str(parent_session_id) if parent_session_id else None,
             "source_file": str(session_file),

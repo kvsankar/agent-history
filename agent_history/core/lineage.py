@@ -10,7 +10,7 @@ from typing import Any
 
 from agent_history.types import SessionDict
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
-from agent_history.utils.session_identity import claude_session_identity
+from agent_history.utils.session_identity import CodexSessionMeta, claude_session_identity
 
 LineageRecord = dict[str, Any]
 
@@ -116,9 +116,7 @@ def extract_codex_lineage(
 ) -> tuple[LineageRecord | None, dict[str, dict[str, Any]]]:
     """Extract one Codex session lineage record plus parent spawn invocations."""
     parts, invocations = _collect_codex_lineage_parts(jsonl_file)
-    session_meta = parts.get("session_meta") or {}
-    session_id = session_meta.get("id")
-    if not session_id:
+    if not parts["identity"].session_id:
         return None, invocations
     return _codex_lineage_record(jsonl_file, parts), invocations
 
@@ -129,7 +127,7 @@ def _collect_codex_lineage_parts(
     from agent_history.backends.codex import _codex_open_text
 
     parts: dict[str, Any] = {
-        "session_meta": {},
+        "identity": CodexSessionMeta(),
         "first_ts": None,
         "last_ts": None,
         "task_complete": None,
@@ -150,7 +148,7 @@ def _collect_codex_lineage_parts(
                 entry_type = entry.get("type")
                 payload = entry.get("payload") or {}
                 if entry_type == "session_meta":
-                    parts["session_meta"] = payload
+                    parts["identity"].add(payload)
                 elif entry_type == "response_item":
                     _collect_codex_invocation(
                         jsonl_file,
@@ -225,22 +223,12 @@ def _codex_completed_spawn_invocation(
 
 
 def _codex_lineage_record(jsonl_file: Path, parts: dict[str, Any]) -> LineageRecord:
-    session_meta = parts["session_meta"]
-    session_id = session_meta.get("id")
+    identity: CodexSessionMeta = parts["identity"]
+    session_meta = identity.payload or {}
+    session_id = identity.session_id
     task_complete = parts.get("task_complete") or {}
-    source = session_meta.get("source") if isinstance(session_meta.get("source"), dict) else {}
-    subagent_source = source.get("subagent")
-    if not isinstance(subagent_source, dict):
-        subagent_source = {}
-    spawn = subagent_source.get("thread_spawn")
-    if not isinstance(spawn, dict):
-        spawn = {}
-    parent_session_id = (
-        session_meta.get("parent_thread_id")
-        or spawn.get("parent_thread_id")
-        or session_meta.get("forked_from_id")
-    )
-    is_subagent = session_meta.get("thread_source") == "subagent" or bool(spawn)
+    parent_session_id = identity.parent_session_id
+    is_subagent = identity.is_subagent
     record: LineageRecord = {
         "agent": AGENT_CODEX,
         "kind": "subagent" if is_subagent else "main",

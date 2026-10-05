@@ -97,3 +97,57 @@ def claude_session_identity(
         "is_agent": True,
         "agent_id": own_agent_id,
     }
+
+
+def codex_meta_parent(payload: Dict[str, Any]) -> Optional[str]:
+    """Parent thread named in a Codex session_meta payload, if any."""
+    source = payload.get("source")
+    subagent = source.get("subagent") if isinstance(source, dict) else None
+    spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+    spawn_parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+    return payload.get("parent_thread_id") or spawn_parent or payload.get("forked_from_id")
+
+
+def codex_meta_is_subagent(payload: Dict[str, Any]) -> bool:
+    """Whether a session_meta payload describes a thread another thread started.
+
+    Its source names a sub-agent: a spawned agent (``thread_spawn``) or
+    another kind, such as a review thread (``{"other": "guardian"}``).
+    """
+    source = payload.get("source")
+    return (isinstance(source, dict) and "subagent" in source) or payload.get(
+        "thread_source"
+    ) == "subagent"
+
+
+class CodexSessionMeta:
+    """Fold a rollout's session_meta payloads into its identity.
+
+    The first payload with an ID describes the rollout. A later payload
+    only names the parent, when the first did not and its ID differs.
+    """
+
+    def __init__(self) -> None:
+        self.payload: Optional[Dict[str, Any]] = None
+        self.parent_session_id: Optional[str] = None
+
+    @property
+    def session_id(self) -> Optional[str]:
+        return self.payload.get("id") if self.payload else None
+
+    @property
+    def is_subagent(self) -> bool:
+        return codex_meta_is_subagent(self.payload) if self.payload else False
+
+    def add(self, payload: Any) -> bool:
+        """Add one session_meta payload; True when it now describes the rollout."""
+        if not isinstance(payload, dict):
+            return False
+        if self.session_id is None:
+            self.payload = payload
+            self.parent_session_id = codex_meta_parent(payload)
+            return True
+        later_id = payload.get("id")
+        if self.parent_session_id is None and later_id and later_id != self.session_id:
+            self.parent_session_id = later_id
+        return False
