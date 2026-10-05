@@ -426,11 +426,19 @@ def _codex_resolve_stats_workspace(
     return session_info.get("cwd") or workspace or "unknown"
 
 
+# The session_meta line also holds the system instructions, full of JSON escapes
+# such as \n. Take only the cwd value with grep -o: echo in dash and zsh would
+# expand those escapes and split the line.
+_CODEX_REMOTE_CWD = (
+    """cwd=$(grep -m1 -o '"cwd":"[^"]*"' "$f" | head -1 | sed 's/^"cwd":"//; s/"$//')"""
+)
+
+
 def _codex_remote_list_workspaces_command() -> str:
-    return """for f in ~/.codex/sessions/*/*/*/*.jsonl; do
+    return f"""for f in ~/.codex/sessions/*/*/*/*.jsonl; do
     [ -f "$f" ] || continue
-    line=$(grep -m1 '"cwd"' "$f" | head -1)
-    echo "$line" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/'
+    {_CODEX_REMOTE_CWD}
+    [ -n "$cwd" ] && printf '%s\\n' "$cwd"
 done | sort -u"""
 
 
@@ -439,8 +447,7 @@ def _codex_remote_list_sessions_command(workspace: str) -> str:
     return f"""ws={safe_workspace}
 for f in ~/.codex/sessions/*/*/*/*.jsonl; do
     [ -f "$f" ] || continue
-    line=$(grep -m1 '"cwd"' "$f" | head -1)
-    cwd=$(echo "$line" | sed 's/.*"cwd":"\\([^"]*\\)".*/\\1/')
+    {_CODEX_REMOTE_CWD}
     if [ -n "$cwd" ] && [ "$cwd" = "$ws" ]; then
         size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
         mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
