@@ -180,3 +180,17 @@ def test_subagent_without_any_parent_keeps_its_bare_agent_id(tmp_path):
     assert session_info["session_id"] == "c9"
     assert session_info["parent_session_id"] is None
     assert session_info["is_agent"] is True
+
+
+def test_main_session_without_session_id_lines_is_named_by_its_file(tmp_path):
+    """The lineage model and the catalog name such a file by its file name too."""
+    session_file = _write_jsonl(
+        tmp_path / "project" / f"{PARENT}.jsonl",
+        [{"type": "user", "uuid": "m-0", "message": {"role": "user", "content": "hi"}}],
+    )
+
+    session_info, _messages, _tools = metrics._parse_claude_jsonl(session_file)
+
+    assert session_info["session_id"] == PARENT
+    assert session_info["parent_session_id"] is None
+    assert session_info["is_agent"] is False

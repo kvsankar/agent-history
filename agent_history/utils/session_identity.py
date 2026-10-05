@@ -8,6 +8,7 @@ to, so one file can hold several:
 
 - A continued session starts with lines copied from the earlier session.
   Its own ID is the one in its file name.
+- A main session whose lines carry no sessionId is named by its file name.
 - A sub-agent's lines carry its parent's sessionId, and its file sits in
   ``<parent>/subagents/`` (older versions wrote ``agent-*.jsonl`` next to
   the sessions). The parent is the session whose folder holds the file,
@@ -75,12 +76,15 @@ def claude_agent_id(jsonl_file: Path, agent_id: Optional[str]) -> str:
     return stem[len(_AGENT_PREFIX) :] if stem.startswith(_AGENT_PREFIX) else stem
 
 
-def claude_main_session_id(jsonl_file: Path, session_ids: Sequence[str]) -> Optional[str]:
-    """ID of a main (not sub-agent) Claude transcript."""
+def claude_main_session_id(jsonl_file: Path, session_ids: Sequence[str]) -> str:
+    """ID of a main (not sub-agent) Claude transcript.
+
+    A file whose lines carry no sessionId is named by its file name.
+    """
     stem = claude_file_stem(jsonl_file)
     if stem in session_ids:
         return stem
-    return session_ids[0] if session_ids else None
+    return session_ids[0] if session_ids else stem
 
 
 def claude_subagent_parent(jsonl_file: Path, session_ids: Sequence[str]) -> Optional[str]:

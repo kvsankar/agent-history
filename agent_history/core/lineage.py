@@ -332,8 +332,7 @@ def _claude_notifications_by_task(
 def _claude_lineage_record(jsonl_file: Path, state: dict[str, Any]) -> LineageRecord:
     identity = state["identity"]
     is_subagent = identity["is_agent"]
-    # A main transcript without sessionId lines is named by its file
-    session_id = identity["session_id"] or (None if is_subagent else jsonl_file.stem)
+    session_id = identity["session_id"]
 
     record: LineageRecord = {
         "agent": AGENT_CLAUDE,

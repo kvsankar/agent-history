@@ -61,6 +61,7 @@ CLAUDE_CASES = {
     "main": (f"{PARENT}.jsonl", [PARENT, PARENT], None),
     "continued main": (f"{PARENT}.jsonl", [EARLIER, EARLIER, PARENT], None),
     "main with another name": ("copy.jsonl", [EARLIER, PARENT], None),
+    "main without sessionId lines": (f"{PARENT}.jsonl", [None, None], None),
     "sub-agent in its folder": (f"{PARENT}/subagents/agent-a1.jsonl", [PARENT], "a1"),
     "sub-agent of a continued parent": (
         f"{PARENT}/subagents/agent-a2.jsonl",
