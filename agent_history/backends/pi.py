@@ -13,7 +13,7 @@ from agent_history.export.markdown import (
     MARKDOWN_DEFAULT_LEVEL,
     parse_jsonl_to_markdown,
 )
-from agent_history.utils.jsonl import dict_field, json_objects, open_transcript
+from agent_history.utils.jsonl import dict_field, id_key, json_objects, open_transcript
 from agent_history.utils.platform import AGENT_PI
 
 PI_WRAPPED_WORKSPACE_MARKER_LEN = len("----")
@@ -133,8 +133,8 @@ def _pi_extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
         for block in content:
             if isinstance(block, dict) and block.get("type") == "toolCall":
                 call_id = block.get("id")
-                if call_id:
-                    seen_ids.add(call_id)
+                if key := id_key(call_id):
+                    seen_ids.add(key)
                 calls.append(
                     {
                         "id": call_id,
@@ -148,11 +148,11 @@ def _pi_extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
         for call in metadata_calls:
             if not isinstance(call, dict):
                 continue
-            call_id = call.get("id")
-            if call_id and call_id in seen_ids:
+            key = id_key(call.get("id"))
+            if key and key in seen_ids:
                 continue
-            if call_id:
-                seen_ids.add(call_id)
+            if key:
+                seen_ids.add(key)
             calls.append(call)
     return calls
 
@@ -282,24 +282,34 @@ def _pi_normalize_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
     return normalized
 
 
+def _pi_branch_ids(leaf: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> set[str]:
+    """The text IDs on the path from ``leaf`` up through its parents."""
+    branch_ids: set[str] = set()
+    current: dict[str, Any] | None = leaf
+    while current and (key := id_key(current.get("id"))) and key not in branch_ids:
+        branch_ids.add(key)
+        current = by_id.get(id_key(current.get("parent_id")) or "")
+    return branch_ids
+
+
 def _pi_active_branch_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return messages on Pi's latest active branch path."""
-    by_id = {msg.get("id"): msg for msg in messages if msg.get("id")}
+    """Return messages on Pi's latest active branch path.
+
+    IDs are compared in their text form, so an ID that is a list or object
+    in a malformed entry still links its messages.
+    """
+    by_id = {key: msg for msg in messages if (key := id_key(msg.get("id")))}
     if not by_id or not any(msg.get("parent_id") for msg in messages):
         return messages
 
-    leaf = next((msg for msg in reversed(messages) if msg.get("id")), None)
+    leaf = next((msg for msg in reversed(messages) if id_key(msg.get("id"))), None)
     if not leaf:
         return messages
 
-    active_ids = set()
-    current = leaf
-    while current and current.get("id") and current.get("id") not in active_ids:
-        active_ids.add(current["id"])
-        current = by_id.get(current.get("parent_id"))
-
-    omitted = sum(1 for msg in messages if msg.get("id") and msg.get("id") not in active_ids)
-    active = [msg for msg in messages if not msg.get("id") or msg.get("id") in active_ids]
+    active_ids = _pi_branch_ids(leaf, by_id)
+    keys = [id_key(msg.get("id")) for msg in messages]
+    omitted = sum(1 for key in keys if key and key not in active_ids)
+    active = [msg for msg, key in zip(messages, keys) if not key or key in active_ids]
     if omitted:
         for msg in active:
             msg["pi_omitted_branch_entries"] = omitted

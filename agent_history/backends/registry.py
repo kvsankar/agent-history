@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List
 
 from agent_history.utils.env import has_env
+from agent_history.utils.jsonl import as_count, as_timestamp, dict_field
 from agent_history.utils.paths import is_cached_workspace, normalize_workspace_name
 from agent_history.utils.platform import (
     AGENT_CLAUDE,
@@ -209,9 +210,9 @@ def _claude_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def _claude_extract_stats(session_file: Path) -> StatsPayload:
-    from agent_history.storage.metrics import _parse_claude_jsonl
+    from agent_history.storage.metrics import _parse_claude_jsonl, clean_stats_payload
 
-    return _parse_claude_jsonl(session_file)
+    return clean_stats_payload(_parse_claude_jsonl(session_file))
 
 
 def _claude_resolve_stats_workspace(
@@ -419,9 +420,9 @@ def _codex_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def _codex_extract_stats(session_file: Path) -> StatsPayload:
-    from agent_history.storage.metrics import _parse_codex_jsonl
+    from agent_history.storage.metrics import _parse_codex_jsonl, clean_stats_payload
 
-    return _parse_codex_jsonl(session_file)
+    return clean_stats_payload(_parse_codex_jsonl(session_file))
 
 
 def _codex_resolve_stats_workspace(
@@ -522,9 +523,9 @@ def _gemini_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def _gemini_extract_stats(session_file: Path) -> StatsPayload:
-    from agent_history.storage.metrics import _parse_gemini_json
+    from agent_history.storage.metrics import _parse_gemini_json, clean_stats_payload
 
-    return _parse_gemini_json(session_file)
+    return clean_stats_payload(_parse_gemini_json(session_file))
 
 
 def _gemini_resolve_stats_workspace(
@@ -644,6 +645,12 @@ def _empty_session_info() -> dict[str, Any]:
 
 
 def _pi_extract_stats(session_file: Path) -> StatsPayload:
+    from agent_history.storage.metrics import clean_stats_payload
+
+    return clean_stats_payload(_pi_stats(session_file))
+
+
+def _pi_stats(session_file: Path) -> StatsPayload:
     from agent_history.backends.pi import pi_read_jsonl_messages
 
     messages, session_meta = pi_read_jsonl_messages(session_file)
@@ -658,7 +665,7 @@ def _pi_extract_stats(session_file: Path) -> StatsPayload:
     for msg in messages:
         role = msg.get("role")
         timestamp = msg.get("timestamp", "")
-        if timestamp:
+        if as_timestamp(timestamp):
             timestamps.append(timestamp)
 
         for tool_call in msg.get("tool_calls", []):
@@ -689,11 +696,11 @@ def _pi_extract_stats(session_file: Path) -> StatsPayload:
         if role not in ("user", "assistant"):
             continue
 
-        tokens = msg.get("tokens") or {}
-        input_tokens = tokens.get("input", 0) or 0
-        output_tokens = tokens.get("output", 0) or 0
-        cache_creation = tokens.get("cacheWrite", 0) or 0
-        cache_read = tokens.get("cacheRead", 0) or 0
+        tokens = dict_field(msg, "tokens")
+        input_tokens = as_count(tokens.get("input"))
+        output_tokens = as_count(tokens.get("output"))
+        cache_creation = as_count(tokens.get("cacheWrite"))
+        cache_read = as_count(tokens.get("cacheRead"))
 
         session_info["message_count"] += 1
         if role == "user":
@@ -827,8 +834,9 @@ def _copilot_message_to_unified(message: dict[str, Any]) -> dict[str, Any]:
 
 def _copilot_cli_extract_stats(session_file: Path) -> StatsPayload:
     from agent_history.backends.copilot import copilot_extract_stats
+    from agent_history.storage.metrics import clean_stats_payload
 
-    return copilot_extract_stats(session_file, AGENT_COPILOT_CLI)
+    return clean_stats_payload(copilot_extract_stats(session_file, AGENT_COPILOT_CLI))
 
 
 def _copilot_cli_resolve_stats_workspace(
@@ -900,8 +908,9 @@ def _copilot_vscode_render_markdown(
 
 def _copilot_vscode_extract_stats(session_file: Path) -> StatsPayload:
     from agent_history.backends.copilot import copilot_extract_stats
+    from agent_history.storage.metrics import clean_stats_payload
 
-    return copilot_extract_stats(session_file, AGENT_COPILOT_VSCODE)
+    return clean_stats_payload(copilot_extract_stats(session_file, AGENT_COPILOT_VSCODE))
 
 
 def _copilot_vscode_resolve_stats_workspace(

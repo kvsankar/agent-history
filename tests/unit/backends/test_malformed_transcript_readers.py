@@ -1,16 +1,21 @@
-"""The list, export and message readers skip transcript lines they cannot use.
+"""The list, export, message and stats readers skip transcript lines they cannot use.
 
 A line can carry a byte that is not UTF-8, be valid JSON that is not an
-object, or hold a string where an object is expected. One such line must
-not stop a reader: it skips the line, or decodes the bad byte as U+FFFD,
-and reads the rest of the file.
+object, nest too deeply to parse, or hold a string where an object is
+expected. One such line must not stop a reader: it skips the line, or
+decodes the bad byte as U+FFFD, and reads the rest of the file. A value of
+the wrong type is ignored (a token count or timestamp) or stored as text
+(an ID, model or tool name).
 """
 
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from agent_history.backends.claude import (
     _count_file_messages,
@@ -35,8 +40,15 @@ from agent_history.backends.copilot import (
 )
 from agent_history.backends.gemini import gemini_get_first_timestamp, gemini_read_json_messages
 from agent_history.backends.pi import pi_get_workspace_from_session, pi_read_jsonl_messages
-from agent_history.core.lineage import extract_gemini_lineage, extract_pi_lineage
+from agent_history.backends.registry import get_backend
+from agent_history.core.lineage import (
+    extract_claude_lineage,
+    extract_codex_lineage,
+    extract_gemini_lineage,
+    extract_pi_lineage,
+)
 from agent_history.handlers.export import SessionExportHandler
+from agent_history.storage.metrics import init_metrics_db, sync_file_to_db
 from agent_history.utils.platform import AGENT_COPILOT_CLI
 
 REPLACED = "caf�"
@@ -373,3 +385,394 @@ def test_copilot_vscode_workspace_reader_reads_past_a_bad_byte(tmp_path: Path) -
 
     assert copilot_vscode_get_workspace_from_session(transcript) == "/home/alex/project"
     assert copilot_count_messages(transcript) == 1
+
+
+# A line nested more deeply than the JSON decoder's recursion limit
+DEEP = b"[" * 100_000 + b"]" * 100_000 + b"\n"
+
+CODEX_META = {"type": "session_meta", "timestamp": START, "payload": {"id": "c-1", "cwd": "/w"}}
+
+# For each agent: where its session file lives and one usable user message
+_AGENT_FILES: dict[str, tuple[str, bytes]] = {
+    "claude": (
+        "projects/-w/s-1.jsonl",
+        _line(
+            {
+                "type": "user",
+                "sessionId": "s-1",
+                "timestamp": START,
+                "message": {"role": "user", "content": "hi"},
+            }
+        ),
+    ),
+    "codex": (
+        "sessions/2026/05/01/rollout-2026-05-01T04-29-00-c-1.jsonl",
+        _line(CODEX_META) + _codex_item({"type": "message", "role": "user", "content": "hi"}),
+    ),
+    "gemini": (
+        "tmp/h/chats/session-g-1.jsonl",
+        _line({"sessionId": "g-1"})
+        + _line({"id": "m-1", "type": "user", "content": "hi", "timestamp": START}),
+    ),
+    "pi": (
+        "sessions/--w--/p-1.jsonl",
+        _line({"type": "session", "id": "p-1"})
+        + _line({"type": "message", "id": "m-1", "message": {"role": "user", "content": "hi"}}),
+    ),
+    "copilot-cli": (
+        "session-state/c-1/events.jsonl",
+        _copilot_event("user.message", {"content": "hi"}, "e-1"),
+    ),
+}
+
+_LINEAGE_READERS = {
+    "claude": extract_claude_lineage,
+    "codex": extract_codex_lineage,
+    "gemini": extract_gemini_lineage,
+    "pi": extract_pi_lineage,
+}
+
+
+def _write_session(tmp_path: Path, agent: str, content: bytes) -> Path:
+    path = tmp_path / _AGENT_FILES[agent][0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
+def _assert_bindable(payload: Any) -> None:
+    """Every value a stats reader returns can be stored in SQLite as it is."""
+    session_info, messages, tool_uses = payload
+    conn = sqlite3.connect(":memory:")
+    for row in (session_info, *messages, *tool_uses):
+        names = ", ".join(f"c{i}" for i in range(len(row)))
+        conn.execute(f"CREATE TABLE IF NOT EXISTS t{len(row)} ({names})")
+        marks = ", ".join("?" * len(row))
+        conn.execute(f"INSERT INTO t{len(row)} VALUES ({marks})", tuple(row.values()))
+    conn.close()
+
+
+def _synced_rows(tmp_path: Path, session_file: Path, agent: str) -> dict[str, list[tuple]]:
+    conn = init_metrics_db(tmp_path / f"metrics-{agent}.db")
+    try:
+        assert sync_file_to_db(conn, session_file, force=True, agent=agent)
+        return {
+            "sessions": [
+                tuple(row)
+                for row in conn.execute(
+                    "SELECT session_id, cwd, message_count, input_tokens, output_tokens,"
+                    " first_timestamp, last_timestamp FROM sessions"
+                )
+            ],
+            "messages": [
+                tuple(row) for row in conn.execute("SELECT uuid, timestamp, model FROM messages")
+            ],
+            "tool_uses": [
+                tuple(row)
+                for row in conn.execute("SELECT tool_use_id, tool_name, is_error FROM tool_uses")
+            ],
+        }
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("agent", sorted(_AGENT_FILES))
+def test_every_reader_skips_a_deeply_nested_line(tmp_path: Path, agent: str) -> None:
+    session_file = _write_session(tmp_path, agent, DEEP + _AGENT_FILES[agent][1])
+    backend = get_backend(agent)
+    assert backend is not None
+
+    messages = backend.read_messages(session_file)
+    assert [m["content"] for m in messages if m.get("role") == "user"] == ["hi"]
+    assert backend.count_messages(session_file) == 1
+    assert backend.render_markdown(session_file, False, messages, 4)
+    stats = backend.extract_stats(session_file)
+    assert stats[0]["message_count"] == 1
+    assert _synced_rows(tmp_path, session_file, agent)["sessions"][0][2] == 1
+    if agent in _LINEAGE_READERS:
+        _LINEAGE_READERS[agent](session_file)
+
+
+def test_gemini_json_reader_treats_a_deeply_nested_file_as_unreadable(tmp_path: Path) -> None:
+    session_file = tmp_path / "tmp" / "h" / "chats" / "session-g-1.json"
+    session_file.parent.mkdir(parents=True)
+    session_file.write_bytes(b'{"sessionId": "g-1", "messages": ' + DEEP.strip() + b"}")
+    backend = get_backend("gemini")
+    assert backend is not None
+
+    assert backend.read_messages(session_file) == []
+    assert backend.extract_stats(session_file)[0]["message_count"] == 0
+    assert extract_gemini_lineage(session_file) == []
+
+
+T1 = "2026-05-01T04:29:01.000Z"
+
+_GEMINI_JSON_CASES: dict[str, tuple[bytes, tuple]] = {
+    # name: (file content, (session_id, message_count, input, output, first, last))
+    "bad byte": (
+        b'{"sessionId": "g\xff1", "messages": [{"type": "user", "timestamp": "'
+        + T1.encode()
+        + b'"}]}',
+        ("g�1", 1, 0, 0, T1, T1),
+    ),
+    "top-level list": (b"[1, 2]", (None, 0, 0, 0, None, None)),
+    "null messages": (b'{"sessionId": "g1", "messages": null}', ("g1", 0, 0, 0, None, None)),
+    "message not an object": (
+        b'{"sessionId": "g1", "messages": ["x", 5, {"type": "user"}]}',
+        ("g1", 1, 0, 0, None, None),
+    ),
+    "tokens not an object": (
+        b'{"sessionId": "g1", "messages": [{"type": "gemini", "tokens": "x"}]}',
+        ("g1", 1, 0, 0, None, None),
+    ),
+    "token values as text": (
+        b'{"sessionId": "g1", "messages": [{"type": "gemini",'
+        b' "tokens": {"input": "5", "output": 2.0, "cached": "x"}}]}',
+        ("g1", 1, 5, 2, None, None),
+    ),
+    "mixed timestamp types": (
+        b'{"sessionId": "g1", "messages": [{"type": "user", "timestamp": 5},'
+        b' {"type": "user", "timestamp": "' + T1.encode() + b'"},'
+        b' {"type": "user", "timestamp": {"a": 1}}]}',
+        ("g1", 3, 0, 0, T1, T1),
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_GEMINI_JSON_CASES))
+def test_gemini_json_stats_reader_reads_malformed_chats(tmp_path: Path, name: str) -> None:
+    content, expected = _GEMINI_JSON_CASES[name]
+    session_file = tmp_path / "tmp" / "h" / "chats" / "session-g1.json"
+    session_file.parent.mkdir(parents=True)
+    session_file.write_bytes(content)
+    backend = get_backend("gemini")
+    assert backend is not None
+
+    payload = backend.extract_stats(session_file)
+    session_info = payload[0]
+    _assert_bindable(payload)
+    assert (
+        session_info["session_id"],
+        session_info["message_count"],
+        session_info["input_tokens"],
+        session_info["output_tokens"],
+        session_info["first_timestamp"],
+        session_info["last_timestamp"],
+    ) == expected
+    _synced_rows(tmp_path, session_file, "gemini")
+
+
+def test_gemini_json_stats_reader_reads_malformed_tool_calls(tmp_path: Path) -> None:
+    session_file = tmp_path / "tmp" / "h" / "chats" / "session-g1.json"
+    session_file.parent.mkdir(parents=True)
+    messages = [
+        {"type": "gemini", "toolCalls": None},
+        {
+            "type": "gemini",
+            "toolCalls": [
+                5,
+                {"id": "t-1", "name": "shell", "status": None},
+                {"id": ["t-2"], "name": {"n": 1}, "status": "error"},
+            ],
+        },
+    ]
+    session_file.write_text(json.dumps({"sessionId": "g1", "messages": messages}))
+    backend = get_backend("gemini")
+    assert backend is not None
+
+    payload = backend.extract_stats(session_file)
+    _assert_bindable(payload)
+    assert [(t["tool_use_id"], t["is_error"]) for t in payload[2]] == [
+        ("t-1", 0),
+        ('["t-2"]', 1),
+    ]
+    assert _synced_rows(tmp_path, session_file, "gemini")["tool_uses"] == [
+        ("t-1", "shell", 0),
+        ('["t-2"]', '{"n": 1}', 1),
+    ]
+
+
+def test_gemini_markdown_export_reads_fields_of_the_wrong_type(tmp_path: Path) -> None:
+    session_file = tmp_path / "tmp" / "h" / "chats" / "session-g1.jsonl"
+    session_file.parent.mkdir(parents=True)
+    session_file.write_bytes(
+        _line({"sessionId": "g1"})
+        + _line({"id": "m-1", "type": "gemini", "content": "one", "tokens": "x", "toolCalls": None})
+        + _line({"id": "m-2", "type": "gemini", "content": "two", "toolCalls": "x", "thoughts": 5})
+        + _line(
+            {
+                "id": "m-3",
+                "type": "gemini",
+                "content": "three",
+                "toolCalls": [
+                    7,
+                    {"name": "shell", "result": [{"functionResponse": "x"}]},
+                    {"name": "read", "result": [{"functionResponse": {"response": {"output": 5}}}]},
+                ],
+            }
+        )
+    )
+    backend = get_backend("gemini")
+    assert backend is not None
+
+    markdown = backend.render_markdown(session_file, False, None, 4)
+
+    for text in ("one", "two", "three", "[Tool: shell]", "[Tool: read]"):
+        assert text in markdown
+
+
+def test_claude_stats_reader_ignores_values_of_the_wrong_type(tmp_path: Path) -> None:
+    def entry(timestamp: Any, message: dict[str, Any], **fields: Any) -> dict[str, Any]:
+        return {
+            "type": message["role"],
+            "sessionId": "s-1",
+            "timestamp": timestamp,
+            "message": message,
+            **fields,
+        }
+
+    session_file = _write_session(
+        tmp_path,
+        "claude",
+        _line(entry(T1, {"role": "user", "content": "a"}, cwd={"x": 1}))
+        + _line(entry(5, {"role": "user", "content": "b"}))
+        + _line(
+            entry(
+                {"a": 1},
+                {
+                    "role": "assistant",
+                    "model": ["m"],
+                    "usage": {
+                        "input_tokens": "5",
+                        "output_tokens": "x",
+                        "cache_read_input_tokens": 3,
+                    },
+                    "content": [{"type": "tool_use", "name": ["n"], "id": {"a": 1}, "input": "s"}],
+                },
+            )
+        ),
+    )
+    backend = get_backend("claude")
+    assert backend is not None
+
+    payload = backend.extract_stats(session_file)
+    _assert_bindable(payload)
+    session_info = payload[0]
+    assert (session_info["first_timestamp"], session_info["last_timestamp"]) == (T1, T1)
+    assert (session_info["input_tokens"], session_info["output_tokens"]) == (5, 0)
+    assert session_info["cache_read_tokens"] == 3
+    rows = _synced_rows(tmp_path, session_file, "claude")
+    assert rows["sessions"] == [("s-1", '{"x": 1}', 3, 5, 0, T1, T1)]
+    assert [model for _, _, model in rows["messages"]] == [None, None, '["m"]']
+    assert rows["tool_uses"] == [('{"a": 1}', '["n"]', 0)]
+
+
+def test_codex_stats_reader_ignores_values_of_the_wrong_type(tmp_path: Path) -> None:
+    session_file = _write_session(
+        tmp_path,
+        "codex",
+        _line({**CODEX_META, "payload": {"id": {"a": 1}, "cwd": {"b": 2}}})
+        + _line({"type": "turn_context", "payload": {"model": {"m": 1}}})
+        + _line(
+            {
+                "type": "response_item",
+                "timestamp": 5,
+                "payload": {"type": "message", "role": "user", "content": "a"},
+            }
+        )
+        + _line(
+            {
+                "type": "response_item",
+                "timestamp": T1,
+                "payload": {"type": "message", "role": "assistant", "content": "b"},
+            }
+        )
+        + _codex_item({"type": "function_call", "name": {"n": 1}, "arguments": 5, "call_id": [1]})
+        + _codex_item({"type": "function_call_output", "output": {"a": 1}, "call_id": [1]}),
+    )
+    backend = get_backend("codex")
+    assert backend is not None
+
+    payload = backend.extract_stats(session_file)
+    _assert_bindable(payload)
+    assert (payload[0]["first_timestamp"], payload[0]["last_timestamp"]) == (T1, T1)
+    rows = _synced_rows(tmp_path, session_file, "codex")
+    assert rows["sessions"][0][:2] == ('{"a": 1}', '{"b": 2}')
+    assert [model for _, _, model in rows["messages"]] == [None, '{"m": 1}']
+    assert rows["tool_uses"] == [("[1]", '{"n": 1}', 0)]
+    extract_codex_lineage(session_file)
+
+
+def test_codex_lineage_reads_a_list_call_id(tmp_path: Path) -> None:
+    session_file = _write_session(
+        tmp_path,
+        "codex",
+        _line(CODEX_META)
+        + _codex_item(
+            {"type": "function_call", "name": "spawn_agent", "arguments": "{}", "call_id": [1]}
+        )
+        + _codex_item(
+            {
+                "type": "function_call_output",
+                "call_id": [1],
+                "output": json.dumps({"agent_id": "a-1"}),
+            }
+        ),
+    )
+
+    record, invocations = extract_codex_lineage(session_file)
+
+    assert record is not None
+    assert list(invocations) == ["a-1"]
+
+
+def test_pi_readers_read_ids_that_are_not_text(tmp_path: Path) -> None:
+    session_file = _write_session(
+        tmp_path,
+        "pi",
+        _line({"type": "session", "id": {"a": 1}, "cwd": ["x"]})
+        + _line(
+            {
+                "type": "message",
+                "id": ["a"],
+                "parentId": {"x": 1},
+                "timestamp": 5,
+                "message": {"role": "user", "content": "x"},
+            }
+        )
+        + _line(
+            {
+                "type": "message",
+                "id": "b",
+                "parentId": ["a"],
+                "timestamp": START,
+                "message": {
+                    "role": "assistant",
+                    "usage": {"input": "5", "output": "x"},
+                    "content": [{"type": "toolCall", "id": ["t"], "name": ["n"]}],
+                },
+            }
+        )
+        + _line(
+            {
+                "type": "message",
+                "id": "c",
+                "parentId": "b",
+                "message": {"role": "assistant", "usage": "x", "content": "y"},
+            }
+        ),
+    )
+    backend = get_backend("pi")
+    assert backend is not None
+
+    messages = backend.read_messages(session_file)
+    assert [m["role"] for m in messages] == ["user", "assistant", "assistant"]
+    assert backend.count_messages(session_file) == 3
+    assert backend.render_markdown(session_file, False, messages, 4)
+    payload = backend.extract_stats(session_file)
+    _assert_bindable(payload)
+    assert (payload[0]["message_count"], payload[0]["input_tokens"]) == (3, 5)
+    rows = _synced_rows(tmp_path, session_file, "pi")
+    assert rows["sessions"][0][:2] == ('{"a": 1}', '["x"]')
+    assert rows["tool_uses"] == [('["t"]', '["n"]', 0)]
+    extract_pi_lineage(session_file)

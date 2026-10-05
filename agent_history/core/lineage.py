@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_history.types import SessionDict
-from agent_history.utils.jsonl import json_objects, open_transcript
+from agent_history.utils.jsonl import id_key, json_objects, open_transcript
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
 from agent_history.utils.session_identity import (
     CodexSessionMeta,
@@ -145,7 +145,7 @@ def _collect_codex_lineage_parts(
             for raw_line in handle:
                 try:
                     entry = json.loads(raw_line)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, RecursionError):
                     continue
                 if not isinstance(entry, dict):
                     continue
@@ -183,11 +183,11 @@ def _collect_codex_invocation(
 ) -> None:
     payload_type = payload.get("type")
     if payload_type == "function_call" and payload.get("name") == "spawn_agent":
-        pending_spawn_calls[payload.get("call_id", "")] = _codex_spawn_invocation(
+        pending_spawn_calls[id_key(payload.get("call_id")) or ""] = _codex_spawn_invocation(
             jsonl_file, timestamp, payload
         )
     elif payload_type == "function_call_output":
-        invocation = pending_spawn_calls.get(payload.get("call_id", ""))
+        invocation = pending_spawn_calls.get(id_key(payload.get("call_id")) or "")
         if completed := _codex_completed_spawn_invocation(jsonl_file, payload, invocation):
             invocations_by_agent_id[completed["agent_id"]] = completed
 
@@ -290,7 +290,7 @@ def _collect_claude_lineage_parts(
             for raw_line in handle:
                 try:
                     entry = json.loads(raw_line)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, RecursionError):
                     continue
                 if not isinstance(entry, dict):
                     continue
@@ -358,7 +358,7 @@ def extract_gemini_lineage(json_file: Path) -> list[LineageRecord]:
     try:
         with open_transcript(json_file) as handle:
             data = json.load(handle) if json_file.suffix == ".json" else None
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return []
 
     if not isinstance(data, dict):
@@ -906,7 +906,7 @@ def _loads_json_object(value: Any) -> dict[str, Any]:
         return {}
     try:
         loaded = json.loads(value)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
 

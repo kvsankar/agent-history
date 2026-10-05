@@ -227,7 +227,7 @@ def _iter_json_objects(line: str) -> Optional[list]:
             break
         try:
             obj, next_idx = decoder.raw_decode(line, idx)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             return None
         objects.append(obj)
         idx = next_idx
@@ -420,6 +420,8 @@ def read_jsonl_messages(jsonl_file: Path, quiet: bool = False):
         for line in f:
             try:
                 handle_entry(json.loads(line))
+            except RecursionError:
+                continue
             except json.JSONDecodeError as e:
                 parsed = _iter_json_objects(line)
                 if not parsed:
@@ -463,6 +465,8 @@ def get_first_timestamp(jsonl_file: Path) -> Optional[str]:
                         timestamp = entry.get("timestamp", "")
                         if timestamp:
                             return timestamp
+                except RecursionError:
+                    continue
                 except json.JSONDecodeError as e:
                     # Skip malformed lines with debug info (NO-BARE-EXCEPT)
                     if os.environ.get("DEBUG"):

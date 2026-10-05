@@ -21,6 +21,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.codex_tokens import CodexTokenCounter
+from agent_history.utils.jsonl import (
+    as_count,
+    as_text,
+    as_timestamp,
+    json_objects,
+    open_transcript,
+)
 from agent_history.utils.session_identity import CodexSessionMeta, claude_session_identity
 
 if TYPE_CHECKING:
@@ -355,6 +362,78 @@ def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+StatsPayload = Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]
+
+_SESSION_TEXT_FIELDS = ("session_id", "cwd", "git_branch", "claude_version", "parent_session_id")
+_SESSION_COUNT_FIELDS = (
+    "message_count",
+    "user_messages",
+    "assistant_messages",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+)
+_MESSAGE_TEXT_FIELDS = ("uuid", "session_id", "parent_uuid", "type", "model", "stop_reason")
+_MESSAGE_COUNT_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+)
+_TOOL_TEXT_FIELDS = ("tool_use_id", "message_uuid", "session_id", "tool_name")
+
+
+def _clean_fields(
+    record: Dict[str, Any],
+    text_fields: Tuple[str, ...],
+    count_fields: Tuple[str, ...],
+    time_fields: Tuple[str, ...],
+    no_time: Optional[str] = None,
+) -> Dict[str, Any]:
+    cleaned = dict(record)
+    for field in text_fields:
+        if field in cleaned:
+            cleaned[field] = as_text(cleaned[field])
+    for field in count_fields:
+        if field in cleaned:
+            cleaned[field] = as_count(cleaned[field])
+    for field in time_fields:
+        value = cleaned.get(field)
+        if value is not None and not isinstance(value, str):
+            cleaned[field] = no_time
+    return cleaned
+
+
+def clean_stats_payload(payload: StatsPayload) -> StatsPayload:
+    """A stats reader's output with every value storable in SQLite.
+
+    IDs, names and models that are not text become their JSON text, counts
+    that are not numbers become 0, and timestamps that are not text become
+    None, so a malformed transcript cannot stop its rows from being stored.
+    """
+    session_info, messages, tool_uses = payload
+    session_info = _clean_fields(
+        session_info,
+        _SESSION_TEXT_FIELDS,
+        _SESSION_COUNT_FIELDS,
+        ("first_timestamp", "last_timestamp"),
+    )
+    session_info["is_agent"] = bool(session_info.get("is_agent"))
+    messages = [
+        _clean_fields(msg, _MESSAGE_TEXT_FIELDS, _MESSAGE_COUNT_FIELDS, ("timestamp",), "")
+        for msg in messages
+    ]
+    tool_uses = [
+        {
+            **_clean_fields(tu, _TOOL_TEXT_FIELDS, (), ("timestamp",)),
+            "is_error": 1 if tu.get("is_error") else 0,
+        }
+        for tu in tool_uses
+    ]
+    return session_info, messages, tool_uses
+
+
 def _set_claude_session_identity(
     session_info: Dict[str, Any], identity: Dict[str, Any], jsonl_file: Path
 ) -> None:
@@ -404,18 +483,8 @@ def _parse_claude_jsonl(
 
     try:
         # A stray invalid byte must not stop the read
-        with open(jsonl_file, encoding="utf-8-sig", errors="replace") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(entry, dict):
-                    continue
-
+        with open_transcript(jsonl_file) as f:
+            for entry in json_objects(f):
                 entry_type = entry.get("type")
                 timestamp = entry.get("timestamp", "")
 
@@ -428,16 +497,16 @@ def _parse_claude_jsonl(
                     else:
                         session_info["assistant_messages"] += 1
 
-                    if timestamp:
+                    if as_timestamp(timestamp):
                         timestamps.append(timestamp)
 
                     # Extract token usage
                     message_obj = _as_dict(entry.get("message"))
                     usage = _as_dict(message_obj.get("usage"))
-                    input_tokens = usage.get("input_tokens", 0) or 0
-                    output_tokens = usage.get("output_tokens", 0) or 0
-                    cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
-                    cache_read = usage.get("cache_read_input_tokens", 0) or 0
+                    input_tokens = as_count(usage.get("input_tokens"))
+                    output_tokens = as_count(usage.get("output_tokens"))
+                    cache_creation = as_count(usage.get("cache_creation_input_tokens"))
+                    cache_read = as_count(usage.get("cache_read_input_tokens"))
 
                     session_info["input_tokens"] += input_tokens
                     session_info["output_tokens"] += output_tokens
@@ -617,17 +686,7 @@ def _parse_codex_jsonl(
         # Rollouts may be zstd-compressed; a stray invalid byte must not stop
         # the read, so undecodable bytes become U+FFFD.
         with _codex_open_text(jsonl_file, encoding="utf-8-sig", errors="replace") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(entry, dict):
-                    continue
-
+            for entry in json_objects(f):
                 entry_type = entry.get("type")
                 timestamp = entry.get("timestamp", "")
                 payload = _as_dict(entry.get("payload"))
@@ -652,7 +711,7 @@ def _parse_codex_jsonl(
                             else:
                                 session_info["assistant_messages"] += 1
 
-                            if timestamp:
+                            if as_timestamp(timestamp):
                                 timestamps.append(timestamp)
 
                             # Build message record
@@ -776,91 +835,33 @@ def _parse_gemini_json(
     tool_uses: List[Dict[str, Any]] = []
     timestamps: List[str] = []
 
-    try:
-        records = gemini_session_records(json_file)
-        if records is None:
-            return session_info, messages, tool_uses
-        chat_messages, data = records
+    records = gemini_session_records(json_file)
+    if records is None:
+        return session_info, messages, tool_uses
+    chat_messages, data = records
 
-        session_info["session_id"] = data.get("sessionId")
-        session_info["cwd"] = data.get("projectHash")
-        session_info["first_timestamp"] = data.get("startTime")
-        session_info["last_timestamp"] = data.get("lastUpdated")
+    session_info["session_id"] = data.get("sessionId")
+    session_info["cwd"] = data.get("projectHash")
+    session_info["first_timestamp"] = data.get("startTime")
+    session_info["last_timestamp"] = data.get("lastUpdated")
 
-        for msg in chat_messages:
-            msg_type = msg.get("type", "")
-            timestamp = msg.get("timestamp", "")
-
-            if msg_type == "user":
-                session_info["message_count"] += 1
-                session_info["user_messages"] += 1
-                if timestamp:
-                    timestamps.append(timestamp)
-
-                messages.append(
-                    {
-                        "uuid": msg.get("id"),
-                        "session_id": session_info["session_id"],
-                        "parent_uuid": None,
-                        "type": "user",
-                        "timestamp": timestamp,
-                        "model": None,
-                        "stop_reason": None,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "cache_creation_tokens": 0,
-                        "cache_read_tokens": 0,
-                    }
-                )
-
-            elif msg_type == "gemini":
-                session_info["message_count"] += 1
-                session_info["assistant_messages"] += 1
-                if timestamp:
-                    timestamps.append(timestamp)
-
-                # Extract tokens
-                tokens = msg.get("tokens", {})
-                input_tokens = tokens.get("input", 0)
-                output_tokens = tokens.get("output", 0)
-
-                session_info["input_tokens"] += input_tokens
-                session_info["output_tokens"] += output_tokens
-
-                messages.append(
-                    {
-                        "uuid": msg.get("id"),
-                        "session_id": session_info["session_id"],
-                        "parent_uuid": None,
-                        "type": "assistant",
-                        "timestamp": timestamp,
-                        "model": msg.get("model"),
-                        "stop_reason": None,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cache_creation_tokens": 0,
-                        "cache_read_tokens": tokens.get("cached", 0),
-                    }
-                )
-
-                # Extract tool calls
-                for tc in msg.get("toolCalls", []):
-                    status = tc.get("status", "")
-                    tool_uses.append(
-                        {
-                            "tool_use_id": tc.get("id"),
-                            "message_uuid": msg.get("id"),
-                            "session_id": session_info["session_id"],
-                            "tool_name": tc.get("name", "unknown"),
-                            "is_error": 1
-                            if status.lower() in ("error", "failed", "failure")
-                            else 0,
-                            "timestamp": tc.get("timestamp", timestamp),
-                        }
-                    )
-
-    except (OSError, json.JSONDecodeError):
-        pass
+    for msg in chat_messages:
+        if not isinstance(msg, dict):
+            continue
+        record = _gemini_message_record(msg, session_info["session_id"])
+        if record is None:
+            continue
+        session_info["message_count"] += 1
+        if record["type"] == "user":
+            session_info["user_messages"] += 1
+        else:
+            session_info["assistant_messages"] += 1
+            session_info["input_tokens"] += record["input_tokens"]
+            session_info["output_tokens"] += record["output_tokens"]
+            tool_uses.extend(_gemini_tool_uses(msg, record))
+        if as_timestamp(record["timestamp"]):
+            timestamps.append(record["timestamp"])
+        messages.append(record)
 
     # Update first/last timestamps from messages if needed
     if timestamps:
@@ -868,6 +869,55 @@ def _parse_gemini_json(
         session_info["last_timestamp"] = max(timestamps)
 
     return session_info, messages, tool_uses
+
+
+def _gemini_message_record(msg: Dict[str, Any], session_id: Any) -> Optional[Dict[str, Any]]:
+    """The messages-table record of a Gemini user or gemini message, else None."""
+    msg_type = msg.get("type", "")
+    if msg_type not in ("user", "gemini"):
+        return None
+    tokens = _as_dict(msg.get("tokens")) if msg_type == "gemini" else {}
+    return {
+        "uuid": msg.get("id"),
+        "session_id": session_id,
+        "parent_uuid": None,
+        "type": "user" if msg_type == "user" else "assistant",
+        "timestamp": msg.get("timestamp", ""),
+        "model": msg.get("model") if msg_type == "gemini" else None,
+        "stop_reason": None,
+        "input_tokens": as_count(tokens.get("input")),
+        "output_tokens": as_count(tokens.get("output")),
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": as_count(tokens.get("cached")),
+    }
+
+
+_GEMINI_TOOL_ERROR_STATUSES = ("error", "failed", "failure")
+
+
+def _gemini_tool_uses(msg: Dict[str, Any], record: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The tool-use records of a Gemini message's toolCalls; non-objects are skipped."""
+    tool_calls = msg.get("toolCalls")
+    if not isinstance(tool_calls, list):
+        return []
+    uses = []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        status = tc.get("status")
+        uses.append(
+            {
+                "tool_use_id": tc.get("id"),
+                "message_uuid": record["uuid"],
+                "session_id": record["session_id"],
+                "tool_name": tc.get("name", "unknown"),
+                "is_error": 1
+                if isinstance(status, str) and status.lower() in _GEMINI_TOOL_ERROR_STATUSES
+                else 0,
+                "timestamp": tc.get("timestamp", record["timestamp"]),
+            }
+        )
+    return uses
 
 
 def _calculate_work_periods(
@@ -975,7 +1025,7 @@ def sync_file_to_db(
     from agent_history.backends.registry import require_backend
 
     backend = require_backend(agent)
-    session_info, messages, tool_uses = backend.extract_stats(jsonl_file)
+    session_info, messages, tool_uses = clean_stats_payload(backend.extract_stats(jsonl_file))
     workspace = backend.resolve_stats_workspace(jsonl_file, session_info, workspace)
 
     # Calculate work periods from message timestamps

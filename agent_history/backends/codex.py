@@ -258,7 +258,7 @@ def _codex_parse_subagent_notification(content: str) -> dict[str, Any] | None:
         return None
     try:
         data = json.loads(match.group("body"))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 

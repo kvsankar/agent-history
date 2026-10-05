@@ -267,14 +267,20 @@ def _build_gemini_message(msg: dict, content: str) -> Optional[dict]:
     if msg_type == "user":
         return {"role": "user", "content": content, "timestamp": timestamp}
     if msg_type in ("gemini", "assistant", "model"):
+        # Fields of the wrong type in a malformed message are dropped
+        thoughts = msg.get("thoughts")
+        tokens = msg.get("tokens")
+        tool_calls = msg.get("toolCalls")
         return {
             "role": "assistant",
             "content": content,
             "timestamp": timestamp,
-            "thoughts": msg.get("thoughts", []),
-            "tokens": msg.get("tokens"),
+            "thoughts": thoughts if isinstance(thoughts, list) else [],
+            "tokens": tokens if isinstance(tokens, dict) else None,
             "model": msg.get("model"),
-            "tool_calls": msg.get("toolCalls", []),
+            "tool_calls": [tc for tc in tool_calls if isinstance(tc, dict)]
+            if isinstance(tool_calls, list)
+            else [],
         }
     if msg_type in ("info", "error", "warning"):
         return {"role": msg_type, "content": content, "timestamp": timestamp}
@@ -434,7 +440,7 @@ def _gemini_load_json_session(json_file: Path) -> dict[str, Any] | None:
     try:
         with open_transcript(json_file) as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -482,12 +488,13 @@ def gemini_format_tool_call(tool_call: dict) -> str:
         lines.append(f"```json\n{args_str}\n```")
 
     # Extract result output if present
-    if result:
+    if isinstance(result, list):
         for r in result:
             if isinstance(r, dict):
-                func_resp = r.get("functionResponse", {})
-                output = func_resp.get("response", {}).get("output", "")
+                func_resp = dict_field(r, "functionResponse")
+                output = dict_field(func_resp, "response").get("output", "")
                 if output:
+                    output = output if isinstance(output, str) else str(output)
                     # Use helper for consistent truncation (M4)
                     output = _truncate_tool_output(output)
                     lines.append(f"**Result:**\n```\n{output}\n```")
