@@ -195,7 +195,7 @@ def _verify(args: argparse.Namespace) -> int:
     else:
         for name, report in reports.items():
             print(f"{name}: checked {report.checked}, {'ok' if report.ok else 'PROBLEMS'}")
-            for label in ("mismatched", "missing", "unlisted", "errors"):
+            for label in ("mismatched", "missing", "unlisted", "errors", "pending"):
                 for path in getattr(report, label):
                     print(f"  {label}: {path}")
     return EXIT_OK if all(report.ok for report in reports.values()) else EXIT_PROBLEMS

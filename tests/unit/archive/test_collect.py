@@ -482,6 +482,77 @@ def test_run_stopped_while_placing_files_is_finished_by_the_next_run(env):
     assert not (env["dest"] / "sources" / "src" / "incoming").exists()
 
 
+class _StopsWhilePlacing:
+    @staticmethod
+    def make(env, puts: bool):
+        """Stops after the version moves, and after the new copies too when ``puts``."""
+        from agent_history.archive.transport import LocalDestination
+
+        class Stops(LocalDestination):
+            def place(self, keeps, new_copies):
+                super().place(keeps, new_copies if puts else [])
+                raise OSError("connection dropped")
+
+        return Stops(env["dest"])
+
+
+def _interrupt_a_rewrite(env, config, puts: bool):
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _write(env, ".codex/history.jsonl", b"h\n", mtime=1_790_000_000)
+    _collect(env, config=config)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+    _write(env, ".codex/history.jsonl", b"h\nmore\n", mtime=1_790_000_100)
+    _write(env, ".claude/projects/p/new.jsonl", b"n\n", mtime=1_790_000_100)
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            config=config,
+            force=True,
+            destination=_StopsWhilePlacing.make(env, puts),
+        )
+
+
+def test_an_interrupted_run_is_finished_before_min_interval_applies(env):
+    config = _config(env, min_interval_hours=20)
+    _interrupt_a_rewrite(env, config, puts=False)
+
+    dry = _collect(env, now=T0 + timedelta(hours=2), config=config, dry_run=True)
+    assert dry.skipped_reason == "min_interval"
+    third = _collect(env, now=T0 + timedelta(hours=2), config=config)
+
+    assert third.skipped_reason is None
+    assert _archived(env, SESSION) == b"rewritten\n"
+    assert not (env["dest"] / "sources" / "src" / "incoming").exists()
+    _assert_archive_consistent(env, {SESSION: b"original\n"})
+    fourth = _collect(env, now=T0 + timedelta(hours=3), config=config)
+    assert fourth.skipped_reason == "min_interval"
+
+
+@pytest.mark.parametrize("puts", [False, True], ids=["versions-moved", "all-moved"])
+def test_verify_reports_an_interrupted_run_as_pending(env, puts):
+    _interrupt_a_rewrite(env, _config(env), puts)
+    (pending,) = (env["dest"] / "sources" / "src" / "incoming").iterdir()
+
+    report = verify_source(open_destination(str(env["dest"])), "src")
+
+    assert report.pending == [pending.name]
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+    assert not report.ok
+    _collect(env, now=T0 + timedelta(hours=2))
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_verify_still_reports_damage_next_to_a_pending_run(env):
+    _interrupt_a_rewrite(env, _config(env), puts=True)
+    archived = env["dest"] / "sources" / "src" / "files" / f"{SESSION}.zst"
+    archived.write_bytes(zstandard.ZstdCompressor().compress(b"tampered\n"))
+
+    report = verify_source(open_destination(str(env["dest"])), "src")
+
+    assert report.mismatched == [SESSION]
+
+
 def test_dry_run_does_not_finish_an_interrupted_run(env):
     _write(env, SESSION, b"a\n", mtime=1_790_000_000)
     _collect(env)

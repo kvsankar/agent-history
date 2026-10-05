@@ -286,6 +286,22 @@ def test_verify_prints_files_that_could_not_be_read(setup, capsys, monkeypatch):
     assert f"errors: {SESSION}: connection dropped" in capsys.readouterr().out
 
 
+def test_verify_prints_pending_runs(setup, capsys, monkeypatch):
+    from agent_history.archive import verify
+
+    config = setup["config"]
+    main(["archive", "collect", "--config", config])
+    capsys.readouterr()
+    monkeypatch.setattr(
+        verify,
+        "verify_source",
+        lambda *args, **kwargs: verify.VerifyReport(pending=["20261002T061500Z-laptop-3f2a"]),
+    )
+
+    assert main(["archive", "verify", "--config", config]) == 2
+    assert "pending: 20261002T061500Z-laptop-3f2a" in capsys.readouterr().out
+
+
 def test_archive_is_listed_in_main_help(capsys):
     with pytest.raises(SystemExit):
         main(["--help"])

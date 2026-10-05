@@ -205,6 +205,16 @@ def finish_run(
     destination.discard_tree(discard)
 
 
+def pending_run_ids(destination: Destination, source: str) -> list[str]:
+    """Interrupted runs that wrote their manifest to the incoming folder, oldest first."""
+    names = destination.list_files(incoming_root(source))
+    return sorted(
+        name.split("/")[0]
+        for name in names
+        if name.count("/") == 1 and name.endswith(f"/{PENDING_MANIFEST}")
+    )
+
+
 def recover_incoming(destination: Destination, source: str) -> bool:
     """Finish runs that stopped after writing their manifest; drop other incoming files.
 
@@ -213,14 +223,8 @@ def recover_incoming(destination: Destination, source: str) -> bool:
     was cut short while it was written, and placing starts only after that write, so
     such a run placed nothing and is dropped with the rest.
     """
-    names = destination.list_files(incoming_root(source))
-    pending = sorted(
-        name.split("/")[0]
-        for name in names
-        if name.count("/") == 1 and name.endswith(f"/{PENDING_MANIFEST}")
-    )
     finished = False
-    for run_id in pending:
+    for run_id in pending_run_ids(destination, source):
         data = destination.read_bytes(f"{incoming_dir(source, run_id)}/{PENDING_MANIFEST}")
         if data is None:
             continue
@@ -353,6 +357,24 @@ class _Run:
         last = datetime.fromisoformat(self.state.last_success)
         return self.now - last < timedelta(hours=hours)
 
+    def _has_pending_run(self) -> bool:
+        """True when an interrupted run waits in the incoming folder to be finished.
+
+        Such a run is finished even before min_interval_hours have passed, so the archive
+        does not hold placed but uncommitted files until then. A dry run would not finish
+        it, so it does not look. When the destination cannot be read, the run is not due
+        anyway: it is skipped with a warning, and the next due run reports the failure.
+        """
+        if self.dry_run:
+            return False
+        try:
+            return bool(pending_run_ids(self.destination, self.source.name))
+        except (ArchiveError, OSError) as exc:
+            sys.stderr.write(
+                f"Warning: could not look for interrupted runs of {self.source.name}: {exc}\n"
+            )
+            return False
+
     def execute(self, force: bool = False, break_lock: bool = False) -> RunSummary:
         """Check the destination and take its lock, then run.
 
@@ -363,7 +385,7 @@ class _Run:
             try:
                 if self.rebuild_state:  # before the interval check, which needs the state
                     self._reconcile(committed_run_ids(self.destination, self.source.name))
-                if not force and self.too_soon():
+                if not force and self.too_soon() and not self._has_pending_run():
                     return RunSummary("", self.source.name, skipped_reason="min_interval")
                 has_format = self._check_destination()
                 if not self.dry_run:  # a dry run writes nothing, so it needs no lock
