@@ -504,6 +504,40 @@ def _parse_claude_jsonl(
     return session_info, messages, tool_uses
 
 
+def _codex_meta_parent(payload: Dict[str, Any]) -> Optional[str]:
+    """Parent thread named in a Codex session_meta payload, if any."""
+    source = payload.get("source")
+    subagent = source.get("subagent") if isinstance(source, dict) else None
+    spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+    spawn_parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+    return payload.get("parent_thread_id") or spawn_parent or payload.get("forked_from_id")
+
+
+def _read_codex_session_meta(session_info: Dict[str, Any], payload: Dict[str, Any]) -> None:
+    """Fill session fields from a Codex session_meta line.
+
+    A rollout's first session_meta describes it. A spawned sub-agent or a
+    forked rollout later repeats the session_meta of the thread it came
+    from, so a later one only names the parent when the first did not.
+    """
+    if session_info["session_id"] is not None:
+        later_id = payload.get("id")
+        if session_info["parent_session_id"] is None and later_id != session_info["session_id"]:
+            session_info["parent_session_id"] = later_id
+        return
+
+    session_info["session_id"] = payload.get("id")
+    session_info["cwd"] = payload.get("cwd")
+    git_info = payload.get("git") or {}
+    session_info["git_branch"] = git_info.get("branch") if isinstance(git_info, dict) else None
+    session_info["claude_version"] = payload.get("cli_version")
+    source = payload.get("source")
+    session_info["is_agent"] = (isinstance(source, dict) and "subagent" in source) or payload.get(
+        "thread_source"
+    ) == "subagent"
+    session_info["parent_session_id"] = _codex_meta_parent(payload)
+
+
 def _apply_codex_token_count(
     session_info: Dict[str, Any],
     messages: List[Dict[str, Any]],
@@ -587,11 +621,7 @@ def _parse_codex_jsonl(
 
                 # Extract session metadata
                 if entry_type == "session_meta":
-                    session_info["session_id"] = payload.get("id")
-                    session_info["cwd"] = payload.get("cwd")
-                    git_info = payload.get("git", {})
-                    session_info["git_branch"] = git_info.get("branch")
-                    session_info["claude_version"] = payload.get("cli_version")
+                    _read_codex_session_meta(session_info, payload)
 
                 # Each turn names its model; assistant messages carry it
                 elif entry_type == "turn_context":
