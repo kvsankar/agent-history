@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import glob
 import itertools
+import json
 import os
 import shutil
 import sqlite3
@@ -23,7 +24,11 @@ from agent_history.archive.config import parse_config
 from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import archive_file_path
 from agent_history.archive.transport import open_destination
-from tests.helpers.session_builders import ClaudeSessionBuilder, CodexSessionBuilder
+from tests.helpers.session_builders import (
+    ClaudeSessionBuilder,
+    CodexSessionBuilder,
+    GeminiSessionBuilder,
+)
 
 T0 = datetime(2026, 10, 2, 6, 15, tzinfo=timezone.utc)
 SECRET_PROMPT = "please refactor the billing module"
@@ -188,6 +193,51 @@ def test_sync_records_sources_runs_files_and_sessions(store, archive):
     assert sessions["claude-s1"][2] >= 2
     assert sessions["codex-s1"][:2] == ("codex", "/home/alex/shop")
     assert sessions["copilot-gone"] == ("copilot-cli", "/home/alex/shop", 2, True)
+
+
+def _add_claude_sub_agent(archive, rel_folder, name="agent-a1.jsonl", agent_id="a1"):
+    """Add a Claude sub-agent transcript under the claude-s1 session folder."""
+    path = archive["home"] / ".claude/projects/-home-alex-shop/claude-s1" / rel_folder / name
+    path.parent.mkdir(parents=True)
+    line = {
+        "type": "user",
+        "sessionId": "claude-s1",
+        "agentId": agent_id,
+        "timestamp": "2025-01-03T10:06:00Z",
+        "uuid": f"{agent_id}-u1",
+        "message": {"role": "user", "content": "look at the tests"},
+    }
+    path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    _settle(path)
+    return path
+
+
+def test_a_claude_sub_agent_has_its_projects_folder_as_workspace(store, archive):
+    _add_claude_sub_agent(archive, "subagents")
+    archive["collect"](hours=1)
+
+    sync_catalog(store, archive["destination"])
+
+    assert _rows(
+        store,
+        "SELECT session_id, workspace, parent_session_id FROM sessions "
+        "WHERE agent = 'claude' ORDER BY session_id",
+    ) == [("a1", "-home-alex-shop", "claude-s1"), ("claude-s1", "-home-alex-shop", None)]
+
+
+def test_a_gemini_chat_of_an_unknown_project_has_its_project_folder_as_workspace(
+    store, archive, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    gemini = GeminiSessionBuilder(session_id="gemini-s1", project_hash="b" * 64)
+    gemini.add_user_message("hello gemini")
+    gemini.add_gemini_message("hi")
+    _settle(gemini.write_to(archive["home"] / ".gemini" / "tmp"))
+    archive["collect"](hours=1)
+
+    sync_catalog(store, archive["destination"])
+
+    assert _rows(store, "SELECT workspace FROM sessions WHERE agent = 'gemini'") == [("b" * 64,)]
 
 
 def test_catalog_holds_no_message_text(store, archive, tmp_path):

@@ -112,6 +112,9 @@ class AgentLayout:
     databases: tuple[DatabaseRule, ...] = ()
     backend: str | None = None  # cagelens backend id that reads this agent's sessions
     sessions: tuple[str, ...] = ()  # session file patterns, relative to the root
+    # The folder, relative to the root, whose subfolders name each session's workspace
+    # (Claude's projects/<workspace>/), when the agent keeps sessions that way.
+    workspace_folder: str | None = None
 
     def roots_for(self, platform: str) -> tuple[str, ...]:
         return self.roots.get(platform) or self.roots.get("*", ())
@@ -154,6 +157,7 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         ),
         backend="claude",
         sessions=("projects/*/*.jsonl", "projects/*/*/subagents/*.jsonl"),
+        workspace_folder="projects",
     ),
     AgentLayout(
         name="codex",
@@ -185,6 +189,7 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         exclude=("tmp/*/tool-outputs/**", "tmp/bin/**"),
         backend="gemini",
         sessions=("tmp/*/chats/*.json", "tmp/*/chats/*.jsonl"),
+        workspace_folder="tmp",
     ),
     AgentLayout(
         name="pi",
@@ -265,6 +270,8 @@ class SessionTarget:
 
     backend: str
     database: DatabaseRule | None = None
+    # The workspace that the file's path names, for agents with a workspace_folder.
+    workspace: str | None = None
 
 
 def session_target(rel_path: str, platform: str) -> SessionTarget | None:
@@ -277,11 +284,19 @@ def session_target(rel_path: str, platform: str) -> SessionTarget | None:
                 continue
             inner = rel_path[len(root) + 1 :]
             if _matches_any(inner, layout.sessions):
-                return SessionTarget(layout.backend)
+                return SessionTarget(layout.backend, workspace=_path_workspace(layout, inner))
             for rule in layout.databases:
                 if rule.sessions_sql and _compiled(rule.pattern).match(inner):
                     return SessionTarget(layout.backend, rule)
     return None
+
+
+def _path_workspace(layout: AgentLayout, inner: str) -> str | None:
+    """The workspace folder that a root-relative path lies in, if the layout has one."""
+    if layout.workspace_folder is None or not inner.startswith(layout.workspace_folder + "/"):
+        return None
+    rest = inner[len(layout.workspace_folder) + 1 :].split("/")
+    return rest[0] if len(rest) > 1 else None
 
 
 def iter_source_files(source: SourceConfig) -> Iterator[SelectedFile]:

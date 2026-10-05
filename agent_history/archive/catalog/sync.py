@@ -31,7 +31,7 @@ from agent_history.storage.metrics import METRICS_PARSER_VERSION
 
 # The catalog's own part of how a session file becomes rows (such as how it derives the
 # workspace). Raise it when that changes; METRICS_PARSER_VERSION covers the parsers.
-_EXTRACTION_REVISION = 1
+_EXTRACTION_REVISION = 2
 # Recorded in schema_meta. A catalog whose rows were written under another version has
 # every session file read again on its next sync.
 READER_VERSION = f"{METRICS_PARSER_VERSION}.{_EXTRACTION_REVISION}"
@@ -322,7 +322,7 @@ def _extract_sessions(
                 {**base, **row}
                 for row in _database_sessions(local, str(target.database.sessions_sql))
             ]
-        return [{**base, **_file_session(local, target.backend)}]
+        return [{**base, **_file_session(local, target.backend, target.workspace)}]
 
 
 class ContentMismatchError(Exception):
@@ -348,7 +348,14 @@ def _decompress_checked(destination: Destination, archived: str, local: Path, sh
         )
 
 
-def _file_session(local: Path, backend_id: str) -> dict[str, Any]:
+def _file_session(local: Path, backend_id: str, workspace: str | None) -> dict[str, Any]:
+    """Session metadata of one session file.
+
+    ``workspace`` is the workspace the archived path names, if any. Each backend's
+    resolver may prefer what the file records (such as its working directory); without
+    it, the Claude and Gemini resolvers fall back to the file's parent folder, which for
+    a sub-agent is ``subagents`` and for a Gemini chat is ``chats``.
+    """
     from agent_history.backends.registry import get_backend
 
     backend = get_backend(backend_id)
@@ -357,9 +364,9 @@ def _file_session(local: Path, backend_id: str) -> dict[str, Any]:
     stats, messages, tool_uses = backend.extract_stats(local)
     stats = stats or {}
     try:
-        workspace = backend.resolve_stats_workspace(local, stats, None)
+        workspace = backend.resolve_stats_workspace(local, stats, workspace)
     except Exception:
-        workspace = None
+        pass
     models = sorted({str(m["model"]) for m in messages if m.get("model")})
     return {
         "session_id": stats.get("session_id") or local.name.split(".")[0],
