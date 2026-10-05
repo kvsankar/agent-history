@@ -598,6 +598,60 @@ def test_state_without_a_run_list_is_reconciled_by_run_order(env):
     assert "runs" in json.loads(state_file.read_text(encoding="utf-8"))
 
 
+@pytest.mark.parametrize("step", [timedelta(0), timedelta(minutes=-5)], ids=["same", "back"])
+def test_runs_apply_in_the_order_they_ran(env, monkeypatch, step):
+    """A run in the same second as the last one, or after the clock stepped back, still
+    sorts after it, so a state rebuilt from the manifests ends at the newest content."""
+    from agent_history.archive import manifest as manifest_module
+
+    suffixes = iter(["ffff", "0000", "8888"])
+    monkeypatch.setattr(manifest_module.secrets, "token_hex", lambda n: next(suffixes))
+    _write(env, SESSION, b"v1\n", mtime=1_790_000_000)
+    first = _collect(env)
+    _write(env, SESSION, b"v2 rewritten\n", mtime=1_790_000_100)
+    second = _collect(env, now=T0 + step)
+    destination = open_destination(str(env["dest"]))
+
+    assert [run["run_id"] for run, _ in read_manifests(destination, "src")] == [
+        first.run_id,
+        second.run_id,
+    ]
+    assert verify_source(destination, "src").ok
+    for state_file in env["state"].rglob("*.json"):
+        state_file.unlink()  # a new machine: the state is rebuilt from the manifests
+    third = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert third.written == 0
+    assert verify_source(destination, "src").ok
+    assert _archived(env, SESSION) == b"v2 rewritten\n"
+
+
+def test_run_ids_follow_the_newest_collector_run_id():
+    from agent_history.archive.manifest import new_run_id
+
+    after = ["20261002T061500Z-src-ffff", "imported-by-hand", "20261002T061459Z-src-0000"]
+
+    assert new_run_id(T0, "src", after).startswith("20261002T061501Z-src-")
+    assert new_run_id(T0 + timedelta(hours=1), "src", after).startswith("20261002T071500Z-")
+    assert new_run_id(T0, "src", ["imported-by-hand"]).startswith("20261002T061500Z-")
+
+
+def test_versions_of_runs_in_the_same_second_do_not_collide(env, monkeypatch):
+    from agent_history.archive import manifest as manifest_module
+
+    monkeypatch.setattr(manifest_module.secrets, "token_hex", lambda n: "abcd")
+    _write(env, SESSION, b"v1\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"v2\n", mtime=1_790_000_100)
+    _collect(env)
+    _write(env, SESSION, b"v3\n", mtime=1_790_000_200)
+    _collect(env)
+
+    _assert_archive_consistent(env, {})
+    versions = sorted((env["dest"] / "sources" / "src" / "versions").rglob("*.zst"))
+    assert [_decompress(path) for path in versions] == [b"v1\n", b"v2\n"]
+
+
 def test_dry_run_writes_nothing(env):
     _write(env, SESSION, b"a\n")
 

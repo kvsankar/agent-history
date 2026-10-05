@@ -40,7 +40,7 @@ from agent_history.archive.manifest import (
     manifest_path,
     new_run_id,
     read_manifest,
-    run_stamp,
+    run_id_stamp,
 )
 from agent_history.archive.state import (
     CollectLockedError,
@@ -225,14 +225,14 @@ class _Run:
         self.destination = destination
         self.now = now
         self.dry_run = dry_run
-        self.run_id = new_run_id(now, source.name)
+        self.run_id = ""  # named once the archive's runs are known (_set_run_id)
         self.state_file = state_path(state_dir, config.destination, source.name)
         loaded = load_state(self.state_file)
         self.state = loaded or SourceState()
         if loaded is None:  # rebuilt from the manifests, so min_interval_hours can apply
             self._reconcile(committed_run_ids(destination, source.name))
         self.summary = RunSummary(self.run_id, source.name, dry_run=dry_run)
-        self.incoming = incoming_dir(source.name, self.run_id)
+        self.incoming = ""
         # (manifest entry, archived copy, version path) for each rewrite
         self.moves: list[tuple[dict[str, Any], str, str]] = []
         self.staged_bytes = 0
@@ -275,6 +275,13 @@ class _Run:
             if recover_incoming(self.destination, self.source.name):
                 committed = committed_run_ids(self.destination, self.source.name)
         self._reconcile(committed)
+        self._set_run_id(new_run_id(self.now, self.source.name, after=committed))
+
+    def _set_run_id(self, run_id: str) -> None:
+        """Name the run so that it sorts after the source's committed runs."""
+        self.run_id = run_id
+        self.summary.run_id = run_id
+        self.incoming = incoming_dir(self.source.name, run_id)
 
     def _destination_has_history(self) -> bool:
         """True when this or another source's state records runs to this destination."""
@@ -467,7 +474,8 @@ class _Run:
         )
         entry["compressed_size"] = result.compressed_size
         if action == "versioned" and previous is not None:
-            version = f"versions/{item.rel_path}.{run_stamp(self.now)}-{self.run_id[-4:]}.zst"
+            stamp = run_id_stamp(self.run_id)
+            version = f"versions/{item.rel_path}.{stamp}-{self.run_id[-4:]}.zst"
             entry["previous_sha256"] = previous.sha256
             entry["previous_size"] = previous.size
             entry["version_path"] = version
