@@ -320,6 +320,30 @@ def test_log_rows_pruned_past_the_last_export_are_exported_once(env):
     assert [row["id"] for row in _exported_rows(env, entry)] == [6, 7]
 
 
+def test_exported_log_rows_have_credential_columns_blanked(env):
+    path = env["home"] / ".codex" / "logs_2.sqlite"
+    path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE logs (id INTEGER PRIMARY KEY, body TEXT, api_key TEXT, input_tokens INTEGER)"
+    )
+    conn.execute("INSERT INTO logs VALUES (1, 'line 1', ?, 42)", (TOKEN,))
+    conn.commit()
+    conn.close()
+
+    summary = _collect(env)
+
+    (entry,) = _entries(env, summary.run_id)
+    assert _exported_rows(env, entry) == [
+        {"id": 1, "body": "line 1", "api_key": None, "input_tokens": 42}
+    ]
+    assert entry["blanked"] == ["logs.api_key"]
+    data = (
+        env["dest"] / "sources" / "src" / "files" / (entry["export_path"] + ".zst")
+    ).read_bytes()
+    assert TOKEN.encode() not in zstandard.ZstdDecompressor().decompress(data)
+
+
 def test_new_log_file_name_starts_its_own_export(env):
     old = _logs_db(env)
     _add_logs(old, [1, 2])

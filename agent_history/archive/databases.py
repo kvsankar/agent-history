@@ -265,7 +265,9 @@ def _export_new_rows(
         if signature_is_racy(signature):
             entry["racy"] = True
         jsonl = snapshot.with_suffix(".jsonl")
-        count = _write_rows(conn, table, key, start, jsonl)
+        count, blanked = _write_rows(conn, rule, start, jsonl)
+        if blanked:
+            entry["blanked"] = blanked
         if count == 0:
             entry["to_key"] = last if not reset else newest
         identity = _table_identity(conn, table, key, entry["to_key"])
@@ -354,7 +356,12 @@ def _row_identity(conn, table: str, key: str, value) -> str | None:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _write_rows(conn, table: str, key: str, start, out: Path) -> int:
+def _write_rows(conn, rule: DatabaseRule, start, out: Path) -> tuple[int, list[str]]:
+    """Write rows with keys above ``start`` as JSON Lines, credential columns set to null.
+
+    Returns the row count and the blanked "table.column" names.
+    """
+    table, key = str(rule.log_table), str(rule.log_key)
     query = f"SELECT * FROM {_quote(table)}"
     params: tuple = ()
     if start is not None:
@@ -362,13 +369,20 @@ def _write_rows(conn, table: str, key: str, start, out: Path) -> int:
         params = (start,)
     cursor = conn.execute(query + f" ORDER BY {_quote(key)}", params)
     names = [column[0] for column in cursor.description]
+    named = {entry.lower() for entry in rule.blank_columns}
+    blank = {
+        name for name in names if f"{table}.{name}".lower() in named or _looks_like_credential(name)
+    }
     count = 0
     with out.open("w", encoding="utf-8") as handle:
         for row in cursor:
-            record = {name: _json_value(value) for name, value in zip(names, row)}
+            record = {
+                name: None if name in blank else _json_value(value)
+                for name, value in zip(names, row)
+            }
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
             count += 1
-    return count
+    return count, sorted(f"{table}.{name}" for name in blank)
 
 
 def _json_value(value: Any) -> Any:
