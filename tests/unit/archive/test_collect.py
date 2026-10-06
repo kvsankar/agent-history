@@ -1592,3 +1592,24 @@ def test_folders_are_flushed_before_the_commit_and_the_state(env, monkeypatch):
     save = _index(events, "replace", lambda d: d.endswith("src.json"))
     assert ("fsync", f"{source_dir}/manifests") in events[commit:save]
     assert ("fsync", str(next(env["state"].rglob("src.json")).parent)) in events[save:]
+
+
+def test_a_copy_ending_in_ctrl_z_is_archived_whole(env, tmp_path, windows_text_mode):
+    """On Windows, reopening a file in text mode to flush it dropped a final 0x1A byte.
+
+    A frame ends in any byte; a short file is stored in a raw block, so its copy ends in
+    the file's own last byte, which makes the case certain here.
+    """
+    data = b'{"n": 1}\n\x1a'
+    _write(env, SESSION, data, mtime=1_790_000_000)
+    staged_copy = zstandard.ZstdCompressor(level=3, write_content_size=True).compress(data)
+    assert staged_copy.endswith(b"\x1a")
+
+    summary = _collect(env)
+
+    assert summary.errors == 0
+    assert _archived(env, SESSION) == data
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched) == ([], [])
+    for _run, entries in read_manifests(open_destination(str(env["dest"])), "src"):
+        assert entries  # the manifest, a zstd frame as well, decodes

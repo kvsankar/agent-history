@@ -19,8 +19,13 @@ def _check_rel(rel: str) -> str:
 
 
 def fsync_file(path: Path) -> None:
-    """Flush a file's content to disk, so a rename that follows cannot expose an empty file."""
-    fd = os.open(path, os.O_RDWR)
+    """Flush a file's content to disk, so a rename that follows cannot expose an empty file.
+
+    On Windows the file is opened in binary mode: in text mode, the C runtime removes a
+    final Ctrl-Z byte (0x1A) from a file opened for reading and writing, and a compressed
+    copy or manifest ends in that byte about once in 256.
+    """
+    fd = os.open(path, os.O_RDWR | getattr(os, "O_BINARY", 0))
     try:
         os.fsync(fd)
     finally:
