@@ -67,18 +67,23 @@ def test_stats_without_cost_data_show_no_cost_line():
 
 def test_cost_rollup_tsv_columns_and_total():
     rows = [
-        {"month": "2026-01", "cost_usd": 10.5, "unpriced_tokens": 0},
-        {"month": "2026-02", "cost_usd": 2.25, "unpriced_tokens": 70},
+        {"month": "2026-01", "cost_usd": 10.5, "unpriced_tokens": 0, "share": 10.5 / 12.75},
+        {"month": "2026-02", "cost_usd": 2.25, "unpriced_tokens": 70, "share": 2.25 / 12.75},
     ]
-    metadata = {"dimensions": ["month"], "metric": "cost", "total": True}
+    metadata = {
+        "dimensions": ["month"],
+        "metric": "cost",
+        "total": True,
+        "scope_totals": {"cost_usd": 12.75, "unpriced_tokens": 70},
+    }
 
     output = TsvFormatter().format(rows, "stats_rollup", metadata)
 
     assert output.splitlines() == [
-        "MONTH\tCOST_USD\tUNPRICED_TOKENS",
-        "2026-01\t10.50\t0",
-        "2026-02\t2.25\t70",
-        "TOTAL\t12.75\t70",
+        "MONTH\tCOST_USD\tUNPRICED_TOKENS\tSHARE",
+        "2026-01\t10.50\t0\t82.4%",
+        "2026-02\t2.25\t70\t17.6%",
+        "TOTAL\t12.75\t70\t100.0%",
     ]
 
 

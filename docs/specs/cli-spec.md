@@ -405,6 +405,7 @@ Rollup Options:
   --metric <time|tokens|cost|all>   # Metric family (default: all)
   --by <dims>                      # project/proj, tag, workspace/ws, home, agent, model, day, month
   --top <n>                        # Limit rows
+  --tag-facet <tags>               # With --by tag: rows for these tags only, the rest as "other"
   --sort <fields>                  # metric/tokens/time/sessions/messages/input/output/cache-read/cost/dims
   --asc | --desc                   # Sort direction
   -c, --total, --totals            # Explicitly include the default totals row
@@ -419,6 +420,11 @@ Time rollup columns:
 Cost rollup columns:
   COST_USD                         # Estimated cost at API list prices on each message's date
   UNPRICED_TOKENS                  # Tokens from models with no known price (--metric cost)
+
+Share column (--metric time, tokens or cost):
+  SHARE                            # Row's percentage of the scope total; overlapping
+                                   # tags can add up to more than 100%
+  The totals row counts each session once, even when rows overlap.
 
 Human-readable rollups:
   -H, --human                      # Explicit default: compact token columns with K/M/B
@@ -449,6 +455,9 @@ Discoverability examples:
 
   cagelens stats rollup --metric cost --by month,model
       Show estimated API cost per model and month.
+
+  cagelens stats rollup --metric cost --by tag --tag-facet work,personal
+      Split estimated cost into work, personal and other, with each share.
 ```
 
 ### project

@@ -412,6 +412,7 @@ def test_stats_rollup_tsv_formats_token_columns() -> None:
             "output_tokens": 5,
             "cache_read_tokens": 3,
             "cache_creation_tokens": 2,
+            "share": 1.0,
         }
     ]
     metadata = {"dimensions": ["workspace", "model"], "metric": "tokens"}
@@ -419,8 +420,8 @@ def test_stats_rollup_tsv_formats_token_columns() -> None:
     output = formatter.format(rows, "stats_rollup", metadata)
 
     assert output.splitlines() == [
-        "WORKSPACE\tMODEL\tINPUT_TOKENS\tOUTPUT_TOKENS\tCACHE_READ\tCACHE_CREATE",
-        "/tmp/project\tclaude-test\t10\t5\t3\t2",
+        "WORKSPACE\tMODEL\tINPUT_TOKENS\tOUTPUT_TOKENS\tCACHE_READ\tCACHE_CREATE\tSHARE",
+        "/tmp/project\tclaude-test\t10\t5\t3\t2\t100.0%",
     ]
 
 
@@ -525,6 +526,7 @@ def test_stats_rollup_tsv_human_formats_token_columns() -> None:
             "output_tokens": 5_000_000,
             "cache_read_tokens": 3,
             "cache_creation_tokens": 2,
+            "share": 1.0,
         }
     ]
     metadata = {"dimensions": ["workspace", "model"], "metric": "tokens", "human": True}
@@ -532,24 +534,24 @@ def test_stats_rollup_tsv_human_formats_token_columns() -> None:
     output = formatter.format(rows, "stats_rollup", metadata)
 
     assert output.splitlines() == [
-        "WORKSPACE\tMODEL\tINPUT_TOKENS\tOUTPUT_TOKENS\tCACHE_READ\tCACHE_CREATE",
-        "/tmp/project\tclaude-test\t10K\t5M\t3\t2",
+        "WORKSPACE\tMODEL\tINPUT_TOKENS\tOUTPUT_TOKENS\tCACHE_READ\tCACHE_CREATE\tSHARE",
+        "/tmp/project\tclaude-test\t10K\t5M\t3\t2\t100.0%",
     ]
 
 
 def test_stats_rollup_tsv_can_append_total_row() -> None:
     formatter = TsvFormatter()
     rows = [
-        {"month": "2026-01", "input_tokens": 10, "output_tokens": 20},
-        {"month": "2026-02", "input_tokens": 30, "output_tokens": 40},
+        {"month": "2026-01", "input_tokens": 10, "output_tokens": 20, "share": 0.3},
+        {"month": "2026-02", "input_tokens": 30, "output_tokens": 40, "share": 0.7},
     ]
     metadata = {"dimensions": ["month"], "metric": "tokens", "total": True}
 
     output = formatter.format(rows, "stats_rollup", metadata)
 
     assert output.splitlines() == [
-        "MONTH\tINPUT_TOKENS\tOUTPUT_TOKENS\tCACHE_READ\tCACHE_CREATE",
-        "2026-01\t10\t20\t0\t0",
-        "2026-02\t30\t40\t0\t0",
-        "TOTAL\t40\t60\t0\t0",
+        "MONTH\tINPUT_TOKENS\tOUTPUT_TOKENS\tCACHE_READ\tCACHE_CREATE\tSHARE",
+        "2026-01\t10\t20\t0\t0\t30.0%",
+        "2026-02\t30\t40\t0\t0\t70.0%",
+        "TOTAL\t40\t60\t0\t0\t",
     ]

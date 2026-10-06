@@ -533,6 +533,9 @@ def _append_stats_guidance(
     lines.append("")
 
 
+ROLLUP_SHARE_METRICS = {"time", "tokens", "cost"}
+
+
 def _rollup_columns(metadata: dict[str, Any]) -> list[str]:
     dimensions = [str(dimension).upper() for dimension in metadata.get("dimensions", [])]
     metric = metadata.get("metric") or "all"
@@ -545,6 +548,8 @@ def _rollup_columns(metadata: dict[str, Any]) -> list[str]:
         columns.extend(["COST_USD", "UNPRICED_TOKENS"])
     if metric == "all":
         columns.extend(["COST_USD", "SESSIONS", "MESSAGES"])
+    if metric in ROLLUP_SHARE_METRICS:
+        columns.append("SHARE")
     return columns
 
 
@@ -577,6 +582,9 @@ def _rollup_row_values(row: dict[str, Any], metadata: dict[str, Any]) -> list[st
         values.append(_format_stat_number(row.get("unpriced_tokens", 0), human=human))
     if metric == "all":
         values.extend([str(row.get("sessions", 0)), str(row.get("messages", 0))])
+    if metric in ROLLUP_SHARE_METRICS:
+        share = row.get("share")
+        values.append("" if share is None else f"{float(share) * 100:.1f}%")
     return values
 
 
@@ -596,9 +604,18 @@ def _rollup_total_row(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> d
         "messages",
         "unpriced_tokens",
     ]
-    for field in numeric_fields:
-        total[field] = int(sum(_numeric_value(row.get(field)) for row in rows))
-    total["cost_usd"] = sum(_numeric_value(row.get("cost_usd")) for row in rows)
+    scope_totals = metadata.get("scope_totals")
+    if isinstance(scope_totals, dict):
+        # Rows can overlap (a project with two tags), so the total comes from
+        # the scope, where each session counts once.
+        for field in numeric_fields:
+            total[field] = int(_numeric_value(scope_totals.get(field)))
+        total["cost_usd"] = _numeric_value(scope_totals.get("cost_usd"))
+        total["share"] = 1.0
+    else:
+        for field in numeric_fields:
+            total[field] = int(sum(_numeric_value(row.get(field)) for row in rows))
+        total["cost_usd"] = sum(_numeric_value(row.get("cost_usd")) for row in rows)
 
     total_time = metadata.get("total_time_seconds")
     if (metadata.get("metric") or "all") in {"time", "all"} and total_time is not None:
@@ -628,6 +645,7 @@ def _is_numeric_column(header: str) -> bool:
         "MESSAGES",
         "COST_USD",
         "UNPRICED_TOKENS",
+        "SHARE",
     }
 
 

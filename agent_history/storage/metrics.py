@@ -1879,6 +1879,11 @@ def _rollup_sort_value(row: Dict[str, Any], field: str, metric: str) -> Any:
     return "" if value is None else str(value)
 
 
+def rollup_metric_value(row: Dict[str, Any], metric: str) -> float:
+    """Return a rollup row's value for a metric family (time, tokens, cost, all)."""
+    return _row_metric_total(row, metric)
+
+
 def _row_metric_total(row: Dict[str, Any], metric: str) -> float:
     if metric == "cost":
         return float(row.get("cost_usd") or 0)

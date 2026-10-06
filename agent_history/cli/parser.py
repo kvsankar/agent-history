@@ -1689,6 +1689,14 @@ class CLIParser:
                 help="Limit rollup rows",
             )
             parser.add_argument(
+                "--tag-facet",
+                metavar="TAGS",
+                help=(
+                    "With --by tag, show only these comma-separated tags as rows; "
+                    "projects with none of them, and untagged ones, become 'other'"
+                ),
+            )
+            parser.add_argument(
                 "--sort",
                 metavar="FIELDS",
                 help=(
@@ -2271,6 +2279,9 @@ class CLIParser:
             "total": getattr(args, "total", False),
             "separator": getattr(args, "separator", False),
             "stats_mode": getattr(args, "stats_verb", "summary"),
+            "tag_facet": self._split_csv_list([getattr(args, "tag_facet", None)])
+            if getattr(args, "tag_facet", None)
+            else None,
         }
 
     def _normalize_stats_dimensions(self, dimensions: list[str]) -> list[str]:

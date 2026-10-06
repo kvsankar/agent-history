@@ -365,6 +365,7 @@ def test_top_level_stats_rollup_uses_cached_db(tmp_path, monkeypatch, capsys) ->
             "time_hours": None,
             "cost_usd": 0,
             "unpriced_tokens": 20,
+            "share": 1.0,
             "workspace": "/tmp/project",
             "model": "claude-test",
         }
@@ -432,6 +433,7 @@ def test_time_month_rollup_omits_untimestamped_zero_time_bucket(
             "time_hours": 300 / 3600,
             "cost_usd": 0,
             "unpriced_tokens": 20,
+            "share": 1.0,
             "month": "2026-06",
         }
     ]
@@ -742,6 +744,7 @@ def test_cached_token_rollup_by_tag_model_preserves_null_time(
             "time_hours": None,
             "cost_usd": 0,
             "unpriced_tokens": 20,
+            "share": 1.0,
             "tag": "work",
             "model": "claude-test",
         }
@@ -828,6 +831,7 @@ def test_token_month_rollup_omits_untimestamped_zero_token_bucket(
             "time_hours": 300 / 3600,
             "cost_usd": 0,
             "unpriced_tokens": 20,
+            "share": 1.0,
             "workspace": "/tmp/project",
             "month": "2026-06",
         }

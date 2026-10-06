@@ -309,6 +309,9 @@ cagelens stats rollup --metric time --by project
 # Estimated API cost, at list prices on the date of use
 cagelens stats rollup --metric cost --by month,model
 
+# Share of cost by work vs personal tags; everything else is "other"
+cagelens stats rollup --metric cost --by tag --tag-facet work,personal
+
 # Tag projects and roll up by tag
 cagelens tag add --project myproject work
 cagelens stats --tag work

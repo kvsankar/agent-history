@@ -23,6 +23,10 @@ from agent_history.utils.paths import decode_workspace_path, is_encoded_workspac
 from agent_history.utils.workspace_ref import build_workspace_ref
 
 SUMMARY_DIMENSIONS = {"agent", "home", "workspace", "model", "tool", "day"}
+# Rollup row label for projects that carry none of the --tag-facet tags.
+OTHER_TAG = "other"
+# Rollup metrics whose rows get a share of the scope total.
+SHARE_METRICS = {"time", "tokens", "cost"}
 
 
 class SessionStatsHandler(VerbHandler):
@@ -182,11 +186,14 @@ class SessionStatsHandler(VerbHandler):
             dimensions,
             tag_map,
             preserve_workspace="project" in dimensions,
+            facet=self._tag_facet(verb_args, dimensions),
         )
         rows = self._apply_project_rollup(rows, dimensions, project_map)
         if storage_dimensions != dimensions and verb_args.get("top"):
             rows = rows[: verb_args["top"]]
         scoped_summary = get_scoped_stats_from_db(filters=filters)
+        scope_totals = _scope_totals(scoped_summary)
+        _add_shares(rows, verb_args.get("metric") or "all", scope_totals)
         metadata = build_scope_metadata(scope)
         return CommandResult(
             success=True,
@@ -203,6 +210,7 @@ class SessionStatsHandler(VerbHandler):
                 "total_time_seconds": scoped_summary.get("time_stats", {}).get(
                     "total_duration_seconds", 0
                 ),
+                "scope_totals": scope_totals,
                 "sync_stats": verb_args.get("sync_stats"),
                 "human": human,
                 "total": bool(verb_args.get("total")),
@@ -370,11 +378,14 @@ class SessionStatsHandler(VerbHandler):
             dimensions,
             tag_map,
             preserve_workspace="project" in dimensions,
+            facet=self._tag_facet(verb_args, dimensions),
         )
         rows = self._apply_project_rollup(rows, dimensions, project_map)
         if storage_dimensions != dimensions and verb_args.get("top"):
             rows = rows[: verb_args["top"]]
         scoped_summary = get_scoped_stats_from_db(filters=filters)
+        scope_totals = _scope_totals(scoped_summary)
+        _add_shares(rows, verb_args.get("metric") or "all", scope_totals)
         return CommandResult(
             success=True,
             data=rows,
@@ -391,6 +402,7 @@ class SessionStatsHandler(VerbHandler):
                 "total_time_seconds": scoped_summary.get("time_stats", {}).get(
                     "total_duration_seconds", 0
                 ),
+                "scope_totals": scope_totals,
                 "human": bool(verb_args.get("human")),
                 "total": bool(verb_args.get("total")),
                 "separator": bool(verb_args.get("separator")),
@@ -563,6 +575,14 @@ class SessionStatsHandler(VerbHandler):
                 normalized.append(dimension)
         return normalized
 
+    def _tag_facet(self, verb_args: Dict[str, Any], dimensions: list[str]) -> list[str] | None:
+        facet = verb_args.get("tag_facet")
+        if not facet:
+            return None
+        if "tag" not in dimensions:
+            raise ValueError("--tag-facet needs a tag dimension, e.g. --by tag")
+        return normalize_tags(facet)
+
     def _apply_tag_rollup(
         self,
         rows: list[dict[str, Any]],
@@ -570,6 +590,7 @@ class SessionStatsHandler(VerbHandler):
         tag_map: dict[str, list[str]] | None,
         *,
         preserve_workspace: bool = False,
+        facet: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         if "tag" not in dimensions:
             return rows
@@ -579,6 +600,8 @@ class SessionStatsHandler(VerbHandler):
             tags = tag_map.get(workspace) if tag_map else None
             if not tags:
                 tags = [UNTAGGED_TAG]
+            if facet is not None:
+                tags = [tag for tag in tags if tag in facet] or [OTHER_TAG]
             for tag in tags:
                 item = dict(row)
                 item["tag"] = tag
@@ -837,3 +860,35 @@ class SessionStatsHandler(VerbHandler):
         if workspaces:
             filters["workspaces"] = list(dict.fromkeys(workspaces))
         return filters
+
+
+def _scope_totals(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a scope's totals, counting each session once, in rollup row fields."""
+    tokens = summary.get("tokens", {})
+    cost = summary.get("cost", {})
+    return {
+        "sessions": summary.get("sessions", 0),
+        "messages": summary.get("messages", 0),
+        "input_tokens": tokens.get("input", 0),
+        "output_tokens": tokens.get("output", 0),
+        "cache_read_tokens": tokens.get("cache_read", 0),
+        "cache_creation_tokens": tokens.get("cache_creation", 0),
+        "time_seconds": summary.get("time_stats", {}).get("total_duration_seconds", 0),
+        "cost_usd": cost.get("usd", 0),
+        "unpriced_tokens": cost.get("unpriced_tokens", 0),
+    }
+
+
+def _add_shares(rows: list[dict[str, Any]], metric: str, totals: Dict[str, Any]) -> None:
+    """Set each row's share of the scope total for the rollup's metric.
+
+    Rows can overlap (a project with two tags appears under both), so shares
+    can add up to more than one.
+    """
+    if metric not in SHARE_METRICS:
+        return
+    from agent_history.storage.metrics import rollup_metric_value
+
+    whole = rollup_metric_value(totals, metric)
+    for row in rows:
+        row["share"] = rollup_metric_value(row, metric) / whole if whole else None

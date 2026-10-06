@@ -562,6 +562,16 @@ commands remain supported as convenience aliases:
   - `cagelens stats rollup --metric tokens --by project,agent,model`
   - `cagelens stats rollup --metric all --by project`
   - `cagelens stats rollup --metric cost --by agent,model`
+  - `cagelens stats rollup --metric cost --by tag --tag-facet work,personal`
+- Rollups with `--metric time`, `tokens` or `cost` add a `SHARE` column: each
+  row's percentage of the scope total for that metric, counting each session
+  once. Tags can overlap (a project tagged `work` and `personal` appears under
+  both), so shares can add up to more than 100%.
+- The totals row comes from the scope, where each session counts once, not
+  from adding the rows, so overlapping tags do not inflate it.
+- `--tag-facet <tags>` limits `--by tag` rows to the named tags; projects with
+  none of them, untagged projects and folders in no project are grouped as
+  `other`. It is an error without a `tag` dimension.
 
 **Estimated API cost (metrics DB):**
 - Each assistant message is priced with its model's pay-as-you-go API list
@@ -611,6 +621,7 @@ commands remain supported as convenience aliases:
 | `--by-workspace` | Compatibility alias for `--by workspace` |
 | `--time` | Expand work-period time details, including daily time totals |
 | `--metric <name>` | Rollup metric: `time`, `tokens`, `cost`, or `all` |
+| `--tag-facet <tags>` | With `--by tag`, rows for these tags only; the rest are `other` |
 | `--top <N>` | Rollup row limit |
 | `--sort <fields>` | Sort rollup rows by comma-separated fields |
 | `--asc` | Sort rollup rows ascending |
