@@ -37,8 +37,14 @@ MTIME_TOLERANCE_SECONDS = 0.01
 
 
 def to_wsl_path(value: str) -> str:
-    """C:\\a\\b -> /mnt/c/a/b; anything that is not a drive path is unchanged."""
-    match = _WINDOWS_DRIVE.match(value or "")
+    """C:\\a\\b -> /mnt/c/a/b; anything that is not a drive path is unchanged.
+
+    The extended-length prefix \\\\?\\ that Windows puts on some paths is dropped.
+    """
+    value = value or ""
+    if value.startswith(("\\\\?\\", "//?/")):
+        value = value[4:]
+    match = _WINDOWS_DRIVE.match(value)
     if not match:
         return value
     rest = (match.group(2) or "").replace("\\", "/").strip("/")

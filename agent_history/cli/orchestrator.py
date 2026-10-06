@@ -395,6 +395,9 @@ class CommandOrchestrator:
         from agent_history.storage.config import load_config
         from agent_history.storage.windows_native import prepare_windows_homes
 
+        # On native Windows the Windows home is read directly; this is for WSL.
+        if sys.platform == "win32":
+            return []
         settings = load_config().get("windows_native")
         homes = self._windows_homes_selected(request, context)
         if not settings or not homes:

@@ -10,7 +10,12 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 from tests.helpers.cli import run_cli_subprocess
+
+# The Windows export is how WSL reads a Windows home; native Windows reads it directly.
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="WSL/Linux-side feature")
 
 REPO = Path(__file__).resolve().parents[3]
 

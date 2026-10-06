@@ -216,3 +216,10 @@ def test_interop_socket_is_found_when_the_environment_lacks_it(tmp_path):
     assert env["WSL_INTEROP"] == str(new)
     assert windows_native.interop_env({"WSL_INTEROP": "/x"}, run_dir)["WSL_INTEROP"] == "/x"
     assert "WSL_INTEROP" not in windows_native.interop_env({}, tmp_path / "missing")
+
+
+def test_extended_length_prefix_is_dropped():
+    """Windows reports some folders as \\\\?\\C:\\..., which must match plain C:\\..."""
+    assert windows_native.to_wsl_path("\\\\?\\C:\\alex\\projects\\sample-project") == (
+        "/mnt/c/alex/projects/sample-project"
+    )
