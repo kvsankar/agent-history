@@ -5,7 +5,8 @@ Codex writes a token_count event after each model response. Its
 ``last_token_usage`` is the usage of the latest response. Summing running
 totals overcounts, and so does taking the last running total of a spawned
 sub-agent, whose totals start from its parent's. Codex also repeats an event
-unchanged when only rate limits change.
+unchanged when only rate limits change. Its output count already includes
+the reasoning tokens, and its input count includes the cached tokens.
 """
 
 from typing import Any, Dict, Optional
@@ -47,7 +48,7 @@ class CodexTokenCounter:
 
         delta = {
             "input_tokens": usage["input_tokens"],
-            "output_tokens": usage["output_tokens"] + usage["reasoning_output_tokens"],
+            "output_tokens": usage["output_tokens"],
             "cache_read_tokens": usage["cached_input_tokens"],
         }
         self.input_tokens += delta["input_tokens"]

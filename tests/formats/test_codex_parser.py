@@ -51,10 +51,10 @@ def get_token_usage(records: List[Dict[str, Any]]) -> Dict[str, int]:
             if payload.get("type") == "token_count":
                 info = payload.get("info", {})
                 total_usage = info.get("total_token_usage", {})
+                # output_tokens already includes reasoning_output_tokens.
                 return {
                     "input": total_usage.get("input_tokens", 0),
-                    "output": total_usage.get("output_tokens", 0)
-                    + total_usage.get("reasoning_output_tokens", 0),
+                    "output": total_usage.get("output_tokens", 0),
                 }
     return {"input": 0, "output": 0}
 

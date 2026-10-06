@@ -35,8 +35,8 @@ CLAUDE_STATS_EXPECTED = {
 }
 
 # Codex session with known values
-# The stats implementation sums output_tokens + reasoning_output_tokens as total output
-# This matches user expectation that "output" = all generated tokens
+# Codex's output_tokens already includes reasoning_output_tokens, and
+# total_tokens = input_tokens + output_tokens.
 CODEX_STATS_EXPECTED = {
     "session_id": "stats-codex-001",
     "agent": "codex",
@@ -45,8 +45,7 @@ CODEX_STATS_EXPECTED = {
     "user_messages": 2,
     "assistant_messages": 2,
     "input_tokens": 300,
-    "output_tokens": 150,  # 135 base + 15 reasoning (total output)
-    "base_output_tokens": 135,  # Excluding reasoning
+    "output_tokens": 150,  # includes the 15 reasoning tokens
     "cached_input_tokens": 120,
     "reasoning_output_tokens": 15,
     "tool_calls": {"shell": 1},
@@ -630,7 +629,7 @@ def setup_codex_stats_fixture(stats_test_home: Dict[str, Any]) -> Path:
         model=exp["model"],
         token_usage={
             "input": exp["input_tokens"],
-            "output": exp["base_output_tokens"],  # 135, implementation adds reasoning
+            "output": exp["output_tokens"],
             "cached": exp["cached_input_tokens"],
             "reasoning": exp["reasoning_output_tokens"],
         },

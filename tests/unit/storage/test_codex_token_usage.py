@@ -117,3 +117,29 @@ def test_backend_token_summary_uses_the_same_per_response_sums(tmp_path):
     assert summary["input_tokens"] == 300
     assert summary["cache_read_tokens"] == 190
     assert summary["output_tokens"] == 30
+
+
+def test_reasoning_tokens_are_already_inside_output(tmp_path):
+    """Codex's output count includes reasoning; total = input + output."""
+    usage = {
+        "input_tokens": 19082,
+        "cached_input_tokens": 4864,
+        "output_tokens": 140,
+        "reasoning_output_tokens": 122,
+        "total_tokens": 19222,
+    }
+    session_file = _write_jsonl(
+        tmp_path / "rollout.jsonl",
+        [
+            _meta(),
+            _message("assistant", "2026-09-29T12:00:02Z"),
+            _token_count("2026-09-29T12:00:03Z", usage, usage),
+        ],
+    )
+
+    session_info, messages, _tools = metrics._parse_codex_jsonl(session_file)
+
+    assert session_info["output_tokens"] == 140
+    assert messages[0]["output_tokens"] == 140
+    summary = codex_extract_metrics_from_jsonl(session_file)["tokens_summary"]
+    assert summary["output_tokens"] == 140

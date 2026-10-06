@@ -408,6 +408,8 @@ def _parse_claude_jsonl(
     messages: List[Dict[str, Any]] = []
     tool_uses: List[Dict[str, Any]] = []
     timestamps: List[str] = []
+    # First message record of each model response, by response id.
+    responses: Dict[str, Dict[str, Any]] = {}
 
     try:
         with open(jsonl_file, encoding="utf-8-sig") as f:
@@ -443,10 +445,20 @@ def _parse_claude_jsonl(
                     cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
                     cache_read = usage.get("cache_read_input_tokens", 0) or 0
 
-                    session_info["input_tokens"] += input_tokens
-                    session_info["output_tokens"] += output_tokens
-                    session_info["cache_creation_tokens"] += cache_creation
-                    session_info["cache_read_tokens"] += cache_read
+                    usage_tokens = {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_creation_tokens": cache_creation,
+                        "cache_read_tokens": cache_read,
+                    }
+                    response_id = message_obj.get("id") if entry_type == "assistant" else None
+                    first_record = responses.get(response_id) if response_id else None
+                    if first_record is not None:
+                        _merge_repeated_response_usage(session_info, first_record, usage_tokens)
+                        input_tokens = output_tokens = cache_creation = cache_read = 0
+                    else:
+                        for field, value in usage_tokens.items():
+                            session_info[field] += value
 
                     # Build message record
                     msg_record = {
@@ -463,6 +475,8 @@ def _parse_claude_jsonl(
                         "cache_read_tokens": cache_read,
                     }
                     messages.append(msg_record)
+                    if response_id and first_record is None:
+                        responses[response_id] = msg_record
 
                     # Extract tool uses from content
                     content = message_obj.get("content", [])
@@ -500,6 +514,23 @@ def _parse_claude_jsonl(
         session_info["last_timestamp"] = max(timestamps)
 
     return session_info, messages, tool_uses
+
+
+def _merge_repeated_response_usage(
+    session_info: Dict[str, Any], first_record: Dict[str, Any], usage: Dict[str, int]
+) -> None:
+    """Count a response's usage once when Claude Code repeats it on later lines.
+
+    Claude Code writes each content block of one response as its own line,
+    each carrying the response's usage. A streamed response's earlier lines
+    carry a partial output count, so the largest value of each field is kept
+    on the response's first message record.
+    """
+    for field, value in usage.items():
+        previous = first_record.get(field) or 0
+        if value > previous:
+            session_info[field] += value - previous
+            first_record[field] = value
 
 
 def _apply_codex_token_count(
