@@ -179,3 +179,36 @@ def test_an_include_snapshots_a_database_that_no_layout_names(env):
     assert key.encode() not in restored.read_bytes()
     with sqlite3.connect(restored) as check:
         assert check.execute("SELECT name, api_key FROM providers").fetchall() == [("main", None)]
+
+
+def test_a_wildcard_include_leaves_an_agent_database_to_its_layout(env):
+    token = "gho_" + "x" * 36
+    db = env["home"] / ".copilot" / "data.db"
+    db.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, access_token TEXT)")
+    conn.execute("INSERT INTO accounts (access_token) VALUES (?)", (token,))
+    conn.commit()  # the row stays in data.db-wal while the connection is open
+    _write(env["home"], ".copilot/command-history-state.json", b"{}")
+    _write(env["home"], "notes/n.md", b"note\n")
+    entry = {"name": "src", "kind": "live", "platform": "linux", "home": str(env["home"])}
+    entry["include"] = ["**"]
+    config = parse_config(
+        {"archive": {"destination": str(env["dest"]), "compression_level": 3}, "sources": [entry]}
+    )
+    try:
+        summary = _collect(env, config=config)
+    finally:
+        conn.close()
+
+    entries = _run_entries(env, summary.run_id)
+    assert sorted(entry["path"] for entry in entries) == [".copilot/data.db", "notes/n.md"]
+    data_db = next(entry for entry in entries if entry["path"] == ".copilot/data.db")
+    assert (data_db["kind"], data_db["agent"]) == ("sqlite-snapshot", "copilot-cli")
+    restored = env["tmp"] / "restored.db"
+    archived = env["dest"] / "sources/src/files/.copilot/data.db.zst"
+    restored.write_bytes(zstandard.ZstdDecompressor().decompress(archived.read_bytes()))
+    assert token.encode() not in restored.read_bytes()
+    with sqlite3.connect(restored) as check:
+        assert check.execute("SELECT COUNT(*) FROM accounts").fetchone() == (1,)

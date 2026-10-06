@@ -14,6 +14,7 @@ from agent_history.archive.config import parse_config
 from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import (
     archive_file_path,
+    is_within,
     iter_source_files,
     original_path,
     session_target,
@@ -619,3 +620,163 @@ def test_an_include_snapshots_a_database_whose_rows_are_only_in_its_wal(tmp_path
 
     assert set(selected) == {"tools/app/state.db"}
     assert selected["tools/app/state.db"].database.mode == "snapshot"
+
+
+# Files in every Linux agent folder: some the layouts select, some they leave out.
+_IN_AGENT_FOLDERS = (
+    ".claude/projects/p/a.jsonl",
+    ".claude/projects/-home-alex-oauth-proxy/s.jsonl",
+    ".claude/settings.json",
+    ".claude/plugins/x/notes.md",
+    ".codex/hooks.json",
+    ".codex/skills/oauth/SKILL.md",
+    ".gemini/tmp/abc/chats/session-1.json",
+    ".gemini/tmp/abc/tool-outputs/out.json",
+    ".pi/agent/settings.json",
+    ".copilot/session-state/abc/events.jsonl",
+    ".copilot/command-history-state.json",
+    ".config/Code/User/settings.json",
+    ".config/Code/User/workspaceStorage/w/chatSessions/c.json",
+    ".vscode-server/data/User/globalStorage/x.json",
+    ".cagelens/config.json",
+    ".cagelens/codex_index.json",
+    ".agent-history/aliases.json",
+)
+_DATABASES_IN_AGENT_FOLDERS = (
+    ".codex/state_5.sqlite",
+    ".codex/logs_2.sqlite",
+    ".codex/thread_history_1.sqlite",
+    ".copilot/data.db",
+    ".copilot/repo-metadata-cache.db",
+    ".cagelens/metrics.db",
+)
+_OUTSIDE_AGENT_FOLDERS = (
+    "notes/n.json",
+    ".config/tool/settings.json",
+    ".pi/settings.json",
+    ".vscode-server/extensions/e/package.json",
+)
+
+
+def _fill_home(home: Path) -> None:
+    for rel in _IN_AGENT_FOLDERS + _OUTSIDE_AGENT_FOLDERS:
+        _touch(home, rel)
+    for rel in _DATABASES_IN_AGENT_FOLDERS:
+        _sqlite(home, rel)
+    _sqlite(home, "tools/app/state.sqlite")
+
+
+@pytest.mark.parametrize(
+    ("include", "added"),
+    [
+        (["**"], set(_OUTSIDE_AGENT_FOLDERS) | {"tools/app/state.sqlite"}),
+        (["**/*.json"], set(_OUTSIDE_AGENT_FOLDERS)),
+        ([".*/**"], set(_OUTSIDE_AGENT_FOLDERS) - {"notes/n.json"}),
+        (
+            [".config/**", ".pi/**", ".vscode-server/**"],
+            set(_OUTSIDE_AGENT_FOLDERS) - {"notes/n.json"},
+        ),
+    ],
+)
+def test_a_wildcard_include_selects_nothing_inside_agent_folders(tmp_path, include, added):
+    _fill_home(tmp_path)
+    layouts_only = _selected(_source(tmp_path))
+
+    items = list(iter_source_files(_source(tmp_path, include=include)))
+
+    selected = {item.rel_path: item for item in items}
+    assert len(items) == len(selected)  # each path once
+    assert {rel: selected[rel] for rel in layouts_only} == layouts_only
+    assert set(selected) - set(layouts_only) == added
+    assert {selected[rel].agent for rel in added} == {"other"}
+
+
+def test_the_default_layouts_select_the_same_files_with_a_wildcard_include(tmp_path):
+    _fill_home(tmp_path)
+
+    selected = _selected(_source(tmp_path, include=["**"]))
+
+    layout_files = {rel: item for rel, item in selected.items() if item.agent != "other"}
+    assert set(layout_files) == {
+        ".claude/projects/p/a.jsonl",
+        ".claude/projects/-home-alex-oauth-proxy/s.jsonl",
+        ".gemini/tmp/abc/chats/session-1.json",
+        ".copilot/session-state/abc/events.jsonl",
+        ".config/Code/User/workspaceStorage/w/chatSessions/c.json",
+        ".cagelens/config.json",
+        ".agent-history/aliases.json",
+        ".codex/state_5.sqlite",
+        ".codex/logs_2.sqlite",
+        ".copilot/data.db",
+    }
+    assert layout_files[".copilot/data.db"].agent == "copilot-cli"
+    assert "accounts.access_token" in layout_files[".copilot/data.db"].database.blank_columns
+    assert layout_files[".codex/logs_2.sqlite"].database.mode == "log"
+
+
+def test_a_wildcard_include_skips_the_vscode_user_folders_on_windows(tmp_path):
+    chat = "AppData/Roaming/Code/User/workspaceStorage/w/chatSessions/c.json"
+    for rel in (
+        chat,
+        "AppData/Roaming/Code/User/settings.json",
+        "AppData/Roaming/Code - Insiders/User/globalStorage/x.json",
+        # The same folder spelt in another case, as a case-insensitive file system allows.
+        "Appdata/roaming/code/user/y.json",
+        "AppData/Roaming/Code/logs/main.log",
+        "AppData/Roaming/tool/settings.json",
+    ):
+        _touch(tmp_path, rel)
+
+    selected = _selected(_source(tmp_path, platform="windows", include=["**"]))
+
+    assert set(selected) == {
+        chat,
+        "AppData/Roaming/Code/logs/main.log",
+        "AppData/Roaming/tool/settings.json",
+    }
+    assert selected[chat].agent == "copilot-vscode"
+
+
+def test_a_wildcard_include_skips_a_roots_override_inside_the_home(tmp_path):
+    copy = tmp_path / "old" / "claude-copy"
+    _touch(copy, "projects/p/a.jsonl")
+    _touch(copy, "settings.json")
+    _touch(tmp_path, "old/notes.md")
+    source = _source(tmp_path, include=["**"], roots={"claude": str(copy)})
+
+    selected = _selected(source)
+
+    assert set(selected) == {".claude/projects/p/a.jsonl", "old/notes.md"}
+    assert selected[".claude/projects/p/a.jsonl"].path == copy / "projects/p/a.jsonl"
+
+
+def test_includes_never_read_inside_agent_folders(tmp_path, monkeypatch):
+    from agent_history.archive import layouts
+
+    _fill_home(tmp_path)
+    listed, opened = [], []
+    real_scandir, real_header = layouts.os.scandir, layouts._read_header
+
+    def scandir(path):
+        listed.append(Path(path).relative_to(tmp_path).as_posix())
+        return real_scandir(path)
+
+    def read_header(path):
+        opened.append(Path(path).relative_to(tmp_path).as_posix())
+        return real_header(path)
+
+    monkeypatch.setattr(layouts.os, "scandir", scandir)
+    monkeypatch.setattr(layouts, "_read_header", read_header)
+
+    _selected(_source(tmp_path, agents=[], include=["**"]))
+    listed_by_includes = set(listed)
+    _selected(_source(tmp_path, include=["**"]))
+
+    agent_folders = (".claude", ".codex", ".gemini", ".pi/agent", ".copilot", ".config/Code/User")
+    agent_folders += (".vscode-server/data/User", ".cagelens", ".agent-history")
+    assert not [p for p in listed_by_includes if is_within(p, agent_folders)]
+    assert sorted(opened) == sorted(
+        rel
+        for rel in (*_OUTSIDE_AGENT_FOLDERS, "tools/app/state.sqlite")
+        for _ in range(2)  # once per run above
+    )
