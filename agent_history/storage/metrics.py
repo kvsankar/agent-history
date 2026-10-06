@@ -538,11 +538,14 @@ def _apply_codex_token_count(
     messages: List[Dict[str, Any]],
     payload: Dict[str, Any],
     counter: CodexTokenCounter,
+    turn_model: Optional[str] = None,
 ) -> None:
     """Add one Codex token_count event's per-response usage.
 
     The usage goes to the session totals and to the latest assistant message,
-    so sums over the messages table match the session.
+    so sums over the messages table match the session. A forked sub-agent
+    replays its parent's messages before its first turn_context, so that
+    message may have no model yet; it then takes the current turn's model.
     """
     delta = counter.add(payload.get("info") or {})
     if delta is None:
@@ -556,6 +559,8 @@ def _apply_codex_token_count(
         if msg["type"] == "assistant":
             for field, value in delta.items():
                 msg[field] = (msg.get(field) or 0) + value
+            if not msg.get("model"):
+                msg["model"] = turn_model
             break
 
 
@@ -671,7 +676,9 @@ def _parse_codex_jsonl(
 
                 # Extract token usage from event_msg
                 elif entry_type == "event_msg" and payload.get("type") == "token_count":
-                    _apply_codex_token_count(session_info, messages, payload, token_counter)
+                    _apply_codex_token_count(
+                        session_info, messages, payload, token_counter, turn_model
+                    )
 
     except OSError:
         pass

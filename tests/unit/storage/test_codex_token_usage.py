@@ -143,3 +143,32 @@ def test_reasoning_tokens_are_already_inside_output(tmp_path):
     assert messages[0]["output_tokens"] == 140
     summary = codex_extract_metrics_from_jsonl(session_file)["tokens_summary"]
     assert summary["output_tokens"] == 140
+
+
+def test_usage_after_inherited_history_takes_the_turn_model(tmp_path):
+    """A forked sub-agent replays its parent's messages before its first turn_context.
+
+    Usage reported after that turn belongs to the turn's model, even when the
+    latest assistant message is one of the replayed ones.
+    """
+    usage = _usage(1000, 400, 50)
+    session_file = _write_jsonl(
+        tmp_path / "rollout.jsonl",
+        [
+            _meta(),
+            _message("user", "2026-09-29T12:00:01Z"),
+            _message("assistant", "2026-09-29T12:00:02Z"),
+            {
+                "type": "turn_context",
+                "timestamp": "2026-09-29T12:00:03Z",
+                "payload": {"model": "model-a"},
+            },
+            _token_count("2026-09-29T12:00:04Z", usage, usage),
+        ],
+    )
+
+    _session_info, messages, _tools = metrics._parse_codex_jsonl(session_file)
+
+    assistant = [m for m in messages if m["type"] == "assistant"]
+    assert assistant[0]["model"] == "model-a"
+    assert assistant[0]["input_tokens"] == 1000
