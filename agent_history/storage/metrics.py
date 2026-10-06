@@ -15,18 +15,22 @@ import json
 import os
 import re
 import sqlite3
+import sys
+from contextlib import closing
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from agent_history import pricing
 from agent_history.storage.config import get_config_dir
 from agent_history.utils.codex_tokens import CodexTokenCounter, is_replayed
+from agent_history.utils.jsonl import iter_jsonl_lines
 
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
 
 __all__ = [
+    "default_sync_jobs",
     "get_metrics_db_path",
     "get_session_stats_from_db",
     "get_stats_rollup_from_db",
@@ -433,7 +437,7 @@ def _parse_claude_jsonl(
     responses: Dict[str, Dict[str, Any]] = {}
 
     try:
-        with open(jsonl_file, encoding="utf-8-sig") as f:
+        with closing(iter_jsonl_lines(jsonl_file)) as f:
             for raw_line in f:
                 line = raw_line.strip()
                 if not line:
@@ -628,7 +632,7 @@ def _parse_codex_jsonl(
     history_start: Optional[int] = None
 
     try:
-        with open(jsonl_file, encoding="utf-8-sig") as f:
+        with closing(iter_jsonl_lines(jsonl_file)) as f:
             for raw_line in f:
                 line = raw_line.strip()
                 if not line:
@@ -946,49 +950,77 @@ def sync_file_to_db(
     Returns:
         True if file was synced, False if skipped
     """
-    file_path_str = str(jsonl_file)
-
-    # Check if file needs syncing
     try:
-        stat = jsonl_file.stat()
-        current_mtime = stat.st_mtime
+        current_mtime = jsonl_file.stat().st_mtime
     except OSError:
         return False
 
-    if not force:
-        cursor = conn.execute(
-            "SELECT file_mtime, home, stats_format FROM sessions WHERE file_path = ?",
-            (file_path_str,),
-        )
-        row = cursor.fetchone()
-        # An unchanged file reached through a different home is synced again, so
-        # one file is never left under the home of an older sync. So is a file
-        # whose row an older cagelens wrote.
-        if (
-            row
-            and row["file_mtime"]
-            and row["file_mtime"] >= current_mtime
-            and row["home"] == source_key
-            and row["stats_format"] == STATS_FORMAT_VERSION
-        ):
-            return False
+    if not force and not _needs_sync(conn, str(jsonl_file), current_mtime, source_key):
+        return False
 
+    record = _extract_file_stats(str(jsonl_file), agent, workspace)
+    _store_file_stats(conn, record, source_key)
+    return True
+
+
+def _needs_sync(
+    conn: sqlite3.Connection, file_path: str, current_mtime: float, source_key: str
+) -> bool:
+    """Return True unless the stored row is current for this file.
+
+    An unchanged file reached through a different home is synced again, so
+    one file is never left under the home of an older sync. So is a file
+    whose row an older cagelens wrote.
+    """
+    row = conn.execute(
+        "SELECT file_mtime, home, stats_format FROM sessions WHERE file_path = ?",
+        (file_path,),
+    ).fetchone()
+    return not (
+        row
+        and row["file_mtime"]
+        and row["file_mtime"] >= current_mtime
+        and row["home"] == source_key
+        and row["stats_format"] == STATS_FORMAT_VERSION
+    )
+
+
+def _extract_file_stats(file_path: str, agent: str, workspace: Optional[str]) -> Dict[str, Any]:
+    """Parse one session file into the rows to store.
+
+    This reads no database, so worker processes can run it in parallel.
+    """
     from agent_history.backends.registry import require_backend
 
+    jsonl_file = Path(file_path)
+    current_mtime = jsonl_file.stat().st_mtime
     backend = require_backend(agent)
     session_info, messages, tool_uses = backend.extract_stats(jsonl_file)
-    workspace = backend.resolve_stats_workspace(jsonl_file, session_info, workspace)
-
-    # Calculate work periods from message timestamps
+    resolved_workspace = backend.resolve_stats_workspace(jsonl_file, session_info, workspace)
     timestamps = [m.get("timestamp", "") for m in messages if m.get("timestamp")]
     work_seconds, num_periods = _calculate_work_periods(timestamps)
+    return {
+        "file_path": file_path,
+        "mtime": current_mtime,
+        "agent": agent,
+        "workspace": resolved_workspace,
+        "session_info": session_info,
+        "messages": messages,
+        "tool_uses": tool_uses,
+        "work_seconds": work_seconds,
+        "num_periods": num_periods,
+    }
 
-    # Delete existing data for this file
+
+def _store_file_stats(conn: sqlite3.Connection, record: Dict[str, Any], source_key: str) -> None:
+    """Replace one file's rows with a parsed record."""
+    file_path_str = record["file_path"]
+    session_info = record["session_info"]
+
     conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (file_path_str,))
     conn.execute("DELETE FROM messages WHERE file_path = ?", (file_path_str,))
     conn.execute("DELETE FROM sessions WHERE file_path = ?", (file_path_str,))
 
-    # Insert session record
     conn.execute(
         """
         INSERT INTO sessions (
@@ -1006,11 +1038,11 @@ def sync_file_to_db(
         (
             file_path_str,
             session_info.get("session_id"),
-            workspace,
+            record["workspace"],
             source_key,
             source_key,
-            agent,
-            current_mtime,
+            record["agent"],
+            record["mtime"],
             1 if session_info.get("is_agent") else 0,
             session_info.get("parent_session_id"),
             session_info.get("first_timestamp"),
@@ -1027,22 +1059,21 @@ def sync_file_to_db(
             session_info.get("git_branch"),
             session_info.get("claude_version"),
             session_info.get("cwd"),
-            work_seconds,
-            num_periods,
+            record["work_seconds"],
+            record["num_periods"],
             STATS_FORMAT_VERSION,
         ),
     )
 
-    # Insert message records
-    for msg in messages:
-        conn.execute(
-            """
-            INSERT INTO messages (
-                uuid, file_path, session_id, parent_uuid, type, timestamp,
-                model, stop_reason, input_tokens, output_tokens,
-                cache_creation_tokens, cache_read_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+    conn.executemany(
+        """
+        INSERT INTO messages (
+            uuid, file_path, session_id, parent_uuid, type, timestamp,
+            model, stop_reason, input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
             (
                 msg.get("uuid"),
                 file_path_str,
@@ -1056,18 +1087,19 @@ def sync_file_to_db(
                 msg.get("output_tokens", 0),
                 msg.get("cache_creation_tokens", 0),
                 msg.get("cache_read_tokens", 0),
-            ),
-        )
+            )
+            for msg in record["messages"]
+        ],
+    )
 
-    # Insert tool use records
-    for tu in tool_uses:
-        conn.execute(
-            """
-            INSERT INTO tool_uses (
-                tool_use_id, message_uuid, file_path, session_id,
-                tool_name, is_error, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
+    conn.executemany(
+        """
+        INSERT INTO tool_uses (
+            tool_use_id, message_uuid, file_path, session_id,
+            tool_name, is_error, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
             (
                 tu.get("tool_use_id"),
                 tu.get("message_uuid"),
@@ -1076,19 +1108,18 @@ def sync_file_to_db(
                 tu.get("tool_name", "unknown"),
                 tu.get("is_error", 0),
                 tu.get("timestamp"),
-            ),
-        )
+            )
+            for tu in record["tool_uses"]
+        ],
+    )
 
-    # Update synced files tracking
     conn.execute(
         """
         INSERT OR REPLACE INTO synced_files (file_path, mtime, synced_at)
         VALUES (?, ?, ?)
         """,
-        (file_path_str, current_mtime, datetime.now().isoformat()),
+        (file_path_str, record["mtime"], datetime.now().isoformat()),
     )
-
-    return True
 
 
 def sync_sessions_to_db(
@@ -1178,14 +1209,79 @@ def sync_sessions_to_db(
     return stats
 
 
+# Fewer files than this are parsed in the calling process.
+PARALLEL_SYNC_MIN_FILES = 8
+# Commit after this many stored files, so the rollback journal stays small.
+SYNC_COMMIT_EVERY = 200
+# Parsed files waiting to be stored, per worker, before more are submitted.
+SYNC_PENDING_PER_WORKER = 4
+# Remote session files copied at the same time.
+REMOTE_COPY_THREADS = 8
+
+
+def default_sync_jobs() -> int:
+    """Worker processes for parsing: CAGELENS_SYNC_JOBS, else up to 8 cores."""
+    value = os.environ.get("CAGELENS_SYNC_JOBS")
+    if value:
+        try:
+            jobs = int(value)
+        except ValueError:
+            jobs = 0
+        if jobs >= 1:
+            return jobs
+    return max(1, min(8, os.cpu_count() or 1))
+
+
 def sync_scope_to_db(
     conn: sqlite3.Connection,
     scope: "ConcreteScope",
     force: bool = False,
+    jobs: Optional[int] = None,
 ) -> Dict[str, int]:
-    """Sync all sessions referenced in a resolved scope to the database."""
+    """Sync all sessions referenced in a resolved scope to the database.
+
+    Files are parsed in ``jobs`` worker processes (default: default_sync_jobs())
+    while this process does all database writes, committing in batches.
+    """
     stats = {"synced": 0, "skipped": 0, "errors": 0}
+    candidates = _local_session_files(scope, force, stats)
+
+    todo: list[tuple[str, str, Optional[str], str]] = []
     seen_paths: set[str] = set()
+    for file_path, home, workspace, agent in candidates:
+        file_key = str(file_path)
+        if file_key in seen_paths:
+            continue
+        seen_paths.add(file_key)
+        try:
+            current_mtime = file_path.stat().st_mtime
+        except OSError:
+            stats["errors"] += 1
+            continue
+        if not force and not _needs_sync(conn, file_key, current_mtime, home):
+            stats["skipped"] += 1
+            continue
+        todo.append((file_key, home, workspace, agent))
+
+    jobs = jobs or default_sync_jobs()
+    if jobs <= 1 or len(todo) < PARALLEL_SYNC_MIN_FILES:
+        results = (_extract_or_error(item) for item in todo)
+        _store_results(conn, results, stats)
+    else:
+        _store_results(conn, _parallel_extract(todo, jobs), stats)
+    return stats
+
+
+def _local_session_files(
+    scope: "ConcreteScope", force: bool, stats: Dict[str, int]
+) -> list[tuple[Path, str, Optional[str], str]]:
+    """Return (local file, home, workspace, agent) for every session in scope.
+
+    Remote and web sessions are copied into the local cache first; remote
+    copies run on several threads because each is a separate SSH call.
+    """
+    files: list[tuple[Path, str, Optional[str], str]] = []
+    remote_copies: list[tuple[str, Any, Dict[str, Any]]] = []
 
     for record in scope:
         home = record.home
@@ -1194,75 +1290,127 @@ def sync_scope_to_db(
             if not file_value:
                 stats["errors"] += 1
                 continue
-
-            file_path = Path(str(file_value))
-
-            if not file_path.exists():
-                if home.startswith("remote:"):
-                    from agent_history.adapters.remote import SSHRemoteClient
-
-                    remote_host = home[7:]
-                    try:
-                        client = SSHRemoteClient()
-                        local_copy = client.ensure_local_copy(
-                            remote_host, record.workspace, session
-                        )
-                        if local_copy:
-                            file_path = local_copy
-                    except Exception:
-                        stats["errors"] += 1
-                        continue
-                elif home == "web":
-                    from agent_history.backends.web import (
-                        WebSessionsError,
-                        ensure_web_session_cache,
-                        resolve_web_credentials,
-                    )
-
-                    session_id = (
-                        session.get("session_id") or session.get("id") or session.get("filename")
-                    )
-                    if not session_id:
-                        stats["errors"] += 1
-                        continue
-                    try:
-                        token, org_uuid = resolve_web_credentials()
-                        file_path = ensure_web_session_cache(
-                            str(session_id), token, org_uuid, force=force
-                        )
-                    except WebSessionsError:
-                        stats["errors"] += 1
-                        continue
-
-            if not file_path.exists():
-                stats["errors"] += 1
-                continue
-
-            file_key = str(file_path)
-            if file_key in seen_paths:
-                continue
-            seen_paths.add(file_key)
-
             agent = session.get("agent") or "claude"
-            try:
-                synced = sync_file_to_db(
-                    conn,
-                    file_path,
-                    source_key=home,
-                    force=force,
-                    workspace=record.workspace,
-                    agent=agent,
-                )
-            except Exception:
+            file_path = Path(str(file_value))
+            if not file_path.exists() and home.startswith("remote:"):
+                remote_copies.append((home, record, session))
+                continue
+            if not file_path.exists() and home == "web":
+                cached = _web_session_copy(session, force)
+                if cached is None:
+                    stats["errors"] += 1
+                    continue
+                file_path = cached
+            if not file_path.exists():
                 stats["errors"] += 1
                 continue
+            files.append((file_path, home, record.workspace, agent))
 
-            if synced:
-                stats["synced"] += 1
-            else:
-                stats["skipped"] += 1
+    if remote_copies:
+        from concurrent.futures import ThreadPoolExecutor
 
-    return stats
+        from agent_history.adapters.remote import SSHRemoteClient
+
+        client = SSHRemoteClient()
+
+        def copy(item: tuple[str, Any, Dict[str, Any]]) -> Optional[Path]:
+            home, record, session = item
+            try:
+                return client.ensure_local_copy(home[7:], record.workspace, session)
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=REMOTE_COPY_THREADS) as pool:
+            for (home, record, session), local_copy in zip(
+                remote_copies, pool.map(copy, remote_copies)
+            ):
+                if local_copy is None or not local_copy.exists():
+                    stats["errors"] += 1
+                    continue
+                files.append((local_copy, home, record.workspace, session.get("agent") or "claude"))
+    return files
+
+
+def _web_session_copy(session: Dict[str, Any], force: bool) -> Optional[Path]:
+    from agent_history.backends.web import (
+        WebSessionsError,
+        ensure_web_session_cache,
+        resolve_web_credentials,
+    )
+
+    session_id = session.get("session_id") or session.get("id") or session.get("filename")
+    if not session_id:
+        return None
+    try:
+        token, org_uuid = resolve_web_credentials()
+        return ensure_web_session_cache(str(session_id), token, org_uuid, force=force)
+    except WebSessionsError:
+        return None
+
+
+def _extract_or_error(
+    item: tuple[str, str, Optional[str], str],
+) -> tuple[str, Optional[Dict[str, Any]]]:
+    """Parse one file in a worker; return (home, record), or (home, None) on failure."""
+    file_path, home, workspace, agent = item
+    try:
+        return home, _extract_file_stats(file_path, agent, workspace)
+    except Exception:
+        return home, None
+
+
+def _parallel_extract(
+    todo: list[tuple[str, str, Optional[str], str]], jobs: int
+) -> Iterator[tuple[str, Optional[Dict[str, Any]]]]:
+    """Parse files in worker processes, yielding results as they finish.
+
+    Only a few results per worker are allowed to wait, so memory stays
+    bounded when storing is slower than parsing.
+    """
+    import multiprocessing
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+
+    # Linux forks, so workers need no re-import of the calling script; other
+    # platforms spawn, which needs the usual `if __name__ == "__main__"` guard.
+    method = "fork" if sys.platform.startswith("linux") else "spawn"
+    context = multiprocessing.get_context(method)
+    limit = jobs * SYNC_PENDING_PER_WORKER
+    items = iter(todo)
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=context) as pool:
+        pending = set()
+        for item in items:
+            pending.add(pool.submit(_extract_or_error, item))
+            if len(pending) >= limit:
+                break
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                yield future.result()
+            for item in items:
+                pending.add(pool.submit(_extract_or_error, item))
+                if len(pending) >= limit:
+                    break
+
+
+def _store_results(
+    conn: sqlite3.Connection,
+    results: Iterable[tuple[str, Optional[Dict[str, Any]]]],
+    stats: Dict[str, int],
+) -> None:
+    stored = 0
+    for home, record in results:
+        if record is None:
+            stats["errors"] += 1
+            continue
+        try:
+            _store_file_stats(conn, record, home)
+        except Exception:
+            stats["errors"] += 1
+            continue
+        stats["synced"] += 1
+        stored += 1
+        if stored % SYNC_COMMIT_EVERY == 0:
+            conn.commit()
 
 
 def _install_file_scope(conn: sqlite3.Connection, file_paths: Optional[List[str]]) -> str:
