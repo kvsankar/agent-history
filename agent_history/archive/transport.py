@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Iterator, Tuple
@@ -331,6 +332,25 @@ def _sync_dirs(folders: set[Path]) -> None:
     """Flush folders, deepest first, so a new folder is on disk before its parent's entry."""
     for folder in sorted(folders, key=lambda path: len(path.parts), reverse=True):
         fsync_dir(folder)
+
+
+def fold_case(path: str) -> str:
+    """``path`` as a destination that ignores letter case compares it.
+
+    NTFS, SMB shares and default APFS volumes treat names that differ only in case as one
+    name, and APFS also ignores Unicode normalization. Case folding folds a little more
+    than NTFS does (``ß`` and ``ss``), which only makes the collector more careful.
+    """
+    return unicodedata.normalize("NFC", path).casefold()
+
+
+def ignores_case(destination: Destination) -> bool:
+    """True when ``destination`` treats names that differ only in letter case as one.
+
+    Tested on ARCHIVE.json, which an archive holds from its first run on, so an archive
+    without one counts as telling case apart. Only reads.
+    """
+    return destination.exists("ARCHIVE.json") and destination.exists("archive.json")
 
 
 def open_destination(destination: str) -> Destination:

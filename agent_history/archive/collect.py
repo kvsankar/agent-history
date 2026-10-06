@@ -23,7 +23,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from agent_history.archive.codec import CompressResult, compress_file, hash_file
 from agent_history.archive.config import ArchiveConfig, SourceConfig
@@ -55,7 +55,14 @@ from agent_history.archive.state import (
     source_lock,
     state_path,
 )
-from agent_history.archive.transport import Destination, Keep, Put, open_destination
+from agent_history.archive.transport import (
+    Destination,
+    Keep,
+    Put,
+    fold_case,
+    ignores_case,
+    open_destination,
+)
 
 __all__ = ["CollectLockedError", "RunSummary", "collect_source", "source_lock"]
 
@@ -73,6 +80,9 @@ LARGE_FILE_BYTES = 64 * 1024 * 1024
 _LARGE_FILE_SLOT = threading.Lock()
 _FILE_ERRORS = (OSError, sqlite3.Error)
 _WRITTEN = ("added", "updated", "versioned")
+# A path whose archived copy moved to versions/ so that a path whose name differs only in
+# letter case could take its name, on a destination that ignores case (see _CaseNames).
+DISPLACED = "displaced"
 
 
 @dataclass
@@ -174,6 +184,9 @@ def placements(
     keeps: list[Keep] = []
     puts: list[Put] = []
     for entry in entries:
+        if entry.get("action") == DISPLACED:
+            keeps.extend(_displaced_keep(source, run_id, entry))
+            continue
         put = new_copy(source, run_id, entry)
         if put is None:
             continue
@@ -194,6 +207,16 @@ def new_copy(source: str, run_id: str, entry: dict[str, Any]) -> Put | None:
     else:
         return None
     return f"{incoming_dir(source, run_id)}/{current[len(prefix) :]}", current
+
+
+def _displaced_keep(source: str, run_id: str, entry: dict[str, Any]) -> list[Keep]:
+    """The move that keeps a displaced copy as a version, before the new copy takes its name."""
+    version, by = entry.get("version_path"), entry.get("displaced_by")
+    if entry.get("type") != "file" or not isinstance(version, str) or not isinstance(by, str):
+        return []
+    prefix = f"sources/{source}/"
+    incoming = f"{incoming_dir(source, run_id)}/{archive_file_path(source, by)[len(prefix) :]}"
+    return [(archive_file_path(source, entry["path"]), f"{prefix}{version}", incoming)]
 
 
 def finish_run(
@@ -253,6 +276,46 @@ def recover_incoming(destination: Destination, source: str) -> bool:
     return finished
 
 
+class _CaseNames:
+    """Which path holds each name on a destination that ignores letter case.
+
+    There, ``files/notes/Plan.md.zst`` and ``files/notes/plan.md.zst`` are one file, so
+    two paths whose names fold equal cannot both have a current copy. A path holds its
+    folded name when the archive holds its current copy (the state records its hash), or
+    when this run archives it. Of two such paths in the state, one still in the source
+    holds the name. A path whose name another path holds waits until the walk is done:
+    if the holder is still in the source, or could not be read, the path is not
+    archived; otherwise the holder's copy is kept as a version (it is displaced) and the
+    path takes the name.
+    """
+
+    def __init__(self, files: dict[str, FileState]):
+        self.holders: dict[str, str] = {}
+        for rel, state in sorted(files.items(), key=lambda item: (item[1].gone, item[0])):
+            if state.sha256:  # a log database's state has none: its exports have own names
+                self.holders.setdefault(fold_case(rel), rel)
+        self.live: set[str] = set()  # holders found in the source by this run
+        self.waiting: list[SelectedFile] = []
+
+    def admit(self, item: SelectedFile) -> bool:
+        """True to archive ``item`` now; False when it waits for the end of the walk."""
+        if item.database is not None and item.database.mode == "log":
+            return True
+        holder = self.holders.setdefault(fold_case(item.rel_path), item.rel_path)
+        if holder == item.rel_path:
+            self.live.add(holder)
+            return True
+        self.waiting.append(item)
+        return False
+
+    def holder(self, rel_path: str) -> str:
+        return self.holders[fold_case(rel_path)]
+
+    def take(self, rel_path: str) -> None:
+        self.holders[fold_case(rel_path)] = rel_path
+        self.live.add(rel_path)
+
+
 class _Run:
     def __init__(self, config, source: SourceConfig, destination, state_dir, now, dry_run, key):
         self.config = config
@@ -270,6 +333,8 @@ class _Run:
         self.incoming = ""
         # (manifest entry, archived copy, version path) for each rewrite
         self.moves: list[tuple[dict[str, Any], str, str]] = []
+        # Set once the destination is known to ignore letter case (_execute_locked).
+        self.case_names: _CaseNames | None = None
         self.staged_bytes = 0
         # On disk next to the state, never the system temp folder (often a small tmpfs).
         # One folder per source, because the lock that keeps runs apart is per source.
@@ -425,6 +490,8 @@ class _Run:
             self._ping("/start")
         try:
             self._catch_up(has_format)
+            if ignores_case(self.destination):
+                self.case_names = _CaseNames(self.state.files)
             if not self.dry_run:
                 self.destination.write_bytes(
                     f"sources/{self.source.name}/SOURCE.json", self._descriptor()
@@ -451,11 +518,14 @@ class _Run:
         does not leave the other workers idle. Before a batch is transferred, every file
         in flight finishes, because the transfer empties the staging folder. Entries are
         sorted by path at the end, so manifests do not depend on timing.
+
+        On a destination that ignores letter case, a file whose name another path holds
+        is processed after the walk, once it is known whether that path is still in the
+        source (see _CaseNames).
         """
         seen = set()
         unreadable: list[str] = []
         pending: set = set()
-        window = self.config.workers * _IN_FLIGHT_PER_WORKER
         pool = ThreadPoolExecutor(max_workers=self.config.workers)
         try:
             for item in iter_source_files(self.source):
@@ -463,13 +533,10 @@ class _Run:
                 if item.error is not None:
                     unreadable.append(item.rel_path)
                     self._record({"type": "error", "path": item.rel_path, "message": item.error})
-                    continue
-                pending.add(pool.submit(self._safe_process, item, staging))
-                if len(pending) >= window:
-                    pending = self._record_done(pending, FIRST_COMPLETED)
-                if not self.dry_run and self.staged_bytes >= BATCH_BYTES:
-                    pending = self._record_done(pending, ALL_COMPLETED)
-                    self._flush(staging)
+                elif self.case_names is None or self.case_names.admit(item):
+                    pending = self._submit(pool, pending, item, staging)
+            for item in self._admit_waiting(unreadable):
+                pending = self._submit(pool, pending, item, staging)
             self._record_done(pending, ALL_COMPLETED)
         except BaseException:
             for future in pending:
@@ -480,7 +547,73 @@ class _Run:
         for rel_path, previous in sorted(self.state.files.items()):
             if rel_path not in seen and not previous.gone and not is_within(rel_path, unreadable):
                 self._record({"type": "file", "path": rel_path, "action": "gone"})
+        self._drop_unneeded_displacements()
         self.summary.entries.sort(key=lambda entry: (entry["path"], entry["type"]))
+
+    def _submit(self, pool: ThreadPoolExecutor, pending: set, item, staging: Path) -> set:
+        """Queue a file; wait while too many are in flight, and transfer a full batch."""
+        pending.add(pool.submit(self._safe_process, item, staging))
+        if len(pending) >= self.config.workers * _IN_FLIGHT_PER_WORKER:
+            pending = self._record_done(pending, FIRST_COMPLETED)
+        if not self.dry_run and self.staged_bytes >= BATCH_BYTES:
+            pending = self._record_done(pending, ALL_COMPLETED)
+            self._flush(staging)
+        return pending
+
+    def _admit_waiting(self, unreadable: list[str]) -> Iterator[SelectedFile]:
+        """The files that waited for another path's name, which may take it now.
+
+        A file whose name a path still in the source holds (or a path that could not be
+        read) is not archived: it would overwrite that path's copy. Otherwise the
+        holder's copy is displaced to versions/ and the file takes the name.
+        """
+        names = self.case_names
+        if names is None:
+            return
+        for item in names.waiting:
+            holder = names.holder(item.rel_path)
+            if holder in names.live or is_within(holder, unreadable):
+                self._record(
+                    {
+                        "type": "error",
+                        "path": item.rel_path,
+                        "message": f"not archived: its name differs only in letter case from "
+                        f"{holder}, which is still in the source or could not be read, and "
+                        f"the destination does not tell such names apart",
+                    }
+                )
+                continue
+            previous = self.state.files[holder]
+            self._record(
+                {
+                    "type": "file",
+                    "path": holder,
+                    "action": DISPLACED,
+                    "displaced_by": item.rel_path,
+                    "previous_sha256": previous.sha256,
+                    "previous_size": previous.size,
+                    "version_path": self._version_path(holder),
+                }
+            )
+            names.take(item.rel_path)
+            yield item
+
+    def _drop_unneeded_displacements(self) -> None:
+        """Keep a displacement only while the copy that takes the name is to be placed.
+
+        When that file could not be read, or its copy did not arrive whole, the displaced
+        copy stays where it is.
+        """
+        placed = {
+            entry["path"]
+            for entry in self.summary.entries
+            if entry.get("type") == "file" and entry.get("action") in _WRITTEN
+        }
+        self.summary.entries = [
+            entry
+            for entry in self.summary.entries
+            if entry.get("action") != DISPLACED or entry.get("displaced_by") in placed
+        ]
 
     def _record_done(self, pending: set, return_when: str) -> set:
         done, still_pending = wait(pending, return_when=return_when)
@@ -567,13 +700,16 @@ class _Run:
         )
         entry["compressed_size"] = result.compressed_size
         if action == "versioned" and previous is not None:
-            stamp = run_id_stamp(self.run_id)
-            version = f"versions/{item.rel_path}.{stamp}-{self.run_id[-4:]}.zst"
+            version = self._version_path(item.rel_path)
             entry["previous_sha256"] = previous.sha256
             entry["previous_size"] = previous.size
             entry["version_path"] = version
             self.moves.append((entry, archived, f"sources/{self.source.name}/{version}"))
         return entry
+
+    def _version_path(self, rel_path: str) -> str:
+        """Where this run keeps the archived copy of ``rel_path``, relative to the source."""
+        return f"versions/{rel_path}.{run_id_stamp(self.run_id)}-{self.run_id[-4:]}.zst"
 
     def staged_path(self, staging: Path, archived: str) -> Path:
         """Where a file for archive path ``archived`` is staged: under the incoming folder."""
@@ -662,15 +798,19 @@ class _Run:
         cut short on its way. It is not committed: its entry becomes an error, so the next
         run archives the file again. A missing new copy stops the run. A rewritten file
         whose archived copy is missing (removed outside the collector) cannot be kept, so
-        its entry records no version and the run records an error.
+        its entry records no version and the run records an error. The same holds for a
+        displaced copy: its entry is left out.
         """
         copies: dict[str, dict[str, Any]] = {}
+        displaced: dict[str, dict[str, Any]] = {}
         for entry in self.summary.entries:
             put = new_copy(self.source.name, self.run_id, entry)
             if put is not None:
                 copies[put[0]] = entry
+            if entry.get("action") == DISPLACED:
+                displaced[archive_file_path(self.source.name, entry["path"])] = entry
         sources = [current for _entry, current, _version in self.moves]
-        sizes = self.destination.sizes([*copies, *sources])
+        sizes = self.destination.sizes([*copies, *sources, *displaced])
         lost = sorted(incoming for incoming in copies if incoming not in sizes)
         if lost:
             raise ArchiveError(f"{len(lost)} transferred files are missing, such as {lost[0]}")
@@ -680,6 +820,10 @@ class _Run:
         for entry, current, _version in self.moves:
             if current not in sizes:
                 self._drop_version(entry, current)
+        for current, entry in displaced.items():
+            if current not in sizes:
+                self._drop_version(entry, current)
+        self._drop_unneeded_displacements()
         self.summary.entries.sort(key=lambda entry: (entry["path"], entry["type"]))
 
     def _drop_copy(self, entry: dict[str, Any], stored: int) -> None:
@@ -699,10 +843,13 @@ class _Run:
         )
 
     def _drop_version(self, entry: dict[str, Any], current: str) -> None:
-        for key in ("version_path", "previous_sha256", "previous_size"):
-            entry.pop(key, None)
-        entry["action"] = "added"
-        self.summary.versioned -= 1
+        if entry.get("action") == DISPLACED:  # nothing to keep, and nothing in the way
+            self.summary.entries = [kept for kept in self.summary.entries if kept is not entry]
+        else:
+            for key in ("version_path", "previous_sha256", "previous_size"):
+                entry.pop(key, None)
+            entry["action"] = "added"
+            self.summary.versioned -= 1
         self._record(
             {
                 "type": "error",

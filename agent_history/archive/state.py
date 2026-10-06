@@ -101,6 +101,9 @@ def _apply_entry(state: SourceState, entry: dict[str, Any]) -> None:
         if path in state.files:
             state.files[path].gone = True
         return
+    if action == "displaced":  # its copy is now a version, so if it returns it is new
+        state.files.pop(path, None)
+        return
     if action in ("added", "updated", "versioned", "touched", "returned"):
         state.files[path] = FileState(
             size=entry["size"],
