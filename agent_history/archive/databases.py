@@ -422,8 +422,56 @@ def _write_rows(conn, rule: DatabaseRule, start, out: Path) -> tuple[int, list[s
 def _export_value(value: Any) -> tuple[Any, int]:
     """A value as written to a row export, and the number of JWTs replaced in it."""
     if isinstance(value, str):
-        return JWT_PATTERN.subn(JWT_PLACEHOLDER, value)
+        return replace_jwts(value)
     return _json_value(value), 0
+
+
+def replace_jwts(text: str) -> tuple[str, int]:
+    """``JWT_PATTERN.subn(JWT_PLACEHOLDER, text)``, in time linear in the text's length.
+
+    Searching with the pattern itself tries every "eyJ" of a long base64url run, and each
+    try reads to the end of the run: a 1 MB run took minutes. A match lies within one
+    run of base64url characters and dots, so each run is searched on its own (_run_jwts).
+    """
+    if "eyJ" not in text:
+        return text, 0
+    count = 0
+
+    def run(match: re.Match) -> str:
+        nonlocal count
+        replaced, found = _run_jwts(match.group())
+        count += found
+        return replaced
+
+    return _BASE64URL_RUN.sub(run, text), count
+
+
+_BASE64URL_RUN = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def _run_jwts(run: str) -> tuple[str, int]:
+    """Replace the JWTs in one run of base64url characters and dots, trying one start per
+    dot-separated segment.
+
+    A match's first segment runs from an "eyJ" to the next dot, and what must follow that
+    dot does not depend on where in the segment the match starts. So when the segment's
+    first "eyJ" with at least 10 characters after it starts no match, no later "eyJ" in
+    the segment does, and the search moves on to the next segment. Each try reads at most
+    three segments, so the run is read a bounded number of times. Matches end where a
+    segment ends, as they do when the pattern searches the run.
+    """
+    parts: list[str] = []
+    count = done = start = 0
+    while (dot := run.find(".", start)) >= 0:
+        header = run.find("eyJ", start, dot)
+        match = JWT_PATTERN.match(run, header) if header >= 0 and dot - header >= 13 else None
+        if match is None:
+            start = dot + 1
+            continue
+        parts += [run[done:header], JWT_PLACEHOLDER]
+        count += 1
+        done = start = match.end()
+    return "".join(parts) + run[done:], count
 
 
 def _json_value(value: Any) -> Any:

@@ -546,6 +546,50 @@ def test_log_text_that_only_resembles_a_jwt_is_exported_unchanged(env):
     assert "redacted" not in entry
 
 
+def _base64url_json_blob(size: int) -> str:
+    """Base64url of a JSON array of objects: about one "eyJ" every 18 characters, no dots."""
+    return _b64url(json.dumps([{"k": i} for i in range(size // 8)], separators=(",", ":")))[:size]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _base64url_json_blob(1_000_000),
+        _base64url_json_blob(1_000_000) + ".x",
+        "eyJ" * 333_333 + ".eyJ",
+    ],
+    ids=["base64url-without-dots", "base64url-then-a-dot", "repeated-header"],
+)
+def test_jwt_replacement_takes_linear_time_on_long_base64url_text(text):
+    """Each "eyJ" in a long run without a JWT used to scan the rest of the run again.
+
+    A 1 MB value took minutes; it now takes well under a second. The bound is generous.
+    """
+    import time
+
+    from agent_history.archive.databases import replace_jwts
+
+    started = time.perf_counter()
+    replaced, count = replace_jwts(text)
+
+    assert time.perf_counter() - started < 5
+    assert (replaced, count) == (text, 0)
+
+
+def test_jwt_replacement_matches_the_pattern_everywhere():
+    """The linear scan replaces exactly what JWT_PATTERN.subn replaces."""
+    import random
+
+    from agent_history.archive.databases import JWT_PATTERN, JWT_PLACEHOLDER, replace_jwts
+
+    pieces = ["eyJ", "eyJ", "abcdefghij", "k", "-_", ".", ".", " ", ",", "eyJabcdefghij"]
+    rng = random.Random(5)
+    texts = [JWT, JWT_UNSIGNED, JWT_TRUNCATED, f"a {JWT}.{JWT} b", f"x{JWT}y.{JWT}"]
+    texts += ["".join(rng.choice(pieces) for _ in range(rng.randint(1, 40))) for _ in range(3000)]
+    for text in texts:
+        assert replace_jwts(text) == JWT_PATTERN.subn(JWT_PLACEHOLDER, text), text
+
+
 def test_jwt_redaction_keeps_the_reset_identity_stable(env):
     conn = _text_logs_db(env, [(i, "t", f"token {JWT} line {i}", i) for i in (1, 2, 3)])
     first = _collect(env)
