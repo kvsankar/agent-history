@@ -155,7 +155,7 @@ def _decode_state(data: Any) -> SourceState:
         _expect(run_id, str, "a run id")
     return SourceState(
         files={_expect(rel, str, "a path"): _decode_file(value) for rel, value in files.items()},
-        log_keys=dict(log_keys),
+        log_keys=_decode_log_keys(log_keys),
         last_success=last_success,
         last_run_id=_optional(data.get("last_run_id"), str, "last_run_id"),
         runs=None if runs is None else list(runs),
@@ -169,6 +169,39 @@ def _decode_file(value: Any) -> FileState:
     for number in _optional(file.signature, list, "signature") or ():
         _expect(number, int, "signature")
     return file
+
+
+def _decode_log_keys(log_keys: dict[str, Any]) -> dict[str, Any]:
+    """Check the log tables' last exported keys and identities.
+
+    A last key is a number, text or null. An identity is an object whose ``first_key``
+    is a number or text, of the same kind as the table's last key, and whose hashes are
+    text or null (null when the row was gone).
+    """
+    for name, value in log_keys.items():
+        if name.endswith(IDENTITY_SUFFIX):
+            _decode_identity(value, log_keys.get(name[: -len(IDENTITY_SUFFIX)]))
+        elif value is not None:
+            _key_kind(value, f"the last key of {name}")
+    return dict(log_keys)
+
+
+def _decode_identity(value: Any, last: Any) -> None:
+    identity = _expect(value, dict, "a log table's identity")
+    kind = _key_kind(identity.get("first_key"), "first_key")
+    for name in ("first_sha256", "last_sha256"):
+        _optional(identity.get(name), str, name)
+    if last is not None and _key_kind(last, "a last key") is not kind:
+        raise TypeError(f"first_key {identity['first_key']!r} and last key {last!r} differ in kind")
+
+
+def _key_kind(value: Any, what: str) -> type:
+    """``str`` for a text key, ``float`` for a number; TypeError for anything else."""
+    if isinstance(value, str):
+        return str
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float
+    raise TypeError(f"{what} is {type(value).__name__}, not a number or text")
 
 
 def _expect(value: Any, kind: type, what: str) -> Any:

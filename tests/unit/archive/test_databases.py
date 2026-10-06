@@ -234,6 +234,98 @@ def test_log_database_exports_only_new_rows(env):
     assert verify_source(open_destination(str(env["dest"])), "src").ok
 
 
+def _change_log_keys(env, change):
+    """Rewrite the state's log_keys with ``change``; returns the state file's path."""
+    from agent_history.archive.state import state_path
+
+    path = state_path(env["state"], str(env["dest"]), "src")
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["log_keys"] = change(state["log_keys"])
+    path.write_text(json.dumps(state), encoding="utf-8")
+    return path
+
+
+def _with_last_key(value):
+    return lambda keys: {
+        name: (value if not name.endswith("::identity") else found) for name, found in keys.items()
+    }
+
+
+def _with_identity(change):
+    return lambda keys: {
+        name: (change(found) if name.endswith("::identity") else found)
+        for name, found in keys.items()
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        _with_last_key("3"),
+        _with_last_key([3]),
+        _with_last_key({"key": 3}),
+        _with_last_key(True),
+        _with_identity(lambda identity: "x"),
+        _with_identity(lambda identity: {**identity, "first_key": "1"}),
+        _with_identity(lambda identity: {**identity, "first_key": None}),
+        _with_identity(lambda identity: {**identity, "first_sha256": 5}),
+        _with_identity(lambda identity: {**identity, "last_sha256": ["a"]}),
+        _with_identity(lambda identity: {"last_sha256": identity["last_sha256"]}),
+    ],
+    ids=[
+        "last-key-text-beside-a-number-identity",
+        "last-key-list",
+        "last-key-object",
+        "last-key-boolean",
+        "identity-text",
+        "first-key-text",
+        "first-key-missing",
+        "first-hash-number",
+        "last-hash-list",
+        "identity-without-first-key",
+    ],
+)
+def test_log_keys_of_another_type_rebuild_the_state_with_a_warning(env, capsys, change):
+    conn = _logs_db(env)
+    _add_logs(conn, [1, 2, 3])
+    _collect(env)
+    path = _change_log_keys(env, change)
+    _add_logs(conn, [4])
+    conn.close()
+    capsys.readouterr()
+
+    summary = _collect(env, hours=1)
+
+    assert summary.errors == 0
+    assert str(path) in capsys.readouterr().err
+    (entry,) = _entries(env, summary.run_id)
+    assert (entry["from_key"], entry["rows"], entry["reset"]) == (3, 1, False)
+    assert [row["id"] for row in _exported_rows(env, entry)] == [4]
+
+
+def test_a_text_last_key_beside_number_keys_exports_from_the_start(env):
+    """A state from before table identities, whose key has another type than the table's.
+
+    Such a key cannot place the next row, so the run exports every row again rather than
+    fail on every run or skip rows.
+    """
+    conn = _logs_db(env)
+    _add_logs(conn, [1, 2, 3])
+    _collect(env)
+    _change_log_keys(
+        env, lambda keys: {name: "3" for name in keys if not name.endswith("::identity")}
+    )
+    _add_logs(conn, [4])
+    conn.close()
+
+    summary = _collect(env, hours=1)
+
+    assert summary.errors == 0
+    (entry,) = _entries(env, summary.run_id)
+    assert entry["reset"] is True
+    assert [row["id"] for row in _exported_rows(env, entry)] == [1, 2, 3, 4]
+
+
 def test_log_exports_of_runs_in_the_same_second_do_not_collide(env, monkeypatch):
     from types import SimpleNamespace
 

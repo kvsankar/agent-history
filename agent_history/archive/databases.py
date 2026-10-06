@@ -328,12 +328,12 @@ def _was_recreated(conn, table: str, key: str, last, identity, newest) -> bool:
     """
     if last is None or newest is None:
         return False
-    if newest < last:
+    if _sql_less(conn, newest, last):
         return True
     if not identity:  # state written before tables were identified
         return False
     first_key = identity.get("first_key")
-    if _min_key(conn, table, key) < first_key:
+    if _sql_less(conn, _min_key(conn, table, key), first_key):
         return True
     if first_key == last:  # one row: an update in place would look the same
         return False
@@ -345,6 +345,15 @@ def _was_recreated(conn, table: str, key: str, last, identity, newest) -> bool:
         and first != identity.get("first_sha256")
         and latest != identity.get("last_sha256")
     )
+
+
+def _sql_less(conn, left, right) -> bool:
+    """``left < right`` in SQLite's order, which ranks every number below every text.
+
+    So a recorded key of another type than the table's keys never raises; a text key
+    above number keys reads as a reset, and the run exports every row again.
+    """
+    return bool(conn.execute("SELECT ? < ?", (left, right)).fetchone()[0])
 
 
 def _table_identity(conn, table: str, key: str, last) -> dict[str, Any] | None:
