@@ -115,3 +115,50 @@ def test_tag_facet_needs_a_tag_dimension(tagged_home, capsys):
 
     assert exit_code != 0
     assert "--tag-facet" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("configured_home", "selected_home"),
+    [
+        ("windows", "windows:alex"),
+        ("remote:node-alpha", "remote:alex@node-alpha"),
+    ],
+)
+def test_project_folders_match_under_a_shorter_home_key(
+    tmp_path, monkeypatch, capsys, configured_home, selected_home
+):
+    """Projects can list folders under "windows" while sessions carry "windows:<user>"."""
+    config_dir = tmp_path / ".cagelens"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "homes": [],
+                "sources": [],
+                "projects": {"books": {configured_home: ["/mnt/c/alex/projects/books"]}},
+                "project_tags": {"books": ["work"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(config_dir))
+    monkeypatch.chdir(tmp_path)
+    _insert_cached_session(
+        file_path="/tmp/books.jsonl",
+        session_id="books",
+        workspace="/mnt/c/alex/projects/books",
+        input_tokens=7,
+    )
+    from agent_history.storage.metrics import init_metrics_db
+
+    conn = init_metrics_db()
+    conn.execute("UPDATE sessions SET home = ?, source = ?", (selected_home, selected_home))
+    conn.commit()
+    conn.close()
+
+    rows = _json_rows(
+        capsys, "--metric", "tokens", "--by", "tag", "--home", selected_home, "--no-total"
+    )
+
+    assert set(rows) == {"work"}

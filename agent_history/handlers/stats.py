@@ -487,7 +487,7 @@ class SessionStatsHandler(VerbHandler):
         for project in projects:
             project_def = context.project_config.get(project, {})
             for home, configured in project_def.items():
-                if home_filter_explicit and home not in selected_homes:
+                if home_filter_explicit and not _home_selected(home, selected_homes):
                     continue
                 values = configured if isinstance(configured, list) else [configured]
                 for value in values:
@@ -524,7 +524,7 @@ class SessionStatsHandler(VerbHandler):
             if not tags:
                 continue
             for home, configured in project_def.items():
-                if home_filter_explicit and home not in selected_homes:
+                if home_filter_explicit and not _home_selected(home, selected_homes):
                     continue
                 values = configured if isinstance(configured, list) else [configured]
                 for value in values:
@@ -753,7 +753,7 @@ class SessionStatsHandler(VerbHandler):
         for project in projects if projects is not None else scope_args.projects:
             project_def = context.project_config.get(project, {})
             for home, configured in project_def.items():
-                if home_filter_explicit and home not in selected_homes:
+                if home_filter_explicit and not _home_selected(home, selected_homes):
                     continue
                 homes.append(home)
                 values = configured if isinstance(configured, list) else [configured]
@@ -782,7 +782,7 @@ class SessionStatsHandler(VerbHandler):
         for project in projects if projects is not None else scope_args.projects:
             project_def = context.project_config.get(project, {})
             for home, configured in project_def.items():
-                if home_filter_explicit and home not in selected_homes:
+                if home_filter_explicit and not _home_selected(home, selected_homes):
                     continue
                 homes.append(home)
                 values = configured if isinstance(configured, list) else [configured]
@@ -892,3 +892,22 @@ def _add_shares(rows: list[dict[str, Any]], metric: str, totals: Dict[str, Any])
     whole = rollup_metric_value(totals, metric)
     for row in rows:
         row["share"] = rollup_metric_value(row, metric) / whole if whole else None
+
+
+def _home_selected(configured: str, selected: set[str]) -> bool:
+    """Return True if a project's home key covers one of the selected homes.
+
+    Project config can name a home more loosely than sessions do: a bare
+    "windows" or "wsl" covers every "windows:<user>" or "wsl:<distro>", and
+    "remote:host" covers "remote:user@host".
+    """
+    if configured in selected:
+        return True
+    if configured in {"windows", "wsl"}:
+        return any(home.startswith(f"{configured}:") for home in selected)
+    if configured.startswith("remote:") and "@" not in configured:
+        host = configured[len("remote:") :]
+        return any(
+            home.startswith("remote:") and home.rsplit("@", 1)[-1] == host for home in selected
+        )
+    return False
