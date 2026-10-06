@@ -11,6 +11,12 @@ session file is queued there too, so rows written by an older reader are replace
 
 A source whose manifests cannot be read, or lack a field the catalog records, is
 reported in the summary's errors and left unrecorded; the other sources are synced.
+
+A ``displaced`` entry (see ``collect.DISPLACED``) says that a path's archived copy moved
+to its version path, so that a path whose name differs only in letter case could take
+its name on a destination that ignores case. The catalog records the path as gone with
+no current archive path, points its last version at the version path, and deletes its
+session rows: the session now lives under the path that took the name.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from typing import Any
 
 from agent_history.archive.catalog.store import CatalogStore
 from agent_history.archive.codec import CHUNK_SIZE, _zstd
+from agent_history.archive.collect import DISPLACED
 from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import SessionTarget, archive_file_path, session_target
 from agent_history.archive.manifest import read_manifests
@@ -120,9 +127,12 @@ def _queue_for_new_reader(store: CatalogStore) -> None:
         )
         if found and found[0][0] == READER_VERSION:
             return
+        # A displaced path has no archive path: its copy is a version, and its name
+        # now holds another path's content.
         rows = store.fetchall(
             "SELECT f.source, f.path, f.sha256, s.platform FROM files f "
-            "JOIN sources s ON s.name = f.source WHERE f.sha256 IS NOT NULL"
+            "JOIN sources s ON s.name = f.source "
+            "WHERE f.sha256 IS NOT NULL AND f.archive_path IS NOT NULL"
         )
         for source, path, sha256, platform in rows:
             if session_target(path, platform) is not None:
@@ -164,21 +174,42 @@ def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: 
     # unrecorded, so the next sync reads them all again once it is fixed.
     for run, entries in runs:
         _check_manifest(run, entries)
-    # Files that failed before, then this sync's runs: a newer run's hash replaces a
-    # pending one.
     changed = _pending_session_files(store, name, descriptor.get("platform", "linux"))
-    for _run, entries in runs:
-        for entry in entries:
-            if entry.get("type") == "file" and entry.get("action") in _WRITTEN:
-                changed[entry["path"]] = entry["sha256"]
+    displaced = _apply_runs(changed, runs)
     # Sessions first, runs last: a sync stopped part way records no run, so the next
     # sync reads the same sessions again instead of skipping them.
+    if displaced:
+        with store.transaction():
+            for path in sorted(displaced):
+                _delete_path_rows(store, name, path)
     _sync_sessions(store, destination, name, descriptor, changed, summary, work_dir)
     for run, entries in runs:
         with store.transaction():
             _upsert_source(store, name, descriptor, run)
             _record_run(store, name, run, entries)
         summary.runs += 1
+
+
+def _apply_runs(changed: dict[str, str], runs: list) -> set[str]:
+    """Update ``changed`` (path to SHA-256) with the runs' files; return displaced paths.
+
+    ``changed`` starts with the files that failed before, and a newer run's hash replaces
+    a pending one. A displaced path leaves ``changed``, since its archived copy moved to
+    versions/ and its name holds another path's content, until a later run writes it
+    again. The paths returned are displaced by the last run that names them.
+    """
+    displaced: set[str] = set()
+    for _run, entries in runs:
+        for entry in entries:
+            if entry.get("type") != "file":
+                continue
+            if entry.get("action") in _WRITTEN:
+                changed[entry["path"]] = entry["sha256"]
+                displaced.discard(entry["path"])
+            elif entry.get("action") == DISPLACED:
+                changed.pop(entry["path"], None)
+                displaced.add(entry["path"])
+    return displaced
 
 
 def _pending_session_files(store, source: str, platform: str) -> dict[str, str]:
@@ -316,6 +347,11 @@ def _record_run(store, source: str, run: dict, entries: list[dict]) -> None:
             _record_file(store, source, run_id, entry)
 
 
+# The file actions that keep the path's earlier copy at a version path, and the verb
+# that names each in an error.
+_KEEPS_A_VERSION = {"versioned": "versions", DISPLACED: "displaces"}
+
+
 def _check_manifest(run: dict, entries: list[dict]) -> None:
     """Raise ArchiveError naming the run, path and field of an entry the catalog cannot record."""
     run_id = run.get("run_id")
@@ -326,12 +362,11 @@ def _check_manifest(run: dict, entries: list[dict]) -> None:
         path = entry.get("path")
         if not isinstance(path, str) or not path:
             raise ArchiveError(f"Run {run_id}'s manifest has a {kind} entry without a path")
-        if kind == "file" and entry.get("action") == "versioned":
-            version_path = entry.get("version_path")
-            if not isinstance(version_path, str) or not version_path:
-                raise ArchiveError(
-                    f"Run {run_id} versions {path} but its manifest gives no version_path"
-                )
+        action = entry.get("action")
+        verb = _KEEPS_A_VERSION.get(action) if kind == "file" and isinstance(action, str) else None
+        version_path = entry.get("version_path")
+        if verb and (not isinstance(version_path, str) or not version_path):
+            raise ArchiveError(f"Run {run_id} {verb} {path} but its manifest gives no version_path")
         for name in _required_fields(kind, entry):
             if entry.get(name) is None:
                 raise ArchiveError(f"Run {run_id}'s manifest gives no {name} for {path}")
@@ -343,6 +378,8 @@ def _required_fields(kind: str, entry: dict) -> tuple[str, ...]:
         return ("export_path", "table") if entry.get("rows") else ()
     if "action" not in entry:
         return ("action",)
+    if entry["action"] == DISPLACED:
+        return ("previous_sha256",)
     return ("size", "mtime_ns", "sha256") if entry["action"] in _PRESENT else ()
 
 
@@ -352,6 +389,9 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
         store.execute(
             "UPDATE files SET gone_run_id = ? WHERE source = ? AND path = ?", (run_id, source, path)
         )
+        return
+    if action == DISPLACED:
+        _record_displaced(store, source, run_id, entry)
         return
     if action not in _PRESENT:
         return
@@ -363,6 +403,7 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
         "agent = excluded.agent, kind = excluded.kind, size = excluded.size, "
         "mtime_ns = excluded.mtime_ns, sha256 = excluded.sha256, "
         "compressed_size = COALESCE(excluded.compressed_size, files.compressed_size), "
+        "archive_path = excluded.archive_path, "
         "last_written_run_id = COALESCE(excluded.last_written_run_id, files.last_written_run_id), "
         "gone_run_id = NULL",
         (
@@ -391,6 +432,41 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
         "INSERT INTO file_versions (source, path, run_id, sha256, size, mtime_ns, archive_path, "
         "superseded_run_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
         (source, path, run_id, entry["sha256"], entry["size"], entry["mtime_ns"], archive_path),
+    )
+
+
+def _record_displaced(store, source: str, run_id: str, entry: dict) -> None:
+    """Record that a path's archived copy moved to its version path.
+
+    The path is gone from the source and has no current copy, so its ``files`` row gets
+    this run as its gone run and no archive path (it gets one again if the path is
+    archived again). Its current version is superseded by this run and points at the
+    version path, as for a versioned rewrite; when the catalog has no current version
+    of the path, one is added from the entry. Its session rows are deleted by
+    :func:`_sync_source`.
+    """
+    path = entry["path"]
+    kept = f"sources/{source}/{entry['version_path']}"
+    store.execute(
+        "UPDATE files SET gone_run_id = ?, archive_path = NULL WHERE source = ? AND path = ?",
+        (run_id, source, path),
+    )
+    current = store.fetchall(
+        "SELECT 1 FROM file_versions WHERE source = ? AND path = ? AND superseded_run_id IS NULL",
+        (source, path),
+    )
+    if current:
+        store.execute(
+            "UPDATE file_versions SET superseded_run_id = ?, archive_path = ? "
+            "WHERE source = ? AND path = ? AND superseded_run_id IS NULL",
+            (run_id, kept, source, path),
+        )
+        return
+    store.execute(
+        "INSERT INTO file_versions (source, path, run_id, sha256, size, mtime_ns, archive_path, "
+        "superseded_run_id) VALUES (?, ?, ?, ?, ?, NULL, ?, ?) "
+        "ON CONFLICT (source, path, run_id) DO NOTHING",
+        (source, path, run_id, entry["previous_sha256"], entry.get("previous_size"), kept, run_id),
     )
 
 

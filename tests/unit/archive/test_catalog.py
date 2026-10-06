@@ -32,6 +32,7 @@ from tests.helpers.session_builders import (
     CodexSessionBuilder,
     GeminiSessionBuilder,
 )
+from tests.unit.archive.test_collect_case import FoldingDestination
 
 T0 = datetime(2026, 10, 2, 6, 15, tzinfo=timezone.utc)
 SECRET_PROMPT = "please refactor the billing module"
@@ -1327,4 +1328,184 @@ def test_a_gemini_subagent_chat_is_catalogued_as_a_subagent_of_its_folders_sessi
     ) == [
         ("gemini-r1", "c" * 64, None, False, 2),
         ("gemini-r1:a1b2c3", "c" * 64, "gemini-r1", True, 1),
+    ]
+
+
+# -- names that differ only in letter case, on a destination that ignores case ---------
+
+_UPPER = ".claude/projects/-home-alex-Shop/claude-c1.jsonl"
+_LOWER = ".claude/projects/-home-alex-shop/claude-c1.jsonl"
+
+
+@pytest.fixture
+def folding(tmp_path):
+    """A source with one Claude session, archived to a destination that ignores case.
+
+    ``rename`` changes the letter case of the session's project folder, as a user would,
+    and adds a message; ``collect`` runs the next collect.
+    """
+    home = tmp_path / "home"
+    claude = ClaudeSessionBuilder(workspace="-home-alex-Shop", session_id="claude-c1")
+    claude.add_user_message("hello")
+    claude.add_assistant_message("hi")
+    _settle(claude.write_to(home / ".claude" / "projects"))
+    config = parse_config(
+        {
+            "archive": {"destination": str(tmp_path / "archive"), "compression_level": 3},
+            "sources": [{"name": "laptop", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    destination = FoldingDestination(tmp_path / "archive")
+    hours = itertools.count()
+
+    def collect():
+        return collect_source(
+            config,
+            "laptop",
+            state_dir=tmp_path / "state",
+            now=T0 + timedelta(hours=next(hours)),
+            destination=destination,
+        )
+
+    def rename(new: str):
+        (old,) = (home / ".claude" / "projects").iterdir()
+        old.rename(old.with_name(new))
+        (session,) = old.with_name(new).iterdir()
+        with session.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"type": "summary", "summary": f"in {new}"}) + "\n")
+        _settle(session)
+
+    collect()
+    return {"destination": destination, "collect": collect, "rename": rename, "path": tmp_path}
+
+
+def _displaced(run, path):
+    (entry,) = [
+        entry
+        for entry in run.entries
+        if entry.get("action") == "displaced" and entry["path"] == path
+    ]
+    return entry
+
+
+def _file_row(store, path):
+    return _rows(store, "SELECT archive_path, gone_run_id FROM files WHERE path = ?", (path,))
+
+
+@pytest.mark.parametrize("sync_each_run", [True, False], ids=["sync-each-run", "sync-once"])
+def test_a_case_only_rename_moves_the_session_to_the_path_that_took_the_name(
+    store, folding, sync_each_run
+):
+    if sync_each_run:
+        sync_catalog(store, folding["destination"])
+    folding["rename"]("-home-alex-shop")
+    second = folding["collect"]()
+
+    summary = sync_catalog(store, folding["destination"])
+
+    assert summary.errors == []
+    assert _rows(store, "SELECT path, session_id FROM sessions") == [(_LOWER, "claude-c1")]
+    assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
+    displaced = _displaced(second, _UPPER)
+    assert _rows(
+        store,
+        "SELECT sha256, archive_path, superseded_run_id FROM file_versions WHERE path = ?",
+        (_UPPER,),
+    ) == [
+        (
+            displaced["previous_sha256"],
+            f"sources/laptop/{displaced['version_path']}",
+            second.run_id,
+        )
+    ]
+    assert _file_row(store, _UPPER) == [(None, second.run_id)]
+    assert _file_row(store, _LOWER) == [(archive_file_path("laptop", _LOWER), None)]
+
+
+@pytest.mark.parametrize("sync_each_run", [True, False], ids=["sync-each-run", "sync-once"])
+def test_a_displaced_path_that_returns_is_catalogued_again(store, folding, sync_each_run):
+    folding["rename"]("-home-alex-shop")
+    folding["collect"]()
+    if sync_each_run:
+        sync_catalog(store, folding["destination"])
+    folding["rename"]("-home-alex-Shop")
+    third = folding["collect"]()
+    _displaced(third, _LOWER)
+
+    summary = sync_catalog(store, folding["destination"])
+
+    assert summary.errors == []
+    assert _rows(store, "SELECT path, session_id FROM sessions") == [(_UPPER, "claude-c1")]
+    assert _file_row(store, _UPPER) == [(archive_file_path("laptop", _UPPER), None)]
+    assert _file_row(store, _LOWER) == [(None, third.run_id)]
+    assert _rows(
+        store, "SELECT path, archive_path FROM file_versions WHERE superseded_run_id IS NULL"
+    ) == [(_UPPER, archive_file_path("laptop", _UPPER))]
+
+
+def test_a_new_reader_does_not_read_a_displaced_path(store, folding):
+    folding["rename"]("-home-alex-shop")
+    folding["collect"]()
+    sync_catalog(store, folding["destination"])
+    _make_rows_stale(store)
+
+    summary = sync_catalog(store, folding["destination"])
+
+    assert summary.errors == []
+    assert _stale_rows(store) == [(0,)]
+    assert _rows(store, "SELECT path, session_id FROM sessions") == [(_LOWER, "claude-c1")]
+    assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
+
+
+@pytest.mark.parametrize("field", ["version_path", "previous_sha256"])
+def test_a_displaced_entry_without_a_field_is_an_error_for_its_source_only(store, folding, field):
+    from agent_history.archive.manifest import decode_manifest, encode_manifest
+
+    folding["rename"]("-home-alex-shop")
+    folding["collect"]()
+    _collect_second_source(folding, "nas")
+    manifest = _manifests(folding)[1]
+    original = manifest.read_bytes()
+    run, entries = decode_manifest(original)
+    (entry,) = [entry for entry in entries if entry.get("action") == "displaced"]
+    del entry[field]  # a hand-edited or foreign manifest
+    manifest.write_bytes(encode_manifest(run, entries, 3))
+
+    summary = sync_catalog(store, folding["destination"])
+
+    (error,) = summary.errors
+    assert all(part in error for part in ("laptop", run["run_id"], _UPPER, field))
+    assert _rows(store, "SELECT source, COUNT(*) FROM runs GROUP BY source") == [("nas", 1)]
+    manifest.write_bytes(original)
+
+    fixed = sync_catalog(store, folding["destination"])
+
+    assert fixed.errors == []
+    assert fixed.runs == 2
+    assert _rows(store, "SELECT path FROM sessions WHERE source = 'laptop'") == [(_LOWER,)]
+
+
+def test_a_displaced_path_without_a_catalogued_version_gets_one(store, folding):
+    sync_catalog(store, folding["destination"])
+    with store.transaction():
+        store.execute("DELETE FROM file_versions WHERE path = ?", (_UPPER,))
+    folding["rename"]("-home-alex-shop")
+    second = folding["collect"]()
+
+    sync_catalog(store, folding["destination"])
+
+    displaced = _displaced(second, _UPPER)
+    assert _rows(
+        store,
+        "SELECT run_id, sha256, size, archive_path, superseded_run_id FROM file_versions "
+        "WHERE path = ?",
+        (_UPPER,),
+    ) == [
+        (
+            second.run_id,
+            displaced["previous_sha256"],
+            displaced["previous_size"],
+            f"sources/laptop/{displaced['version_path']}",
+            second.run_id,
+        )
     ]
