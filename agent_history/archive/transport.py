@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ntpath
 import os
 import secrets
 import shutil
@@ -43,6 +44,32 @@ def replace(src: Path, dst: Path) -> None:
             if pause is None:
                 raise
             time.sleep(pause)
+
+
+_EXTENDED_PREFIX = "\\\\?\\"
+
+
+def long_path(path: Path) -> Path:
+    """On Windows, ``path`` in the extended form (``\\\\?\\C:\\...``); unchanged elsewhere.
+
+    Windows limits ordinary paths to 260 characters (MAX_PATH) unless the
+    LongPathsEnabled setting is on. A run adds about 150 characters to a home-relative
+    path while it stages and places a file (the work folder, the incoming folder, the run
+    id), so a deep sub-agent transcript can pass the limit. Paths in the extended form
+    have no such limit. Every path below the archive root and the work folder is built
+    from them, so converting those two is enough.
+    """
+    return Path(extended_path(str(path))) if _WINDOWS else path
+
+
+def extended_path(path: str) -> str:
+    """A Windows path in the extended form: absolute, normalized, with ``\\\\?\\``."""
+    if path.startswith((_EXTENDED_PREFIX, "\\\\.\\")):  # extended already, or a device
+        return path
+    path = ntpath.abspath(path)
+    if path.startswith("\\\\"):  # \\server\share\...
+        return f"{_EXTENDED_PREFIX}UNC\\{path[2:]}"
+    return _EXTENDED_PREFIX + path
 
 
 def fsync_file(path: Path) -> None:
@@ -197,8 +224,8 @@ class Destination:
 
 class LocalDestination(Destination):
     def __init__(self, root: Path):
-        self.root = Path(root)
-        self.description = str(self.root)
+        self.description = str(Path(root))
+        self.root = long_path(Path(root))
 
     def _path(self, rel: str) -> Path:
         return self.root / _check_rel(rel)

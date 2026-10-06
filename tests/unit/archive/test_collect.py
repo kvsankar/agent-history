@@ -1370,7 +1370,9 @@ def test_staging_lives_in_the_state_folder_and_is_removed(env, monkeypatch):
     _collect(env)
 
     assert seen
-    assert all(env["state"] in path.parents for path in seen)
+    # On Windows the work folder is written in the extended form (\\?\C:\...).
+    state = collect_module.long_path(env["state"])
+    assert all(state in path.parents for path in seen)
     assert not list((env["state"]).rglob("*.zst"))
 
 

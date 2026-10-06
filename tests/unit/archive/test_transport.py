@@ -154,3 +154,87 @@ def test_a_permission_error_is_not_tried_again_outside_windows(tmp_path, monkeyp
     with pytest.raises(PermissionError):
         LocalDestination(tmp_path).write_bytes("sources/s/a.zst", b"x")
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("given", "extended"),
+    [
+        (r"C:\Users\alex\state", r"\\?\C:\Users\alex\state"),
+        ("C:/Users/alex/state/", r"\\?\C:\Users\alex\state"),
+        (r"C:\Users\alex\..\sam\.\state", r"\\?\C:\Users\sam\state"),
+        (r"\\nas\share\archive", r"\\?\UNC\nas\share\archive"),
+        (r"\\?\C:\Users\alex", r"\\?\C:\Users\alex"),
+    ],
+)
+def test_windows_paths_take_the_extended_form(given, extended):
+    from agent_history.archive.transport import extended_path
+
+    assert extended_path(given) == extended
+
+
+def test_long_path_changes_nothing_outside_windows(tmp_path, monkeypatch):
+    from agent_history.archive import transport
+
+    monkeypatch.setattr(transport, "_WINDOWS", False)
+
+    assert transport.long_path(tmp_path) == tmp_path
+
+
+def test_the_destination_and_the_work_folder_use_long_paths(tmp_path, monkeypatch):
+    """Staging adds about 150 characters to a home-relative path; on Windows a long
+    transcript path then passes 260 characters, which fails unless LongPathsEnabled is set."""
+    from agent_history.archive import collect, transport
+    from agent_history.archive.config import parse_config
+
+    def marked(path):
+        return path.with_name(path.name + "-long")
+
+    monkeypatch.setattr(transport, "long_path", marked)
+    monkeypatch.setattr(collect, "long_path", marked)
+    session = tmp_path / "home" / ".claude" / "projects" / "p" / "a.jsonl"
+    session.parent.mkdir(parents=True)
+    session.write_bytes(b"x\n")
+    config = parse_config(
+        {
+            "archive": {"destination": str(tmp_path / "archive"), "compression_level": 3},
+            "sources": [
+                {"name": "s", "kind": "live", "platform": "linux", "home": str(tmp_path / "home")}
+            ],
+        }
+    )
+
+    dest = LocalDestination(tmp_path / "archive")
+    summary = collect.collect_source(config, "s", state_dir=tmp_path / "state")
+
+    assert dest.root == tmp_path / "archive-long"
+    assert dest.description == str(tmp_path / "archive")
+    assert summary.written == 1
+    assert (tmp_path / "archive-long" / "sources/s/files/.claude/projects/p/a.jsonl.zst").exists()
+    assert list((tmp_path / "state").glob("*/work/s-long"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the 260-character limit is Windows'")
+def test_a_file_whose_staged_path_passes_260_characters_is_archived(tmp_path):
+    from agent_history.archive.collect import collect_source
+    from agent_history.archive.config import parse_config
+    from agent_history.archive.verify import verify_source
+
+    rel = ".claude/projects/C--Users-alex-code-a-project-with-a-rather-long-name/" + (
+        "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/subagents/agent-a1b2c3d4e5f6a7b8c9.jsonl"
+    )
+    session = tmp_path / "home" / rel
+    session.parent.mkdir(parents=True)
+    session.write_bytes(b"x\n")
+    config = parse_config(
+        {
+            "archive": {"destination": str(tmp_path / "archive"), "compression_level": 3},
+            "sources": [
+                {"name": "s", "kind": "live", "platform": "windows", "home": str(tmp_path / "home")}
+            ],
+        }
+    )
+
+    summary = collect_source(config, "s", state_dir=tmp_path / ("state-" + "x" * 60))
+
+    assert (summary.written, summary.errors) == (1, 0)
+    assert verify_source(LocalDestination(tmp_path / "archive"), "s").ok

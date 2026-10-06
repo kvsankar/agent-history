@@ -61,6 +61,7 @@ from agent_history.archive.transport import (
     Put,
     fold_case,
     ignores_case,
+    long_path,
     open_destination,
 )
 
@@ -338,7 +339,8 @@ class _Run:
         self.staged_bytes = 0
         # On disk next to the state, never the system temp folder (often a small tmpfs).
         # One folder per source, because the lock that keeps runs apart is per source.
-        self.work_root = self.state_file.parent / "work" / source.name
+        # In Windows' extended form, so staged paths may pass 260 characters (long_path).
+        self.work_root = long_path(self.state_file.parent / "work" / source.name)
 
     # -- the state against the archive ------------------------------------------------
 
