@@ -198,10 +198,20 @@ def _summary_dict(summary) -> dict[str, Any]:
 
 def _verify(args: argparse.Namespace) -> int:
     """Verify each source in turn. A source that cannot be verified, for example because
-    one of its manifests is damaged, is reported with its error, and the next one runs."""
-    config, names = _load(args)
-    destination = _destination(args, config)
-    results = [_verify_one(destination, name, args.sample) for name in names]
+    one of its manifests is damaged, is reported with its error, and the next one runs.
+
+    The sources are those in the archive, like catalog sync's, not the configuration's:
+    the archive can also hold another machine's sources and retired ones. The
+    configuration is read only when there is no --destination.
+    """
+    from agent_history.archive.catalog.sync import list_sources
+
+    destination = _catalog_destination(args)
+    found = list_sources(destination)
+    missing = sorted(set(args.sources or ()) - set(found))
+    if missing:
+        raise ArchiveError(f"Not in the archive at {destination.description}: {', '.join(missing)}")
+    results = [_verify_one(destination, name, args.sample) for name in args.sources or found]
     if args.json:
         _print_json(results)
     else:
@@ -288,8 +298,8 @@ def _catalog_status(args: argparse.Namespace) -> int:
 def _catalog_destination(args: argparse.Namespace):
     """``--destination``, or else the configured destination.
 
-    The configuration file is read only when it is needed, so a catalog of an archive
-    can be kept on a machine that has no archive configuration.
+    The configuration file is read only when it is needed, so an archive can be verified
+    and catalogued on a machine that has no archive configuration.
     """
     from agent_history.archive.config import load_config
     from agent_history.archive.transport import open_destination

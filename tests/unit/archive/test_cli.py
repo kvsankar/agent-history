@@ -109,6 +109,37 @@ def test_catalog_with_a_destination_needs_no_config_file(setup, capsys, action):
     assert _catalogued_sources(setup["config"], capsys) == ["laptop"]
 
 
+def test_verify_checks_archive_sources_missing_from_the_config(setup, capsys):
+    config = setup["config"]
+    assert main(["archive", "collect", "--config", config]) == 0
+    _rename_configured_source(setup, "desktop")
+    capsys.readouterr()
+
+    assert main(["archive", "verify", "--config", config]) == 0
+
+    assert capsys.readouterr().out.splitlines() == ["laptop: checked 1, ok"]
+
+
+def test_verify_with_a_destination_needs_no_config_file(setup, capsys):
+    assert main(["archive", "collect", "--config", setup["config"]]) == 0
+    capsys.readouterr()
+
+    # No --config, and the default configuration file does not exist.
+    code = main(["archive", "verify", "--destination", str(setup["tmp"] / "archive")])
+
+    assert code == 0, capsys.readouterr().err
+    assert "laptop: checked 1, ok" in capsys.readouterr().out
+
+
+def test_verify_of_a_source_that_is_not_in_the_archive_is_an_error(setup, capsys):
+    config = setup["config"]
+    assert main(["archive", "collect", "--config", config]) == 0
+    capsys.readouterr()
+
+    assert main(["archive", "verify", "--config", config, "--source", "nope"]) == 1
+    assert "nope" in capsys.readouterr().err
+
+
 def test_catalog_status_shows_only_the_named_sources(setup, capsys):
     config = _two_sources(setup)
     assert main(["archive", "collect", "--config", config]) == 0
