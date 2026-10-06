@@ -163,9 +163,7 @@ def test_copilot_vscode_scans_workspace_json_and_reads_transcript(tmp_path: Path
     sessions = copilot_vscode_scan_sessions(sessions_dir=tmp_path / "workspaceStorage")
     messages = copilot_vscode_read_messages(transcript)
 
-    assert (
-        copilot_vscode_get_workspace_from_session(transcript) == "D:\\acme\\pre\\ttt-python"
-    )
+    assert copilot_vscode_get_workspace_from_session(transcript) == "D:\\acme\\pre\\ttt-python"
     assert len(sessions) == 1
     assert sessions[0]["agent"] == "copilot-vscode"
     assert sessions[0]["workspace"] == "D:\\acme\\pre\\ttt-python"

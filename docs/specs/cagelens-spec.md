@@ -633,9 +633,9 @@ commands remain supported as convenience aliases:
 Examples:
 
 ```bash
-cagelens project add auth --glob '/home/alex/alex/projects/auth*' --dry-run
-cagelens project add auth --glob '/home/alex/alex/projects/auth*'
-cagelens project add auth /home/alex/alex/projects/auth
+cagelens project add auth --glob '/home/alex/projects/auth*' --dry-run
+cagelens project add auth --glob '/home/alex/projects/auth*'
+cagelens project add auth /home/alex/projects/auth
 ```
 
 Dynamic project rules are intentionally out of scope for `project add`; if

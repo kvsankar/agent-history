@@ -757,7 +757,7 @@ Stats table output begins with an explicit scope banner before metrics:
 Scope:
   Request: workspace glob *shopapp*
   Homes: local
-  Workspaces: 3 (shopapp-main, /home/alex/alex/projects/shopapp-main, shopapp-mobile)
+  Workspaces: 3 (shopapp-main, /home/alex/projects/shopapp-main, shopapp-mobile)
   Sessions: 7
 ```
 

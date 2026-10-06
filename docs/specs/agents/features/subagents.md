@@ -158,7 +158,7 @@ The child rollout ended with:
 {
   "type": "task_complete",
   "turn_id": "019eabfc-872d-7d23-8724-b0e7f27bd27f",
-  "last_agent_message": "LINEAGE_PROBE_DONE /home/alex/alex/projects/claude-history",
+  "last_agent_message": "LINEAGE_PROBE_DONE /home/alex/projects/claude-history",
   "completed_at": 1781001934,
   "duration_ms": 19969,
   "time_to_first_token_ms": 6124
