@@ -32,12 +32,13 @@ from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import SessionTarget, archive_file_path, session_target
 from agent_history.archive.manifest import read_manifests
 from agent_history.archive.transport import Destination
+from agent_history.backends.gemini import gemini_resumed_copy_name
 from agent_history.storage.metrics import METRICS_PARSER_VERSION
 
 # The catalog's own part of how session files become rows (which archived paths hold
 # sessions, how the workspace is derived). Raise it when that changes;
 # METRICS_PARSER_VERSION covers the parsers.
-_EXTRACTION_REVISION = 4
+_EXTRACTION_REVISION = 5
 # Recorded in schema_meta. A catalog whose rows were written under another version has
 # every session file read again on its next sync.
 READER_VERSION = f"{METRICS_PARSER_VERSION}.{_EXTRACTION_REVISION}"
@@ -210,9 +211,13 @@ def _sync_sessions(
         target = session_target(path, platform)
         if target is None:
             continue
+        if _has_resumed_copy(store, name, path, target, changed):
+            with store.transaction():
+                _delete_path_rows(store, name, path)
+            continue
         try:
             rows = _extract_sessions(destination, name, path, target, sha256, work_dir)
-            _replace_sessions(store, name, path, rows)
+            _replace_sessions(store, name, path, rows, _resumed_original(path, target))
         except Exception as exc:  # one bad file must not stop the sync
             summary.errors.append(f"{name}:{path}: {exc}")
             _mark_pending(store, name, path, sha256, exc)
@@ -220,13 +225,43 @@ def _sync_sessions(
         summary.sessions += len(rows)
 
 
-def _replace_sessions(store, source: str, path: str, rows: list[dict[str, Any]]) -> None:
-    """Replace a session file's rows and clear its pending entry, in one transaction."""
+def _replace_sessions(
+    store, source: str, path: str, rows: list[dict[str, Any]], replaces: str | None = None
+) -> None:
+    """Replace a session file's rows and clear its pending entry, in one transaction.
+
+    ``replaces`` is another path whose rows and pending entry go too, because this
+    file now holds its session.
+    """
     with store.transaction():
+        if replaces is not None:
+            _delete_path_rows(store, source, replaces)
         store.execute("DELETE FROM sessions WHERE source = ? AND path = ?", (source, path))
         for row in rows:
             _insert_session(store, row)
         store.execute("DELETE FROM pending_sessions WHERE source = ? AND path = ?", (source, path))
+
+
+def _has_resumed_copy(store, source: str, path: str, target: SessionTarget, changed) -> bool:
+    """Whether ``path`` is a legacy Gemini chat that Gemini CLI resumed.
+
+    Gemini CLI resumes ``<name>.json`` by writing ``<name>.jsonl`` beside it with every
+    message, and keeps the JSON file, so the session is read from the copy only. The
+    copy counts once it is in this sync's changed files or in the catalog's files.
+    """
+    copy = gemini_resumed_copy_name(path) if target.backend == "gemini" else None
+    if copy is None:
+        return False
+    if copy in changed:
+        return True
+    return bool(store.fetchall("SELECT 1 FROM files WHERE source = ? AND path = ?", (source, copy)))
+
+
+def _resumed_original(path: str, target: SessionTarget) -> str | None:
+    """The legacy Gemini chat that ``path`` would be the resumed copy of, if any."""
+    if target.backend == "gemini" and path.endswith(".jsonl"):
+        return path[:-1]
+    return None
 
 
 def _mark_pending(store, source: str, path: str, sha256: str, exc: Exception) -> None:

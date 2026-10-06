@@ -179,3 +179,56 @@ def test_a_rewind_record_without_a_text_id_is_not_a_rewind(tmp_path: Path) -> No
     messages, _meta = gemini_read_json_messages(_rewound_chat(tmp_path, 5))
 
     assert [m["content"] for m in messages] == ["hello", "Reading it.", "more", "Done.", "instead"]
+
+
+def _resumed_legacy_chat(tmp_path: Path) -> Path:
+    """A legacy JSON chat that Gemini CLI resumed; returns the JSONL copy.
+
+    On resume Gemini CLI writes ``<name>.jsonl`` beside ``<name>.json``,
+    holding the metadata and every message, keeps the JSON file, and
+    appends later messages to the copy only.
+    """
+    legacy = _json_chat(tmp_path)
+    records = [
+        META,
+        *MESSAGES,
+        {"$set": {"sessionId": "g-1"}},
+        {"id": "u3", "type": "user", "content": "back again", "timestamp": T4},
+    ]
+    copy = legacy.with_name(legacy.name + "l")
+    copy.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return copy
+
+
+def test_a_resumed_legacy_chat_is_listed_once_by_its_jsonl_copy(tmp_path: Path) -> None:
+    from agent_history.backends.gemini import gemini_scan_sessions
+
+    copy = _resumed_legacy_chat(tmp_path)
+
+    sessions = gemini_scan_sessions(sessions_dir=tmp_path / "tmp")
+
+    assert [(s["file"], s["message_count"]) for s in sessions] == [(copy, 5)]
+
+
+def test_a_legacy_chat_without_a_jsonl_copy_is_listed(tmp_path: Path) -> None:
+    from agent_history.backends.gemini import gemini_scan_sessions
+
+    legacy = _json_chat(tmp_path)
+
+    assert [s["file"] for s in gemini_scan_sessions(sessions_dir=tmp_path / "tmp")] == [legacy]
+
+
+def test_syncing_a_resumed_chat_replaces_the_rows_of_its_legacy_file(tmp_path: Path) -> None:
+    legacy = _json_chat(tmp_path)
+    conn = init_metrics_db(tmp_path / "metrics.db")
+    try:
+        assert sync_file_to_db(conn, legacy, agent="gemini")
+        copy = _resumed_legacy_chat(tmp_path)
+        assert sync_file_to_db(conn, copy, agent="gemini")
+        rows = conn.execute("SELECT file_path, message_count FROM sessions").fetchall()
+        message_files = {r[0] for r in conn.execute("SELECT file_path FROM messages")}
+    finally:
+        conn.close()
+
+    assert [tuple(row) for row in rows] == [(str(copy), 5)]
+    assert message_files == {str(copy)}

@@ -567,8 +567,10 @@ def _gemini_remote_list_workspaces_command() -> str:
 
 def _gemini_remote_list_sessions_command(workspace: str) -> str:
     safe_workspace = shlex.quote(workspace)
+    # A legacy chat that Gemini CLI resumed has a .jsonl copy beside it; list only the copy.
     return f"""for f in ~/.gemini/tmp/{safe_workspace}/chats/*.json ~/.gemini/tmp/{safe_workspace}/chats/*.jsonl; do
     [ -f "$f" ] || continue
+    case "$f" in *.json) [ -f "${{f}}l" ] && continue ;; esac
     size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null)
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
     echo "$f|$size|$mtime|0"

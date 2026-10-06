@@ -1060,7 +1060,12 @@ def sync_file_to_db(
         num_periods,
         METRICS_PARSER_VERSION,
     )
-    _store_file_rows(conn, file_path_str, current_mtime, session_row, messages, tool_uses)
+    paths = [file_path_str]
+    if agent == "gemini" and file_path_str.endswith(".jsonl"):
+        # Gemini CLI resumes <name>.json by copying it, with every message, to
+        # <name>.jsonl beside it; the copy holds the session from then on.
+        paths.append(file_path_str[:-1])
+    _store_file_rows(conn, paths, current_mtime, session_row, messages, tool_uses)
     return True
 
 
@@ -1069,13 +1074,16 @@ _FILE_SAVEPOINT = "sync_file"
 
 def _store_file_rows(
     conn: sqlite3.Connection,
-    file_path_str: str,
+    paths: List[str],
     current_mtime: float,
     session_row: Tuple[Any, ...],
     messages: List[Dict[str, Any]],
     tool_uses: List[Dict[str, Any]],
 ) -> None:
     """Replace one file's rows, all or none.
+
+    ``paths`` is the file's path, then any other files whose session it now
+    holds; their rows are deleted.
 
     The rows are written inside a savepoint. If one cannot be stored, the
     savepoint is rolled back, so the file keeps its earlier rows (or has
@@ -1089,7 +1097,7 @@ def _store_file_rows(
         conn.execute("BEGIN")
     conn.execute(f"SAVEPOINT {_FILE_SAVEPOINT}")
     try:
-        _write_file_rows(conn, file_path_str, current_mtime, session_row, messages, tool_uses)
+        _write_file_rows(conn, paths, current_mtime, session_row, messages, tool_uses)
     except BaseException:
         conn.execute(f"ROLLBACK TO SAVEPOINT {_FILE_SAVEPOINT}")
         conn.execute(f"RELEASE SAVEPOINT {_FILE_SAVEPOINT}")
@@ -1099,16 +1107,20 @@ def _store_file_rows(
 
 def _write_file_rows(
     conn: sqlite3.Connection,
-    file_path_str: str,
+    paths: List[str],
     current_mtime: float,
     session_row: Tuple[Any, ...],
     messages: List[Dict[str, Any]],
     tool_uses: List[Dict[str, Any]],
 ) -> None:
-    # Delete existing data for this file
-    conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (file_path_str,))
-    conn.execute("DELETE FROM messages WHERE file_path = ?", (file_path_str,))
-    conn.execute("DELETE FROM sessions WHERE file_path = ?", (file_path_str,))
+    file_path_str = paths[0]
+    # Delete existing data for this file and the files it replaces
+    for path in paths:
+        conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (path,))
+        conn.execute("DELETE FROM messages WHERE file_path = ?", (path,))
+        conn.execute("DELETE FROM sessions WHERE file_path = ?", (path,))
+    for path in paths[1:]:
+        conn.execute("DELETE FROM synced_files WHERE file_path = ?", (path,))
 
     # Insert session record
     conn.execute(

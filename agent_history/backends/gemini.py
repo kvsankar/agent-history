@@ -1226,6 +1226,18 @@ def _gemini_session_matches_filters(
     return _is_date_in_range(modified, since_date, until_date)
 
 
+def gemini_resumed_copy_name(name: str) -> str | None:
+    """The file Gemini CLI writes when it resumes the legacy chat ``name``, if it is one.
+
+    ``name`` is a file name or a path, and the result is of the same kind.
+
+    Gemini CLI resumes ``<name>.json`` by writing ``<name>.jsonl`` beside it, holding
+    the metadata and every message, and appends later messages there; it keeps the
+    JSON file. Its session list shows one file per session ID, the latest.
+    """
+    return name + "l" if name.endswith(".json") else None
+
+
 def gemini_scan_sessions(
     pattern: str = "",
     since_date=None,
@@ -1262,7 +1274,11 @@ def gemini_scan_sessions(
         + list(sessions_dir.glob("*/chats/session-*.jsonl"))
         + list(sessions_dir.glob("*/chats/*/*.jsonl"))
     )
+    found = set(session_files)
     for json_file in session_files:
+        copy_name = gemini_resumed_copy_name(json_file.name)
+        if copy_name and json_file.with_name(copy_name) in found:
+            continue  # read from its copy, which holds every message
         workspace = gemini_get_workspace_from_session(json_file)
         modified = datetime.fromtimestamp(json_file.stat().st_mtime)
 

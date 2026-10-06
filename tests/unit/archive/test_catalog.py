@@ -1193,3 +1193,90 @@ def test_a_damaged_manifest_is_an_error_for_its_source_only(store, archive):
     (error,) = summary.errors
     assert "laptop" in error and manifest.name in error
     assert _rows(store, "SELECT source FROM runs") == [("nas",)]
+
+
+def _write_legacy_gemini_chat(archive):
+    """A legacy Gemini JSON chat; returns its path relative to the home."""
+    gemini = GeminiSessionBuilder(session_id="gemini-r1", project_hash="c" * 64)
+    gemini.add_user_message("hello gemini")
+    gemini.add_gemini_message("hi")
+    path = gemini.write_to(archive["home"] / ".gemini" / "tmp")
+    _settle(path)
+    return path.relative_to(archive["home"]).as_posix()
+
+
+def _resume_legacy_gemini_chat(archive, rel):
+    """Do what Gemini CLI does on resuming a legacy chat: copy it to ``<name>.jsonl``.
+
+    The copy holds the metadata and every message, then the new ones; the JSON file
+    stays.
+    """
+    data = json.loads((archive["home"] / rel).read_text(encoding="utf-8"))
+    messages = data.pop("messages")
+    new = {"id": "u-new", "type": "user", "content": "again", "timestamp": "2025-01-06T09:00:00Z"}
+    copy = archive["home"] / (rel + "l")
+    copy.write_text(
+        "".join(json.dumps(record) + "\n" for record in [data, *messages, new]), encoding="utf-8"
+    )
+    _settle(copy)
+    return rel + "l"
+
+
+def _gemini_rows(store):
+    return _rows(
+        store,
+        "SELECT path, session_id, message_count FROM sessions WHERE agent = 'gemini' ORDER BY path",
+    )
+
+
+def test_a_resumed_legacy_gemini_chat_is_catalogued_once_by_its_jsonl_copy(
+    store, archive, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    copy = _resume_legacy_gemini_chat(archive, _write_legacy_gemini_chat(archive))
+    archive["collect"](hours=1)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _gemini_rows(store) == [(copy, "gemini-r1", 3)]
+
+
+def test_a_legacy_gemini_chat_resumed_after_a_sync_keeps_only_its_jsonl_copy(
+    store, archive, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    legacy = _write_legacy_gemini_chat(archive)
+    archive["collect"](hours=1)
+    sync_catalog(store, archive["destination"])
+    assert _gemini_rows(store) == [(legacy, "gemini-r1", 2)]
+    copy = _resume_legacy_gemini_chat(archive, legacy)
+    archive["collect"](hours=2)
+
+    sync_catalog(store, archive["destination"])
+
+    assert _gemini_rows(store) == [(copy, "gemini-r1", 3)]
+
+
+def test_a_new_reader_drops_the_rows_of_a_resumed_legacy_gemini_chat(
+    store, archive, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    legacy = _write_legacy_gemini_chat(archive)
+    copy = _resume_legacy_gemini_chat(archive, legacy)
+    archive["collect"](hours=1)
+    sync_catalog(store, archive["destination"])
+    with store.transaction():  # as an older reader catalogued both files
+        store.execute(
+            "INSERT INTO sessions (source, path, session_id, agent, from_database, "
+            "message_count, is_subagent) VALUES ('laptop', ?, 'gemini-r1', 'gemini', ?, 2, ?) "
+            "ON CONFLICT (source, path, session_id) DO NOTHING",
+            (legacy, False, False),
+        )
+    _make_rows_stale(store)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _gemini_rows(store) == [(copy, "gemini-r1", 3)]
+    assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]

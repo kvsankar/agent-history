@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from agent_history.adapters.inventory import InventoryProvider
 from agent_history.backends import ssh as ssh_backend
@@ -306,3 +309,29 @@ def test_registered_backend_can_drive_markdown_titles(tmp_path: Path) -> None:
 
     assert header[0] == "# Fake Conversation"
     assert "session.jsonl" not in header[0]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="remote commands target POSIX hosts")
+def test_gemini_remote_session_listing_lists_a_resumed_legacy_chat_once(tmp_path: Path) -> None:
+    """Gemini CLI resumes ``<name>.json`` by writing ``<name>.jsonl`` beside it."""
+    import subprocess
+
+    chats = tmp_path / ".gemini" / "tmp" / "project-id" / "chats"
+    chats.mkdir(parents=True)
+    for name in ("session-a.json", "session-a.jsonl", "session-b.json", "session-c.jsonl"):
+        (chats / name).write_text("{}\n", encoding="utf-8")
+    backend = get_backend("gemini")
+    assert backend is not None
+    assert backend.remote_list_sessions_command is not None
+    command = backend.remote_list_sessions_command("project-id")
+
+    result = subprocess.run(
+        ["sh", "-c", command],
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        check=False,
+    )
+
+    listed = sorted(Path(line.split("|")[0]).name for line in result.stdout.splitlines())
+    assert listed == ["session-a.jsonl", "session-b.json", "session-c.jsonl"]
