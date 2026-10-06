@@ -1,13 +1,13 @@
 """An archive destination on another host, reached over SSH.
 
 The remote host needs only ``sh`` (with its ``test``/``[``, ``echo`` and ``printf``, and
-``set -C``, whose exclusive create takes the lock where ``ln`` cannot), ``cat``,
-``mkdir``, ``mv``, ``find``, ``tar``, ``ln`` (whose hard link takes the lock; optional),
-``rm`` (which removes only a source's incoming folder and what its lock folder holds),
-``rmdir`` (which removes the lock folder) and
-``sync`` (as ``sync -f <path>``, which flushes the archive's file system before the run
-goes on; plain ``sync`` only where ``-f`` is missing, since it waits on every mount of
-the host). Each
+``set -C``, whose exclusive create takes the lock where ``ln`` cannot), ``cat``, ``wc``
+(only as ``wc -c``, to check transferred sizes), ``mkdir``, ``mv``, ``find``, ``tar``,
+``ln`` (whose hard link takes the lock; optional), ``rm`` (which removes only a source's
+incoming folder and what its lock folder holds), ``rmdir`` (which removes the lock
+folder) and ``sync`` (as ``sync -f <path>``, which flushes the archive's file system
+before the run goes on; plain ``sync`` only where ``-f`` is missing, since it waits on
+every mount of the host). Each
 operation sends ssh one already-quoted command string: ssh joins its remote arguments with
 spaces, so passing them separately would lose the quoting. The remote login shell runs
 that string, and it need not be sh (csh, tcsh and fish parse differently), so the string
