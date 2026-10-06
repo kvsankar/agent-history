@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import unicodedata
 from contextlib import contextmanager
@@ -143,10 +144,14 @@ class Destination:
     def create_lock(self, rel: str, owner: bytes) -> bool:
         """Take the lock ``rel``: create its owner.json, holding ``owner``, exclusively.
 
-        The owner file is the lock; the folder around it only holds it. The file is
-        created with an exclusive create (O_EXCL), which fails when the file exists, so
-        of two runs that try at the same time only one succeeds, and the content is
-        written in the same step. False when the owner file exists already.
+        The owner file is the lock; the folder around it only holds it. The owner is
+        written to a temporary file in the folder, flushed, and hard-linked to
+        owner.json. Creating a link fails when the name exists, so of two runs that try
+        at the same time only one succeeds, and owner.json appears with its whole
+        content: a run killed part way leaves at most the temporary file, which is no
+        lock. Where the filesystem has no hard links and owner.json is absent, owner.json
+        is created with an exclusive create (O_EXCL) and written through the same
+        descriptor instead. False when the owner file exists already.
         """
         raise NotImplementedError
 
@@ -269,25 +274,18 @@ class LocalDestination(Destination):
 
     def create_lock(self, rel: str, owner: bytes) -> bool:
         target = self._path(_check_lock(rel)) / LOCK_OWNER
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         for _ in range(_LOCK_ATTEMPTS):
             folders = _make_parent(target)
+            tmp = target.with_name(f"{LOCK_OWNER}.{secrets.token_hex(8)}.tmp")
             try:
-                fd = os.open(target, flags, 0o644)
-            except FileExistsError:
-                return False
+                taken = _link_owner(tmp, target, owner)
             except FileNotFoundError:
                 continue  # a run releasing the lock removed the folder just now
-            try:
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(owner)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            except BaseException:
-                target.unlink(missing_ok=True)  # never leave a lock without its owner
-                raise
-            _sync_dirs(folders)
-            return True
+            finally:
+                tmp.unlink(missing_ok=True)
+            if taken:
+                _sync_dirs(folders)
+            return taken
         raise ArchiveError(f"Could not create {rel}/{LOCK_OWNER}: its folder kept disappearing")
 
     def remove_lock(self, rel: str) -> None:
@@ -312,6 +310,49 @@ class LocalDestination(Destination):
     def open_binary(self, rel: str) -> Iterator[IO[bytes]]:
         with self._path(rel).open("rb") as handle:
             yield handle
+
+
+def _link_owner(tmp: Path, target: Path, owner: bytes) -> bool:
+    """Write the owner to ``tmp``, flush it, and hard-link it to ``target``.
+
+    A hard link fails when ``target`` exists, and ``target`` appears with its whole
+    content, so it never exists empty, even when the run is killed part way. Where the
+    filesystem has no hard links and ``target`` is absent, ``target`` is created with
+    O_EXCL instead. False when another run holds the lock.
+    """
+    _create_exclusive(tmp, owner)
+    try:
+        os.link(tmp, target)
+    except FileExistsError:
+        return False
+    except FileNotFoundError:
+        raise  # the folder was removed meanwhile; the caller tries again
+    except OSError:  # no hard links on this filesystem
+        if target.exists():
+            return False
+        return _create_exclusive(target, owner)
+    return True
+
+
+def _create_exclusive(path: Path, data: bytes) -> bool:
+    """Create ``path`` holding ``data``, flushed; False when it exists.
+
+    The file is removed if the write fails, so it never stays empty after an error.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags, 0o644)
+    except FileExistsError:
+        return False
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return True
 
 
 def _make_parent(path: Path) -> set[Path]:

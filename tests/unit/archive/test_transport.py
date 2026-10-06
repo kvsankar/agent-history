@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import errno
 import os
+from pathlib import Path
+
+import pytest
 
 from agent_history.archive.transport import LocalDestination, fsync_file
+
+LOCK = "sources/s/LOCK"
 
 ENDS_IN_CTRL_Z = b"compressed bytes\x00\x1a"
 
@@ -44,3 +50,56 @@ def test_sizes_reports_existing_files_only(tmp_path):
     sizes = dest.sizes(["a/one.zst", "a/empty.zst", "a/missing.zst", "a/folder"])
 
     assert sizes == {"a/one.zst": 5, "a/empty.zst": 0}
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork to stop a process mid-call")
+def test_a_run_killed_while_taking_the_lock_leaves_no_empty_owner_file(tmp_path):
+    """A run killed between creating owner.json and writing it must not leave it empty.
+
+    An empty owner file names no holder, so every later run would fail until --break-lock.
+    """
+    dest = LocalDestination(tmp_path)
+    pid = os.fork()
+    if pid == 0:  # the run that is killed: it dies right after a lock file is created
+        real_open = os.open
+
+        def open_then_die(path, flags, *args, **kwargs):
+            fd = real_open(path, flags, *args, **kwargs)
+            if Path(path).name.startswith("owner.json"):
+                os._exit(9)
+            return fd
+
+        os.open = open_then_die
+        try:
+            dest.create_lock(LOCK, b'{"token": "killed"}')
+        finally:
+            os._exit(0)
+    os.waitpid(pid, 0)
+
+    assert not (tmp_path / LOCK / "owner.json").exists()
+    assert dest.create_lock(LOCK, b'{"token": "next"}')
+    assert (tmp_path / LOCK / "owner.json").read_bytes() == b'{"token": "next"}'
+
+
+def test_the_lock_is_taken_once_and_leaves_only_the_owner_file(tmp_path):
+    dest = LocalDestination(tmp_path)
+
+    assert dest.create_lock(LOCK, b'{"token": "a"}')
+    assert not dest.create_lock(LOCK, b'{"token": "b"}')
+
+    assert os.listdir(tmp_path / LOCK) == ["owner.json"]
+    assert (tmp_path / LOCK / "owner.json").read_bytes() == b'{"token": "a"}'
+
+
+def test_without_hard_links_the_lock_falls_back_to_an_exclusive_create(tmp_path, monkeypatch):
+    def no_links(src, dst, *args, **kwargs):
+        raise OSError(errno.EPERM, "hard links are not supported here")
+
+    monkeypatch.setattr(os, "link", no_links)
+    dest = LocalDestination(tmp_path)
+
+    assert dest.create_lock(LOCK, b'{"token": "a"}')
+    assert not dest.create_lock(LOCK, b'{"token": "b"}')
+
+    assert os.listdir(tmp_path / LOCK) == ["owner.json"]
+    assert (tmp_path / LOCK / "owner.json").read_bytes() == b'{"token": "a"}'
