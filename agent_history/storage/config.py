@@ -150,6 +150,10 @@ def get_config_file() -> Path:
 # =============================================================================
 
 
+# Set in config.json once it has been saved with any legacy projects merged in.
+LEGACY_PROJECTS_MERGED_KEY = "legacy_projects_merged"
+
+
 def load_config() -> dict:
     """Load config from storage file. Returns empty structure if not found."""
     config_file = get_config_file()
@@ -193,7 +197,12 @@ def load_config() -> dict:
                 data["project_tags"] = {}
             if "version" not in data:
                 data["version"] = 1
-            legacy_projects = _load_legacy_projects()
+            # Legacy projects are merged until config.json has been saved
+            # once with them; after that config.json alone is authoritative,
+            # so projects removed or renamed there do not come back.
+            legacy_projects = (
+                {} if data.get(LEGACY_PROJECTS_MERGED_KEY) else _load_legacy_projects()
+            )
             if legacy_projects:
                 existing = data.get("projects", {})
                 for name, cfg in legacy_projects.items():
@@ -246,6 +255,7 @@ def save_config(data: dict) -> bool:
         data["homes"] = homes
         # Keep sources in sync for backward compatibility
         data["sources"] = homes
+        data[LEGACY_PROJECTS_MERGED_KEY] = True
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         # Set secure permissions on config file (owner read/write only)
