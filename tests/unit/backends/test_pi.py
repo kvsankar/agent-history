@@ -183,3 +183,31 @@ def test_pi_home_dir_uses_project_settings_session_dir(tmp_path: Path, monkeypat
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "agent"))
 
     assert pi_get_home_dir(include_project_settings=True) == custom_sessions
+
+
+def test_inventory_scans_a_backend_once_for_many_workspace_lookups(tmp_path, monkeypatch):
+    """Listing looks sessions up once per workspace. Backends without a cheap
+    per-workspace lookup were rescanned each time, which over /mnt/c made the
+    Windows listing take tens of minutes."""
+    from agent_history.backends import registry
+
+    sessions_dir = tmp_path / ".pi" / "agent" / "sessions"
+    _write_pi_session(sessions_dir / "--home-alex-pi-project--" / "session.jsonl")
+    import dataclasses
+
+    backend = registry.get_backend("pi")
+    calls = []
+    real_scan = backend.scan_sessions
+    counting = dataclasses.replace(
+        backend, scan_sessions=lambda directory: calls.append(directory) or real_scan(directory)
+    )
+    monkeypatch.setitem(registry._BACKENDS, "pi", counting)
+
+    inventory = InventoryProvider(ResolutionContext(pi_sessions_dir=sessions_dir))
+    first = inventory.list_sessions("local", agent="pi", workspace="/home/alex/pi-project")
+    second = inventory.list_sessions("local", agent="pi", workspace="/home/alex/other")
+    third = inventory.list_sessions("local", agent="pi", workspace="/home/alex/pi-project")
+
+    assert len(calls) == 1
+    assert len(first) == len(third) == 1
+    assert second == []

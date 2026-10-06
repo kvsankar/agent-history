@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, TextIO, TypedDict
 
 from agent_history.storage.config import get_config_dir
+from agent_history.utils import progress
 from agent_history.utils.codex_tokens import CodexTokenCounter, is_replayed
 from agent_history.utils.paths import normalize_workspace_name
 
@@ -823,17 +824,20 @@ def _codex_date_folders_since(sessions_dir: Path, since_date: str | None) -> lis
     return list(_iter_date_folders(sessions_dir, since_dt))
 
 
-def _remove_stale_entries(sessions_map: dict) -> int:
+def _remove_stale_entries(sessions_map: dict, prefix: str = "") -> int:
     """Remove entries for files that no longer exist.
 
     Args:
         sessions_map: Dict mapping file paths to workspace names
+        prefix: Only check entries whose path starts with this folder
 
     Returns:
         Number of stale entries removed
     """
     stale_keys = []
     for key in sessions_map:
+        if prefix and not key.startswith(prefix.rstrip("/\\") + os.sep):
+            continue
         try:
             if not Path(key).exists():
                 stale_keys.append(key)
@@ -873,6 +877,12 @@ def _scan_folders_for_sessions(
     return existing_sessions
 
 
+# Index maps already brought up to date in this process, by (index file,
+# sessions folder). Listing asks once per workspace; checking every indexed
+# file again each time cost a network round trip per file on /mnt/c.
+_REFRESHED_INDEXES: dict[tuple[str, str], dict[str, str]] = {}
+
+
 def codex_ensure_index_updated(sessions_dir: Path | None = None) -> dict[str, str]:
     """Ensure Codex session index is up-to-date.
 
@@ -892,23 +902,36 @@ def codex_ensure_index_updated(sessions_dir: Path | None = None) -> dict[str, st
     except (OSError, PermissionError):
         return {}
 
+    dir_key = str(sessions_dir)
+    memo_key = (str(codex_get_index_file()), dir_key)
+    if memo_key in _REFRESHED_INDEXES:
+        return _REFRESHED_INDEXES[memo_key]
+
     index = codex_load_index()
     sessions_map = index.get("sessions", {})
 
-    # Clean up deleted files
-    _remove_stale_entries(sessions_map)
+    # Each sessions folder (local, Windows, WSL, ...) keeps its own scan
+    # date, so scanning one folder never makes another look up to date.
+    scan_dates = index.setdefault("last_scan_dates", {})
+    since = scan_dates.get(dir_key)
+    if since is None and sessions_dir == codex_get_home_dir():
+        since = index.get("last_scan_date")
+
+    # Clean up deleted files in this folder only
+    _remove_stale_entries(sessions_map, prefix=dir_key)
 
     # Incremental scan from last scan date (or full scan if first run)
     try:
-        folders = _codex_date_folders_since(sessions_dir, index.get("last_scan_date"))
+        folders = _codex_date_folders_since(sessions_dir, since)
     except (OSError, PermissionError):
         return sessions_map
     _scan_folders_for_sessions(folders, sessions_map)
 
     # Save updated index
     index["sessions"] = sessions_map
-    index["last_scan_date"] = datetime.now().strftime("%Y-%m-%d")
+    scan_dates[dir_key] = datetime.now().strftime("%Y-%m-%d")
     codex_save_index(index)
+    _REFRESHED_INDEXES[memo_key] = sessions_map
 
     return sessions_map
 
@@ -1147,9 +1170,11 @@ def codex_scan_sessions(
 
     for jsonl_file in candidates:
         file_key = str(jsonl_file)
+        progress.add("codex_files_checked")
         # Look up workspace from index (fallback to file read if not in index or empty)
         workspace = sessions_map.get(file_key)
         if not workspace:  # None or empty string
+            progress.add("codex_files_opened")
             try:
                 workspace = codex_get_workspace_from_session(jsonl_file)
             except (OSError, PermissionError):

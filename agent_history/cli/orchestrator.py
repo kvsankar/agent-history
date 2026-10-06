@@ -53,7 +53,9 @@ from agent_history.scope.context import (
     ResolutionResult,
 )
 from agent_history.scope.resolver import ScopeResolver
+from agent_history.storage.config import get_config_dir
 from agent_history.storage.metrics import init_metrics_db, sync_scope_to_db
+from agent_history.utils import progress
 
 
 class ErrorHandler:
@@ -366,6 +368,52 @@ class CommandOrchestrator:
             return home
         return None
 
+    def _windows_homes_selected(
+        self, request: CommandRequest, context: ResolutionContext
+    ) -> list[str]:
+        args = request.scope_args
+        named = [home for home in args.home_names if home.startswith("windows:")]
+        if args.all_homes and not args.no_windows:
+            named.extend(f"windows:{user}" for user in context.available_homes.get("windows", []))
+        return list(dict.fromkeys(named))
+
+    def _only_windows_homes(self, request: CommandRequest) -> bool:
+        args = request.scope_args
+        return (
+            bool(args.home_names)
+            and not args.all_homes
+            and all(home.startswith("windows:") for home in args.home_names)
+        )
+
+    def _prepare_windows_native(self, request: CommandRequest, context: ResolutionContext) -> list:
+        """List and parse Windows homes with cagelens on Windows, if configured.
+
+        On success the Windows homes are taken out of normal resolution and
+        their scope is returned; on any failure this returns [] and the slow
+        /mnt/c path is used.
+        """
+        from agent_history.storage.config import load_config
+        from agent_history.storage.windows_native import prepare_windows_homes
+
+        settings = load_config().get("windows_native")
+        homes = self._windows_homes_selected(request, context)
+        if not settings or not homes:
+            return []
+        try:
+            scope, prepared = prepare_windows_homes(
+                homes, settings, force=bool(request.verb_args.get("force"))
+            )
+        except Exception as exc:
+            sys.stderr.write(
+                f"Warning: could not run cagelens on Windows ({exc}); reading /mnt/c instead.\n"
+            )
+            return []
+        args = request.scope_args
+        args.no_windows = True
+        args.home_names = [home for home in args.home_names if home not in homes]
+        request.verb_args["windows_prepared"] = prepared
+        return scope
+
     def _handle_stats_sync(
         self, request: CommandRequest, scope, context: ResolutionContext | None = None
     ) -> None:
@@ -385,7 +433,9 @@ class CommandOrchestrator:
             session_count = sum(len(record.sessions) for record in scope)
             if show_progress:
                 sys.stderr.write(f"Syncing stats cache for {session_count} sessions...\n")
-            sync_stats = sync_scope_to_db(conn, scope, force=force)
+            sync_stats = sync_scope_to_db(
+                conn, scope, force=force, prepared=request.verb_args.get("windows_prepared")
+            )
             conn.commit()
             request.verb_args["sync"] = True
             request.verb_args["sync_stats"] = sync_stats
@@ -467,12 +517,30 @@ class CommandOrchestrator:
                 if project_add_result is not None:
                     return project_add_result
 
-            # 3. Resolve scope
-            resolver = ScopeResolver(context)
-            resolution = resolver.resolve(
-                request.scope_args,
-                load_sessions=self._should_load_sessions(request),
-            )
+            # 3. Resolve scope. A stats sync can run for a long time, so it
+            # writes a progress line every minute from here until it finishes.
+            syncing = self._is_stats_request(request) and not request.verb_args.get("no_sync")
+            if syncing:
+                progress.start(
+                    "stats sync",
+                    quiet=bool(request.output_args.quiet),
+                    log_file=get_config_dir() / "logs" / "sync.log",
+                )
+                progress.set_phase("resolving scope")
+            try:
+                windows_scope = self._prepare_windows_native(request, context) if syncing else []
+                resolver = ScopeResolver(context)
+                if windows_scope and self._only_windows_homes(request):
+                    resolution = ResolutionResult(scope=[], errors=[], warnings=[])
+                else:
+                    resolution = resolver.resolve(
+                        request.scope_args,
+                        load_sessions=self._should_load_sessions(request),
+                    )
+                resolution.scope.extend(windows_scope)
+            except BaseException:
+                progress.stop()
+                raise
 
             if self.debug:
                 sys.stderr.write(
@@ -482,10 +550,14 @@ class CommandOrchestrator:
 
             # Handle resolution errors
             if not self.error_handler.handle_resolution_errors(resolution):
+                progress.stop()
                 return 1
 
             # 3.5. Auto-sync stats after scope resolution (unless --no-sync)
-            self._handle_stats_sync(request, resolution.scope, context)
+            try:
+                self._handle_stats_sync(request, resolution.scope, context)
+            finally:
+                progress.stop()
 
             # 4. Dispatch to handler
             try:

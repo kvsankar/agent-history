@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Optional,
 
 from agent_history import pricing
 from agent_history.storage.config import get_config_dir
+from agent_history.utils import progress
 from agent_history.utils.codex_tokens import CodexTokenCounter, is_replayed
 from agent_history.utils.jsonl import iter_jsonl_lines
 
@@ -1237,14 +1238,23 @@ def sync_scope_to_db(
     scope: "ConcreteScope",
     force: bool = False,
     jobs: Optional[int] = None,
+    prepared: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> Dict[str, int]:
     """Sync all sessions referenced in a resolved scope to the database.
 
     Files are parsed in ``jobs`` worker processes (default: default_sync_jobs())
     while this process does all database writes, committing in batches.
+
+    ``prepared`` maps file paths that were already listed and parsed
+    elsewhere (cagelens on Windows) to their parsed rows, or to None when the
+    file is unchanged; those files are not read here.
     """
     stats = {"synced": 0, "skipped": 0, "errors": 0}
+    if prepared:
+        scope = _store_prepared(conn, scope, prepared, stats)
+    progress.set_phase("collecting session files")
     candidates = _local_session_files(scope, force, stats)
+    progress.set_phase("checking for changes", f"{len(candidates)} files")
 
     todo: list[tuple[str, str, Optional[str], str]] = []
     seen_paths: set[str] = set()
@@ -1263,13 +1273,52 @@ def sync_scope_to_db(
             continue
         todo.append((file_key, home, workspace, agent))
 
+    progress.add("unchanged", stats["skipped"])
     jobs = jobs or default_sync_jobs()
+    progress.set_phase("parsing and storing", f"{len(todo)} files, {jobs} workers")
     if jobs <= 1 or len(todo) < PARALLEL_SYNC_MIN_FILES:
         results = (_extract_or_error(item) for item in todo)
         _store_results(conn, results, stats)
     else:
         _store_results(conn, _parallel_extract(todo, jobs), stats)
     return stats
+
+
+def _store_prepared(
+    conn: sqlite3.Connection,
+    scope: "ConcreteScope",
+    prepared: Dict[str, Optional[Dict[str, Any]]],
+    stats: Dict[str, int],
+) -> "ConcreteScope":
+    """Store rows parsed elsewhere; return the scope without those sessions."""
+    from agent_history.scope.types import ConcreteRecord
+
+    progress.set_phase("storing rows parsed on Windows", f"{len(prepared)} files")
+    remaining = []
+    for record in scope:
+        sessions = []
+        for session in record.sessions:
+            file_key = str(session.get("file") or "")
+            if file_key not in prepared:
+                sessions.append(session)
+                continue
+            parsed = prepared[file_key]
+            if parsed is None:
+                stats["skipped"] += 1
+                continue
+            _store_results(conn, [(record.home, parsed)], stats)
+        if sessions:
+            remaining.append(
+                ConcreteRecord(
+                    home=record.home,
+                    workspace=record.workspace,
+                    sessions=sessions,
+                    workspace_key=record.workspace_key,
+                    workspace_display=record.workspace_display,
+                )
+            )
+    conn.commit()
+    return remaining
 
 
 def _local_session_files(
@@ -1308,6 +1357,8 @@ def _local_session_files(
 
     if remote_copies:
         from concurrent.futures import ThreadPoolExecutor
+
+        progress.set_phase("copying remote sessions", f"{len(remote_copies)} files")
 
         from agent_history.adapters.remote import SSHRemoteClient
 
@@ -1401,6 +1452,7 @@ def _store_results(
     for home, record in results:
         if record is None:
             stats["errors"] += 1
+            progress.add("errors")
             continue
         try:
             _store_file_stats(conn, record, home)
@@ -1408,6 +1460,7 @@ def _store_results(
             stats["errors"] += 1
             continue
         stats["synced"] += 1
+        progress.add("stored")
         stored += 1
         if stored % SYNC_COMMIT_EVERY == 0:
             conn.commit()

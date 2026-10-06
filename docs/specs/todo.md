@@ -13,6 +13,21 @@ Items that need investigation or clarification before full specification.
 
 ## Pending Investigation
 
+### Windows Drive Access From WSL (virtiofs)
+
+From WSL, the Windows drive is mounted over 9P, where every file check or
+open is a round trip to Windows (about 14 ms per `stat` on laptop), so
+listing a Windows home from WSL takes about 10 minutes for 3,340 sessions.
+Stats sync avoids this by running cagelens on Windows (`windows_native`).
+
+- Evaluate WSL's experimental virtiofs transport for `/mnt/c`
+  (`virtiofs=true` under `[wsl2]` in `.wslconfig`; needs the pre-release WSL
+  kernel 6.18.26.3 or newer via `wsl.exe --update --pre-release`; laptop
+  runs WSL 2.6.3 with kernel 6.6.87.2).
+- Measure Windows listing and sync over virtiofs against the Windows-native
+  export, and decide whether `windows_native` is still needed.
+- Source: https://boxofcables.dev/wsl2-per-device-swiotlb-pools-for-virtiofs-and-virtioproxy
+
 ### Real Agent Session Generation / Validation
 
 **Status:** Complete for current release validation

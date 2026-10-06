@@ -13,6 +13,7 @@ from agent_history.adapters.remote import RemoteClientError, SSHRemoteClient
 from agent_history.backends.registry import AgentBackend, get_default_backend_id, iter_backends
 from agent_history.scope.context import ResolutionContext
 from agent_history.scope.home_resolver import get_resolver_for_home
+from agent_history.utils import progress
 from agent_history.utils.env import get_env, has_env
 from agent_history.utils.paths import normalize_workspace_name
 from agent_history.utils.platform import AGENT_CLAUDE
@@ -25,6 +26,18 @@ class InventoryProvider:
     def __init__(self, context: ResolutionContext, remote_client: SSHRemoteClient | None = None):
         self.context = context
         self.remote_client = remote_client or SSHRemoteClient()
+        # Full scans by (home, backend, folder). Listing asks once per
+        # workspace, and backends without a per-workspace lookup would
+        # otherwise rescan their whole folder each time.
+        self._scans: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+
+    def _scan_backend(
+        self, home: str, backend: AgentBackend, sessions_dir: Path
+    ) -> list[dict[str, Any]]:
+        key = (home, backend.id, str(sessions_dir))
+        if key not in self._scans:
+            self._scans[key] = backend.scan_sessions(sessions_dir)
+        return [dict(session) for session in self._scans[key]]
 
     def list_sessions(
         self, home: str, agent: str | None = None, workspace: str | None = None
@@ -40,7 +53,10 @@ class InventoryProvider:
             return self._list_web_sessions(agent)
 
         for backend in iter_backends(agent):
-            sessions.extend(self._list_backend_sessions(home, backend, workspace=workspace))
+            progress.set_phase("listing sessions", f"{home} {backend.id}")
+            found = self._list_backend_sessions(home, backend, workspace=workspace)
+            progress.add("sessions_listed", len(found))
+            sessions.extend(found)
 
         for session in sessions:
             apply_workspace_ref(session)
@@ -59,6 +75,7 @@ class InventoryProvider:
             return self._list_web_workspaces()
 
         for backend in iter_backends(agent):
+            progress.set_phase("listing workspaces", f"{home} {backend.id}")
             workspaces.update(self._list_backend_workspaces(home, backend))
 
         return sorted(workspaces)
@@ -107,7 +124,7 @@ class InventoryProvider:
                     skip_message_count=True,
                 )
 
-        sessions = backend.scan_sessions(sessions_dir)
+        sessions = self._scan_backend(home, backend, sessions_dir)
         if workspace:
             sessions = [
                 session

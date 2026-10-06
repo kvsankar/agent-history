@@ -586,6 +586,38 @@ Environment variables for testing, automation, and overriding default behavior.
 | Variable | Description |
 |----------|-------------|
 | `CAGELENS_CONFIG_DIR` | Override config directory (`~/.cagelens/`). Bypasses migration logic. Used for test isolation. |
+| `CAGELENS_SYNC_JOBS` | Worker processes that parse session files during a stats sync (default: up to 8). |
+| `CAGELENS_PROGRESS_INTERVAL` | Seconds between stats sync progress lines (default: 60). |
+
+### Stats Sync Progress
+
+A stats sync writes one progress line per interval with the phase, the home
+being worked on, the counts so far and the elapsed time. Lines go to stderr
+(unless `--quiet`) and to `~/.cagelens/logs/sync.log`, which is rotated to
+`sync.log.1` when it passes 1 MB.
+
+### Windows Homes From WSL (`windows_native`)
+
+From WSL, Windows files are read through `/mnt/c`, where each file access is
+a round trip to Windows. When config.json has a `windows_native` block, a
+stats sync that includes a Windows home runs cagelens on Windows instead: it
+lists that home's sessions and parses the changed ones natively, writes one
+JSON lines file to `exchange_dir`, and WSL stores the rows. If the Windows
+side cannot be started, the sync warns and reads `/mnt/c` as before.
+
+```json
+"windows_native": {
+  "python": "/mnt/c/path/to/cagelens/.venv/Scripts/python.exe",
+  "code": "\\\\wsl.localhost\\Ubuntu\\home\\user\\code\\cagelens",
+  "exchange_dir": "/mnt/c/Users/user/.cagelens/windows-native"
+}
+```
+
+`python` is Windows' Python as WSL sees it; `code` is this cagelens checkout
+as Windows sees it, put first on Windows' import path so both sides run the
+same code. Starting Windows programs from WSL needs WSL interop (the
+`WSLInterop` binfmt rule); cagelens supplies `WSL_INTEROP` when a shell
+started over SSH lacks it.
 
 ### Session Data Paths
 
