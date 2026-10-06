@@ -400,8 +400,12 @@ def _extract_gemini_jsonl_lineage(jsonl_file: Path) -> list[LineageRecord]:
     except OSError:
         return []
 
-    session_id = session_meta.get("sessionId") or session_meta.get("id") or jsonl_file.stem
-    identity = gemini_session_identity(jsonl_file, session_meta.get("kind"))
+    identity = gemini_session_identity(
+        jsonl_file,
+        session_meta.get("kind"),
+        session_meta.get("sessionId") or session_meta.get("id") or jsonl_file.stem,
+    )
+    session_id = identity["session_id"]
     nested_parent_id = identity["parent_session_id"]
     is_nested_child = identity["is_agent"]
     records = [

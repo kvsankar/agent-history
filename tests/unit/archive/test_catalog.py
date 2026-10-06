@@ -1325,6 +1325,6 @@ def test_a_gemini_subagent_chat_is_catalogued_as_a_subagent_of_its_folders_sessi
         "SELECT session_id, workspace, parent_session_id, is_subagent, message_count "
         "FROM sessions WHERE agent = 'gemini' ORDER BY session_id",
     ) == [
-        ("a1b2c3", "c" * 64, "gemini-r1", True, 1),
         ("gemini-r1", "c" * 64, None, False, 2),
+        ("gemini-r1:a1b2c3", "c" * 64, "gemini-r1", True, 1),
     ]

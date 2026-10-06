@@ -139,14 +139,21 @@ def gemini_subagent_parent(chat_file: Path) -> Optional[str]:
     return folder.name if folder.parent.name == "chats" else None
 
 
-def gemini_session_identity(chat_file: Path, kind: Any) -> Dict[str, Any]:
-    """parent_session_id and is_agent of one Gemini chat file.
+def gemini_session_identity(
+    chat_file: Path, kind: Any, session_id: Optional[str]
+) -> Dict[str, Any]:
+    """session_id, parent_session_id and is_agent of one Gemini chat file.
 
-    ``kind`` is the chat metadata's ``kind``. A chat is a sub-agent's when it is
-    ``"subagent"`` or the file lies in a folder below ``chats``.
+    ``kind`` is the chat metadata's ``kind`` and ``session_id`` its ``sessionId``.
+    A chat is a sub-agent's when it is ``"subagent"`` or the file lies in a folder
+    below ``chats``. A sub-agent's short ID can repeat across sessions, so, as for
+    Claude, its session ID is ``<parent>:<sessionId>`` when the parent is known.
     """
     parent = gemini_subagent_parent(chat_file)
-    return {"parent_session_id": parent, "is_agent": kind == "subagent" or parent is not None}
+    is_agent = kind == "subagent" or parent is not None
+    if is_agent and session_id:
+        session_id = claude_subagent_session_id(parent, session_id)
+    return {"session_id": session_id, "parent_session_id": parent, "is_agent": is_agent}
 
 
 def codex_meta_parent(payload: Dict[str, Any]) -> Optional[str]:

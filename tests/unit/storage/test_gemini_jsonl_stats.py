@@ -257,7 +257,7 @@ def _subagent_chat(tmp_path: Path) -> Path:
 def test_a_subagent_chat_is_a_subagent_of_the_session_its_folder_names(tmp_path: Path) -> None:
     session_info, _messages, _tool_uses = _stats(_subagent_chat(tmp_path))
 
-    assert session_info["session_id"] == "a1b2c3"
+    assert session_info["session_id"] == "g-1:a1b2c3"
     assert (session_info["is_agent"], session_info["parent_session_id"]) == (True, "g-1")
 
 
@@ -277,4 +277,4 @@ def test_a_subagent_chat_gets_a_subagent_metrics_row(tmp_path: Path) -> None:
     finally:
         conn.close()
 
-    assert tuple(row) == ("a1b2c3", 1, "g-1")
+    assert tuple(row) == ("g-1:a1b2c3", 1, "g-1")

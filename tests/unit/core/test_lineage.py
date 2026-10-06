@@ -603,7 +603,7 @@ def test_gemini_jsonl_lineage_recognizes_nested_child_transcript(tmp_path: Path)
     lineage = build_timeline_lineage([_session(gemini_file, AGENT_GEMINI)])
 
     assert lineage[0]["kind"] == "subagent"
-    assert lineage[0]["session_id"] == "child-session"
+    assert lineage[0]["session_id"] == "parent-session:child-session"
     assert lineage[0]["parent_session_id"] == "parent-session"
     assert lineage[0]["agent_id"] == "child-agent"
 
