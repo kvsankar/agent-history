@@ -3,7 +3,8 @@
 The configuration names the archive destination and the sources to collect. Entries in
 ``sources`` that share a name merge into one source; each entry becomes one *part*. Two
 parts of one source may not cover the same agent, because its files would map to the
-same archive paths.
+same archive paths. Include patterns may not reach inside an agent's folder, which only
+its layout reads.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from agent_history.archive.errors import ArchiveConfigError
-from agent_history.archive.layouts import AGENT_NAMES
+from agent_history.archive.layouts import AGENT_NAMES, agent_folder_of, agent_folders
 
 DEFAULT_COMPRESSION_LEVEL = 19
 SOURCE_KINDS = ("live", "imported", "restored")
@@ -162,6 +163,7 @@ def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:
         )
     for source in merged.values():
         _reject_overlapping_parts(source)
+        _reject_includes_in_agent_folders(source)
     return tuple(merged.values())
 
 
@@ -180,6 +182,38 @@ def _reject_overlapping_parts(source: SourceConfig) -> None:
                     'other copy its own source name, for example with kind "imported".'
                 )
             first_part[agent] = number
+
+
+def _reject_includes_in_agent_folders(source: SourceConfig) -> None:
+    """Refuse an include whose fixed leading part lies inside an agent folder.
+
+    Agent folders are read only through their layouts. An include that starts with a
+    wildcard can still match inside one; the walk skips those files.
+    """
+    overrides = [root for part in source.parts for root in part.roots.values()]
+    for part in source.parts:
+        if not part.include:
+            continue
+        folders = agent_folders(source.platform, part.home, overrides)
+        for pattern in part.include:
+            folder = agent_folder_of(_fixed_part(pattern), folders, source.platform)
+            if folder is not None:
+                raise ArchiveConfigError(
+                    f"Source {source.name}: include pattern {pattern!r} reaches inside the "
+                    f"agent folder {folder or part.home}. Agent folders are archived through "
+                    "their layouts only; include patterns are for files elsewhere in the home."
+                )
+
+
+def _fixed_part(pattern: str) -> str:
+    """The folders and name at the start of a pattern, up to its first wildcard."""
+    fixed = []
+    for segment in pattern.replace("\\", "/").split("/"):
+        if "*" in segment or "?" in segment:
+            break
+        if segment not in ("", "."):
+            fixed.append(segment)
+    return "/".join(fixed)
 
 
 def _covered_agents(part: SourcePart) -> tuple[str, ...]:

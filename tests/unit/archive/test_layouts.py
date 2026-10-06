@@ -113,8 +113,9 @@ def test_credential_files_are_never_selected(tmp_path):
     _touch(tmp_path, ".claude/projects/p/auth.json")
     _touch(tmp_path, ".claude/projects/p/my-oauth-token.json")
     _touch(tmp_path, ".claude/projects/p/server.pem")
-    _touch(tmp_path, ".codex/auth.json")
-    source = _source(tmp_path, include=[".codex/auth.json", ".claude/projects/**"])
+    _touch(tmp_path, "tools/auth.json")
+    _touch(tmp_path, "tools/app/server.key")
+    source = _source(tmp_path, include=["tools/auth.json", "tools/**"])
 
     assert set(_selected(source)) == set()
 
@@ -165,10 +166,11 @@ def test_mcp_configurations_are_never_selected_by_layouts_or_includes(tmp_path):
     _touch(tmp_path, ".gemini/antigravity/mcp_config.json")
     _touch(tmp_path, ".gemini/antigravity/conversations/c1.pb")
     _touch(tmp_path, ".copilot/mcp-config.json")
-    _touch(tmp_path, ".claude/plugins/x/.mcp.json")
     _touch(tmp_path, ".config/Code/User/mcp.json")
+    _touch(tmp_path, ".config/tool/mcp_config.json")
+    _touch(tmp_path, "tools/plugins/x/.mcp.json")
     _touch(tmp_path, "notes/n.md")
-    include = [".copilot/**", ".claude/plugins/**", ".config/**", "notes/**"]
+    include = [".config/**", "tools/**", "notes/**"]
 
     selected = _selected(_source(tmp_path, include=include))
 
@@ -235,19 +237,13 @@ def test_copilot_chat_index_databases_are_skipped(tmp_path):
 
 
 def _merged_source(home: Path, old: Path):
-    """A source whose second entry includes another home's ``.claude`` folder, ``old``."""
-    assert old.name == ".claude"
+    """A source whose two entries include the ``notes`` folders of two homes."""
     entries = [
         {"name": "src", "kind": "live", "platform": "linux", "home": str(home)},
-        {
-            "name": "src",
-            "kind": "live",
-            "platform": "linux",
-            "home": str(old.parent),
-            "agents": [],
-            "include": [".claude/**"],
-        },
+        {"name": "src", "kind": "live", "platform": "linux", "home": str(old), "agents": []},
     ]
+    for entry in entries:
+        entry["include"] = ["notes/**"]
     return parse_config({"archive": {"destination": "/d"}, "sources": entries}).sources[0]
 
 
@@ -256,48 +252,45 @@ def _set_mtime(path: Path, stamp: int) -> None:
 
 
 def test_merged_parts_with_a_differing_copy_report_it(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old" / ".claude"
-    _touch(home, ".claude/projects/p/a.jsonl", "live\n")
-    _touch(old, "projects/p/a.jsonl", "older and longer\n")
-    _touch(old, "projects/p/only-old.jsonl")
+    home, old = tmp_path / "home", tmp_path / "old"
+    _touch(home, "notes/a.md", "live\n")
+    _touch(old, "notes/a.md", "older and longer\n")
+    _touch(old, "notes/only-old.md")
 
     items = list(iter_source_files(_merged_source(home, old)))
 
     paths = [(item.rel_path, item.path, item.error is not None) for item in items]
     assert sorted(paths) == [
-        (".claude/projects/p/a.jsonl", home / ".claude/projects/p/a.jsonl", False),
-        (".claude/projects/p/a.jsonl", old / "projects/p/a.jsonl", True),
-        (".claude/projects/p/only-old.jsonl", old / "projects/p/only-old.jsonl", False),
+        ("notes/a.md", home / "notes/a.md", False),
+        ("notes/a.md", old / "notes/a.md", True),
+        ("notes/only-old.md", old / "notes/only-old.md", False),
     ]
     (error,) = [item.error for item in items if item.error]
-    assert str(old / "projects/p/a.jsonl") in error
+    assert str(old / "notes/a.md") in error
 
 
 def test_merged_parts_with_the_same_content_are_not_reported(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old" / ".claude"
-    _touch(home, ".claude/history.jsonl", "same\n")
-    _touch(old, "history.jsonl", "same\n")
-    _touch(home, ".claude/projects/p/a.jsonl", "same size, other time\n")
-    _touch(old, "projects/p/a.jsonl", "same size, other time\n")
-    _set_mtime(home / ".claude/history.jsonl", 1_790_000_000)
-    _set_mtime(old / "history.jsonl", 1_790_000_000)
-    _set_mtime(old / "projects/p/a.jsonl", 1_780_000_000)
+    home, old = tmp_path / "home", tmp_path / "old"
+    _touch(home, "notes/b.md", "same\n")
+    _touch(old, "notes/b.md", "same\n")
+    _touch(home, "notes/a.md", "same size, other time\n")
+    _touch(old, "notes/a.md", "same size, other time\n")
+    _set_mtime(home / "notes/b.md", 1_790_000_000)
+    _set_mtime(old / "notes/b.md", 1_790_000_000)
+    _set_mtime(old / "notes/a.md", 1_780_000_000)
 
     items = list(iter_source_files(_merged_source(home, old)))
 
     assert [item.error for item in items] == [None, None]
-    assert {item.path for item in items} == {
-        home / ".claude/history.jsonl",
-        home / ".claude/projects/p/a.jsonl",
-    }
+    assert {item.path for item in items} == {home / "notes/b.md", home / "notes/a.md"}
 
 
 def test_merged_parts_with_same_size_and_other_content_report_it(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old" / ".claude"
-    _touch(home, ".claude/history.jsonl", "aaaa\n")
-    _touch(old, "history.jsonl", "bbbb\n")
-    _set_mtime(home / ".claude/history.jsonl", 1_790_000_000)
-    _set_mtime(old / "history.jsonl", 1_780_000_000)
+    home, old = tmp_path / "home", tmp_path / "old"
+    _touch(home, "notes/a.md", "aaaa\n")
+    _touch(old, "notes/a.md", "bbbb\n")
+    _set_mtime(home / "notes/a.md", 1_790_000_000)
+    _set_mtime(old / "notes/a.md", 1_780_000_000)
 
     items = list(iter_source_files(_merged_source(home, old)))
 
@@ -529,77 +522,24 @@ def test_copilot_session_databases_are_snapshots(tmp_path):
     assert selected[".copilot/session-state/abc/session.db"].database.mode == "snapshot"
 
 
-def test_includes_under_an_agent_folder_keep_its_database_rules(tmp_path):
-    _touch(tmp_path, ".copilot/data.db")
-    _touch(tmp_path, ".codex/state_5.sqlite")
-    _touch(tmp_path, ".codex/logs_2.sqlite")
-    _touch(tmp_path, ".codex/hooks.json")
-    source = _source(tmp_path, agents=["claude"], include=[".copilot/**", ".codex/**"])
-
-    selected = _selected(source)
-
-    assert set(selected) == {
-        ".copilot/data.db",
-        ".codex/state_5.sqlite",
-        ".codex/logs_2.sqlite",
-        ".codex/hooks.json",
-    }
-    data_db = selected[".copilot/data.db"]
-    assert data_db.agent == "copilot-cli"
-    assert data_db.database is not None
-    assert "accounts.access_token" in data_db.database.blank_columns
-    assert selected[".codex/state_5.sqlite"].database.mode == "snapshot"
-    assert selected[".codex/logs_2.sqlite"].database.mode == "log"
-    assert selected[".codex/hooks.json"].database is None
-
-
-def test_includes_under_an_agent_folder_keep_its_exclusions(tmp_path):
-    chat = ".config/Code/User/workspaceStorage/ws1/GitHub.copilot-chat"
-    _touch(tmp_path, ".gemini/tmp/abc/chats/session-1.json")
-    _touch(tmp_path, ".gemini/tmp/abc/tool-outputs/out.txt")
-    _touch(tmp_path, ".gemini/tmp/bin/rg")
-    _touch(tmp_path, f"{chat}/transcripts/t.jsonl")
-    _touch(tmp_path, f"{chat}/codebase-external.sqlite")
-    _touch(tmp_path, ".copilot/data.db-wal")
-    source = _source(
-        tmp_path, agents=["claude"], include=[".gemini/**", ".config/**", ".copilot/**"]
-    )
-
-    assert set(_selected(source)) == {
-        ".gemini/tmp/abc/chats/session-1.json",
-        f"{chat}/transcripts/t.jsonl",
-    }
-
-
 def test_includes_never_select_files_inside_credential_folders(tmp_path):
-    _touch(tmp_path, ".copilot/mcp-oauth-config/abc123.json")
-    _touch(tmp_path, ".copilot/mcp-oauth-config/abc123.tokens.json")
-    _touch(tmp_path, ".copilot/run/ws.token")
-    _touch(tmp_path, ".copilot/run/ws.release.token")
+    _touch(tmp_path, ".config/tool/mcp-oauth-config/abc123.json")
+    _touch(tmp_path, ".config/tool/mcp-oauth-config/abc123.tokens.json")
+    _touch(tmp_path, ".config/tool/run/ws.token")
     _touch(tmp_path, ".config/tool/credentials/default.json")
-    _touch(tmp_path, ".copilot/session-state/abc/events.jsonl")
-    source = _source(tmp_path, agents=["cagelens"], include=[".copilot/**", ".config/**"])
+    _touch(tmp_path, ".config/tool/settings.json")
+    source = _source(tmp_path, agents=[], include=[".config/**"])
 
-    assert set(_selected(source)) == {".copilot/session-state/abc/events.jsonl"}
+    assert set(_selected(source)) == {".config/tool/settings.json"}
 
 
 def test_unreadable_credential_folder_under_an_include_is_not_an_error(tmp_path, monkeypatch):
-    from agent_history.archive import layouts
+    _touch(tmp_path, "tools/mcp-oauth-config/abc123.json")
+    _touch(tmp_path, "tools/chats/c.json")
+    _refuse_folder(monkeypatch, tmp_path / "tools" / "mcp-oauth-config")
+    source = _source(tmp_path, agents=[], include=["tools/**"])
 
-    _touch(tmp_path, ".copilot/mcp-oauth-config/abc123.json")
-    _touch(tmp_path, ".copilot/chats/c.json")
-    locked = tmp_path / ".copilot" / "mcp-oauth-config"
-    real_scandir = layouts.os.scandir
-
-    def scandir(path):
-        if Path(path) == locked:
-            raise PermissionError(13, "Permission denied", str(path))
-        return real_scandir(path)
-
-    monkeypatch.setattr(layouts.os, "scandir", scandir)
-    source = _source(tmp_path, agents=["cagelens"], include=[".copilot/**"])
-
-    assert set(_selected(source)) == {".copilot/chats/c.json"}
+    assert set(_selected(source)) == {"tools/chats/c.json"}
 
 
 def test_default_layouts_keep_project_folders_named_like_credentials(tmp_path):
@@ -635,109 +575,39 @@ def _sqlite(root: Path, rel: str, wal: bool = False) -> Path:
     return path
 
 
-def test_includes_follow_the_databases_that_layouts_leave_out(tmp_path):
-    _sqlite(tmp_path, ".codex/thread_history_1.sqlite")
-    _sqlite(tmp_path, ".copilot/repo-metadata-cache.db")
-    _sqlite(tmp_path, ".cagelens/metrics.db")
-    _sqlite(tmp_path, ".cagelens/backups/metrics.db.20260108-175254")
-    _touch(tmp_path, ".cagelens/codex_index.json")
-    _touch(tmp_path, ".cagelens/remote_u1_codex/s.jsonl")
-    _touch(tmp_path, ".cagelens/remote-cache/h/claude/x.jsonl")
-    _touch(tmp_path, ".cagelens/archive-work/staging/f.zst")
-    _touch(tmp_path, ".cagelens/config.json")
-    _touch(tmp_path, ".codex/history.jsonl")
-    _touch(tmp_path, ".copilot/chats/c.json")
-    include = [".codex/**", ".copilot/**", ".cagelens/**"]
-
-    selected = _selected(_source(tmp_path, agents=[], include=include))
-
-    assert set(selected) == {
-        ".cagelens/config.json",
-        ".codex/history.jsonl",
-        ".copilot/chats/c.json",
-    }
-
-
-def test_includes_snapshot_any_sqlite_database_no_rule_names(tmp_path):
-    _sqlite(tmp_path, ".codex/sqlite/codex-dev.db", wal=True)
-    _sqlite(tmp_path, ".copilot/store/index.bin")
+def test_includes_snapshot_any_sqlite_database_outside_agent_folders(tmp_path):
+    _sqlite(tmp_path, ".local/share/app/app-dev.db", wal=True)
+    _sqlite(tmp_path, "tools/store/index.bin")
     _sqlite(tmp_path, "tools/app/state.sqlite")
-    _touch(tmp_path, ".codex/sqlite/notes.db", "not a database")
+    _touch(tmp_path, ".local/share/app/notes.db", "not a database")
     _touch(tmp_path, "tools/app/plain.txt", "text")
-    include = [".codex/**", ".copilot/**", "tools/**"]
+    include = [".local/**", "tools/**"]
 
     selected = _selected(_source(tmp_path, agents=[], include=include))
 
     assert set(selected) == {
-        ".codex/sqlite/codex-dev.db",
-        ".copilot/store/index.bin",
+        ".local/share/app/app-dev.db",
+        "tools/store/index.bin",
         "tools/app/state.sqlite",
-        ".codex/sqlite/notes.db",
+        ".local/share/app/notes.db",
         "tools/app/plain.txt",
     }
-    for rel in (".codex/sqlite/codex-dev.db", ".copilot/store/index.bin", "tools/app/state.sqlite"):
+    for rel in (".local/share/app/app-dev.db", "tools/store/index.bin", "tools/app/state.sqlite"):
         rule = selected[rel].database
         assert rule is not None, rel
         assert (rule.mode, rule.blank_columns) == ("snapshot", ())
-    assert selected[".codex/sqlite/notes.db"].database is None
+        assert selected[rel].agent == "other"
+    assert selected[".local/share/app/notes.db"].database is None
     assert selected["tools/app/plain.txt"].database is None
 
 
-def test_includes_leave_out_agent_configuration_that_holds_tokens(tmp_path):
-    left_out = [
-        ".codex/config.toml",
-        ".codex/config.toml.bak-20260928-150907",
-        ".codex/config.toml~",
-        ".codex/.config.toml.un~",
-        ".codex/backups/removal-20260827/config.toml",
-        ".codex/computer-use/config.json",
-        ".codex/log/codex-login.log",
-        ".copilot/config.json",
-        ".copilot/settings.json",
-        ".copilot/logs/process-1790254081843-19836.log",
-        ".copilot/logs/extensions/canvas-1790254081843-10532.log",
-        ".pi/agent/models.json",
-        ".pi/agent/models.json.bak-20260623-140738",
-        ".claude/daemon-auth-status.json",
-        ".claude/daemon-auth-cooldown",
-        "tools/app/auth-status.json",
-        "tools/app/login.log",
-    ]
-    kept = [
-        ".codex/hooks.json",
-        ".codex/backups/removal-20260827/hooks.json",
-        ".copilot/command-history-state.json",
-        ".pi/agent/settings.json",
-        ".claude/settings.json",
-        ".claude/daemon.status.json",
-        "tools/app/app.log",
-    ]
-    for rel in left_out + kept:
+def test_includes_leave_out_sign_in_files_outside_agent_folders(tmp_path):
+    for rel in ("tools/app/auth-status.json", "tools/app/login.log", "tools/app/app.log"):
         _touch(tmp_path, rel)
-    include = [".codex/**", ".copilot/**", ".pi/**", ".claude/**", "tools/**"]
 
-    assert set(_selected(_source(tmp_path, agents=[], include=include))) == set(kept)
+    selected = _selected(_source(tmp_path, agents=[], include=["tools/**"]))
 
-
-def test_includes_inside_agent_folders_follow_the_layouts_folder_rules(tmp_path):
-    # Claude names a project folder after its working folder, which can be any name.
-    _touch(tmp_path, ".claude/projects/-home-alex-oauth-proxy/s1.jsonl")
-    _touch(tmp_path, ".claude/projects/-home-alex-credentials-api/s2.jsonl")
-    _touch(tmp_path, ".codex/skills/oauth/SKILL.md")
-    # Credential folders that a layout names stay out.
-    _touch(tmp_path, ".copilot/mcp-oauth-config/abc123.json")
-    _touch(tmp_path, ".codex/mcp-oauth-locks/server-1")
-    # Outside agent folders, folder names are still checked.
-    _touch(tmp_path, "tools/oauth-proxy/notes.md")
-    _touch(tmp_path, "tools/app/notes.md")
-    include = [".claude/**", ".codex/**", ".copilot/**", "tools/**"]
-
-    assert set(_selected(_source(tmp_path, agents=[], include=include))) == {
-        ".claude/projects/-home-alex-oauth-proxy/s1.jsonl",
-        ".claude/projects/-home-alex-credentials-api/s2.jsonl",
-        ".codex/skills/oauth/SKILL.md",
-        "tools/app/notes.md",
-    }
+    assert set(selected) == {"tools/app/app.log"}
 
 
 def test_an_include_snapshots_a_database_whose_rows_are_only_in_its_wal(tmp_path):

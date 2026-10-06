@@ -419,6 +419,49 @@ def is_within(rel_path: str, folders) -> bool:
     return any(not f or rel_path == f or rel_path.startswith(f + "/") for f in folders)
 
 
+# Source platforms whose file systems compare names without regard to case.
+_CASE_INSENSITIVE_PLATFORMS = ("windows", "darwin")
+
+
+def agent_folders(platform: str, home: Path | None, overrides=()) -> tuple[str, ...]:
+    """The home-relative folders that only the layouts read.
+
+    These are every layout's default roots on ``platform``, whether or not the source
+    reads that agent, and every root override in ``overrides`` that lies inside
+    ``home`` ("" when an override is the home itself). Configuration includes never
+    select files inside them.
+    """
+    folders = [root for layout in LAYOUTS for root in layout.roots_for(platform)]
+    if home is not None:
+        fold = _case_fold(platform)
+        base = Path(os.path.normpath(home)).as_posix().rstrip("/")
+        for root in overrides:
+            path = Path(os.path.normpath(root)).as_posix()
+            if fold(path) == fold(base):
+                folders.append("")
+            elif fold(path).startswith(fold(base) + "/"):
+                folders.append(path[len(base) + 1 :])
+    return tuple(dict.fromkeys(folders))
+
+
+def agent_folder_of(rel_path: str, folders, platform: str) -> str | None:
+    """The folder of ``folders`` that ``rel_path`` is or lies inside, if any.
+
+    Names are compared case-insensitively on platforms whose file systems do so.
+    """
+    fold = _case_fold(platform)
+    path = fold(rel_path)
+    for folder in folders:
+        key = fold(folder)
+        if not key or path == key or path.startswith(key + "/"):
+            return folder
+    return None
+
+
+def _case_fold(platform: str):
+    return str.lower if platform in _CASE_INSENSITIVE_PLATFORMS else str
+
+
 def _check_configured_folders(source: SourceConfig) -> None:
     for part in source.parts:
         agents = AGENT_NAMES if part.agents is None else part.agents

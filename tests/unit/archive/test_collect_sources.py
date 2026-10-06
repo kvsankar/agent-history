@@ -119,56 +119,29 @@ def test_folder_without_permissions_does_not_abort_the_run(env):
 
 
 def test_differing_copy_in_a_merged_part_is_an_error_not_dropped(env):
-    old = env["tmp"] / "old-claude" / ".claude"
-    _write(env["home"], SESSION, b"live\n", mtime=1_790_000_000)
-    _write(old, "projects/-home-alex-shop/a1.jsonl", b"older, other text\n", mtime=1_780_000_000)
-    _write(old, "projects/-home-alex-shop/z9.jsonl", b"only in the old tree\n")
-    merged = {"name": "src", "kind": "live", "platform": "linux", "home": str(old.parent)}
-    merged.update(agents=[], include=[".claude/**"])
+    old = env["tmp"] / "old-home"
+    _write(env["home"], "notes/a.md", b"live\n", mtime=1_790_000_000)
+    _write(old, "notes/a.md", b"older, other text\n", mtime=1_780_000_000)
+    _write(old, "notes/z9.md", b"only in the old home\n")
+    live = {"name": "src", "kind": "live", "platform": "linux", "home": str(env["home"])}
+    live["include"] = ["notes/**"]
+    merged = {"name": "src", "kind": "live", "platform": "linux", "home": str(old)}
+    merged.update(agents=[], include=["notes/**"])
+    config = parse_config(
+        {
+            "archive": {"destination": str(env["dest"]), "compression_level": 3},
+            "sources": [live, merged],
+        }
+    )
 
-    summary = _collect(env, config=_config(env, merged))
+    summary = _collect(env, config=config)
 
     assert summary.errors == 1
     assert summary.written == 2
     entries = _run_entries(env, summary.run_id)
     (error,) = [entry for entry in entries if entry["type"] == "error"]
-    assert error["path"] == SESSION
-    assert "old-claude" in error["message"]
-
-
-def test_an_include_over_an_agent_folder_still_blanks_its_database(env):
-    token = "gho_" + "x" * 36
-    db = env["home"] / ".copilot" / "data.db"
-    db.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, access_token TEXT)")
-    conn.execute("INSERT INTO accounts (access_token) VALUES (?)", (token,))
-    conn.commit()  # the row stays in data.db-wal while the connection is open
-    entry = {
-        "name": "src",
-        "kind": "live",
-        "platform": "linux",
-        "home": str(env["home"]),
-        "agents": ["claude"],
-        "include": [".copilot/**"],
-    }
-    config = parse_config(
-        {"archive": {"destination": str(env["dest"]), "compression_level": 3}, "sources": [entry]}
-    )
-    try:
-        summary = _collect(env, config=config)
-    finally:
-        conn.close()
-
-    entries = {entry["path"]: entry for entry in _run_entries(env, summary.run_id)}
-    assert entries[".copilot/data.db"]["kind"] == "sqlite-snapshot"
-    restored = env["tmp"] / "restored.db"
-    archived = env["dest"] / "sources/src/files/.copilot/data.db.zst"
-    restored.write_bytes(zstandard.ZstdDecompressor().decompress(archived.read_bytes()))
-    assert token.encode() not in restored.read_bytes()
-    with sqlite3.connect(restored) as check:
-        assert check.execute("SELECT COUNT(*) FROM accounts").fetchone() == (1,)
+    assert error["path"] == "notes/a.md"
+    assert "old-home" in error["message"]
 
 
 def test_an_include_snapshots_a_database_that_no_layout_names(env):
