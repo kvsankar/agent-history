@@ -46,7 +46,7 @@ def test_test_mode_pi_override_skips_host_platform_scan(
     ctx = ContextBuilder().build()
 
     assert ctx.pi_sessions_dir == pi_dir
-    assert ctx.available_homes == {"wsl": [], "windows": [], "remote": []}
+    assert ctx.available_homes == {"wsl": [], "windows": [], "remote": [], "archive": []}
 
 
 def test_gemini_cli_home_points_to_dot_gemini_tmp(monkeypatch, tmp_path: Path) -> None:

@@ -366,6 +366,10 @@ Examples:
 
   cagelens home add --wsl Ubuntu
       Add one WSL distribution.
+
+  cagelens home add --archive /mnt/c/archive/old-vm --name oldvm
+      Add a retired machine's saved home directories as read-only homes,
+      one per home/<user>/ folder (archive:oldvm-<user>).
 """
 
 
@@ -1142,6 +1146,19 @@ class CLIParser:
             help="Add WSL as a home",
         )
         home_add.add_argument("--web", action="store_true", help="Add Claude.ai web as a home")
+        home_add.add_argument(
+            "--archive",
+            metavar="PATH",
+            help=(
+                "Add a saved home directory of a retired machine as a read-only home; "
+                "PATH holds .claude/.codex/... or home/<user>/ folders"
+            ),
+        )
+        home_add.add_argument(
+            "--name",
+            metavar="NAME",
+            help="Name for --archive; homes are archive:NAME or archive:NAME-<user>",
+        )
 
         # home remove
         home_remove = home_sub.add_parser("remove", help="Remove a home")
@@ -2182,6 +2199,8 @@ class CLIParser:
             verb_args["windows"] = getattr(args, "windows", False)
             verb_args["wsl"] = getattr(args, "wsl", None)
             verb_args["web"] = getattr(args, "web", False)
+            verb_args["archive"] = getattr(args, "archive", None)
+            verb_args["name"] = getattr(args, "name", None)
 
         # Gemini-index args
         if resource == RESOURCE_GEMINI_INDEX:

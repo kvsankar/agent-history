@@ -292,6 +292,8 @@ def _normalize_summary_workspace(home: str, workspace: str) -> str:
 
 
 def _workspace_status(home: str, workspace_display: str) -> str:
+    if home.startswith("archive:"):
+        return "archived"
     if home.startswith("remote:") or home == "web":
         return "ok"
     if workspace_display.startswith("[hash:"):

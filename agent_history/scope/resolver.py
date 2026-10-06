@@ -473,6 +473,9 @@ class ScopeResolver:
                 for remote in self.context.available_homes.get("remote", []):
                     homes.append(f"remote:{remote}")
 
+            for archive in self.context.available_homes.get("archive", []):
+                homes.append(f"archive:{archive}")
+
             if not args.no_web:
                 homes.append("web")
 

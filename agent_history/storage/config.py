@@ -17,7 +17,7 @@ import platform
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from agent_history.utils.paths import (
     is_cached_workspace,
@@ -270,6 +270,41 @@ def get_saved_sources() -> list:
 def get_saved_homes() -> list:
     """Get list of saved homes (preferred over sources for clarity)."""
     return get_saved_sources()
+
+
+# Archive homes are saved home directories of machines that no longer run.
+ARCHIVE_HOME_PREFIX = "archive:"
+_AGENT_HOME_DIRS = (".claude", ".codex", ".gemini", ".pi", ".copilot")
+
+
+def _has_agent_dirs(path: Path) -> bool:
+    return any((path / name).is_dir() for name in _AGENT_HOME_DIRS)
+
+
+def find_archive_user_homes(root: Path) -> Dict[str, Path]:
+    """Return the saved home directories in an archive folder.
+
+    ``root`` is either one saved home directory (it holds ``.claude`` and the
+    like), keyed by "", or an archive that mirrors a machine's layout with
+    ``home/<user>/`` directories, keyed by user name.
+    """
+    if _has_agent_dirs(root):
+        return {"": root}
+    home_dir = root / "home"
+    if not home_dir.is_dir():
+        return {}
+    return {
+        child.name: child
+        for child in sorted(home_dir.iterdir())
+        if child.is_dir() and _has_agent_dirs(child)
+    }
+
+
+def get_archive_home_path(name: str) -> Optional[Path]:
+    """Return the saved home directory registered for an archive home name."""
+    archives = load_config().get("archives") or {}
+    path = archives.get(name)
+    return Path(path) if path else None
 
 
 # =============================================================================

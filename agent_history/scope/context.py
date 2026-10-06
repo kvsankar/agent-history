@@ -504,11 +504,13 @@ class ContextBuilder:
             "wsl": [],
             "windows": [],
             "remote": [],
+            "archive": [],
         }
 
         if not self._should_skip_platform_scan():
             self._add_detected_platform_homes(homes)
         self._add_saved_remote_homes(homes)
+        self._add_saved_archive_homes(homes)
 
         return homes
 
@@ -601,6 +603,17 @@ class ContextBuilder:
         except Exception:
             pass
 
+    def _add_saved_archive_homes(self, homes: dict[str, list[str]]) -> None:
+        """Append configured archive homes (saved home directories)."""
+        from agent_history.storage.config import ARCHIVE_HOME_PREFIX, get_saved_homes
+
+        try:
+            for home_spec in get_saved_homes():
+                if isinstance(home_spec, str) and home_spec.startswith(ARCHIVE_HOME_PREFIX):
+                    homes["archive"].append(home_spec[len(ARCHIVE_HOME_PREFIX) :])
+        except Exception:
+            pass
+
     def _remote_name_from_home_spec(self, home_spec: Any) -> str | None:
         """Normalize a configured home entry to a remote host name."""
         if isinstance(home_spec, dict):
@@ -609,7 +622,7 @@ class ContextBuilder:
             return None
         if home_spec.startswith("remote:"):
             return home_spec[7:]
-        if home_spec.startswith(("wsl:", "windows:")):
+        if home_spec.startswith(("wsl:", "windows:", "archive:")):
             return None
         return home_spec
 

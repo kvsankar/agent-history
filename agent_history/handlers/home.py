@@ -5,12 +5,58 @@ These are special handlers that modify the config file rather than
 operating on a scope of sessions.
 """
 
+from pathlib import Path
 from typing import Any, Dict
 
 from agent_history.handlers.base import CommandResult, VerbHandler
 from agent_history.scope.context import OutputArgs
 from agent_history.scope.types import ConcreteScope
-from agent_history.storage.config import load_config, save_config
+from agent_history.storage.config import (
+    ARCHIVE_HOME_PREFIX,
+    find_archive_user_homes,
+    load_config,
+    save_config,
+)
+
+
+def _error(*messages: str) -> CommandResult:
+    return CommandResult(success=False, data=None, data_type="message", errors=list(messages))
+
+
+def _add_archive_homes(path_value: str, name: Any) -> CommandResult:
+    """Register an archive folder's saved home directories as archive homes."""
+    if not name:
+        return _error("--archive needs --name, e.g. --name oldvm")
+    root = Path(path_value).expanduser().resolve()
+    user_homes = find_archive_user_homes(root)
+    if not user_homes:
+        return _error(
+            f"No agent session folders found in {root}.",
+            "Expected .claude, .codex, .gemini, .pi or .copilot there, or home/<user>/ "
+            "folders that hold them.",
+        )
+
+    config = load_config()
+    homes = config.get("homes", [])
+    archives = config.get("archives") or {}
+    added = []
+    for user, user_home in user_homes.items():
+        archive_name = f"{name}-{user}" if user else str(name)
+        home_key = f"{ARCHIVE_HOME_PREFIX}{archive_name}"
+        archives[archive_name] = str(user_home)
+        if home_key not in homes:
+            homes.append(home_key)
+        added.append(home_key)
+    config["homes"] = homes
+    config["sources"] = homes  # keep in sync for backward compatibility
+    config["archives"] = archives
+    if not save_config(config):
+        return _error("Failed to save configuration")
+    return CommandResult(
+        success=True,
+        data={"message": "Added archive home(s): " + ", ".join(added)},
+        data_type="message",
+    )
 
 
 class HomeAddHandler(VerbHandler):
@@ -37,6 +83,9 @@ class HomeAddHandler(VerbHandler):
         add_windows = verb_args.get("windows", False)
         add_wsl = verb_args.get("wsl")
         add_web = verb_args.get("web", False)
+
+        if verb_args.get("archive"):
+            return _add_archive_homes(verb_args["archive"], verb_args.get("name"))
 
         # Determine what to add
         if add_web:
@@ -168,6 +217,8 @@ class HomeRemoveHandler(VerbHandler):
         homes.remove(source)
         config["homes"] = homes
         config["sources"] = homes  # keep in sync for backward compatibility
+        if source.startswith(ARCHIVE_HOME_PREFIX) and config.get("archives"):
+            config["archives"].pop(source[len(ARCHIVE_HOME_PREFIX) :], None)
 
         if save_config(config):
             return CommandResult(

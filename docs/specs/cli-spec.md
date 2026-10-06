@@ -291,7 +291,7 @@ session list --ah --aw --agent copilot-vscode  # all VS Code Copilot sessions, a
 
 ### home
 
-Manage data sources (local, WSL, Windows, SSH remotes).
+Manage data sources (local, WSL, Windows, SSH remotes, archives).
 
 ```
 home [list]                       # List all configured homes
@@ -301,10 +301,19 @@ home add --wsl                    # Add WSL
 home add --windows                # Add Windows
 home add --web                    # Add Claude.ai web home
 home add user@hostname            # Add SSH remote
+home add --archive PATH --name N  # Add saved home directories of a retired machine
 home remove <source>              # Remove a home
 home export [name]                # Export all sessions from home(s)
 home stats [name]                 # Stats for home(s)
 ```
+
+Archive homes are read-only saved home directories of machines that no longer
+run. `PATH` is either one saved home directory (it holds `.claude`, `.codex`,
+`.gemini`, `.pi` or `.copilot`), registered as `archive:N`, or an archive that
+mirrors the machine's layout, where each `home/<user>/` folder becomes
+`archive:N-<user>`. The paths are stored in config under `archives`. Archive
+homes are read like local files with no network access, keep the original
+workspace paths, show the status `archived`, and are included in `--ah`.
 
 ### ws
 

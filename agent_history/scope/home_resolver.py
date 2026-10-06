@@ -463,6 +463,61 @@ class RemoteHomeResolver(HomeResolver):
         return None
 
 
+class ArchiveHomeResolver(HomeResolver):
+    """
+    Resolver for archive homes: saved home directories of retired machines.
+
+    The saved directory keeps the original layout (``.claude/projects``,
+    ``.codex/sessions`` and so on). Its location is registered in config
+    under ``archives`` by name; it is read like a local home, read-only.
+    """
+
+    def __init__(self, name: str):
+        self._name = name
+
+    @property
+    def home_type(self) -> str:
+        return "archive"
+
+    @property
+    def name(self) -> str:
+        """Return the archive home name (the part after "archive:")."""
+        return self._name
+
+    def _dir(self, *parts: str) -> Path | None:
+        from agent_history.storage.config import get_archive_home_path
+
+        root = get_archive_home_path(self._name)
+        if root is None:
+            return None
+        candidate = root.joinpath(*parts)
+        return candidate if candidate.exists() else None
+
+    def get_claude_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        return self._dir(".claude", "projects")
+
+    def get_codex_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        return self._dir(".codex", "sessions")
+
+    def get_gemini_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        return self._dir(".gemini", "tmp")
+
+    def get_pi_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        return self._dir(".pi", "agent", "sessions")
+
+    def get_copilot_cli_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        return self._dir(".copilot", "session-state")
+
+    def get_copilot_vscode_dir(self, context: ResolutionContext) -> Path | None:
+        del context
+        return None
+
+
 def get_resolver_for_home(home: str) -> HomeResolver:
     """
     Factory function to get the appropriate resolver for a home type.
@@ -513,6 +568,9 @@ def get_resolver_for_home(home: str) -> HomeResolver:
     if home.startswith("remote:"):
         remote_name = home[7:]  # Extract remote name after "remote:"
         return RemoteHomeResolver(remote_name=remote_name if remote_name else None)
+
+    if home.startswith("archive:"):
+        return ArchiveHomeResolver(name=home[len("archive:") :])
 
     # Default to local for unknown home types
     return LocalHomeResolver()

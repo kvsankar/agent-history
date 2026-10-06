@@ -373,6 +373,7 @@ class HomeListHandler(VerbHandler):
         homes: Dict[str, HomeDict] = OrderedDict()
         homes["local"] = self._empty_home("local", "local", status="ok")
         homes["web"] = self._empty_home("web", "web", status="ok")
+        self._add_archive_homes(homes, get_saved_homes)
 
         if self._should_skip_non_local_home_probe(os.environ):
             return homes
@@ -450,6 +451,16 @@ class HomeListHandler(VerbHandler):
         except Exception:
             pass
 
+    def _add_archive_homes(self, homes: Dict[str, HomeDict], saved_home_loader: Any) -> None:
+        """Add configured archive homes; they are local files, so never probed."""
+        try:
+            saved_homes = saved_home_loader()
+        except Exception:
+            return
+        for home_spec in saved_homes:
+            if isinstance(home_spec, str) and home_spec.startswith("archive:"):
+                homes[home_spec] = self._empty_home(home_spec, "archive", status="archived")
+
     def _add_remote_homes(self, homes: Dict[str, HomeDict], saved_home_loader: Any) -> None:
         """Add configured SSH remote homes."""
         try:
@@ -491,7 +502,7 @@ class HomeListHandler(VerbHandler):
         if (
             not name
             or name in {"web", "wsl", "windows"}
-            or name.startswith(("wsl:", "windows:", "local"))
+            or name.startswith(("wsl:", "windows:", "local", "archive:"))
         ):
             return None
         if name.startswith("remote:"):
@@ -531,6 +542,8 @@ class HomeListHandler(VerbHandler):
                     home_type = "windows"
                 elif home_key.startswith("remote:"):
                     home_type = "remote"
+                elif home_key.startswith("archive:"):
+                    home_type = "archive"
 
                 homes[home_key] = {
                     "home": home_key,
