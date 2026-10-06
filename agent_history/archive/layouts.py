@@ -126,6 +126,9 @@ class AgentLayout:
     # The folder, relative to the root, whose subfolders name each session's workspace
     # (Claude's projects/<workspace>/), when the agent keeps sessions that way.
     workspace_folder: str | None = None
+    # Home-relative folders the agent owns beyond its roots (Pi reads .pi/agent but keeps
+    # skills and settings in .pi). Configuration includes stay out of these too.
+    owned_folders: tuple[str, ...] = ()
 
     def roots_for(self, platform: str) -> tuple[str, ...]:
         return self.roots.get(platform) or self.roots.get("*", ())
@@ -230,6 +233,7 @@ LAYOUTS: tuple[AgentLayout, ...] = (
     AgentLayout(
         name="pi",
         roots={"*": (".pi/agent",)},
+        owned_folders=(".pi",),
         include=("sessions/**",),
         # Custom model providers keep their API keys in models.json.
         exclude=("models.json", "models.json.*"),
@@ -429,12 +433,13 @@ _CASE_INSENSITIVE_PLATFORMS = ("windows", "darwin")
 def agent_folders(platform: str, home: Path | None, overrides=()) -> tuple[str, ...]:
     """The home-relative folders that only the layouts read.
 
-    These are every layout's default roots on ``platform``, whether or not the source
-    reads that agent, and every root override in ``overrides`` that lies inside
+    These are every layout's default roots on ``platform`` and the folders each agent
+    owns beyond them, whether or not the source reads that agent, and every root override in ``overrides`` that lies inside
     ``home`` ("" when an override is the home itself). Configuration includes never
     select files inside them.
     """
     folders = [root for layout in LAYOUTS for root in layout.roots_for(platform)]
+    folders += [folder for layout in LAYOUTS for folder in layout.owned_folders]
     if home is not None:
         fold = _case_fold(platform)
         base = Path(os.path.normpath(home)).as_posix().rstrip("/")

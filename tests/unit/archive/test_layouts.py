@@ -633,6 +633,7 @@ _IN_AGENT_FOLDERS = (
     ".gemini/tmp/abc/chats/session-1.json",
     ".gemini/tmp/abc/tool-outputs/out.json",
     ".pi/agent/settings.json",
+    ".pi/settings.json",
     ".copilot/session-state/abc/events.jsonl",
     ".copilot/command-history-state.json",
     ".config/Code/User/settings.json",
@@ -653,7 +654,6 @@ _DATABASES_IN_AGENT_FOLDERS = (
 _OUTSIDE_AGENT_FOLDERS = (
     "notes/n.json",
     ".config/tool/settings.json",
-    ".pi/settings.json",
     ".vscode-server/extensions/e/package.json",
 )
 
@@ -673,7 +673,7 @@ def _fill_home(home: Path) -> None:
         (["**/*.json"], set(_OUTSIDE_AGENT_FOLDERS)),
         ([".*/**"], set(_OUTSIDE_AGENT_FOLDERS) - {"notes/n.json"}),
         (
-            [".config/**", ".pi/**", ".vscode-server/**"],
+            [".config/**", ".vscode-server/**"],
             set(_OUTSIDE_AGENT_FOLDERS) - {"notes/n.json"},
         ),
     ],
@@ -772,7 +772,7 @@ def test_includes_never_read_inside_agent_folders(tmp_path, monkeypatch):
     listed_by_includes = set(listed)
     _selected(_source(tmp_path, include=["**"]))
 
-    agent_folders = (".claude", ".codex", ".gemini", ".pi/agent", ".copilot", ".config/Code/User")
+    agent_folders = (".claude", ".codex", ".gemini", ".pi", ".copilot", ".config/Code/User")
     agent_folders += (".vscode-server/data/User", ".cagelens", ".agent-history")
     assert not [p for p in listed_by_includes if is_within(p, agent_folders)]
     assert sorted(opened) == sorted(
@@ -780,3 +780,14 @@ def test_includes_never_read_inside_agent_folders(tmp_path, monkeypatch):
         for rel in (*_OUTSIDE_AGENT_FOLDERS, "tools/app/state.sqlite")
         for _ in range(2)  # once per run above
     )
+
+
+def test_a_wildcard_include_stays_out_of_folders_an_agent_owns_beyond_its_roots(tmp_path):
+    _touch(tmp_path, ".pi/agent/sessions/s1.jsonl")
+    _touch(tmp_path, ".pi/settings.json")
+    _touch(tmp_path, ".pi/skills/notes/SKILL.md")
+    _touch(tmp_path, "notes/todo.md")
+
+    selected = _selected(_source(tmp_path, agents=["pi"], include=["**"]))
+
+    assert set(selected) == {".pi/agent/sessions/s1.jsonl", "notes/todo.md"}

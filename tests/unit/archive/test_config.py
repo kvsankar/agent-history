@@ -134,6 +134,8 @@ def _with_include(platform: str, *patterns: str, **extra):
         ("linux", ".codex/config.toml", ".codex"),
         ("linux", ".gemini/settings.json", ".gemini"),
         ("linux", ".pi/agent/settings.json", ".pi/agent"),
+        ("linux", ".pi/settings.json", ".pi"),
+        ("linux", ".pi/skills/**", ".pi"),
         ("linux", ".copilot/*.json", ".copilot"),
         ("linux", ".cagelens/**", ".cagelens"),
         ("linux", ".agent-history/aliases*.json", ".agent-history"),
@@ -177,7 +179,6 @@ def test_an_include_inside_an_agent_folder_is_rejected(platform, pattern, folder
         ("linux", ".config/Code/**"),
         ("linux", ".config/Code/User-old/notes.md"),
         ("linux", ".claude-notes/**"),
-        ("linux", ".pi/settings.json"),
         ("linux", ".Claude/**"),  # another folder on a case-sensitive file system
         ("linux", "AppData/Roaming/Code/User/**"),  # a Windows path, not a Linux agent folder
         ("windows", ".config/Code/User/**"),
