@@ -1,14 +1,12 @@
-"""Collector runs whose source folders are missing, unreadable or overlapping."""
+"""Collector runs whose source folders are missing or unreadable."""
 
 from __future__ import annotations
 
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-import zstandard
 
 from agent_history.archive.collect import collect_source
 from agent_history.archive.config import parse_config
@@ -116,99 +114,3 @@ def test_folder_without_permissions_does_not_abort_the_run(env):
         locked.chmod(0o755)
 
     assert (summary.errors, summary.gone) == (1, 0)
-
-
-def test_differing_copy_in_a_merged_part_is_an_error_not_dropped(env):
-    old = env["tmp"] / "old-home"
-    _write(env["home"], "notes/a.md", b"live\n", mtime=1_790_000_000)
-    _write(old, "notes/a.md", b"older, other text\n", mtime=1_780_000_000)
-    _write(old, "notes/z9.md", b"only in the old home\n")
-    live = {"name": "src", "kind": "live", "platform": "linux", "home": str(env["home"])}
-    live["include"] = ["notes/**"]
-    merged = {"name": "src", "kind": "live", "platform": "linux", "home": str(old)}
-    merged.update(agents=[], include=["notes/**"])
-    config = parse_config(
-        {
-            "archive": {"destination": str(env["dest"]), "compression_level": 3},
-            "sources": [live, merged],
-        }
-    )
-
-    summary = _collect(env, config=config)
-
-    assert summary.errors == 1
-    assert summary.written == 2
-    entries = _run_entries(env, summary.run_id)
-    (error,) = [entry for entry in entries if entry["type"] == "error"]
-    assert error["path"] == "notes/a.md"
-    assert "old-home" in error["message"]
-
-
-def test_an_include_snapshots_a_database_that_no_layout_names(env):
-    key = "sk-" + "y" * 40
-    db = env["home"] / "tools" / "app" / "store.bin"
-    db.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, name TEXT, api_key TEXT)")
-    conn.execute("INSERT INTO providers (name, api_key) VALUES ('main', ?)", (key,))
-    conn.commit()  # the row stays in store.bin-wal while the connection is open
-    entry = {
-        "name": "src",
-        "kind": "live",
-        "platform": "linux",
-        "home": str(env["home"]),
-        "agents": [],
-        "include": ["tools/**"],
-    }
-    config = parse_config(
-        {"archive": {"destination": str(env["dest"]), "compression_level": 3}, "sources": [entry]}
-    )
-    try:
-        summary = _collect(env, config=config)
-    finally:
-        conn.close()
-
-    entries = {entry["path"]: entry for entry in _run_entries(env, summary.run_id)}
-    assert set(entries) == {"tools/app/store.bin"}
-    assert entries["tools/app/store.bin"]["kind"] == "sqlite-snapshot"
-    assert entries["tools/app/store.bin"]["blanked"] == ["providers.api_key"]
-    restored = env["tmp"] / "restored.db"
-    archived = env["dest"] / "sources/src/files/tools/app/store.bin.zst"
-    restored.write_bytes(zstandard.ZstdDecompressor().decompress(archived.read_bytes()))
-    assert key.encode() not in restored.read_bytes()
-    with sqlite3.connect(restored) as check:
-        assert check.execute("SELECT name, api_key FROM providers").fetchall() == [("main", None)]
-
-
-def test_a_wildcard_include_leaves_an_agent_database_to_its_layout(env):
-    token = "gho_" + "x" * 36
-    db = env["home"] / ".copilot" / "data.db"
-    db.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, access_token TEXT)")
-    conn.execute("INSERT INTO accounts (access_token) VALUES (?)", (token,))
-    conn.commit()  # the row stays in data.db-wal while the connection is open
-    _write(env["home"], ".copilot/command-history-state.json", b"{}")
-    _write(env["home"], "notes/n.md", b"note\n")
-    entry = {"name": "src", "kind": "live", "platform": "linux", "home": str(env["home"])}
-    entry["include"] = ["**"]
-    config = parse_config(
-        {"archive": {"destination": str(env["dest"]), "compression_level": 3}, "sources": [entry]}
-    )
-    try:
-        summary = _collect(env, config=config)
-    finally:
-        conn.close()
-
-    entries = _run_entries(env, summary.run_id)
-    assert sorted(entry["path"] for entry in entries) == [".copilot/data.db", "notes/n.md"]
-    data_db = next(entry for entry in entries if entry["path"] == ".copilot/data.db")
-    assert (data_db["kind"], data_db["agent"]) == ("sqlite-snapshot", "copilot-cli")
-    restored = env["tmp"] / "restored.db"
-    archived = env["dest"] / "sources/src/files/.copilot/data.db.zst"
-    restored.write_bytes(zstandard.ZstdDecompressor().decompress(archived.read_bytes()))
-    assert token.encode() not in restored.read_bytes()
-    with sqlite3.connect(restored) as check:
-        assert check.execute("SELECT COUNT(*) FROM accounts").fetchone() == (1,)

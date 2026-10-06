@@ -103,119 +103,20 @@ def test_invalid_sources_are_rejected(source, message):
         parse_config(_config(sources=[source]))
 
 
-@pytest.mark.parametrize("key", ["include", "exclude"])
 @pytest.mark.parametrize("value", ["notes.md", ".claude/**", ["notes.md", 5], {"a": 1}, 5])
-def test_include_and_exclude_must_be_lists_of_patterns(key, value):
-    source = {"name": "x", "kind": "live", "platform": "linux", "home": "/a", key: value}
+def test_exclude_must_be_a_list_of_patterns(value):
+    source = {"name": "x", "kind": "live", "platform": "linux", "home": "/a", "exclude": value}
 
-    with pytest.raises(ArchiveConfigError, match=f"Source x: {key} must be a list of"):
+    with pytest.raises(ArchiveConfigError, match="Source x: exclude must be a list of"):
         parse_config(_config(sources=[source]))
 
 
-def test_include_and_exclude_may_be_empty_or_absent():
-    source = {"name": "x", "kind": "live", "platform": "linux", "home": "/a", "include": []}
+def test_exclude_may_be_empty_or_absent():
+    source = {"name": "x", "kind": "live", "platform": "linux", "home": "/a", "exclude": []}
 
     (part,) = parse_config(_config(sources=[source])).sources[0].parts
 
-    assert (part.include, part.exclude) == ((), ())
-
-
-def _with_include(platform: str, *patterns: str, **extra):
-    source = {"name": "x", "kind": "live", "platform": platform, "home": "/home/alex"}
-    source.update(include=list(patterns), **extra)
-    return _config(sources=[source])
-
-
-@pytest.mark.parametrize(
-    ("platform", "pattern", "folder"),
-    [
-        ("linux", ".claude/**", ".claude"),
-        ("linux", ".claude", ".claude"),
-        ("linux", ".codex/config.toml", ".codex"),
-        ("linux", ".gemini/settings.json", ".gemini"),
-        ("linux", ".pi/agent/settings.json", ".pi/agent"),
-        ("linux", ".pi/settings.json", ".pi"),
-        ("linux", ".pi/skills/**", ".pi"),
-        ("linux", ".copilot/*.json", ".copilot"),
-        ("linux", ".cagelens/**", ".cagelens"),
-        ("linux", ".agent-history/aliases*.json", ".agent-history"),
-        ("linux", ".config/Code/User/**", ".config/Code/User"),
-        ("linux", ".vscode-server/data/User/globalStorage/*.json", ".vscode-server/data/User"),
-        ("linux", "./.claude/projects/**", ".claude"),
-        ("linux", ".claude//projects/**", ".claude"),
-        ("linux", ".codex\\config.toml", ".codex"),
-        ("windows", "AppData/Roaming/Code/User/**", "AppData/Roaming/Code/User"),
-        (
-            "windows",
-            "AppData/Roaming/Code - Insiders/User/settings.json",
-            "AppData/Roaming/Code - Insiders/User",
-        ),
-        ("windows", "appdata/roaming/code/user/**", "AppData/Roaming/Code/User"),
-        ("windows", ".Claude/**", ".claude"),
-        (
-            "darwin",
-            "Library/Application Support/Code/User/**",
-            "Library/Application Support/Code/User",
-        ),
-        ("darwin", ".CODEX/history.jsonl", ".codex"),
-    ],
-)
-def test_an_include_inside_an_agent_folder_is_rejected(platform, pattern, folder):
-    with pytest.raises(ArchiveConfigError) as raised:
-        parse_config(_with_include(platform, "notes/**", pattern))
-
-    message = str(raised.value)
-    assert repr(pattern) in message
-    assert f"agent folder {folder}" in message
-    assert "through their layouts only" in message
-
-
-@pytest.mark.parametrize(
-    ("platform", "pattern"),
-    [
-        ("linux", "notes/**"),
-        ("linux", "**/*.json"),
-        ("linux", ".*/**"),
-        ("linux", ".config/Code/**"),
-        ("linux", ".config/Code/User-old/notes.md"),
-        ("linux", ".claude-notes/**"),
-        ("linux", ".Claude/**"),  # another folder on a case-sensitive file system
-        ("linux", "AppData/Roaming/Code/User/**"),  # a Windows path, not a Linux agent folder
-        ("windows", ".config/Code/User/**"),
-        ("darwin", ".vscode-server/data/User/**"),
-    ],
-)
-def test_includes_outside_agent_folders_are_accepted(platform, pattern):
-    (source,) = parse_config(_with_include(platform, pattern)).sources
-
-    assert source.parts[0].include == (pattern,)
-
-
-def test_an_include_inside_a_roots_override_under_the_home_is_rejected():
-    data = _with_include(
-        "linux", "old/claude-copy/**", roots={"claude": "/home/alex/old/claude-copy"}
-    )
-
-    with pytest.raises(ArchiveConfigError, match="agent folder old/claude-copy"):
-        parse_config(data)
-
-
-def test_an_include_inside_another_entrys_roots_override_is_rejected():
-    first = {"name": "laptop", "kind": "live", "platform": "linux", "home": "/home/alex"}
-    first.update(agents=["claude"], include=["backup/codex/sessions/**"])
-    second = {"name": "laptop", "kind": "live", "platform": "linux"}
-    second["roots"] = {"codex": "/home/alex/backup/codex"}
-
-    with pytest.raises(ArchiveConfigError, match="agent folder backup/codex"):
-        parse_config(_config(sources=[first, second]))
-
-
-def test_a_roots_override_outside_the_home_does_not_limit_includes():
-    data = _with_include("linux", "old/claude-copy/**", roots={"claude": "/srv/old/claude-copy"})
-
-    (source,) = parse_config(data).sources
-
-    assert source.parts[0].include == ("old/claude-copy/**",)
+    assert part.exclude == ()
 
 
 def test_excludes_may_name_agent_folders():
@@ -289,7 +190,7 @@ def test_unknown_top_level_settings_are_rejected():
     [
         {"roots": {"claude": "/old/raw/laptop/claude"}},
         {"home": "/mnt/old-laptop/home/alex", "agents": ["claude", "pi"]},
-        {"home": "/home/alex", "agents": ["claude"], "include": ["notes/**"]},
+        {"home": "/home/alex", "agents": ["claude"]},
     ],
 )
 def test_entries_of_one_source_may_not_cover_the_same_agent(second):
@@ -316,12 +217,26 @@ def test_a_roots_override_outside_the_agents_filter_does_not_count():
     assert len(source.parts) == 2
 
 
-def test_an_entry_with_no_agents_adds_only_its_includes():
+@pytest.mark.parametrize("value", [["notes/**"], [], "notes/**"])
+def test_include_is_refused(value):
+    source = {"name": "x", "kind": "live", "platform": "linux", "home": "/a", "include": value}
+
+    with pytest.raises(ArchiveConfigError) as raised:
+        parse_config(_config(sources=[source]))
+
+    message = str(raised.value)
+    assert message.startswith("Source 'x': include is not supported")
+    assert "only the files that the agent layouts select" in message
+
+
+def test_an_empty_agents_list_is_refused():
     first = {"name": "laptop", "kind": "live", "platform": "linux", "home": "/home/alex"}
     second = {"name": "laptop", "kind": "live", "platform": "linux", "home": "/data"}
-    second.update(agents=[], include=["notes/**"])
+    second["agents"] = []
 
-    (source,) = parse_config(_config(sources=[first, second])).sources
+    with pytest.raises(ArchiveConfigError) as raised:
+        parse_config(_config(sources=[first, second]))
 
-    assert source.parts[0].agents is None
-    assert source.parts[1].agents == ()
+    message = str(raised.value)
+    assert message.startswith("Source laptop: agents is empty")
+    assert "leave agents out to read every agent" in message

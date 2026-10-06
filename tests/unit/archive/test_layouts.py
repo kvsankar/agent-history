@@ -14,7 +14,6 @@ from agent_history.archive.config import parse_config
 from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import (
     archive_file_path,
-    is_within,
     iter_source_files,
     original_path,
     session_target,
@@ -114,11 +113,8 @@ def test_credential_files_are_never_selected(tmp_path):
     _touch(tmp_path, ".claude/projects/p/auth.json")
     _touch(tmp_path, ".claude/projects/p/my-oauth-token.json")
     _touch(tmp_path, ".claude/projects/p/server.pem")
-    _touch(tmp_path, "tools/auth.json")
-    _touch(tmp_path, "tools/app/server.key")
-    source = _source(tmp_path, include=["tools/auth.json", "tools/**"])
 
-    assert set(_selected(source)) == set()
+    assert set(_selected(_source(tmp_path))) == set()
 
 
 @pytest.mark.parametrize(
@@ -163,28 +159,23 @@ def test_more_credential_files_are_never_selected(tmp_path, name):
     assert set(_selected(_source(tmp_path))) == {".claude/projects/p/id_map.json"}
 
 
-def test_mcp_configurations_are_never_selected_by_layouts_or_includes(tmp_path):
+def test_mcp_configurations_are_never_selected(tmp_path):
     _touch(tmp_path, ".gemini/antigravity/mcp_config.json")
     _touch(tmp_path, ".gemini/antigravity/conversations/c1.pb")
     _touch(tmp_path, ".copilot/mcp-config.json")
     _touch(tmp_path, ".config/Code/User/mcp.json")
-    _touch(tmp_path, ".config/tool/mcp_config.json")
-    _touch(tmp_path, "tools/plugins/x/.mcp.json")
-    _touch(tmp_path, "notes/n.md")
-    include = [".config/**", "tools/**", "notes/**"]
 
-    selected = _selected(_source(tmp_path, include=include))
+    selected = _selected(_source(tmp_path))
 
-    assert set(selected) == {".gemini/antigravity/conversations/c1.pb", "notes/n.md"}
+    assert set(selected) == {".gemini/antigravity/conversations/c1.pb"}
 
 
-def test_config_include_and_exclude(tmp_path):
-    _touch(tmp_path, "notes/agent-log.md")
+def test_config_exclude_narrows_the_layouts(tmp_path):
     _touch(tmp_path, ".claude/projects/p/a.jsonl")
     _touch(tmp_path, ".claude/projects/q/b.jsonl")
-    source = _source(tmp_path, include=["notes/*.md"], exclude=[".claude/projects/q/**"])
+    source = _source(tmp_path, exclude=[".claude/projects/q/**"])
 
-    assert set(_selected(source)) == {"notes/agent-log.md", ".claude/projects/p/a.jsonl"}
+    assert set(_selected(source)) == {".claude/projects/p/a.jsonl"}
 
 
 def test_agents_filter_limits_selection(tmp_path):
@@ -235,67 +226,6 @@ def test_copilot_chat_index_databases_are_skipped(tmp_path):
         f"{chat}/transcripts/t.jsonl",
         f"{chat}/memory-tool/notes.md",
     }
-
-
-def _merged_source(home: Path, old: Path):
-    """A source whose two entries include the ``notes`` folders of two homes."""
-    entries = [
-        {"name": "src", "kind": "live", "platform": "linux", "home": str(home)},
-        {"name": "src", "kind": "live", "platform": "linux", "home": str(old), "agents": []},
-    ]
-    for entry in entries:
-        entry["include"] = ["notes/**"]
-    return parse_config({"archive": {"destination": "/d"}, "sources": entries}).sources[0]
-
-
-def _set_mtime(path: Path, stamp: int) -> None:
-    os.utime(path, (stamp, stamp))
-
-
-def test_merged_parts_with_a_differing_copy_report_it(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old"
-    _touch(home, "notes/a.md", "live\n")
-    _touch(old, "notes/a.md", "older and longer\n")
-    _touch(old, "notes/only-old.md")
-
-    items = list(iter_source_files(_merged_source(home, old)))
-
-    paths = [(item.rel_path, item.path, item.error is not None) for item in items]
-    assert sorted(paths) == [
-        ("notes/a.md", home / "notes/a.md", False),
-        ("notes/a.md", old / "notes/a.md", True),
-        ("notes/only-old.md", old / "notes/only-old.md", False),
-    ]
-    (error,) = [item.error for item in items if item.error]
-    assert str(old / "notes/a.md") in error
-
-
-def test_merged_parts_with_the_same_content_are_not_reported(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old"
-    _touch(home, "notes/b.md", "same\n")
-    _touch(old, "notes/b.md", "same\n")
-    _touch(home, "notes/a.md", "same size, other time\n")
-    _touch(old, "notes/a.md", "same size, other time\n")
-    _set_mtime(home / "notes/b.md", 1_790_000_000)
-    _set_mtime(old / "notes/b.md", 1_790_000_000)
-    _set_mtime(old / "notes/a.md", 1_780_000_000)
-
-    items = list(iter_source_files(_merged_source(home, old)))
-
-    assert [item.error for item in items] == [None, None]
-    assert {item.path for item in items} == {home / "notes/b.md", home / "notes/a.md"}
-
-
-def test_merged_parts_with_same_size_and_other_content_report_it(tmp_path):
-    home, old = tmp_path / "home", tmp_path / "old"
-    _touch(home, "notes/a.md", "aaaa\n")
-    _touch(old, "notes/a.md", "bbbb\n")
-    _set_mtime(home / "notes/a.md", 1_790_000_000)
-    _set_mtime(old / "notes/a.md", 1_780_000_000)
-
-    items = list(iter_source_files(_merged_source(home, old)))
-
-    assert [item.error is not None for item in items] == [False, True]
 
 
 def test_databases_are_marked(tmp_path):
@@ -523,26 +453,6 @@ def test_copilot_session_databases_are_snapshots(tmp_path):
     assert selected[".copilot/session-state/abc/session.db"].database.mode == "snapshot"
 
 
-def test_includes_never_select_files_inside_credential_folders(tmp_path):
-    _touch(tmp_path, ".config/tool/mcp-oauth-config/abc123.json")
-    _touch(tmp_path, ".config/tool/mcp-oauth-config/abc123.tokens.json")
-    _touch(tmp_path, ".config/tool/run/ws.token")
-    _touch(tmp_path, ".config/tool/credentials/default.json")
-    _touch(tmp_path, ".config/tool/settings.json")
-    source = _source(tmp_path, agents=[], include=[".config/**"])
-
-    assert set(_selected(source)) == {".config/tool/settings.json"}
-
-
-def test_unreadable_credential_folder_under_an_include_is_not_an_error(tmp_path, monkeypatch):
-    _touch(tmp_path, "tools/mcp-oauth-config/abc123.json")
-    _touch(tmp_path, "tools/chats/c.json")
-    _refuse_folder(monkeypatch, tmp_path / "tools" / "mcp-oauth-config")
-    source = _source(tmp_path, agents=[], include=["tools/**"])
-
-    assert set(_selected(source)) == {"tools/chats/c.json"}
-
-
 def test_default_layouts_keep_project_folders_named_like_credentials(tmp_path):
     # Claude names a project folder after its working folder, which can be any name.
     _touch(tmp_path, ".claude/projects/-home-alex-code-oauth-proxy/s.jsonl")
@@ -554,72 +464,14 @@ def test_default_layouts_keep_project_folders_named_like_credentials(tmp_path):
     }
 
 
-def test_an_entry_with_no_agents_selects_only_its_includes(tmp_path):
-    _touch(tmp_path, "data/.claude/history.jsonl")
-    _touch(tmp_path, "data/notes/n.md")
-    entry = {"name": "src", "kind": "live", "platform": "linux", "home": str(tmp_path / "data")}
-    entry.update(agents=[], include=["notes/**"])
-    source = parse_config({"archive": {"destination": "/d"}, "sources": [entry]}).sources[0]
-
-    assert set(_selected(source)) == {"notes/n.md"}
-
-
-def _sqlite(root: Path, rel: str, wal: bool = False) -> Path:
+def _sqlite(root: Path, rel: str) -> Path:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
-    if wal:
-        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
     conn.commit()
     conn.close()
     return path
-
-
-def test_includes_snapshot_any_sqlite_database_outside_agent_folders(tmp_path):
-    _sqlite(tmp_path, ".local/share/app/app-dev.db", wal=True)
-    _sqlite(tmp_path, "tools/store/index.bin")
-    _sqlite(tmp_path, "tools/app/state.sqlite")
-    _touch(tmp_path, ".local/share/app/notes.db", "not a database")
-    _touch(tmp_path, "tools/app/plain.txt", "text")
-    include = [".local/**", "tools/**"]
-
-    selected = _selected(_source(tmp_path, agents=[], include=include))
-
-    assert set(selected) == {
-        ".local/share/app/app-dev.db",
-        "tools/store/index.bin",
-        "tools/app/state.sqlite",
-        ".local/share/app/notes.db",
-        "tools/app/plain.txt",
-    }
-    for rel in (".local/share/app/app-dev.db", "tools/store/index.bin", "tools/app/state.sqlite"):
-        rule = selected[rel].database
-        assert rule is not None, rel
-        assert (rule.mode, rule.blank_columns) == ("snapshot", ())
-        assert selected[rel].agent == "other"
-    assert selected[".local/share/app/notes.db"].database is None
-    assert selected["tools/app/plain.txt"].database is None
-
-
-def test_includes_leave_out_sign_in_files_outside_agent_folders(tmp_path):
-    for rel in ("tools/app/auth-status.json", "tools/app/login.log", "tools/app/app.log"):
-        _touch(tmp_path, rel)
-
-    selected = _selected(_source(tmp_path, agents=[], include=["tools/**"]))
-
-    assert set(selected) == {"tools/app/app.log"}
-
-
-def test_an_include_snapshots_a_database_whose_rows_are_only_in_its_wal(tmp_path):
-    # A new WAL database can be empty on disk until its first checkpoint.
-    _touch(tmp_path, "tools/app/state.db", "")
-    (tmp_path / "tools/app/state.db-wal").write_bytes(b"\x37\x7f\x06\x82" + b"\0" * 28)
-
-    selected = _selected(_source(tmp_path, agents=[], include=["tools/**"]))
-
-    assert set(selected) == {"tools/app/state.db"}
-    assert selected["tools/app/state.db"].database.mode == "snapshot"
 
 
 # Files in every Linux agent folder: some the layouts select, some they leave out.
@@ -655,6 +507,11 @@ _OUTSIDE_AGENT_FOLDERS = (
     "notes/n.json",
     ".config/tool/settings.json",
     ".vscode-server/extensions/e/package.json",
+    # Other tools' settings and credentials, which no layout selects.
+    ".claude.json",
+    ".env",
+    ".ssh/id_x",
+    ".docker/config.json",
 )
 
 
@@ -666,38 +523,14 @@ def _fill_home(home: Path) -> None:
     _sqlite(home, "tools/app/state.sqlite")
 
 
-@pytest.mark.parametrize(
-    ("include", "added"),
-    [
-        (["**"], set(_OUTSIDE_AGENT_FOLDERS) | {"tools/app/state.sqlite"}),
-        (["**/*.json"], set(_OUTSIDE_AGENT_FOLDERS)),
-        ([".*/**"], set(_OUTSIDE_AGENT_FOLDERS) - {"notes/n.json"}),
-        (
-            [".config/**", ".vscode-server/**"],
-            set(_OUTSIDE_AGENT_FOLDERS) - {"notes/n.json"},
-        ),
-    ],
-)
-def test_a_wildcard_include_selects_nothing_inside_agent_folders(tmp_path, include, added):
+def test_the_default_layouts_select_only_agent_files_in_a_full_home(tmp_path):
     _fill_home(tmp_path)
-    layouts_only = _selected(_source(tmp_path))
 
-    items = list(iter_source_files(_source(tmp_path, include=include)))
+    items = list(iter_source_files(_source(tmp_path)))
 
     selected = {item.rel_path: item for item in items}
     assert len(items) == len(selected)  # each path once
-    assert {rel: selected[rel] for rel in layouts_only} == layouts_only
-    assert set(selected) - set(layouts_only) == added
-    assert {selected[rel].agent for rel in added} == {"other"}
-
-
-def test_the_default_layouts_select_the_same_files_with_a_wildcard_include(tmp_path):
-    _fill_home(tmp_path)
-
-    selected = _selected(_source(tmp_path, include=["**"]))
-
-    layout_files = {rel: item for rel, item in selected.items() if item.agent != "other"}
-    assert set(layout_files) == {
+    assert set(selected) == {
         ".claude/projects/p/a.jsonl",
         ".claude/projects/-home-alex-oauth-proxy/s.jsonl",
         ".gemini/tmp/abc/chats/session-1.json",
@@ -709,85 +542,20 @@ def test_the_default_layouts_select_the_same_files_with_a_wildcard_include(tmp_p
         ".codex/logs_2.sqlite",
         ".copilot/data.db",
     }
-    assert layout_files[".copilot/data.db"].agent == "copilot-cli"
-    assert "accounts.access_token" in layout_files[".copilot/data.db"].database.blank_columns
-    assert layout_files[".codex/logs_2.sqlite"].database.mode == "log"
+    assert selected[".copilot/data.db"].agent == "copilot-cli"
+    assert "accounts.access_token" in selected[".copilot/data.db"].database.blank_columns
+    assert selected[".codex/logs_2.sqlite"].database.mode == "log"
 
 
-def test_a_wildcard_include_skips_the_vscode_user_folders_on_windows(tmp_path):
-    chat = "AppData/Roaming/Code/User/workspaceStorage/w/chatSessions/c.json"
-    for rel in (
-        chat,
-        "AppData/Roaming/Code/User/settings.json",
-        "AppData/Roaming/Code - Insiders/User/globalStorage/x.json",
-        # The same folder spelt in another case, as a case-insensitive file system allows.
-        "Appdata/roaming/code/user/y.json",
-        "AppData/Roaming/Code/logs/main.log",
-        "AppData/Roaming/tool/settings.json",
-    ):
-        _touch(tmp_path, rel)
-
-    selected = _selected(_source(tmp_path, platform="windows", include=["**"]))
-
-    assert set(selected) == {
-        chat,
-        "AppData/Roaming/Code/logs/main.log",
-        "AppData/Roaming/tool/settings.json",
-    }
-    assert selected[chat].agent == "copilot-vscode"
-
-
-def test_a_wildcard_include_skips_a_roots_override_inside_the_home(tmp_path):
+def test_a_roots_override_inside_the_home_replaces_the_agent_folder(tmp_path):
     copy = tmp_path / "old" / "claude-copy"
     _touch(copy, "projects/p/a.jsonl")
     _touch(copy, "settings.json")
     _touch(tmp_path, "old/notes.md")
-    source = _source(tmp_path, include=["**"], roots={"claude": str(copy)})
+    _touch(tmp_path, ".claude/projects/p/home.jsonl")
+    source = _source(tmp_path, roots={"claude": str(copy)})
 
     selected = _selected(source)
 
-    assert set(selected) == {".claude/projects/p/a.jsonl", "old/notes.md"}
+    assert set(selected) == {".claude/projects/p/a.jsonl"}
     assert selected[".claude/projects/p/a.jsonl"].path == copy / "projects/p/a.jsonl"
-
-
-def test_includes_never_read_inside_agent_folders(tmp_path, monkeypatch):
-    from agent_history.archive import layouts
-
-    _fill_home(tmp_path)
-    listed, opened = [], []
-    real_scandir, real_header = layouts.os.scandir, layouts._read_header
-
-    def scandir(path):
-        listed.append(Path(path).relative_to(tmp_path).as_posix())
-        return real_scandir(path)
-
-    def read_header(path):
-        opened.append(Path(path).relative_to(tmp_path).as_posix())
-        return real_header(path)
-
-    monkeypatch.setattr(layouts.os, "scandir", scandir)
-    monkeypatch.setattr(layouts, "_read_header", read_header)
-
-    _selected(_source(tmp_path, agents=[], include=["**"]))
-    listed_by_includes = set(listed)
-    _selected(_source(tmp_path, include=["**"]))
-
-    agent_folders = (".claude", ".codex", ".gemini", ".pi", ".copilot", ".config/Code/User")
-    agent_folders += (".vscode-server/data/User", ".cagelens", ".agent-history")
-    assert not [p for p in listed_by_includes if is_within(p, agent_folders)]
-    assert sorted(opened) == sorted(
-        rel
-        for rel in (*_OUTSIDE_AGENT_FOLDERS, "tools/app/state.sqlite")
-        for _ in range(2)  # once per run above
-    )
-
-
-def test_a_wildcard_include_stays_out_of_folders_an_agent_owns_beyond_its_roots(tmp_path):
-    _touch(tmp_path, ".pi/agent/sessions/s1.jsonl")
-    _touch(tmp_path, ".pi/settings.json")
-    _touch(tmp_path, ".pi/skills/notes/SKILL.md")
-    _touch(tmp_path, "notes/todo.md")
-
-    selected = _selected(_source(tmp_path, agents=["pi"], include=["**"]))
-
-    assert set(selected) == {".pi/agent/sessions/s1.jsonl", "notes/todo.md"}

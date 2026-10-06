@@ -26,7 +26,7 @@ PLATFORMS = ("linux", "darwin", "windows")
 _SOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _TOP_KEYS = {"archive", "sources"}
 _ARCHIVE_KEYS = {"destination", "compression_level", "min_interval_hours", "health_url", "workers"}
-_SOURCE_KEYS = {"name", "kind", "platform", "note", "home", "roots", "agents", "include", "exclude"}
+_SOURCE_KEYS = {"name", "kind", "platform", "note", "home", "roots", "agents", "exclude"}
 
 
 @dataclass(frozen=True)
@@ -149,6 +149,7 @@ def _health_url(archive: dict[str, Any]) -> str | None:
 def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:
     merged: dict[str, SourceConfig] = {}
     for entry in entries:
+        _reject_include(entry)
         _reject_unknown(entry, _SOURCE_KEYS, f"source {entry.get('name')!r}")
         name, kind, platform, note = _source_identity(entry)
         part = _source_part(entry, name)
@@ -165,6 +166,15 @@ def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:
         _reject_overlapping_parts(source)
         _reject_includes_in_agent_folders(source)
     return tuple(merged.values())
+
+
+def _reject_include(entry: dict[str, Any]) -> None:
+    """Refuse the ``include`` setting, which no longer exists, with a clear message."""
+    if "include" in entry:
+        raise ArchiveConfigError(
+            f"Source {entry.get('name')!r}: include is not supported. The archive takes only "
+            "the files that the agent layouts select; use exclude to leave some of them out."
+        )
 
 
 def _reject_overlapping_parts(source: SourceConfig) -> None:
@@ -240,6 +250,11 @@ def _source_part(entry: dict[str, Any], name: str) -> SourcePart:
     roots = entry.get("roots") or {}
     if not home and not roots:
         raise ArchiveConfigError(f"Source {name}: give a home or roots")
+    if entry.get("agents") == []:
+        raise ArchiveConfigError(
+            f"Source {name}: agents is empty, so this entry would archive nothing. List the "
+            "agents to read, or leave agents out to read every agent."
+        )
     for agent in list(roots) + list(entry.get("agents") or []):
         if agent not in AGENT_NAMES:
             raise ArchiveConfigError(f"Source {name}: unknown agent {agent}")
