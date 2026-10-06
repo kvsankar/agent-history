@@ -172,3 +172,55 @@ def test_usage_after_inherited_history_takes_the_turn_model(tmp_path):
     assistant = [m for m in messages if m["type"] == "assistant"]
     assert assistant[0]["model"] == "model-a"
     assert assistant[0]["input_tokens"] == 1000
+
+
+def _forked_session(tmp_path):
+    """A forked sub-agent replays its parent's history, token events included.
+
+    Entries before ``subagent_history_start_ordinal`` are the parent's; only
+    the fork's own response (ordinal 5) is its usage.
+    """
+    parent_usage = _usage(900_000, 800_000, 4_000)
+    own_usage = _usage(1_000, 400, 50)
+
+    def numbered(ordinal, entry):
+        return {**entry, "ordinal": ordinal}
+
+    meta = _meta()
+    meta["payload"] = {**meta["payload"], "subagent_history_start_ordinal": 4}
+    return _write_jsonl(
+        tmp_path / "rollout.jsonl",
+        [
+            numbered(0, meta),
+            numbered(1, _token_count("2026-09-29T12:00:00Z", parent_usage, parent_usage)),
+            numbered(2, _message("assistant", "2026-09-29T12:00:00Z")),
+            numbered(3, _token_count("2026-09-29T12:00:00Z", parent_usage, parent_usage)),
+            numbered(
+                4,
+                {
+                    "type": "turn_context",
+                    "timestamp": "2026-09-29T12:00:01Z",
+                    "payload": {"model": "model-a"},
+                },
+            ),
+            numbered(5, _message("assistant", "2026-09-29T12:00:02Z")),
+            numbered(6, _token_count("2026-09-29T12:00:03Z", own_usage, own_usage)),
+        ],
+    )
+
+
+def test_forked_session_skips_replayed_parent_usage(tmp_path):
+    session_info, messages, _tools = metrics._parse_codex_jsonl(_forked_session(tmp_path))
+
+    assert session_info["input_tokens"] == 1_000
+    assert session_info["cache_read_tokens"] == 400
+    assert session_info["output_tokens"] == 50
+    assert sum(m["input_tokens"] for m in messages) == 1_000
+    assert messages[-1]["model"] == "model-a"
+
+
+def test_backend_summary_skips_replayed_parent_usage(tmp_path):
+    summary = codex_extract_metrics_from_jsonl(_forked_session(tmp_path))["tokens_summary"]
+
+    assert summary["input_tokens"] == 1_000
+    assert summary["output_tokens"] == 50

@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, TextIO, TypedDict
 
 from agent_history.storage.config import get_config_dir
-from agent_history.utils.codex_tokens import CodexTokenCounter
+from agent_history.utils.codex_tokens import CodexTokenCounter, is_replayed
 from agent_history.utils.paths import normalize_workspace_name
 
 __all__ = [
@@ -535,6 +535,7 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
     # Extract model and per-response token usage from the event stream.
     token_counter = CodexTokenCounter()
     last_token_timestamp = None
+    history_start = (session_meta or {}).get("subagent_history_start_ordinal")
     try:
         with _codex_open_text(jsonl_file) as f:
             for line in f:
@@ -551,7 +552,8 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
                     continue
 
                 if entry_type == "event_msg" and payload.get("type") == "token_count":
-                    if token_counter.add(payload.get("info") or {}) is not None:
+                    replayed = is_replayed(entry, history_start)
+                    if token_counter.add(payload.get("info") or {}, replayed=replayed) is not None:
                         last_token_timestamp = entry.get("timestamp")
     except OSError:
         pass

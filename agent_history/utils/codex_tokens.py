@@ -7,11 +7,22 @@ totals overcounts, and so does taking the last running total of a spawned
 sub-agent, whose totals start from its parent's. Codex also repeats an event
 unchanged when only rate limits change. Its output count already includes
 the reasoning tokens, and its input count includes the cached tokens.
+
+A forked sub-agent's file starts with a replay of its parent's history,
+token_count events included. Entries numbered below the session's
+``subagent_history_start_ordinal`` are that replay; their usage belongs to
+the parent and is not counted again.
 """
 
 from typing import Any, Dict, Optional
 
 _FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")
+
+
+def is_replayed(entry: Dict[str, Any], history_start: Optional[int]) -> bool:
+    """Return True if an entry is part of a forked sub-agent's replayed history."""
+    ordinal = entry.get("ordinal")
+    return isinstance(history_start, int) and isinstance(ordinal, int) and ordinal < history_start
 
 
 class CodexTokenCounter:
@@ -23,14 +34,18 @@ class CodexTokenCounter:
         self.output_tokens = 0
         self.cache_read_tokens = 0
 
-    def add(self, info: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    def add(self, info: Dict[str, Any], replayed: bool = False) -> Optional[Dict[str, int]]:
         """Record one event's ``info``; return that response's usage, or None.
 
-        None means the event adds nothing: it has no running total, or it
-        repeats the previous one.
+        None means the event adds nothing: it has no running total, it
+        repeats the previous one, or it is replayed parent history, whose
+        running total only becomes the baseline for the next event.
         """
         total = info.get("total_token_usage")
         if not total:
+            return None
+        if replayed:
+            self._previous_total = total
             return None
         if total == self._previous_total:
             return None

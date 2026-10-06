@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agent_history import pricing
 from agent_history.storage.config import get_config_dir
-from agent_history.utils.codex_tokens import CodexTokenCounter
+from agent_history.utils.codex_tokens import CodexTokenCounter, is_replayed
 
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
@@ -539,6 +539,7 @@ def _apply_codex_token_count(
     payload: Dict[str, Any],
     counter: CodexTokenCounter,
     turn_model: Optional[str] = None,
+    replayed: bool = False,
 ) -> None:
     """Add one Codex token_count event's per-response usage.
 
@@ -547,7 +548,7 @@ def _apply_codex_token_count(
     replays its parent's messages before its first turn_context, so that
     message may have no model yet; it then takes the current turn's model.
     """
-    delta = counter.add(payload.get("info") or {})
+    delta = counter.add(payload.get("info") or {}, replayed=replayed)
     if delta is None:
         return
 
@@ -603,6 +604,7 @@ def _parse_codex_jsonl(
     timestamps: List[str] = []
     turn_model: Optional[str] = None
     token_counter = CodexTokenCounter()
+    history_start: Optional[int] = None
 
     try:
         with open(jsonl_file, encoding="utf-8-sig") as f:
@@ -621,6 +623,7 @@ def _parse_codex_jsonl(
 
                 # Extract session metadata
                 if entry_type == "session_meta":
+                    history_start = payload.get("subagent_history_start_ordinal")
                     session_info["session_id"] = payload.get("id")
                     session_info["cwd"] = payload.get("cwd")
                     git_info = payload.get("git", {})
@@ -677,7 +680,12 @@ def _parse_codex_jsonl(
                 # Extract token usage from event_msg
                 elif entry_type == "event_msg" and payload.get("type") == "token_count":
                     _apply_codex_token_count(
-                        session_info, messages, payload, token_counter, turn_model
+                        session_info,
+                        messages,
+                        payload,
+                        token_counter,
+                        turn_model,
+                        replayed=is_replayed(entry, history_start),
                     )
 
     except OSError:
