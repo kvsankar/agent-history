@@ -541,7 +541,8 @@ def test_remote_writes_are_flushed_before_the_commit(remote, tmp_path, monkeypat
     commit = next(command for command in commands if "/manifests/" in command)
     writes = [command for command in commands if "cat >" in command]
     for command in [tar, placing, commit, *writes]:
-        assert command.rstrip().endswith("sync"), command
+        assert command.rstrip().endswith("|| sync; }"), command
+        assert "sync -f " in command, command
 
 
 def test_remote_write_is_flushed_before_the_rename(remote, tmp_path, monkeypatch):
@@ -558,8 +559,9 @@ def test_remote_write_is_flushed_before_the_rename(remote, tmp_path, monkeypatch
 
     (command,) = [c for c in log.read_text(encoding="utf-8").split("--- ")[1:] if "cat >" in c]
     _mkdir, rest = command.split("cat >", 1)
-    assert "&& sync && mv " in rest, command
-    assert rest.rstrip().endswith("sync"), command
+    flush, rename = rest.split("&& mv ", 1)
+    assert "sync -f " in flush, command
+    assert rename.rstrip().endswith("|| sync; }"), command
     assert logged.read_bytes("a/b.txt") == b"hello"
 
 
@@ -687,4 +689,47 @@ def test_a_copy_cut_short_over_ssh_is_not_committed(remote, tmp_path, fake_ssh):
     assert (second.written, second.errors) == (1, 0)
     archived = root / "sources" / "src" / "files" / f"{SESSION}.zst"
     assert zstandard.ZstdDecompressor().decompress(archived.read_bytes()) == b"original\n" * 50
+    assert verify_source(dest, "src").ok
+
+
+SYNC_SHIM = """#!/bin/sh
+# A remote sync that records every call that would flush every file system.
+case "$1" in
+  -f) shift; [ $# -gt 0 ] || {{ echo bare >> {log}; exit 0; }}; exit 0 ;;
+  *) echo bare >> {log}; exit 0 ;;
+esac
+"""
+
+
+def test_remote_writes_flush_only_the_archives_file_system(tmp_path, monkeypatch):
+    """A plain ``sync`` waits on every mount of the remote host, so one stuck mount
+    unrelated to the archive would stop every run."""
+    tools = tmp_path / "sync-bin"
+    tools.mkdir()
+    bare_calls = tmp_path / "bare-sync.log"
+    shim = tools / "sync"
+    shim.write_text(SYNC_SHIM.format(log=bare_calls), encoding="utf-8")
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+    ssh = tmp_path / "sync-ssh"
+    ssh.write_text(
+        FAKE_SSH.replace('exec sh -c "$*"', f'PATH={tools}:$PATH exec sh -c "$*"'),
+        encoding="utf-8",
+    )
+    ssh.chmod(ssh.stat().st_mode | stat.S_IEXEC)
+    dest = SshDestination("nas", str(tmp_path / "remote archive"), ssh=[str(ssh)])
+    home = tmp_path / "home"
+    (home / SESSION).parent.mkdir(parents=True)
+    (home / SESSION).write_bytes(b"a\n")
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+
+    collect_source(config, "src", state_dir=tmp_path / "state", now=T0, destination=dest)
+    dest.write_bytes("a/b.txt", b"hello")
+    dest.move("a/b.txt", "a/c.txt")
+
+    assert not bare_calls.exists(), bare_calls.read_text(encoding="utf-8")
     assert verify_source(dest, "src").ok

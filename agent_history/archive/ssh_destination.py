@@ -5,7 +5,9 @@ The remote host needs only ``sh`` (with its ``test``/``[``, ``echo`` and ``print
 ``mkdir``, ``mv``, ``find``, ``tar``, ``ln`` (whose hard link takes the lock; optional),
 ``rm`` (which removes only a source's incoming folder and what its lock folder holds),
 ``rmdir`` (which removes the lock folder) and
-``sync`` (which flushes each write to disk before the run goes on). Each
+``sync`` (as ``sync -f <path>``, which flushes the archive's file system before the run
+goes on; plain ``sync`` only where ``-f`` is missing, since it waits on every mount of
+the host). Each
 operation sends ssh one already-quoted command string: ssh joins its remote arguments with
 spaces, so passing them separately would lose the quoting. The remote login shell runs
 that string, and it need not be sh (csh, tcsh and fish parse differently), so the string
@@ -104,7 +106,10 @@ class SshDestination(Destination):
         parent = shlex.quote(f"{self.root}/{rel}".rsplit("/", 1)[0])
         # The content reaches the disk before the rename, so the name never shows an
         # empty or partial file after a power loss.
-        script = f"mkdir -p {parent} && cat > {part} && sync && mv {part} {path} && sync"
+        script = (
+            f"mkdir -p {parent} && cat > {part} && {_flush(part)} "
+            f"&& mv {part} {path} && {_flush(parent)}"
+        )
         self._check(self._run(script, data), f"Writing {rel}")
 
     def list_files(self, rel_dir: str) -> list[str]:
@@ -135,7 +140,8 @@ class SshDestination(Destination):
         source, target = self._remote(src), self._remote(dst)
         parent = shlex.quote(f"{self.root}/{_check_rel(dst)}".rsplit("/", 1)[0])
         result = self._run(
-            f"test -e {source} || exit {_MISSING}; mkdir -p {parent} && mv {source} {target} && sync"
+            f"test -e {source} || exit {_MISSING}; "
+            f"mkdir -p {parent} && mv {source} {target} && {_flush(parent)}"
         )
         if result.returncode == _MISSING:
             return False
@@ -188,7 +194,7 @@ class SshDestination(Destination):
         for incoming, current in puts:
             inc, cur = self._remote(incoming), self._remote(current)
             lines.append(f"if [ -e {inc} ]; then mv {inc} {cur} || exit 1; fi\n")
-        lines.append("sync\n")
+        lines.append(f"{_flush(shlex.quote(self.root))}\n")
         self._check(self._run_script("".join(lines)), "Moving files into place")
 
     def discard_tree(self, rel: str) -> None:
@@ -235,7 +241,7 @@ class SshDestination(Destination):
             'rm -rf -- "$f" || exit 1; '
             "done; "
             f"rm -rf -- {LOCK_OWNER} || exit 1; "
-            f"cd / && {{ rmdir {path} 2>/dev/null || :; }}; sync"
+            f"cd / && {{ rmdir {path} 2>/dev/null || :; }}; {_flush(shlex.quote(self.root))}"
         )
         self._check(self._run(script), f"Removing the lock {rel}")
 
@@ -253,7 +259,7 @@ class SshDestination(Destination):
         """
         root = shlex.quote(self.root)
         process = subprocess.Popen(
-            self._command(f"mkdir -p {root} && tar -xf - -C {root} && sync"),
+            self._command(f"mkdir -p {root} && tar -xf - -C {root} && {_flush(root)}"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -313,6 +319,16 @@ class SshDestination(Destination):
         return ArchiveError(f"Reading {rel} failed on {self.host}: {message}")
 
 
+def _flush(path: str) -> str:
+    """A shell step that flushes the file system holding ``path`` (already quoted).
+
+    ``sync -f`` waits only on that file system. Plain ``sync`` waits on every mount of the
+    host, so a stuck mount unrelated to the archive would stop the run; it is used only
+    where ``sync`` has no ``-f``.
+    """
+    return f"{{ sync -f {path} 2>/dev/null || sync; }}"
+
+
 def _create_lock_script(folder: str, owner: str, tmp: str, content: str) -> str:
     """The remote script of create_lock; every argument is already quoted.
 
@@ -328,7 +344,7 @@ def _create_lock_script(folder: str, owner: str, tmp: str, content: str) -> str:
         "n=0; while :; do "
         f"mkdir -p {folder} || exit 1; "
         f"[ -e {owner} ] && exit {_EXISTS}; "
-        f"if err=$( {{ printf '%s' {content} > {tmp} && sync; }} 2>&1 ); then "
+        f"if err=$( {{ printf '%s' {content} > {tmp} && {_flush(tmp)}; }} 2>&1 ); then "
         f"if ln {tmp} {owner} 2>/dev/null; then rm -f {tmp}; break; fi; "
         f"if [ ! -e {owner} ] && [ -e {tmp} ]; then "  # ln failed, not the race
         f"rm -f {tmp}; "
@@ -340,7 +356,7 @@ def _create_lock_script(folder: str, owner: str, tmp: str, content: str) -> str:
         'n=$((n + 1)); [ "$n" -lt 5 ] || '
         '{ echo "${err:-could not write the owner file}" >&2; exit 1; }; '
         "done; "
-        f"sync; cat {owner}"
+        f"{_flush(owner)}; cat {owner}"
     )
 
 
