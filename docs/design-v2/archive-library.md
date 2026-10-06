@@ -140,8 +140,8 @@ uses JSON, like the existing `~/.cagelens/config.json`.
 | `sources[].home` | The home directory to read. Agent folders are found under it with the default layouts below. |
 | `sources[].platform` | `linux`, `darwin` or `windows`. It selects platform-specific default folders, such as where VS Code keeps its chats. It describes the source, not the machine the collector runs on, so a Linux collector can read a Windows home through a mount. |
 | `sources[].roots` | Optional per-agent folders that replace the defaults. They are used to bring in an existing tree whose layout differs from a home directory. |
-| `sources[].agents` | Optional list of agents to include. The default is every agent below. An empty list (`[]`) means no agent folders: the entry reads only its `include` patterns. |
-| `sources[].include`, `exclude` | Optional extra glob patterns, relative to the home. They may not leave the home. A file that an include selects inside an agent's folder follows that agent's layout (see Default Agent Layouts). |
+| `sources[].agents` | Optional list of agents to include. The default is every agent below. An empty list (`[]`) means no agent folders: the entry reads only its `include` patterns, which still cannot reach inside agent folders. |
+| `sources[].include`, `exclude` | Optional extra glob patterns, relative to the home. Each is a list of strings. They may not leave the home. An include may not reach inside an agent folder; an exclude may name one (see Default Agent Layouts). |
 | `sources[].note` | Optional text recorded in the source's `SOURCE.json`. |
 
 The top level of the file accepts only `archive` and `sources`. Unknown settings, at
@@ -158,8 +158,9 @@ fails. The error tells the user to give the other copy its own source name, for
 example with kind `imported`. The example above does this for an older copy of a
 Claude folder, `laptop-linux-old-claude`.
 
-Include patterns of different entries can still map different files to the same
-archive path. Then the first entry's file is archived. A differing file from another
+Include patterns never select files inside agent folders, so they cannot collide with
+a layout's files. The include patterns of different entries can still map different
+files to the same archive path. Then the first entry's file is archived. A differing file from another
 entry is not archived; the run records an error entry for it instead. Files of the
 same size and modification time count as the same file. Files of the same size with
 different modification times are compared byte by byte. The fix is to give that folder
@@ -183,8 +184,7 @@ are skipped.
 Agent names are the cagelens backend ids, as used by `--agent`.
 
 - A layout selects only its included paths. The Excluded column lists each layout's
-  own exclusions. They also apply to files that a configuration include selects
-  inside the agent's folder. Credential files such as Codex's and Pi's `auth.json`
+  own exclusions. Credential files such as Codex's and Pi's `auth.json`
   and Gemini's `oauth_creds.json` and `google_accounts.json` are removed by the global
   denylist below.
 
@@ -203,11 +203,10 @@ Agent names are the cagelens backend ids, as used by `--agent`.
   is skipped. Caches are skipped.
 - The global denylist removes these names whatever the configuration says. It
   applies to file names everywhere. It also applies to every folder name on the path
-  of a file that a configuration include selects outside every agent's folder. Inside
-  agent folders, folder names are not checked, for the layouts' own files and for
-  includes alike, because Claude project folders are named after working folders: a
-  project in a folder called `oauth-proxy` keeps its sessions. There the layout's
-  rules decide, and the layouts exclude the agents' own credential folders, such as
+  of every file that a configuration include selects. Inside agent folders, which only
+  the layouts read, folder names are not checked, because Claude project folders are
+  named after working folders: a project in a folder called `oauth-proxy` keeps its
+  sessions. There the layout's rules decide, and the layouts exclude the agents' own credential folders, such as
   Codex's `mcp-oauth-locks/` and Copilot CLI's `mcp-oauth-config/`. Names are compared
   case-insensitively.
   - Agent credentials and tokens: `auth.json`, `*oauth*`, `*.token`, `*tokens.json`,
@@ -230,26 +229,40 @@ Agent names are the cagelens backend ids, as used by `--agent`.
   `Web Data`, `cookies.sqlite`, `logins.json` or `key4.db`; or both `Preferences` and
   `Secure Preferences`; or a `Network/` subfolder holding `Cookies`. `Preferences`
   alone does not count. Names are compared case-insensitively.
-- **Configuration includes follow the agent's layout.** A file that a configuration
-  include selects inside an agent's folder gets that agent's rules, as if the layout
-  had selected it: the layout's exclusions apply, and a database that a layout rule
-  names is snapshotted and blanked, or exported by rows. So an include can add files
-  to an agent folder, such as a settings file, but cannot copy a database raw or bring
-  back what the layout leaves out.
-- **Includes never copy a database raw.** A SQLite database that an include selects
-  and no layout rule names, inside or outside an agent folder, is snapshotted like a
-  snapshot database (see Databases). The copy is made with SQLite's backup API, so it
+- **Configuration includes stay out of agent folders.** Only the layouts read an agent
+  folder. Folder names are compared case-insensitively when the source's platform is
+  `windows` or `darwin`. A source's agent folders are:
+  - every layout's default roots for the source's platform, whatever the entry's
+    `agents` list says;
+  - the folders an agent owns beyond its roots, such as `.pi` for Pi, whose layout
+    reads `.pi/agent`;
+  - every `roots` override of the source, from any of its entries, that lies inside
+    the entry's home. An override that is the home itself makes the whole home an
+    agent folder.
+- Loading the configuration fails when an include pattern's fixed leading part is or
+  lies inside an agent folder. The fixed leading part is the folders and name before
+  the first segment that holds `*` or `?`. In it, `\` counts as `/`, and empty and `.`
+  segments are ignored. The error names the pattern and the agent folder. So
+  `.claude/settings.json` is refused, and `notes/**` is accepted. Exclude patterns may
+  name agent folders.
+- An include that starts with a wildcard, such as `**/*.md`, never selects a file
+  inside an agent folder, because the include walk does not enter agent folders. Every
+  file that an include selects has agent `other`.
+- **Includes never copy a database raw.** A SQLite database that an include selects,
+  which always lies outside agent folders, is snapshotted like a snapshot database
+  (see Databases). The copy is made with SQLite's backup API, so it
   includes the content of the database's write-ahead log (WAL, the `-wal` side file
   that holds recent writes). Credential-named columns in the copy are blanked. A file
   counts as a SQLite database when its first 16 bytes are the SQLite header, or when
   it is empty and a non-empty `-wal` file lies beside it. So each run reads the first
-  16 bytes of every file that an include selects and no layout rule names. The default
-  layouts name their databases, so they do not check headers.
+  16 bytes of every file that an include selects. The layouts name their databases,
+  so the headers of files that a layout selects are not read.
 - **Session files.** Each layout also names the files that hold sessions, which the
   catalog reads (see Catalog). For Claude Code these are `projects/*/*.jsonl`,
   `projects/*/*/subagents/*.jsonl`, and the sub-agent transcripts of workflows,
   `projects/*/*/subagents/workflows/*/agent-*.jsonl`. The `journal.jsonl` beside
-  those transcripts holds workflow steps and is not a session.
+  those transcripts holds workflow steps and is not a session. Compaction transcripts
+  (`agent-acompact-*.jsonl` in `subagents/`) are archived but are not session files.
 - **The walk only descends where a pattern can match.** Patterns are followed folder by
   folder, and only a `**` segment walks a whole subtree, so a pattern such as
   `state_*.sqlite` lists one folder instead of walking all of `.codex`. Symbolic links
@@ -276,8 +289,9 @@ hash is recorded as `touched` and is not written again.
 The state also lists the IDs of the runs whose manifests it includes. Each run applies,
 oldest first, every manifest in the archive that the state does not include yet. When
 the state file is missing, for example on a new machine, this rebuilds the whole state
-from the source's manifests. A state file that cannot be read, is not JSON, or has
-another shape is rebuilt the same way, with a warning that names the file. A state
+from the source's manifests. A state file that cannot be read, is not JSON, has
+another shape, holds a value of the wrong type, or records a `last_success` time
+without a time zone is rebuilt the same way, with a warning that names the file. A state
 file without the list counts as including every
 run up to the last run ID it records.
 
@@ -376,10 +390,19 @@ exports only new rows:
   as JSON Lines to `<path>.rows/<run stamp>-<run suffix>.jsonl.zst`, for example
   `.codex/logs_2.sqlite.rows/20261002T061500Z-3f2a.jsonl.zst`.
 - Exported rows have credential-named columns, and columns the layout names, set to
-  null. The manifest lists those columns under `blanked`. Other columns are exported
-  as stored. Codex's log message text can hold token-shaped strings, which Codex
-  writes in debug- and info-level rows. Blanking works by column name, so it does not
-  remove them.
+  null. The manifest lists those columns under `blanked`.
+- Codex writes JSON Web Tokens (JWTs) into the message text of debug- and info-level
+  rows. Blanking by column name does not reach them. So, after blanking, every JWT in
+  any text value of any column is replaced with `[redacted-jwt]`. BLOB values are
+  exported as base64 and are not searched. Other values are exported as stored. The
+  `rows` entry records the number of replaced JWTs as `"redacted": {"jwt": N}`, and
+  leaves the field out when nothing was replaced. A JWT is made of base64url segments
+  (letters, digits, `-` and `_`) joined by dots, and matches in one of two forms:
+  - three segments: `eyJ` followed by at least 10 characters, then two segments of at
+    least 10 characters each;
+  - two segments that are each `eyJ` followed by at least 10 characters, then an
+    empty, short or missing third segment (the signature), as in an unsecured token
+    or one that a log line cut off.
 - The state file records the last exported key for each database and table, and the
   table's identity (below).
 - A table counts as recreated (a reset) if its newest key is below the last exported
@@ -390,7 +413,9 @@ exports only new rows:
 - For that check, each `rows` entry carries `identity`: the smallest key
   (`first_key`) and the SHA-256 hashes of the rows at that key and at the last
   exported key (`first_sha256`, `last_sha256`). Credential-named columns are left out
-  of the hashes. The state keeps the identity for the next run.
+  of the hashes. The hashes are taken from the rows as the database stores them, so
+  JWT replacement does not affect reset detection. The state keeps the identity for
+  the next run.
 - A new file name, such as `logs_3.sqlite` after an agent upgrade, starts its own
   export.
 
@@ -456,9 +481,11 @@ gone if it could not read it.
 **Health requests.** A failure after the start request sends the failure request. A
 failure before it, while rebuilding the state, checking the destination or taking the
 lock in the archive, sends only the failure request. A lock in the archive whose owner
-file names no holder is such a failure (see Locks). A run skipped for
-`min_interval_hours`, because another run holds the local lock, or because the lock in
-the archive names another holder, sends no request. A dry run sends none. A health
+file names no holder is such a failure. So is a lock of another holder whose run
+started more than 24 hours before this run, or at a time the owner file does not give
+(see Locks). A run skipped for `min_interval_hours`, because another run holds the
+local lock, or because the lock in the archive names another holder whose run started
+within the 24 hours before this run, sends no request. A dry run sends none. A health
 request that fails for any reason only prints a warning (`health request failed`). It
 never fails a run and never hides the run's own error.
 
@@ -470,17 +497,29 @@ folder.
 
 - The lock is the owner file, `sources/<source>/LOCK/owner.json`. The `LOCK/` folder
   only holds it, and a `LOCK/` folder without an owner file is not a lock. The owner
-  file records the host, the process ID, the start time, a token for the run, and a
-  hash of the host name and the local lock file's path.
-- A run creates `LOCK/` with `mkdir -p`, then creates `owner.json` with an exclusive
-  create (`O_EXCL`), which fails when the file exists. The create writes the owner in
-  the same step. So of two runs that try at the same time only one gets the lock, and
-  the remote `mkdir` need not be atomic.
-- On a local destination the create is `os.open` with `O_EXCL`. Over SSH it is the
-  shell's noclobber redirect, `(set -C; printf ... > owner.json)`: `set -C` makes `>`
-  open the file with `O_EXCL`, so it refuses a file that exists. The owner travels
-  inside the script, not on standard input. The script reads the file back, and the
-  run checks that the file holds its own owner.
+  file records the host (`host`), the process ID (`pid`), the start time
+  (`started_at`), a token for the run (`token`), the collector ID (`collector_id`), and
+  the local lock file's path within the state folder (`local_lock`, such as
+  `<destination hash>/<source>.lock`).
+- The collector ID is a random ID that the state folder keeps in its `collector-id`
+  file. The first run that needs it makes it.
+- A run creates `LOCK/` with `mkdir -p`, then creates `owner.json` with a create that
+  fails when the file exists. So of two runs that try at the same time only one gets
+  the lock, and the remote `mkdir` need not be atomic.
+- On a local destination the create is `os.open` with `O_EXCL`. The run writes the
+  owner through the same file descriptor and flushes it to disk. If that write fails,
+  the run removes the file.
+- Over SSH the run writes the owner to `LOCK/owner.json.<random>.tmp`, flushes it with
+  `sync`, and hard-links it to `owner.json` with `ln`. Creating a hard link fails when
+  the name exists, and `owner.json` appears with its whole content, so it never exists
+  empty. The temporary file is then removed.
+- Where `ln` fails although `owner.json` does not exist, because the filesystem has no
+  hard links or the host has no `ln`, the run uses the shell's noclobber redirect
+  instead: `set -C` makes `>` open `owner.json` with `O_EXCL`, so it refuses a file
+  that exists. The owner is written through that file descriptor, and the file is
+  removed if the write fails.
+- Over SSH the owner travels inside the script, not on standard input. The script
+  reads the file back, and the run checks that the file holds its own owner.
 - Local and SSH destinations use the same files on disk, so a run over SSH and a run
   that reaches the same archive as a local folder keep each other out.
 - A run that releases the lock can remove the folder between another run's `mkdir`
@@ -490,11 +529,18 @@ folder.
   Removing the then empty folder is best effort.
 - The run takes the lock after the destination checks, so a refused destination stays
   untouched. Only the run whose token the lock records removes it.
-- A lock that a killed run of this machine's own collector left (same host and local
-  lock file) is taken over, with a message.
-- A lock whose owner file names another holder makes the run a skip. `collect` reports
-  the source as skipped, names the holder, and goes on; a skip alone gives exit code
-  0. `collect --break-lock` first removes whatever the lock folder holds and prints
+- A lock that a killed run of the same collector left is taken over, with a message.
+  Its owner file must record the same collector ID, local lock file and host as this
+  run. An owner file without `collector_id` is never taken over; it names another
+  holder.
+- A lock of another holder whose run started within the 24 hours before this run
+  makes the run a skip. `collect` reports the source as skipped, names the holder, and
+  goes on; a skip alone gives exit code 0.
+- A lock of another holder whose run started more than 24 hours before this run, or
+  at a time the owner file does not give, fails the run: exit code 1, the failure
+  health request, and a message that names the holder and `--break-lock`. Such a run
+  was most likely stopped, and only `--break-lock` removes its lock.
+- `collect --break-lock` first removes whatever the lock folder holds and prints
   whose lock it was.
 - An owner file that is empty or cannot be read as an owner is read again 2 seconds
   later, because its run may be writing it. If it still names no holder, the run
@@ -525,8 +571,9 @@ files ends with `sync`.
 
 **SSH destination.** The remote host needs `sh` (with `test`, `[`, `echo`, its own
 `printf`, and `set -C`), `cat`, `mkdir`, `mv`, `find`, `printf`, `tar`, `rm`, `rmdir`
-and `sync`. `set -C` makes the shell's `>` create a file exclusively, which takes the
-lock. `mkdir` is used only as `mkdir -p`. `rm` removes only a source's incoming folder
+and `sync`. `ln` is optional: its hard link takes the lock. Where `ln` is missing or
+fails, `set -C`, which makes the shell's `>` create a file exclusively, takes the lock
+instead. `mkdir` is used only as `mkdir -p`. `rm` removes only a source's incoming folder
 and what its lock folder holds; `rmdir` removes the lock folder. ssh hands each command to the remote user's login shell, which need not be
 `sh`, so every command is sent as `sh -c '<script>'`. Placing a run's files is one
 script sent over standard input to `sh -s`, because a first run can move more files
@@ -555,12 +602,14 @@ each following line describes one path.
 {"type": "rows", "path": ".codex/logs_2.sqlite", "table": "logs", "key": "id",
  "from_key": 98921, "to_key": 101544, "rows": 2623, "reset": false,
  "identity": {"first_key": 61200, "first_sha256": "…", "last_sha256": "…"},
+ "redacted": {"jwt": 3},
  "export_path": ".codex/logs_2.sqlite.rows/20261002T061500Z-3f2a.jsonl", "sha256": "…", "…": "…"}
 {"type": "file", "path": ".claude/todos/old.json", "action": "gone"}
 {"type": "error", "path": ".copilot/session-store.db", "message": "database is locked"}
 ```
 
-A `rows` entry's export is archived at `files/<export_path>.zst`.
+A `rows` entry's export is archived at `files/<export_path>.zst`. The entry's `sha256`
+and `size` describe the export as written, after JWT replacement.
 
 `action` is one of:
 
@@ -624,18 +673,23 @@ The catalog has one row per source, per run, per archived file and per session.
 
 Session files are the paths each layout names as such (see Default Agent Layouts).
 For Claude Code they include the sub-agent transcripts of workflows; the
-`journal.jsonl` beside them is not a session. The catalog also reads compaction
-transcripts (`agent-acompact-*.jsonl` in `subagents/`) as sessions. The cagelens
+`journal.jsonl` beside them is not a session. Compaction transcripts
+(`agent-acompact-*.jsonl` in `subagents/`) are archived and listed in `files`, but
+the catalog does not read them as sessions. The cagelens
 session scanner behind `stats`, `session list` and `export`, the remote listing
 script and the lineage model find Claude sub-agent transcripts at
 `<session>/subagents/agent-*.jsonl` and `<session>/subagents/workflows/*/agent-*.jsonl`,
 and leave out compaction transcripts. Sessions are read from session files by
 the agent's cagelens stats parser, which the catalog looks up through
 `backends/registry.py` (`extract_stats`); the Claude, Codex and Gemini parsers are in
-`storage/metrics.py`. Sessions are read from databases by a query in the layout that
+`storage/metrics.py`. The Gemini parser reads both of Gemini CLI's chat formats, a
+single JSON file (`chats/*.json`) and an append-only JSON Lines file (`chats/*.jsonl`).
+Sessions are read from databases by a query in the layout that
 returns each session's id, working directory, branch, first and last time, and message
 count. Timestamps are stored as ISO 8601 UTC; epoch seconds and milliseconds are
-converted.
+converted. Text fields (session and parent session IDs, workspace, working directory,
+git branch and model names) are stored as text without NUL characters. A value that
+is not text is stored as its JSON text, and bytes are decoded as UTF-8.
 
 A session's workspace comes from its archived path for Claude Code
 (`.claude/projects/<workspace>/`) and Gemini CLI (`.gemini/tmp/<project>/`). The
@@ -652,6 +706,10 @@ the export use it, so a session has one ID everywhere.
 sessions in scope whose row has `is_agent` set. `main_sessions` is the rest of the
 sessions in scope, so a file that the metrics database has not read yet counts as a
 main session.
+
+The metrics database stores a file's rows all or none: they are written inside a
+savepoint (a nested transaction). If one row cannot be stored, the file keeps its
+earlier rows, or has none, and the next sync reads it again.
 
 The Claude Code reader works as follows:
 
@@ -686,12 +744,26 @@ The Codex reader works as follows:
   installed. Without it, the cagelens stats cache does not store compressed rollouts,
   and its sync counts them as errors.
 
-Every transcript reader skips lines that are not JSON objects, and ignores a nested
-value that should be an object but is not. It decodes bytes that are not valid UTF-8
-as U+FFFD instead of failing the file, and ignores a byte order mark. This holds for
-the stats parsers and for the readers behind session list, message counts, export and
-the lineage model, including the Claude, Codex, Gemini and Pi message readers. The
-shared helpers are in `agent_history/utils/jsonl.py`.
+The Gemini reader reads a JSONL chat as follows. Gemini CLI writes a message again, in
+full and under the same ID, each time it changes. The later copy replaces the earlier
+one in place, in stats, session list and export.
+
+Every transcript reader skips lines that are not JSON objects, including lines nested
+more deeply than the JSON decoder's limit, and ignores a nested value that should be
+an object but is not. It decodes bytes that are not valid UTF-8 as U+FFFD instead of
+failing the file, and ignores a byte order mark. This holds for the stats parsers and
+for the readers behind session list, message counts, export and the lineage model,
+including the Claude, Codex, Gemini and Pi message readers and the Copilot event
+reader. Copilot's side files are decoded the same way. The shared helpers are in
+`agent_history/utils/jsonl.py`.
+
+The readers handle values of the wrong type as follows:
+
+- A token count that is not a number, or text that holds one, counts as 0.
+- A timestamp that is not text is ignored when the first and last times are found.
+- IDs, model names, tool names, working directories and git branches that are not
+  text are stored as their JSON text.
+- Pi's branch links and Codex's spawn links compare IDs by that text form.
 
 A session can be known only from a database. For example, Copilot's
 `session-store.db` keeps sessions whose JSONL folders Copilot deleted. Such a
@@ -726,17 +798,21 @@ For each source it:
 2. then, for each run, records the run, updates `files` and `file_versions`,
    and marks `gone` paths.
 
-A session file that cannot be read, or whose content does not match the manifest's
-SHA-256, is recorded in `pending_sessions`. Every later sync reads it again. A newer
-run's hash replaces the pending one, and a successful read removes the entry. Until
-then, every sync reports the file as an error.
+A session file that cannot be read, whose content does not match the manifest's
+SHA-256, or whose rows the store refuses, is recorded in `pending_sessions`. The
+source's other session files and its runs are still recorded. Every later sync reads
+it again. A newer run's hash replaces the pending one, and a successful read removes
+the entry. Until then, every sync reports the file as an error. A pending entry whose
+path the current layouts do not name as a session file is deleted, with that path's
+session rows, when a sync reaches its source.
 
 `schema_meta` records `reader_version`: the metrics parser version
-(`METRICS_PARSER_VERSION` in `storage/metrics.py`, which is 3) plus the catalog's own
-extraction revision. When a sync finds a different or missing reader version, it queues
+(`METRICS_PARSER_VERSION` in `storage/metrics.py`, which is 4) plus the catalog's own
+extraction revision (4), joined by a dot (`4.4`). When a sync finds a different or missing reader version, it queues
 every session file listed in `files` in `pending_sessions` at its current SHA-256 (a
 file that is already pending keeps its hash). In the same transaction it deletes the
-session rows of every path that the current layouts do not name as a session file,
+session rows and pending entries of every path that the current layouts do not name
+as a session file,
 and records the new version. The queued files are then read like other pending files,
 so rows that an older reader wrote are replaced.
 
@@ -771,7 +847,9 @@ SQLite through its read-only URI mode, PostgreSQL with read-only transactions. S
 changes nothing, and it works on a SQLite file that the user cannot write. With no
 catalog it fails (exit code 1) and creates nothing. On a version 1 catalog it fails
 and asks for `catalog sync`, which upgrades it. On a catalog of an unknown version it
-fails.
+fails. On a SQLite catalog with a rollback journal (the `-journal` side file) left by
+an interrupted sync, which a read-only connection cannot undo, it fails, says so, and
+asks for `catalog sync` to recover the catalog. It changes nothing.
 
 `catalog sync` and `catalog rebuild` read the configuration file only when
 `--destination` is absent, so a machine without an archive configuration can keep a
@@ -836,8 +914,8 @@ agent_history/archive/
                        browser-profile skipping, and archive path mapping
   codec.py             zstd compression, hashing, and open_maybe_compressed, which
                        opens the name it is given as text; no production code calls it
-  state.py             collector state, applying manifests to it, the local lock and
-                       the lock in the archive
+  state.py             collector state, applying manifests to it, the local lock, the
+                       collector ID and the lock in the archive
   manifest.py          manifest writing and reading, run IDs, committed_run_ids,
                        read_manifest
   transport.py         the destination interface (including place, missing,
@@ -867,8 +945,8 @@ defaults to `sqlite:~/.cagelens/archive-catalog.db`. `archive` must be the first
 after `cagelens`, because it does not use the session-scope options.
 
 `collect` runs the selected sources in turn. A source whose local lock another run
-holds, or whose lock in the archive names another holder, is reported as skipped, and
-collection continues. Any other
+holds, or whose lock in the archive names another holder whose run started within the
+24 hours before this run, is reported as skipped, and collection continues. Any other
 failure of a source is reported, and the next source runs. An unexpected exception is
 reported as `<type>: <message>`. A damaged manifest raises `ManifestError`, and a
 damaged `ARCHIVE.json` raises `ArchiveError`; each message names the file. The exit
@@ -877,13 +955,13 @@ if a run recorded file errors, and 0 if not.
 
 `--break-lock` removes each selected source's lock in the archive, with whatever its
 folder holds, before its run, and prints whose lock it was. It is meant for a lock
-that a run killed on another machine left behind, and for an owner file that names no
-holder. With `--dry-run` it does nothing, because a dry run never touches the lock.
+that a run killed on another machine left behind, which fails runs once it is more
+than 24 hours old, and for an owner file that names no holder. With `--dry-run` it does nothing, because a dry run never touches the lock.
 
 `--dry-run` lists what a run would write and which files the content-loss guard
 would version, without writing. It hashes changed files that are already archived and
 compresses nothing. For a log database, it reports the number of new rows it would
-export. It takes no lock in the archive, finishes or discards no interrupted run, and
+export and the number of JWTs it would replace in them. It takes no lock in the archive, finishes or discards no interrupted run, and
 sends no health request.
 
 Packaging: `pip install "cagelens[archive]"`, or `cagelens[archive,postgres]` for a
