@@ -22,6 +22,7 @@ def test_lines_match_text_mode_reading(tmp_path):
 def test_large_file_lines_are_complete(tmp_path):
     path = tmp_path / "big.jsonl"
     lines = [f'{{"n": {n}, "pad": "{"x" * 5000}"}}' for n in range(3000)]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Bytes, so Windows does not turn the newlines into CRLF.
+    path.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
     assert [line.rstrip("\n") for line in iter_jsonl_lines(path)] == lines
