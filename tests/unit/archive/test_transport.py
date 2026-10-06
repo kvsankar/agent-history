@@ -103,3 +103,54 @@ def test_without_hard_links_the_lock_falls_back_to_an_exclusive_create(tmp_path,
 
     assert os.listdir(tmp_path / LOCK) == ["owner.json"]
     assert (tmp_path / LOCK / "owner.json").read_bytes() == b'{"token": "a"}'
+
+
+def _replace_busy(monkeypatch, failures: int) -> list[str]:
+    """Make os.replace fail ``failures`` times as Windows does while a reader holds the file."""
+    from agent_history.archive import transport
+
+    monkeypatch.setattr(transport, "_WINDOWS", True)
+    monkeypatch.setattr(transport.time, "sleep", lambda seconds: None)
+    real = os.replace
+    calls: list[str] = []
+
+    def busy(src, dst, *args, **kwargs):
+        calls.append(str(dst))
+        if len(calls) <= failures:
+            raise PermissionError(13, "The process cannot access the file", str(dst))
+        return real(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", busy)
+    return calls
+
+
+def test_placing_a_file_that_a_reader_holds_open_is_tried_again(tmp_path, monkeypatch):
+    dest = LocalDestination(tmp_path)
+    dest.write_bytes("sources/s/incoming/run/files/a.zst", b"new")
+    dest.write_bytes("sources/s/files/a.zst", b"old")
+    calls = _replace_busy(monkeypatch, failures=2)
+
+    dest.place([], [("sources/s/incoming/run/files/a.zst", "sources/s/files/a.zst")])
+
+    assert (tmp_path / "sources/s/files/a.zst").read_bytes() == b"new"
+    assert len(calls) == 3
+
+
+def test_a_file_held_open_for_too_long_fails_the_placement(tmp_path, monkeypatch):
+    dest = LocalDestination(tmp_path)
+    dest.write_bytes("sources/s/incoming/run/files/a.zst", b"new")
+    _replace_busy(monkeypatch, failures=1000)
+
+    with pytest.raises(PermissionError):
+        dest.place([], [("sources/s/incoming/run/files/a.zst", "sources/s/files/a.zst")])
+
+
+def test_a_permission_error_is_not_tried_again_outside_windows(tmp_path, monkeypatch):
+    from agent_history.archive import transport
+
+    calls = _replace_busy(monkeypatch, failures=1)
+    monkeypatch.setattr(transport, "_WINDOWS", False)
+
+    with pytest.raises(PermissionError):
+        LocalDestination(tmp_path).write_bytes("sources/s/a.zst", b"x")
+    assert len(calls) == 1

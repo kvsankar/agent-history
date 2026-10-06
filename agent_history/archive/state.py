@@ -30,6 +30,7 @@ from agent_history.archive.transport import (
     Destination,
     fsync_dir,
     fsync_file,
+    replace,
 )
 
 # log_keys["<path>::<table>" + IDENTITY_SUFFIX] identifies the log table's rows (see databases).
@@ -234,7 +235,7 @@ def save_state(path: Path, state: SourceState) -> None:
     tmp = path.with_name(path.name + ".part")
     tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     fsync_file(tmp)
-    os.replace(tmp, path)
+    replace(tmp, path)
     fsync_dir(path.parent)
 
 
@@ -437,14 +438,14 @@ def collector_id(state_dir: Path) -> str:
 
 def _place_collector_id(tmp: Path, path: Path) -> None:
     if path.exists():  # damaged
-        os.replace(tmp, path)
+        replace(tmp, path)
         return
     try:
         os.link(tmp, path)
     except FileExistsError:
         pass  # another run made it just now
     except OSError:
-        os.replace(tmp, path)  # no hard links here
+        replace(tmp, path)  # no hard links here
 
 
 def _read_collector_id(path: Path) -> str | None:

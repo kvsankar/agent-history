@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
+import time
 import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
@@ -18,6 +19,30 @@ def _check_rel(rel: str) -> str:
     if rel.startswith("/") or any(part in ("", ".", "..") for part in parts):
         raise ArchiveError(f"Unsafe archive path: {rel!r}")
     return rel
+
+
+_WINDOWS = os.name == "nt"
+# Pauses, in seconds, before each new try of a rename that Windows refused because another
+# process has the target open (a verify or catalog run, an antivirus scan, Explorer's
+# preview): about 1.5 seconds in all.
+_REPLACE_PAUSES = (0.05, 0.1, 0.2, 0.4, 0.75)
+
+
+def replace(src: Path, dst: Path) -> None:
+    """``os.replace``, tried again for a while when Windows reports the file in use.
+
+    Windows refuses to replace a file that another process holds open without delete
+    sharing (PermissionError, WinError 32 or 5). Such a hold is usually brief. Elsewhere
+    a PermissionError means a real lack of permission and is raised at once.
+    """
+    for pause in (*_REPLACE_PAUSES, None) if _WINDOWS else (None,):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if pause is None:
+                raise
+            time.sleep(pause)
 
 
 def fsync_file(path: Path) -> None:
@@ -190,7 +215,7 @@ class LocalDestination(Destination):
         tmp = path.with_name(path.name + ".part")
         tmp.write_bytes(data)
         fsync_file(tmp)
-        os.replace(tmp, path)
+        replace(tmp, path)
         _sync_dirs(folders)
 
     def list_files(self, rel_dir: str) -> list[str]:
@@ -227,7 +252,7 @@ class LocalDestination(Destination):
             return False
         target = self._path(dst)
         folders = _make_parent(target) | {source.parent}
-        os.replace(source, target)
+        replace(source, target)
         _sync_dirs(folders)
         return True
 
@@ -242,7 +267,7 @@ class LocalDestination(Destination):
                 tmp = target.with_name(target.name + ".part")
                 shutil.copy2(src, tmp)
                 fsync_file(tmp)
-                os.replace(tmp, target)
+                replace(tmp, target)
         _sync_dirs(folders)
 
     def place(self, keeps: list[Keep], puts: list[Put]) -> None:
@@ -265,7 +290,7 @@ class LocalDestination(Destination):
     def _rename(self, src: str, dst: str, folders: set[Path]) -> None:
         source, target = self._path(src), self._path(dst)
         folders |= _make_parent(target) | {source.parent}
-        os.replace(source, target)
+        replace(source, target)
 
     def discard_tree(self, rel: str) -> None:
         path = self._path(_check_discardable(rel))
