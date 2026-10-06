@@ -152,6 +152,19 @@ class SshDestination(Destination):
         self._check(result, "Checking archived files")
         return [rels[int(line)] for line in result.stdout.decode("ascii").split()]
 
+    def sizes(self, rels: list[str]) -> dict[str, int]:
+        """Sizes from ``wc -c``, which POSIX has; one script on standard input for all paths."""
+        if not rels:
+            return {}
+        script = "".join(
+            f"if [ -f {path} ]; then printf '%s ' {index}; wc -c < {path} || exit 1; fi\n"
+            for index, path in enumerate(map(self._remote, rels))
+        )
+        result = self._run_script(script)
+        self._check(result, "Checking the sizes of archived files")
+        words = result.stdout.decode("ascii").split()
+        return {rels[int(index)]: int(size) for index, size in zip(words[::2], words[1::2])}
+
     def place(self, keeps: list[Keep], puts: list[Put]) -> None:
         """Run every move as one shell script, read from standard input.
 

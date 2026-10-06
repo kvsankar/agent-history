@@ -635,3 +635,56 @@ def test_verify_reports_transport_errors_apart_from_mismatches(remote, tmp_path)
     assert len(report.errors) == 1
     assert report.errors[0].startswith(f"{SESSION}: ")
     assert not report.ok
+
+
+def test_sizes_reports_existing_files_only(remote):
+    dest, root = remote
+    (root / "a" / "folder").mkdir(parents=True)
+    (root / "a" / "one.zst").write_bytes(b"12345")
+    (root / "a" / "empty.zst").write_bytes(b"")
+    (root / "a" / "new\nline.zst").write_bytes(b"xy")
+
+    sizes = dest.sizes(["a/one.zst", "a/empty.zst", "a/missing.zst", "a/folder", "a/new\nline.zst"])
+
+    assert sizes == {"a/one.zst": 5, "a/empty.zst": 0, "a/new\nline.zst": 2}
+    assert dest.sizes([]) == {}
+
+
+def test_a_copy_cut_short_over_ssh_is_not_committed(remote, tmp_path, fake_ssh):
+    dest, root = remote
+
+    class CutsShort(SshDestination):
+        def put_tree(self, staging):
+            super().put_tree(staging)
+            for copy in (root / "sources" / "src" / "incoming").rglob("a1.jsonl.zst"):
+                copy.write_bytes(copy.read_bytes()[:-1])
+
+    home = tmp_path / "home"
+    session = home / SESSION
+    session.parent.mkdir(parents=True)
+    session.write_bytes(b"original\n" * 50)
+    os.utime(session, (1_790_000_000, 1_790_000_000))
+    config = parse_config(
+        {
+            "archive": {"destination": "ssh://nas/unused", "compression_level": 3},
+            "sources": [{"name": "src", "kind": "live", "platform": "linux", "home": str(home)}],
+        }
+    )
+    state = tmp_path / "state"
+
+    first = collect_source(
+        config,
+        "src",
+        state_dir=state,
+        now=T0,
+        destination=CutsShort("nas", dest.root, ssh=[fake_ssh]),
+    )
+    second = collect_source(
+        config, "src", state_dir=state, now=T0 + timedelta(hours=1), destination=dest
+    )
+
+    assert (first.written, first.errors) == (0, 1)
+    assert (second.written, second.errors) == (1, 0)
+    archived = root / "sources" / "src" / "files" / f"{SESSION}.zst"
+    assert zstandard.ZstdDecompressor().decompress(archived.read_bytes()) == b"original\n" * 50
+    assert verify_source(dest, "src").ok

@@ -1613,3 +1613,99 @@ def test_a_copy_ending_in_ctrl_z_is_archived_whole(env, tmp_path, windows_text_m
     assert (report.missing, report.mismatched) == ([], [])
     for _run, entries in read_manifests(open_destination(str(env["dest"])), "src"):
         assert entries  # the manifest, a zstd frame as well, decodes
+
+
+class _CutsCopiesShort:
+    """A local destination whose transfer drops the last byte of the copies of one file."""
+
+    @staticmethod
+    def make(env, name: str):
+        from agent_history.archive.transport import LocalDestination
+
+        class CutsShort(LocalDestination):
+            def put_tree(self, staging):
+                super().put_tree(staging)
+                incoming = env["dest"] / "sources" / "src" / "incoming"
+                for copy in incoming.rglob(f"{name}.zst"):
+                    copy.write_bytes(copy.read_bytes()[:-1])
+
+        return CutsShort(env["dest"])
+
+
+def _errors(env, run_id):
+    destination = open_destination(str(env["dest"]))
+    for run, entries in read_manifests(destination, "src"):
+        if run["run_id"] == run_id:
+            return {entry["path"]: entry for entry in entries if entry["type"] == "error"}
+    raise AssertionError(f"no manifest for {run_id}")
+
+
+def test_a_copy_cut_short_in_transfer_is_not_committed(env):
+    other = ".codex/history.jsonl"
+    _write(env, SESSION, b'{"n": 1}\n' * 100, mtime=1_790_000_000)
+    _write(env, other, b"h\n", mtime=1_790_000_000)
+
+    first = _collect(env, destination=_CutsCopiesShort.make(env, "a1.jsonl"))
+
+    assert (first.written, first.errors) == (1, 1)
+    assert SESSION not in _entries(env, first.run_id)
+    assert "cut short" in _errors(env, first.run_id)[SESSION]["message"]
+    assert not (env["dest"] / "sources" / "src" / "files" / f"{SESSION}.zst").exists()
+    assert _archived(env, other) == b"h\n"
+
+    second = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (second.written, second.errors) == (1, 0)
+    assert _archived(env, SESSION) == b'{"n": 1}\n' * 100
+    _assert_archive_consistent(env, {})
+
+
+def test_a_rewrite_cut_short_in_transfer_keeps_the_archived_copy(env):
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+
+    second = _collect(
+        env, now=T0 + timedelta(hours=1), destination=_CutsCopiesShort.make(env, "a1.jsonl")
+    )
+
+    assert (second.written, second.versioned, second.errors) == (0, 0, 1)
+    assert _archived(env, SESSION) == b"original\n"
+    assert not (env["dest"] / "sources" / "src" / "versions").exists()
+
+    third = _collect(env, now=T0 + timedelta(hours=2))
+
+    assert (third.versioned, third.errors) == (1, 0)
+    assert _archived(env, SESSION) == b"rewritten\n"
+    _assert_archive_consistent(env, {SESSION: b"original\n"})
+
+
+def test_a_compressed_copy_that_is_not_finished_is_not_archived(env, monkeypatch):
+    """A compressor that never ends its frame leaves a short copy; the next run retries."""
+    from agent_history.archive import codec
+
+    _write(env, SESSION, b'{"n": 1}\n' * 100, mtime=1_790_000_000)
+    monkeypatch.setattr(codec, "_thread_compressor", _unfinished_compressor)
+
+    first = _collect(env)
+
+    assert (first.written, first.errors) == (0, 1)
+    assert not (env["dest"] / "sources" / "src" / "files" / f"{SESSION}.zst").exists()
+    monkeypatch.undo()
+
+    second = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (second.written, second.errors) == (1, 0)
+    assert _archived(env, SESSION) == b'{"n": 1}\n' * 100
+
+
+def _unfinished_compressor(level: int, threads: int = 0):
+    """A compressor whose stream writers never end their frame, like one not flushed."""
+    real = zstandard.ZstdCompressor(level=level, write_content_size=True)
+
+    class Unfinished:
+        def stream_writer(self, raw, **kwargs):
+            writer = real.stream_writer(raw, **kwargs)
+            return SimpleNamespace(write=writer.write, close=lambda: None)
+
+    return Unfinished()

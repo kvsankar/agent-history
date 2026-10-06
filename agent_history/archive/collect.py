@@ -171,21 +171,29 @@ def placements(
 ) -> tuple[list[Keep], list[Put]]:
     """The moves that put a run's files in place, from its manifest entries."""
     prefix = f"sources/{source}/"
-    incoming = incoming_dir(source, run_id)
     keeps: list[Keep] = []
     puts: list[Put] = []
     for entry in entries:
-        if entry.get("type") == "rows" and entry.get("export_path"):
-            current = f"{prefix}files/{entry['export_path']}.zst"
-        elif entry.get("type") == "file" and entry.get("action") in _WRITTEN:
-            current = archive_file_path(source, entry["path"])
-        else:
+        put = new_copy(source, run_id, entry)
+        if put is None:
             continue
-        staged = f"{incoming}/{current[len(prefix) :]}"
+        staged, current = put
         if entry.get("action") == "versioned" and entry.get("version_path"):
             keeps.append((current, f"{prefix}{entry['version_path']}", staged))
-        puts.append((staged, current))
+        puts.append(put)
     return keeps, puts
+
+
+def new_copy(source: str, run_id: str, entry: dict[str, Any]) -> Put | None:
+    """(incoming path, current path) of the copy an entry writes; None when it writes none."""
+    prefix = f"sources/{source}/"
+    if entry.get("type") == "rows" and entry.get("export_path"):
+        current = f"{prefix}files/{entry['export_path']}.zst"
+    elif entry.get("type") == "file" and entry.get("action") in _WRITTEN:
+        current = archive_file_path(source, entry["path"])
+    else:
+        return None
+    return f"{incoming_dir(source, run_id)}/{current[len(prefix) :]}", current
 
 
 def finish_run(
@@ -648,21 +656,47 @@ class _Run:
         save_state(self.state_file, self.state)
 
     def _check_transfer(self) -> None:
-        """Before committing: every new copy arrived, and every copy to keep exists.
+        """Before committing: every new copy arrived whole, and every copy to keep exists.
 
-        A rewritten file whose archived copy is missing (removed outside the collector)
-        cannot be kept, so its entry records no version and the run records an error.
+        A new copy whose size in the archive differs from the size it was staged with was
+        cut short on its way. It is not committed: its entry becomes an error, so the next
+        run archives the file again. A missing new copy stops the run. A rewritten file
+        whose archived copy is missing (removed outside the collector) cannot be kept, so
+        its entry records no version and the run records an error.
         """
-        _keeps, puts = placements(self.source.name, self.run_id, self.summary.entries)
+        copies: dict[str, dict[str, Any]] = {}
+        for entry in self.summary.entries:
+            put = new_copy(self.source.name, self.run_id, entry)
+            if put is not None:
+                copies[put[0]] = entry
         sources = [current for _entry, current, _version in self.moves]
-        missing = set(self.destination.missing([incoming for incoming, _ in puts] + sources))
-        lost = sorted(incoming for incoming, _ in puts if incoming in missing)
+        sizes = self.destination.sizes([*copies, *sources])
+        lost = sorted(incoming for incoming in copies if incoming not in sizes)
         if lost:
             raise ArchiveError(f"{len(lost)} transferred files are missing, such as {lost[0]}")
+        for incoming, entry in copies.items():
+            if sizes[incoming] != entry.get("compressed_size"):
+                self._drop_copy(entry, sizes[incoming])
         for entry, current, _version in self.moves:
-            if current in missing:
+            if current not in sizes:
                 self._drop_version(entry, current)
         self.summary.entries.sort(key=lambda entry: (entry["path"], entry["type"]))
+
+    def _drop_copy(self, entry: dict[str, Any], stored: int) -> None:
+        """Leave out a new copy that arrived cut short, and record an error instead."""
+        self.summary.entries = [kept for kept in self.summary.entries if kept is not entry]
+        self.moves = [move for move in self.moves if move[0] is not entry]
+        self.summary.written -= 1
+        if entry.get("action") == "versioned":
+            self.summary.versioned -= 1
+        self._record(
+            {
+                "type": "error",
+                "path": entry["path"],
+                "message": f"the copy was cut short on its way to the archive ({stored} of "
+                f"{entry.get('compressed_size')} bytes arrived), so it was not committed",
+            }
+        )
 
     def _drop_version(self, entry: dict[str, Any], current: str) -> None:
         for key in ("version_path", "previous_sha256", "previous_size"):

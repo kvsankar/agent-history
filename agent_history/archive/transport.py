@@ -110,6 +110,10 @@ class Destination:
         """The paths among ``rels`` that do not exist."""
         return [rel for rel in rels if not self.exists(rel)]
 
+    def sizes(self, rels: list[str]) -> dict[str, int]:
+        """The size in bytes of each file among ``rels``; paths that are no file are left out."""
+        raise NotImplementedError
+
     def move(self, src: str, dst: str) -> bool:
         """Rename within the archive; False when ``src`` does not exist."""
         raise NotImplementedError
@@ -202,6 +206,14 @@ class LocalDestination(Destination):
 
     def exists(self, rel: str) -> bool:
         return self._path(rel).exists()
+
+    def sizes(self, rels: list[str]) -> dict[str, int]:
+        found = {}
+        for rel in rels:
+            path = self._path(rel)
+            if path.is_file():
+                found[rel] = path.stat().st_size
+        return found
 
     def move(self, src: str, dst: str) -> bool:
         source = self._path(src)
