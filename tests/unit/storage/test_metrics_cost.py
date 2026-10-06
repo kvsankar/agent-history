@@ -50,7 +50,7 @@ def _claude_entry(uuid, entry_type, model=None, usage=None):
     }
 
 
-def _codex_session(path):
+def _codex_session(path, model="gpt-test"):
     usage = {
         "input_tokens": 1000,
         "cached_input_tokens": 400,
@@ -69,7 +69,7 @@ def _codex_session(path):
             {
                 "type": "turn_context",
                 "timestamp": "2026-09-10T11:00:01Z",
-                "payload": {"model": "gpt-test"},
+                "payload": {"model": model},
             },
             {
                 "type": "response_item",
@@ -185,3 +185,21 @@ def test_file_scoped_stats_carry_cost(db_path):
     assert stats["cost"]["unpriced_models"] == ["claude-unknown"]
     assert stats["by_model"]["claude-test"]["cost_usd"] == pytest.approx(CLAUDE_COST)
     assert "gpt-test" not in stats["by_model"]
+
+
+def test_unpriced_codex_tokens_count_cached_input_once(tmp_path):
+    """Codex input already includes cached tokens; they are not added twice."""
+    codex_file = _codex_session(tmp_path / "rollout.jsonl", model="gpt-unknown")
+    path = tmp_path / "metrics.db"
+    conn = metrics.init_metrics_db(path)
+    try:
+        metrics.sync_file_to_db(conn, codex_file, workspace="project-b", agent="codex")
+        conn.commit()
+    finally:
+        conn.close()
+
+    stats = metrics.get_scoped_stats_from_db(db_path=path)
+    rows = metrics.get_stats_rollup_from_db(db_path=path, by=["model"], metric="cost")
+
+    assert stats["cost"]["unpriced_tokens"] == 1050
+    assert rows[0]["unpriced_tokens"] == 1050

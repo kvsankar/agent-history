@@ -249,9 +249,11 @@ _MESSAGE_COST_SQL = (
     "ESTIMATE_COST(s.agent, m.model, m.timestamp, m.input_tokens, m.output_tokens, "
     "m.cache_read_tokens, m.cache_creation_tokens)"
 )
+# Codex input counts already include the cached tokens, so they are not added again.
 _MESSAGE_TOKENS_SQL = (
     "(COALESCE(m.input_tokens, 0) + COALESCE(m.output_tokens, 0) + "
-    "COALESCE(m.cache_read_tokens, 0) + COALESCE(m.cache_creation_tokens, 0))"
+    "CASE WHEN s.agent = 'codex' THEN 0 ELSE COALESCE(m.cache_read_tokens, 0) END + "
+    "COALESCE(m.cache_creation_tokens, 0))"
 )
 
 
