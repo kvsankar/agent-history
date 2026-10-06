@@ -107,8 +107,8 @@ class SSHRemoteClient:
         agent = session.get("agent", "claude")
         workspace_value = session.get("workspace") or workspace
         cache_dir = _remote_cache_dir(remote_host, agent, workspace_value)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        dest = cache_dir / filename
+        dest = cache_dir / _cache_relative_path(session, workspace_value, filename)
+        dest.parent.mkdir(parents=True, exist_ok=True)
         remote_mtime = session.get("mtime")
         if dest.exists():
             if isinstance(remote_mtime, (int, float)):
@@ -172,6 +172,24 @@ def _remote_cache_dir(remote_host: str, agent: str, workspace: str) -> Path:
     safe_host = re.sub(r"[^A-Za-z0-9._-]", "_", remote_host)
     safe_ws = _safe_cache_component(workspace)
     return get_config_dir() / "remote-cache" / safe_host / agent / safe_ws
+
+
+def _cache_relative_path(session: dict[str, Any], workspace: str, filename: str) -> Path:
+    """Where a remote session file goes inside its workspace's cache folder.
+
+    Sub-agent transcripts of different sessions can share a file name, so the
+    cache mirrors the remote path below the workspace folder (for example
+    ``<session>/subagents/agent-a1.jsonl``). A remote path that does not contain
+    the workspace folder, or holds an unsafe name, is cached by its file name.
+    """
+    remote_path = str(session.get("remote_path") or "").replace("\\", "/")
+    parts = [part for part in remote_path.split("/") if part]
+    if workspace in parts:
+        start = len(parts) - parts[::-1].index(workspace)
+        relative = parts[start:]
+        if relative and relative[-1] == filename and all(map(_is_safe_component, relative)):
+            return Path(*relative)
+    return Path(filename)
 
 
 def _safe_cache_component(value: str) -> str:
