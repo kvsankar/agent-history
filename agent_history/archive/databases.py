@@ -5,7 +5,8 @@ that includes the write-ahead log. Credential columns are blanked in the copy, a
 is vacuumed so the blanked values do not survive in free pages.
 
 *Log* databases keep a rolling window of rows. For those, each run exports only rows whose
-key is above the last exported key, as JSON Lines.
+key is above the last exported key, as JSON Lines. Credential columns are set to null, and
+JSON Web Tokens inside text values are replaced with a placeholder.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -39,6 +41,17 @@ CREDENTIAL_COLUMN_MARKERS = (
     "secret",
     "password",
 )
+
+# A JSON Web Token (JWT): base64url segments joined by dots, the header starting with
+# "eyJ", the base64 of '{"'. A signed token has three segments of at least ten characters.
+# A token whose signature is empty or short (an unsecured token, or one a log line cut
+# off) matches only when its payload also starts with "eyJ": two dotted segments that
+# both decode to JSON objects do not occur in ordinary text.
+JWT_PATTERN = re.compile(
+    r"eyJ[A-Za-z0-9_-]{10,}\."
+    r"(?:[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]*)?)"
+)
+JWT_PLACEHOLDER = "[redacted-jwt]"
 
 
 def process_database(run: _Run, item: SelectedFile, staging: Path) -> dict[str, Any] | None:
@@ -270,9 +283,11 @@ def _export_new_rows(
         if signature_is_racy(signature, read_ns):
             entry["racy"] = True
         jsonl = snapshot.with_suffix(".jsonl")
-        count, blanked = _write_rows(conn, rule, start, jsonl)
+        count, blanked, redacted = _write_rows(conn, rule, start, jsonl)
         if blanked:
             entry["blanked"] = blanked
+        if redacted:
+            entry["redacted"] = {"jwt": redacted}
         if count == 0:
             entry["to_key"] = last if not reset else newest
         identity = _table_identity(conn, table, key, entry["to_key"])
@@ -364,10 +379,12 @@ def _row_identity(conn, table: str, key: str, value) -> str | None:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _write_rows(conn, rule: DatabaseRule, start, out: Path) -> tuple[int, list[str]]:
+def _write_rows(conn, rule: DatabaseRule, start, out: Path) -> tuple[int, list[str], int]:
     """Write rows with keys above ``start`` as JSON Lines, credential columns set to null.
 
-    Returns the row count and the blanked "table.column" names.
+    JWTs in text values are replaced with :data:`JWT_PLACEHOLDER`. BLOB values are
+    written as base64 and left as they are. Returns the row count, the blanked
+    "table.column" names and the number of JWTs replaced.
     """
     table, key = str(rule.log_table), str(rule.log_key)
     query = f"SELECT * FROM {_quote(table)}"
@@ -381,16 +398,23 @@ def _write_rows(conn, rule: DatabaseRule, start, out: Path) -> tuple[int, list[s
     blank = {
         name for name in names if f"{table}.{name}".lower() in named or _looks_like_credential(name)
     }
-    count = 0
+    count = redacted = 0
     with out.open("w", encoding="utf-8") as handle:
         for row in cursor:
-            record = {
-                name: None if name in blank else _json_value(value)
-                for name, value in zip(names, row)
-            }
+            record = {}
+            for name, value in zip(names, row):
+                record[name], replaced = _export_value(None if name in blank else value)
+                redacted += replaced
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
             count += 1
-    return count, sorted(f"{table}.{name}" for name in blank)
+    return count, sorted(f"{table}.{name}" for name in blank), redacted
+
+
+def _export_value(value: Any) -> tuple[Any, int]:
+    """A value as written to a row export, and the number of JWTs replaced in it."""
+    if isinstance(value, str):
+        return JWT_PATTERN.subn(JWT_PLACEHOLDER, value)
+    return _json_value(value), 0
 
 
 def _json_value(value: Any) -> Any:

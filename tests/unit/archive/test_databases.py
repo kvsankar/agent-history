@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import itertools
 import json
 import os
@@ -363,6 +364,133 @@ def test_exported_log_rows_have_credential_columns_blanked(env):
         env["dest"] / "sources" / "src" / "files" / (entry["export_path"] + ".zst")
     ).read_bytes()
     assert TOKEN.encode() not in zstandard.ZstdDecompressor().decompress(data)
+
+
+def _b64url(text):
+    return base64.urlsafe_b64encode(text.encode()).rstrip(b"=").decode()
+
+
+JWT_HEADER = _b64url('{"alg":"HS256","typ":"JWT"}')
+JWT_PAYLOAD = _b64url('{"sub":"alex","exp":1790000000}')
+JWT = f"{JWT_HEADER}.{JWT_PAYLOAD}.{_b64url('signature-bytes-for-alex')}"
+JWT_UNSIGNED = f"{JWT_HEADER}.{JWT_PAYLOAD}."
+JWT_TRUNCATED = f"{JWT_HEADER}.{JWT_PAYLOAD[:20]}"
+
+
+def _text_logs_db(env, rows):
+    path = env["home"] / ".codex" / "logs_2.sqlite"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, target TEXT, "
+        "feedback_log_body TEXT, line INTEGER)"
+    )
+    conn.executemany("INSERT INTO logs VALUES (?, ?, ?, ?)", rows)
+    conn.commit()
+    _advance_mtime(path)
+    return conn
+
+
+def _raw_export(env, entry):
+    data = (
+        env["dest"] / "sources" / "src" / "files" / (entry["export_path"] + ".zst")
+    ).read_bytes()
+    return zstandard.ZstdDecompressor().decompress(data)
+
+
+def test_exported_log_rows_have_jwts_replaced_in_every_text_column(env):
+    rows = [
+        (1, "http", f"sending request: authorization: Bearer {JWT} (retry 1)", 10),
+        (2, f"ws {JWT}", f"two tokens {JWT},{JWT_UNSIGNED} done", 11),
+        (3, "session", f"header was {JWT_TRUNCATED}… cut", 12),
+    ]
+    _text_logs_db(env, rows).close()
+
+    summary = _collect(env)
+
+    (entry,) = _entries(env, summary.run_id)
+    assert _exported_rows(env, entry) == [
+        {
+            "id": 1,
+            "target": "http",
+            "feedback_log_body": "sending request: authorization: Bearer [redacted-jwt] (retry 1)",
+            "line": 10,
+        },
+        {
+            "id": 2,
+            "target": "ws [redacted-jwt]",
+            "feedback_log_body": "two tokens [redacted-jwt],[redacted-jwt] done",
+            "line": 11,
+        },
+        {
+            "id": 3,
+            "target": "session",
+            "feedback_log_body": "header was [redacted-jwt]… cut",
+            "line": 12,
+        },
+    ]
+    assert entry["redacted"] == {"jwt": 5}
+    raw = _raw_export(env, entry)
+    assert JWT_HEADER.encode() not in raw
+    assert JWT_PAYLOAD[:20].encode() not in raw
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_log_text_that_only_resembles_a_jwt_is_exported_unchanged(env):
+    blob = _b64url('{"cursor": "page-2", "filters": ["a", "b"]}' * 3)
+    bodies = [
+        "plain line without tokens",
+        "eyJ followed by short text. eyJabc.def.ghi",
+        f"base64 without dots {blob}",
+        f"one dot {JWT_HEADER}.{_b64url('not json payload')}",
+        "version 1.2.3 and file.name.ext and a.b.c",
+    ]
+    _text_logs_db(env, [(i, "t", body, i) for i, body in enumerate(bodies, start=1)]).close()
+
+    summary = _collect(env)
+
+    (entry,) = _entries(env, summary.run_id)
+    assert [row["feedback_log_body"] for row in _exported_rows(env, entry)] == bodies
+    assert "redacted" not in entry
+
+
+def test_jwt_redaction_keeps_the_reset_identity_stable(env):
+    conn = _text_logs_db(env, [(i, "t", f"token {JWT} line {i}", i) for i in (1, 2, 3)])
+    first = _collect(env)
+    conn.executemany(
+        "INSERT INTO logs VALUES (?, ?, ?, ?)",
+        [(i, "t", f"token {JWT} line {i}", i) for i in (4, 5)],
+    )
+    conn.commit()
+    conn.close()
+    _advance_mtime(env["home"] / ".codex" / "logs_2.sqlite")
+
+    second = _collect(env, hours=1)
+
+    (entry1,) = _entries(env, first.run_id)
+    (entry2,) = _entries(env, second.run_id)
+    assert entry2["reset"] is False
+    assert [row["id"] for row in _exported_rows(env, entry2)] == [4, 5]
+    assert entry1["identity"]["first_sha256"] == entry2["identity"]["first_sha256"]
+    assert (entry1["redacted"], entry2["redacted"]) == ({"jwt": 3}, {"jwt": 2})
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_dry_run_reports_the_jwt_count(env):
+    _text_logs_db(env, [(1, "t", f"token {JWT}", 1), (2, "t", "no token", 2)]).close()
+    config = parse_config(
+        {
+            "archive": {"destination": str(env["dest"]), "compression_level": 3},
+            "sources": [
+                {"name": "src", "kind": "live", "platform": "linux", "home": str(env["home"])}
+            ],
+        }
+    )
+
+    summary = collect_source(config, "src", state_dir=env["state"], now=T0, dry_run=True)
+
+    (entry,) = summary.entries
+    assert (entry["rows"], entry["redacted"]) == (2, {"jwt": 1})
 
 
 def test_dry_run_counts_new_log_rows_without_compressing(env, monkeypatch):
