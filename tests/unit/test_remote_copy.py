@@ -104,3 +104,70 @@ def test_a_remote_path_outside_the_workspace_folder_is_cached_by_file_name(
     assert dest is not None
     assert dest.name == "rollout-1.jsonl"
     assert dest.parent.name == "home-alice-shop"
+
+
+def _no_ssh(*args, **kwargs):
+    raise AssertionError("the host must not be contacted")
+
+
+def _escaping_session(workspace="-w", filename="x.jsonl"):
+    return {
+        "agent": "claude",
+        "filename": filename,
+        "workspace": workspace,
+        "mtime": 0,
+        "remote_path": f"/home/alex/.claude/projects/{workspace}/../../../../../../outside/x.jsonl",
+    }
+
+
+def test_a_remote_path_with_parent_components_never_leaves_the_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(remote.subprocess, "run", _no_ssh)
+    session = _escaping_session()
+    cache_dir = remote._remote_cache_dir("laptop", "claude", "-w")
+    relative = remote._cache_relative_path(session, "-w", "x.jsonl")
+    outside = (cache_dir / "../../../../../../outside/x.jsonl").resolve()
+    outside.parent.mkdir(parents=True)
+    outside.write_text("a local file outside the cache\n", encoding="utf-8")
+
+    with pytest.raises(remote.RemoteClientError):
+        remote.SSHRemoteClient().ensure_local_copy("laptop", "-w", session)
+
+    assert (cache_dir / relative).resolve().is_relative_to(cache_dir.resolve())
+    assert not cache_dir.exists()
+
+
+@pytest.mark.parametrize("filename", ["..", "."])
+def test_a_file_name_of_dots_is_refused(monkeypatch, tmp_path: Path, filename: str) -> None:
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(remote.subprocess, "run", _no_ssh)
+    session = {"agent": "claude", "filename": filename, "workspace": "-w", "mtime": 0}
+
+    with pytest.raises(remote.RemoteClientError):
+        remote.SSHRemoteClient().ensure_local_copy("laptop", "-w", session)
+
+    assert not (tmp_path / "config").exists()
+
+
+@pytest.mark.parametrize(("workspace", "agent"), [("..", "claude"), ("-w", "../../elsewhere")])
+def test_a_workspace_or_agent_of_dots_stays_inside_the_cache(
+    monkeypatch, tmp_path: Path, workspace: str, agent: str
+) -> None:
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(remote.subprocess, "run", _no_ssh)
+    cache_root = tmp_path / "config" / "remote-cache"
+    escaped = (cache_root / "laptop" / agent / workspace / "x.jsonl").resolve()
+    if not escaped.is_relative_to((cache_root / "laptop" / "claude").resolve()):
+        escaped.parent.mkdir(parents=True, exist_ok=True)
+        escaped.write_text("a local file outside the session's cache folder\n", encoding="utf-8")
+    session = {"agent": agent, "filename": "x.jsonl", "workspace": workspace, "mtime": 0}
+
+    try:
+        copy = remote.SSHRemoteClient().ensure_local_copy("laptop", workspace, session)
+    except remote.RemoteClientError:
+        return
+    assert copy is not None
+    assert copy.resolve().is_relative_to((cache_root / "laptop").resolve())
+    assert copy.resolve() != escaped
