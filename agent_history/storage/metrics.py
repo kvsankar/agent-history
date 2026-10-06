@@ -27,6 +27,7 @@ from agent_history.utils.jsonl import (
     as_timestamp,
     json_objects,
     open_transcript,
+    without_lone_surrogates,
 )
 from agent_history.utils.session_identity import (
     CodexSessionMeta,
@@ -54,7 +55,7 @@ METRICS_DB_VERSION = 8
 # Version of the transcript parsers that fill a session row. A sync parses a
 # file again when its row was written by another version, even if the file
 # is unchanged. Raise it whenever a parser change alters stored values.
-METRICS_PARSER_VERSION = 6
+METRICS_PARSER_VERSION = 7
 
 # Work period gap threshold in seconds (30 minutes per spec)
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60
@@ -404,7 +405,9 @@ def _clean_fields(
             cleaned[field] = as_count(cleaned[field])
     for field in time_fields:
         value = cleaned.get(field)
-        if value is not None and not isinstance(value, str):
+        if isinstance(value, str):
+            cleaned[field] = without_lone_surrogates(value)
+        elif value is not None:
             cleaned[field] = no_time
     return cleaned
 

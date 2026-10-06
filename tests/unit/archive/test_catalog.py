@@ -450,8 +450,12 @@ def _add_claude_transcript(archive, name, **fields):
             {"cwd": "/home/alex/a\u0000b", "gitBranch": "ma\u0000in"},
             ("odd-1", "/home/alex/ab", "main"),
         ),
+        (
+            {"sessionId": "odd" + chr(0xD800), "cwd": "/home/alex/a" + chr(0xDC00) + "b"},
+            ("odd\ufffd", "/home/alex/a\ufffdb", None),
+        ),
     ],
-    ids=["object-session-id", "nul-in-text"],
+    ids=["object-session-id", "nul-in-text", "lone-surrogates"],
 )
 def test_a_transcript_with_values_a_store_cannot_take_is_catalogued_as_text(
     store, archive, fields, expected
@@ -469,6 +473,22 @@ def test_a_transcript_with_values_a_store_cannot_take_is_catalogued_as_text(
         ("%/odd-1.jsonl",),
     ) == [expected]
     assert "claude-s1" in _session_ids(store)
+
+
+def test_a_transcript_with_counts_a_store_cannot_take_is_catalogued_with_0(store, archive):
+    usage = {"input_tokens": 10**20, "output_tokens": "1e300", "cache_read_input_tokens": 2**53}
+    message = {"role": "assistant", "model": "model-x", "content": [], "usage": usage}
+    _add_claude_transcript(archive, "odd-1.jsonl", type="assistant", message=message)
+    archive["collect"](hours=1)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _rows(
+        store,
+        "SELECT input_tokens, output_tokens, cache_read_tokens FROM sessions WHERE path LIKE ?",
+        ("%/odd-1.jsonl",),
+    ) == [(0, 0, 2**53)]
 
 
 def test_a_database_session_with_values_a_store_cannot_take_is_catalogued_as_text(store, archive):

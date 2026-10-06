@@ -7,6 +7,7 @@ various grouping dimensions and time tracking.
 See docs/design-v2/pipeline-architecture.md for the complete specification.
 """
 
+import sys
 from typing import Any, Dict
 
 from agent_history.core.workspaces import build_scope_metadata, build_workspace_rows
@@ -224,7 +225,11 @@ class SessionStatsHandler(VerbHandler):
             db_stats["by_tool"] = get_tool_usage_stats_from_db(file_paths=file_paths)
             db_stats["time_stats"] = get_time_stats_from_db(file_paths=file_paths)
             return db_stats
-        except Exception:
+        except Exception as exc:
+            sys.stderr.write(
+                f"Warning: could not read the metrics database ({exc}); "
+                "message, token, model and tool totals are left out.\n"
+            )
             return None
 
     def execute_cached(

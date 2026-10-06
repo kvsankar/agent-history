@@ -15,9 +15,11 @@ from pathlib import Path
 import pytest
 
 from agent_history.backends.registry import get_backend, register_backend, unregister_backend
+from agent_history.storage import metrics
 from agent_history.storage.metrics import init_metrics_db, sync_file_to_db
 
 FAILING = "claude-unstorable"
+UNSTORABLE = 2**70
 
 
 def _session_file(tmp_path: Path) -> Path:
@@ -37,16 +39,30 @@ def _session_file(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def failing_backend():
-    """The Claude backend, but its second message holds a count SQLite cannot store."""
+def failing_backend(monkeypatch: pytest.MonkeyPatch):
+    """The Claude backend, but its second message holds a count SQLite cannot store.
+
+    Cleaning a reader's output would make that count 0, so the count is put
+    back after cleaning, as a stand-in for any value the store refuses.
+    """
     claude = get_backend("claude")
     assert claude is not None
 
     def extract_stats(session_file: Path):
         session_info, messages, tool_uses = claude.extract_stats(session_file)
-        messages[1]["input_tokens"] = 2**70
+        messages[1]["input_tokens"] = UNSTORABLE
         return session_info, messages, tool_uses
 
+    real_clean = metrics.clean_stats_payload
+
+    def clean_but_keep_the_unstorable_count(payload):
+        cleaned = real_clean(payload)
+        for original, message in zip(payload[1], cleaned[1]):
+            if original.get("input_tokens") == UNSTORABLE:
+                message["input_tokens"] = UNSTORABLE
+        return cleaned
+
+    monkeypatch.setattr(metrics, "clean_stats_payload", clean_but_keep_the_unstorable_count)
     register_backend(dataclasses.replace(claude, id=FAILING, extract_stats=extract_stats))
     yield FAILING
     unregister_backend(FAILING)

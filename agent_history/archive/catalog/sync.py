@@ -34,6 +34,7 @@ from agent_history.archive.manifest import read_manifests
 from agent_history.archive.transport import Destination
 from agent_history.backends.gemini import gemini_resumed_copy_name
 from agent_history.storage.metrics import METRICS_PARSER_VERSION
+from agent_history.utils.jsonl import without_lone_surrogates
 
 # The catalog's own part of how session files become rows (which archived paths hold
 # sessions, how the workspace is derived). Raise it when that changes;
@@ -598,7 +599,8 @@ def _as_text(value: Any) -> str:
 
     A transcript can hold any JSON value where a reader expects text, such as an object
     as a session ID; such values are stored as their JSON text. NUL characters are
-    removed, because PostgreSQL text cannot hold them.
+    removed, because PostgreSQL text cannot hold them, and lone UTF-16 surrogates become
+    U+FFFD, because neither store can encode them.
     """
     if isinstance(value, str):
         text = value
@@ -606,7 +608,7 @@ def _as_text(value: Any) -> str:
         text = value.decode("utf-8", "replace")
     else:
         text = json.dumps(value, sort_keys=True, default=str)
-    return text.replace("\x00", "")
+    return without_lone_surrogates(text.replace("\x00", ""))
 
 
 def catalog_status(store: CatalogStore, sources: list[str] | None = None) -> list[dict[str, Any]]:
