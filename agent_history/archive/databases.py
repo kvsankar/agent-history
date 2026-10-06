@@ -172,6 +172,10 @@ def blank_credentials(path: Path, rule: DatabaseRule) -> list[str]:
     named = {entry.lower() for entry in rule.blank_columns}
     blanked = []
     with closing(sqlite3.connect(path)) as conn:
+        # Full-text tables first: blanking their shadow tables directly would leave the
+        # words of the old values in the index, with no way to remove them.
+        for table, sql in _full_text_tables(conn):
+            blanked += _blank_full_text(conn, table, sql, named)
         for table in _plain_tables(conn):
             unique = _unique_columns(conn, table)
             for column, declared, not_null in _column_info(conn, table):
@@ -180,7 +184,36 @@ def blank_credentials(path: Path, rule: DatabaseRule) -> list[str]:
                     _blank_column(conn, table, column, declared, not_null, column in unique)
                     blanked.append(qualified)
         conn.execute("VACUUM")
-    return sorted(blanked)
+    return sorted(set(blanked))
+
+
+def _blank_full_text(conn, table: str, sql: str, named: set[str]) -> list[str]:
+    """Blank a full-text (FTS3, FTS4 or FTS5) table's credential columns, index included.
+
+    The update goes through the table, which removes the old values' words from its
+    index, and 'optimize' then merges the index so no segment keeps them. A table whose
+    values cannot be updated (a contentless or external-content table) raises
+    sqlite3.Error, which records an error for the database instead of archiving it. So
+    does a table whose module this SQLite lacks, unless its definition names no
+    credential column.
+    """
+    try:
+        info = _column_info(conn, table)
+    except sqlite3.OperationalError:  # no such module
+        if _looks_like_credential(sql) or any(n.startswith(f"{table.lower()}.") for n in named):
+            raise
+        return []
+    columns = [
+        column
+        for column, _declared, _not_null in info
+        if f"{table}.{column}".lower() in named or _looks_like_credential(column)
+    ]
+    for column in columns:
+        conn.execute(f"UPDATE {_quote(table)} SET {_quote(column)} = NULL")
+    if columns:
+        conn.execute(f"INSERT INTO {_quote(table)}({_quote(table)}) VALUES ('optimize')")
+        conn.commit()
+    return [f"{table}.{column}" for column in columns]
 
 
 def _blank_column(conn, table: str, column: str, declared: str, not_null: bool, unique: bool):
@@ -229,6 +262,15 @@ def _plain_tables(conn: sqlite3.Connection) -> list[str]:
         "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
     return [name for name, sql in rows if not (sql or "").upper().startswith("CREATE VIRTUAL")]
+
+
+_FULL_TEXT = re.compile(r"CREATE\s+VIRTUAL\s+TABLE\s.*?\bUSING\s+fts[345]\b", re.I | re.S)
+
+
+def _full_text_tables(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    """(name, definition) of the FTS3, FTS4 and FTS5 tables; their shadow tables are plain."""
+    rows = conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'").fetchall()
+    return [(name, sql) for name, sql in rows if _FULL_TEXT.match(sql or "")]
 
 
 def _column_info(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, bool]]:

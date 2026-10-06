@@ -7,6 +7,7 @@ import itertools
 import json
 import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -102,6 +103,65 @@ def test_snapshot_includes_wal_content_and_blanks_credentials(env):
         "settings.github_access_token",
         "usage.client_secret",
     ]
+
+
+@pytest.mark.parametrize("module", ["fts5", "fts4"])
+def test_credential_columns_of_full_text_tables_are_blanked_with_their_index(env, module):
+    """A full-text table keeps each value in a shadow table and its words in an index."""
+    conn = _copilot_data_db(env)
+    conn.execute(f"CREATE VIRTUAL TABLE notes USING {module}(title, api_key)")
+    conn.executemany(
+        "INSERT INTO notes VALUES (?, ?)", [("deploy steps", TOKEN), ("other notes", None)]
+    )
+    conn.commit()
+    conn.close()
+
+    summary = _collect(env)
+
+    path, raw = _restore(env, ".copilot/data.db")
+    restored = sqlite3.connect(path)
+    assert restored.execute("SELECT title, api_key FROM notes ORDER BY title").fetchall() == [
+        ("deploy steps", None),
+        ("other notes", None),
+    ]
+    found = restored.execute("SELECT title FROM notes WHERE notes MATCH 'deploy'").fetchall()
+    assert found == [("deploy steps",)]
+    assert restored.execute("SELECT * FROM notes WHERE notes MATCH 'gho'").fetchall() == []
+    restored.close()
+    assert TOKEN.encode() not in raw
+    assert b"secretvalue1234567890" not in raw.lower()  # the indexed word
+    (entry,) = _entries(env, summary.run_id)
+    assert "notes.api_key" in entry["blanked"]
+
+
+@pytest.mark.parametrize(("columns", "fails"), [("title, body", False), ("title, api_key", True)])
+def test_a_full_text_table_whose_module_is_missing_fails_only_with_credential_columns(
+    tmp_path, monkeypatch, columns, fails
+):
+    """Without the table's module its columns cannot be read or blanked."""
+    from agent_history.archive import databases
+    from agent_history.archive.layouts import DatabaseRule
+
+    path = tmp_path / "data.db"
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute(f"CREATE VIRTUAL TABLE notes USING fts5({columns})")
+        conn.execute("CREATE TABLE accounts (login TEXT, access_token TEXT)")
+        conn.commit()
+    real = databases._column_info
+
+    def no_module(conn, table):
+        if table == "notes":
+            raise sqlite3.OperationalError("no such module: fts5")
+        return real(conn, table)
+
+    monkeypatch.setattr(databases, "_column_info", no_module)
+    rule = DatabaseRule(pattern="data.db", mode="snapshot")
+
+    if fails:
+        with pytest.raises(sqlite3.OperationalError):
+            databases.blank_credentials(path, rule)
+    else:
+        assert databases.blank_credentials(path, rule) == ["accounts.access_token"]
 
 
 def test_not_null_credential_columns_are_blanked_with_allowed_values(env):
