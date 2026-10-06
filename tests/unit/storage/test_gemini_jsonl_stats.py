@@ -135,3 +135,47 @@ def test_jsonl_chat_gets_a_full_metrics_row(tmp_path: Path) -> None:
 
     assert tuple(row) == ("g-1", 4, 30, 12)
     assert models == {"gemini-x", "gemini-y"}
+
+
+def _rewound_chat(tmp_path: Path, rewind_to: Any) -> Path:
+    """The chat after the user rewinds to a message and asks again.
+
+    Gemini CLI's ``rewindTo`` removes the named message and every later one,
+    and its loader also removes every message when the ID is not found.
+    """
+    records = [
+        META,
+        *MESSAGES,
+        {"$rewindTo": rewind_to},
+        {"id": "u3", "type": "user", "content": "instead", "timestamp": T4},
+    ]
+    path = _chats(tmp_path) / "session-g-1.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return path
+
+
+def test_a_rewind_removes_the_message_it_names_and_every_later_one(tmp_path: Path) -> None:
+    path = _rewound_chat(tmp_path, "u2")
+
+    messages, _meta = gemini_read_json_messages(path)
+    session_info, _messages, tool_uses = _stats(path)
+
+    assert [m["content"] for m in messages] == ["hello", "Reading it.", "instead"]
+    assert (session_info["message_count"], session_info["input_tokens"]) == (3, 10)
+    assert [t["tool_use_id"] for t in tool_uses] == ["t1"]
+
+
+def test_a_rewind_to_a_message_that_is_not_there_removes_every_message(tmp_path: Path) -> None:
+    path = _rewound_chat(tmp_path, "not-there")
+
+    messages, _meta = gemini_read_json_messages(path)
+    session_info, _messages, _tool_uses = _stats(path)
+
+    assert [m["content"] for m in messages] == ["instead"]
+    assert (session_info["message_count"], session_info["input_tokens"]) == (1, 0)
+
+
+def test_a_rewind_record_without_a_text_id_is_not_a_rewind(tmp_path: Path) -> None:
+    messages, _meta = gemini_read_json_messages(_rewound_chat(tmp_path, 5))
+
+    assert [m["content"] for m in messages] == ["hello", "Reading it.", "more", "Done.", "instead"]

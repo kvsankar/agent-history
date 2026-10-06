@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agent_history.backends.gemini import gemini_rewind
 from agent_history.types import SessionDict
 from agent_history.utils.jsonl import id_key, json_objects, open_transcript
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
@@ -431,8 +432,8 @@ def _collect_gemini_jsonl_record(
     session_meta: dict[str, Any],
     messages: list[dict[str, Any]],
 ) -> None:
-    if "$rewindTo" in entry:
-        _rewind_gemini_messages(messages, entry.get("$rewindTo"))
+    if isinstance(entry.get("$rewindTo"), str):
+        gemini_rewind(messages, entry["$rewindTo"])
         return
     if "$set" in entry:
         _apply_gemini_set_record(session_meta, messages, entry.get("$set"))
@@ -453,13 +454,6 @@ def _collect_gemini_jsonl_record(
         messages.append(entry)
     elif record_type in (None, "metadata", "session"):
         session_meta.update({key: value for key, value in entry.items() if key != "messages"})
-
-
-def _rewind_gemini_messages(messages: list[dict[str, Any]], target_id: Any) -> None:
-    for index, message in enumerate(messages):
-        if isinstance(message, dict) and message.get("id") == target_id:
-            del messages[index + 1 :]
-            return
 
 
 def _apply_gemini_set_record(

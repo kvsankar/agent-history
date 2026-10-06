@@ -171,8 +171,9 @@ def test_gemini_reads_current_jsonl_append_session(tmp_path: Path) -> None:
 
     assert meta["sessionId"] == "gemini-jsonl-1"
     assert meta["summary"] == "short summary"
-    assert [message["content"] for message in messages] == ["Hello", "After rewind."]
-    assert gemini_count_messages(session_file) == 2
+    # Rewinding to u1 removes u1 and every later message, as Gemini CLI does.
+    assert [message["content"] for message in messages] == ["After rewind."]
+    assert gemini_count_messages(session_file) == 1
     assert gemini_get_first_timestamp(session_file) == "2026-06-04T00:00:00Z"
 
 

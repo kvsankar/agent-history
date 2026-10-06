@@ -226,7 +226,8 @@ def _gemini_session(tmp_path: Path) -> Path:
         + b'{"type": "user", "timestamp": "'
         + LATER.encode()
         + b'", "content": "caf\xff"}\n'
-        + _line({"$rewindTo": "missing"})
+        # Gemini CLI reads a record as a rewind only when its $rewindTo is text.
+        + _line({"$rewindTo": ["first"]})
     )
     return session_file
 

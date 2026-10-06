@@ -729,3 +729,31 @@ def test_pi_lineage_captures_extension_subagent_tool_call(tmp_path: Path) -> Non
     assert completion_event["timestamp"] == "2026-06-09T10:00:02.000Z"
     assert completion_event["status"] == "completed"
     assert completion_event["summary"] == "done"
+
+
+def test_gemini_jsonl_lineage_drops_the_message_a_rewind_names(tmp_path: Path) -> None:
+    gemini_file = tmp_path / "session-rewind-named.jsonl"
+    _write_jsonl(
+        gemini_file,
+        [
+            {"sessionId": "gemini-rewind-named", "startTime": "2026-06-09T10:00:00.000Z"},
+            {
+                "id": "removed",
+                "timestamp": "2026-06-09T10:00:10.000Z",
+                "type": "gemini",
+                "toolCalls": [
+                    {
+                        "id": "codebase_investigator-removed",
+                        "name": "codebase_investigator",
+                        "displayName": "Codebase Investigator Agent",
+                        "status": "success",
+                    }
+                ],
+            },
+            {"$rewindTo": "removed"},
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(gemini_file, AGENT_GEMINI)])
+
+    assert [record["kind"] for record in lineage] == ["main"]

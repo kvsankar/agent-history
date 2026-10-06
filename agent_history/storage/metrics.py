@@ -50,7 +50,7 @@ METRICS_DB_VERSION = 8
 # Version of the transcript parsers that fill a session row. A sync parses a
 # file again when its row was written by another version, even if the file
 # is unchanged. Raise it whenever a parser change alters stored values.
-METRICS_PARSER_VERSION = 4
+METRICS_PARSER_VERSION = 5
 
 # Work period gap threshold in seconds (30 minutes per spec)
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60

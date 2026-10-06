@@ -295,8 +295,9 @@ class _GeminiJsonlChat:
 
     Gemini CLI writes a message again, in full and under the same ID, each
     time it changes (a tool call finishes, say); the later copy replaces the
-    earlier one in place. ``$rewindTo`` drops the messages after the named
-    one, and ``$set`` updates the metadata or replaces all messages.
+    earlier one in place. ``$rewindTo`` removes the named message and every
+    later one (see :func:`gemini_rewind`), and ``$set`` updates the metadata
+    or replaces all messages.
     """
 
     def __init__(self) -> None:
@@ -312,13 +313,9 @@ class _GeminiJsonlChat:
                 self._positions[key] = index
 
     def add(self, record: dict[str, Any]) -> None:
-        if "$rewindTo" in record:
-            rewind_id = record.get("$rewindTo")
-            for index, msg in enumerate(self.messages):
-                if isinstance(msg, dict) and msg.get("id") == rewind_id:
-                    self.messages = self.messages[: index + 1]
-                    self._reindex()
-                    break
+        if isinstance(record.get("$rewindTo"), str):
+            gemini_rewind(self.messages, record["$rewindTo"])
+            self._reindex()
             return
         if "$set" in record:
             updates = record.get("$set") or {}
@@ -343,6 +340,20 @@ class _GeminiJsonlChat:
         if key is not None:
             self._positions[key] = len(self.messages)
         self.messages.append(record)
+
+
+def gemini_rewind(messages: list[Any], message_id: str) -> None:
+    """Apply a ``$rewindTo`` record to a chat's messages, in place.
+
+    As Gemini CLI's loader does, the named message and every later one are
+    removed, and every message is removed when none has that ID. Gemini CLI
+    reads a record as a rewind only when its ``$rewindTo`` is text.
+    """
+    for index, msg in enumerate(messages):
+        if isinstance(msg, dict) and msg.get("id") == message_id:
+            del messages[index:]
+            return
+    messages.clear()
 
 
 def _gemini_message_key(msg: Any) -> str | None:
