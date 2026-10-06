@@ -40,6 +40,11 @@ __all__ = [
 # Schema version for migrations
 METRICS_DB_VERSION = 7
 
+# Version of what a sync derives from a session file: token counts, models,
+# workspace keys. Bump it when parsing changes, so rows written by an older
+# cagelens are synced again even when their files have not changed.
+STATS_FORMAT_VERSION = 1
+
 # Work period gap threshold in seconds (30 minutes per spec)
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60
 
@@ -135,7 +140,8 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
             num_work_periods INTEGER DEFAULT 1,
             git_remote_url TEXT,
             project TEXT,
-            project_short TEXT
+            project_short TEXT,
+            stats_format INTEGER DEFAULT 0
         );
 
         -- Messages table (aggregated stats per message)
@@ -218,9 +224,22 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
     if current_version < METRICS_DB_VERSION:
         _run_migrations(conn, current_version, row is None)
+    _ensure_stats_format_column(conn)
 
     conn.commit()
     return conn
+
+
+def _ensure_stats_format_column(conn: sqlite3.Connection) -> None:
+    """Add sessions.stats_format to databases created before it existed.
+
+    Checked on every open rather than by schema version, because a database
+    can carry a version number from another cagelens build. Rows without it
+    read 0 and are synced again.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "stats_format" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN stats_format INTEGER DEFAULT 0")
 
 
 def _sqlite_estimate_cost(
@@ -938,16 +957,19 @@ def sync_file_to_db(
 
     if not force:
         cursor = conn.execute(
-            "SELECT file_mtime, home FROM sessions WHERE file_path = ?", (file_path_str,)
+            "SELECT file_mtime, home, stats_format FROM sessions WHERE file_path = ?",
+            (file_path_str,),
         )
         row = cursor.fetchone()
         # An unchanged file reached through a different home is synced again, so
-        # one file is never left under the home of an older sync.
+        # one file is never left under the home of an older sync. So is a file
+        # whose row an older cagelens wrote.
         if (
             row
             and row["file_mtime"]
             and row["file_mtime"] >= current_mtime
             and row["home"] == source_key
+            and row["stats_format"] == STATS_FORMAT_VERSION
         ):
             return False
 
@@ -978,8 +1000,8 @@ def sync_file_to_db(
             cache_creation_tokens, cache_read_tokens,
             first_timestamp, last_timestamp,
             git_branch, claude_version, cwd,
-            work_period_seconds, num_work_periods
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            work_period_seconds, num_work_periods, stats_format
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             file_path_str,
@@ -1007,6 +1029,7 @@ def sync_file_to_db(
             session_info.get("cwd"),
             work_seconds,
             num_periods,
+            STATS_FORMAT_VERSION,
         ),
     )
 
