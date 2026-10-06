@@ -1280,3 +1280,31 @@ def test_a_new_reader_drops_the_rows_of_a_resumed_legacy_gemini_chat(
     assert summary.errors == []
     assert _gemini_rows(store) == [(copy, "gemini-r1", 3)]
     assert _rows(store, "SELECT COUNT(*) FROM pending_sessions") == [(0,)]
+
+
+def test_a_gemini_subagent_chat_is_catalogued_as_a_subagent_of_its_folders_session(
+    store, archive, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    legacy = _write_legacy_gemini_chat(archive)
+    chat = archive["home"] / legacy.rsplit("/", 1)[0] / "gemini-r1" / "a1b2c3.jsonl"
+    chat.parent.mkdir()
+    records = [
+        {"sessionId": "a1b2c3", "projectHash": "c" * 64, "kind": "subagent"},
+        {"id": "u1", "type": "user", "content": "look", "timestamp": "2025-01-05T14:00:05Z"},
+    ]
+    chat.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    _settle(chat)
+    archive["collect"](hours=1)
+
+    summary = sync_catalog(store, archive["destination"])
+
+    assert summary.errors == []
+    assert _rows(
+        store,
+        "SELECT session_id, workspace, parent_session_id, is_subagent, message_count "
+        "FROM sessions WHERE agent = 'gemini' ORDER BY session_id",
+    ) == [
+        ("a1b2c3", "c" * 64, "gemini-r1", True, 1),
+        ("gemini-r1", "c" * 64, None, False, 2),
+    ]

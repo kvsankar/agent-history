@@ -28,7 +28,11 @@ from agent_history.utils.jsonl import (
     json_objects,
     open_transcript,
 )
-from agent_history.utils.session_identity import CodexSessionMeta, claude_session_identity
+from agent_history.utils.session_identity import (
+    CodexSessionMeta,
+    claude_session_identity,
+    gemini_session_identity,
+)
 
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
@@ -50,7 +54,7 @@ METRICS_DB_VERSION = 8
 # Version of the transcript parsers that fill a session row. A sync parses a
 # file again when its row was written by another version, even if the file
 # is unchanged. Raise it whenever a parser change alters stored values.
-METRICS_PARSER_VERSION = 5
+METRICS_PARSER_VERSION = 6
 
 # Work period gap threshold in seconds (30 minutes per spec)
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60
@@ -842,6 +846,7 @@ def _parse_gemini_json(
 
     session_info["session_id"] = data.get("sessionId")
     session_info["cwd"] = data.get("projectHash")
+    session_info.update(gemini_session_identity(json_file, data.get("kind")))
     session_info["first_timestamp"] = data.get("startTime")
     session_info["last_timestamp"] = data.get("lastUpdated")
 

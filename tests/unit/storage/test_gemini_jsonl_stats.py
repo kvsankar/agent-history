@@ -232,3 +232,49 @@ def test_syncing_a_resumed_chat_replaces_the_rows_of_its_legacy_file(tmp_path: P
 
     assert [tuple(row) for row in rows] == [(str(copy), 5)]
     assert message_files == {str(copy)}
+
+
+def _subagent_chat(tmp_path: Path) -> Path:
+    """A sub-agent's chat as Gemini CLI writes it: ``chats/<parent>/<agentId>.jsonl``."""
+    records = [
+        {
+            "sessionId": "a1b2c3",
+            "projectHash": "hash-1",
+            "startTime": START,
+            "lastUpdated": T2,
+            "kind": "subagent",
+            "directories": ["/home/alex/project"],
+        },
+        MESSAGES[0],
+        FIRST_REPLY,
+    ]
+    path = _chats(tmp_path) / "g-1" / "a1b2c3.jsonl"
+    path.parent.mkdir()
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return path
+
+
+def test_a_subagent_chat_is_a_subagent_of_the_session_its_folder_names(tmp_path: Path) -> None:
+    session_info, _messages, _tool_uses = _stats(_subagent_chat(tmp_path))
+
+    assert session_info["session_id"] == "a1b2c3"
+    assert (session_info["is_agent"], session_info["parent_session_id"]) == (True, "g-1")
+
+
+def test_a_main_chat_is_no_subagent(tmp_path: Path) -> None:
+    session_info, _messages, _tool_uses = _stats(_jsonl_chat(tmp_path))
+
+    assert (session_info["is_agent"], session_info["parent_session_id"]) == (False, None)
+
+
+def test_a_subagent_chat_gets_a_subagent_metrics_row(tmp_path: Path) -> None:
+    conn = init_metrics_db(tmp_path / "metrics.db")
+    try:
+        assert sync_file_to_db(conn, _subagent_chat(tmp_path), agent="gemini")
+        row = conn.execute(
+            "SELECT session_id, is_agent, parent_session_id FROM sessions"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert tuple(row) == ("a1b2c3", 1, "g-1")

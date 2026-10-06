@@ -215,7 +215,8 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         include=("history/**", "tmp/**", "antigravity/**"),
         exclude=("tmp/*/tool-outputs/**", "tmp/bin/**"),
         backend="gemini",
-        sessions=("tmp/*/chats/*.json", "tmp/*/chats/*.jsonl"),
+        # Main chats, then sub-agent chats in a folder named after their parent session.
+        sessions=("tmp/*/chats/*.json", "tmp/*/chats/*.jsonl", "tmp/*/chats/*/*.jsonl"),
         workspace_folder="tmp",
     ),
     AgentLayout(

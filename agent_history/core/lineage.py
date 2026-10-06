@@ -16,6 +16,7 @@ from agent_history.utils.session_identity import (
     CodexSessionMeta,
     claude_session_identity,
     claude_subagent_files,
+    gemini_session_identity,
 )
 
 LineageRecord = dict[str, Any]
@@ -400,8 +401,9 @@ def _extract_gemini_jsonl_lineage(jsonl_file: Path) -> list[LineageRecord]:
         return []
 
     session_id = session_meta.get("sessionId") or session_meta.get("id") or jsonl_file.stem
-    nested_parent_id = _gemini_nested_jsonl_parent_session_id(jsonl_file)
-    is_nested_child = nested_parent_id is not None
+    identity = gemini_session_identity(jsonl_file, session_meta.get("kind"))
+    nested_parent_id = identity["parent_session_id"]
+    is_nested_child = identity["is_agent"]
     records = [
         _drop_none(
             {
@@ -745,13 +747,6 @@ def _is_gemini_subagent_tool(tool_call: dict[str, Any]) -> bool:
     return (
         display.endswith(" agent") or "subagent" in result_display or name.endswith("_investigator")
     )
-
-
-def _gemini_nested_jsonl_parent_session_id(jsonl_file: Path) -> str | None:
-    parent = jsonl_file.parent
-    if parent.parent.name != "chats":
-        return None
-    return parent.name
 
 
 def _collect_pi_subagent_lineage(

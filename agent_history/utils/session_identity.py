@@ -19,6 +19,10 @@ to, so one file can hold several:
 
 A Codex rollout's first session_meta describes it. A spawned sub-agent or a
 forked rollout later repeats the session_meta of the thread it came from.
+
+Gemini CLI writes a sub-agent's chat to ``chats/<parent>/<agentId>.jsonl``,
+with ``kind: "subagent"`` in its metadata. Its own sessionId is the agentId,
+and the folder names the session that started it.
 """
 
 from pathlib import Path
@@ -123,6 +127,26 @@ def claude_session_identity(
         "is_agent": True,
         "agent_id": own_agent_id,
     }
+
+
+def gemini_subagent_parent(chat_file: Path) -> Optional[str]:
+    """Session that started a Gemini sub-agent chat ``chats/<parent>/<agentId>.jsonl``.
+
+    The folder is the parent's session ID with each character other than a letter,
+    digit, ``_`` or ``-`` replaced by ``_``, which leaves the usual UUIDs unchanged.
+    """
+    folder = chat_file.parent
+    return folder.name if folder.parent.name == "chats" else None
+
+
+def gemini_session_identity(chat_file: Path, kind: Any) -> Dict[str, Any]:
+    """parent_session_id and is_agent of one Gemini chat file.
+
+    ``kind`` is the chat metadata's ``kind``. A chat is a sub-agent's when it is
+    ``"subagent"`` or the file lies in a folder below ``chats``.
+    """
+    parent = gemini_subagent_parent(chat_file)
+    return {"parent_session_id": parent, "is_agent": kind == "subagent" or parent is not None}
 
 
 def codex_meta_parent(payload: Dict[str, Any]) -> Optional[str]:

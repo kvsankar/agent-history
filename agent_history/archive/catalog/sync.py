@@ -38,7 +38,7 @@ from agent_history.storage.metrics import METRICS_PARSER_VERSION
 # The catalog's own part of how session files become rows (which archived paths hold
 # sessions, how the workspace is derived). Raise it when that changes;
 # METRICS_PARSER_VERSION covers the parsers.
-_EXTRACTION_REVISION = 5
+_EXTRACTION_REVISION = 6
 # Recorded in schema_meta. A catalog whose rows were written under another version has
 # every session file read again on its next sync.
 READER_VERSION = f"{METRICS_PARSER_VERSION}.{_EXTRACTION_REVISION}"
