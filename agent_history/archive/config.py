@@ -3,8 +3,9 @@
 The configuration names the archive destination and the sources to collect. Entries in
 ``sources`` that share a name merge into one source; each entry becomes one *part*. Two
 parts of one source may not cover the same agent, because its files would map to the
-same archive paths. Include patterns may not reach inside an agent's folder, which only
-its layout reads.
+same archive paths. The archive takes only the files that the built-in agent layouts
+select; an entry's ``exclude`` patterns can leave some of them out, and there is no
+setting that adds other files.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from agent_history.archive.errors import ArchiveConfigError
-from agent_history.archive.layouts import AGENT_NAMES, agent_folder_of, agent_folders
+from agent_history.archive.layouts import AGENT_NAMES
 
 DEFAULT_COMPRESSION_LEVEL = 19
 SOURCE_KINDS = ("live", "imported", "restored")
@@ -35,8 +36,7 @@ class SourcePart:
 
     home: Path | None
     roots: dict[str, Path] = field(default_factory=dict)
-    agents: tuple[str, ...] | None = None  # None: every agent; (): none, only includes
-    include: tuple[str, ...] = ()
+    agents: tuple[str, ...] | None = None  # None: every agent; never empty
     exclude: tuple[str, ...] = ()
 
 
@@ -164,7 +164,6 @@ def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:
         )
     for source in merged.values():
         _reject_overlapping_parts(source)
-        _reject_includes_in_agent_folders(source)
     return tuple(merged.values())
 
 
@@ -178,10 +177,7 @@ def _reject_include(entry: dict[str, Any]) -> None:
 
 
 def _reject_overlapping_parts(source: SourceConfig) -> None:
-    """Refuse two parts that cover one agent: their files would share archive paths.
-
-    Include patterns can still overlap; the collector reports such files at run time.
-    """
+    """Refuse two parts that cover one agent: their files would share archive paths."""
     first_part: dict[str, int] = {}
     for number, part in enumerate(source.parts, start=1):
         for agent in _covered_agents(part):
@@ -192,38 +188,6 @@ def _reject_overlapping_parts(source: SourceConfig) -> None:
                     'other copy its own source name, for example with kind "imported".'
                 )
             first_part[agent] = number
-
-
-def _reject_includes_in_agent_folders(source: SourceConfig) -> None:
-    """Refuse an include whose fixed leading part lies inside an agent folder.
-
-    Agent folders are read only through their layouts. An include that starts with a
-    wildcard can still match inside one; the walk skips those files.
-    """
-    overrides = [root for part in source.parts for root in part.roots.values()]
-    for part in source.parts:
-        if not part.include:
-            continue
-        folders = agent_folders(source.platform, part.home, overrides)
-        for pattern in part.include:
-            folder = agent_folder_of(_fixed_part(pattern), folders, source.platform)
-            if folder is not None:
-                raise ArchiveConfigError(
-                    f"Source {source.name}: include pattern {pattern!r} reaches inside the "
-                    f"agent folder {folder or part.home}. Agent folders are archived through "
-                    "their layouts only; include patterns are for files elsewhere in the home."
-                )
-
-
-def _fixed_part(pattern: str) -> str:
-    """The folders and name at the start of a pattern, up to its first wildcard."""
-    fixed = []
-    for segment in pattern.replace("\\", "/").split("/"):
-        if "*" in segment or "?" in segment:
-            break
-        if segment not in ("", "."):
-            fixed.append(segment)
-    return "/".join(fixed)
 
 
 def _covered_agents(part: SourcePart) -> tuple[str, ...]:
@@ -258,9 +222,8 @@ def _source_part(entry: dict[str, Any], name: str) -> SourcePart:
     for agent in list(roots) + list(entry.get("agents") or []):
         if agent not in AGENT_NAMES:
             raise ArchiveConfigError(f"Source {name}: unknown agent {agent}")
-    include = _patterns(entry, "include", name)
-    exclude = _patterns(entry, "exclude", name)
-    for pattern in include + exclude:
+    exclude = _exclude_patterns(entry, name)
+    for pattern in exclude:
         parts = pattern.replace("\\", "/").split("/")
         if pattern.startswith(("/", "\\")) or ".." in parts or ":" in parts[0]:
             raise ArchiveConfigError(
@@ -271,22 +234,21 @@ def _source_part(entry: dict[str, Any], name: str) -> SourcePart:
         home=Path(home).expanduser() if home else None,
         roots={agent: Path(root).expanduser() for agent, root in roots.items()},
         agents=None if agents is None else tuple(agents),
-        include=include,
         exclude=exclude,
     )
 
 
-def _patterns(entry: dict[str, Any], key: str, name: str) -> tuple[str, ...]:
-    """The ``include`` or ``exclude`` patterns of an entry: a list of strings, or absent.
+def _exclude_patterns(entry: dict[str, Any], name: str) -> tuple[str, ...]:
+    """The ``exclude`` patterns of an entry: a list of strings, or absent.
 
     A single string is refused rather than read as a list of its characters.
     """
-    value = entry.get(key)
+    value = entry.get("exclude")
     if value is None:
         return ()
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ArchiveConfigError(
-            f'Source {name}: {key} must be a list of glob patterns, such as ["notes/**"]; '
-            f"got {json.dumps(value)}"
+            f"Source {name}: exclude must be a list of glob patterns, such as "
+            f'[".claude/projects/scratch/**"]; got {json.dumps(value)}'
         )
     return tuple(value)

@@ -1,23 +1,22 @@
 """Which files to archive for each agent, and where they go in the archive.
 
-Each agent has an allowlist of glob patterns relative to its root folder; only the layout
-reads an agent's folder. Configuration includes select files elsewhere in the home. A
-credential denylist applies to every file whatever the configuration says, and to every
-folder on the path of a file that an include selects. Archived paths mirror the
-source's home directory, so ``.claude/history.jsonl`` is stored at
+Each agent has an allowlist of glob patterns relative to its root folder. The archive
+takes only the files these layouts select, less any that the configuration excludes;
+nothing outside the agents' folders is read. A credential denylist on file names applies
+to every selected file as a second line of defence. Archived paths mirror the source's
+home directory, so ``.claude/history.jsonl`` is stored at
 ``sources/<source>/files/.claude/history.jsonl.zst``.
 """
 
 from __future__ import annotations
 
-import filecmp
 import fnmatch
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple, Pattern
+from typing import TYPE_CHECKING, Iterator, NamedTuple, Pattern
 
 from agent_history.archive.errors import ArchiveError
 from agent_history.utils.session_identity import CLAUDE_COMPACTION_PREFIX
@@ -26,13 +25,11 @@ if TYPE_CHECKING:
     from agent_history.archive.config import SourceConfig, SourcePart
 
 ARCHIVE_SUFFIX = ".zst"
-OTHER_AGENT = "other"
 
-# Matched against every file name, and against the folder names of files that a
-# configuration include selects (never inside an agent's folder). Never archived. Folder
-# names inside agent folders are not checked: a Claude project folder is named after any
-# working folder, such as one called "oauth-proxy". The layouts exclude the agents' own
-# credential folders instead.
+# Matched against the name of every file the layouts select, as a second line of defence
+# behind the layouts' own patterns; matching files are never archived. Folder names are
+# not checked: a Claude project folder is named after any working folder, such as one
+# called "oauth-proxy". The layouts exclude the agents' own credential folders instead.
 CREDENTIAL_DENYLIST = (
     "auth.json",
     "*oauth*",
@@ -126,18 +123,9 @@ class AgentLayout:
     # The folder, relative to the root, whose subfolders name each session's workspace
     # (Claude's projects/<workspace>/), when the agent keeps sessions that way.
     workspace_folder: str | None = None
-    # Home-relative folders the agent owns beyond its roots (Pi reads .pi/agent but keeps
-    # skills and settings in .pi). Configuration includes stay out of these too.
-    owned_folders: tuple[str, ...] = ()
 
     def roots_for(self, platform: str) -> tuple[str, ...]:
         return self.roots.get(platform) or self.roots.get("*", ())
-
-
-# The rule for a SQLite database that a configuration include selects, always outside the
-# agents' folders: a snapshot with credential-named columns blanked, never a raw copy.
-GENERIC_SNAPSHOT = DatabaseRule("*", "snapshot")
-_SQLITE_HEADER = b"SQLite format 3\x00"
 
 
 @dataclass(frozen=True)
@@ -233,7 +221,6 @@ LAYOUTS: tuple[AgentLayout, ...] = (
     AgentLayout(
         name="pi",
         roots={"*": (".pi/agent",)},
-        owned_folders=(".pi",),
         include=("sessions/**",),
         # Custom model providers keep their API keys in models.json.
         exclude=("models.json", "models.json.*"),
@@ -380,94 +367,18 @@ def iter_source_files(source: SourceConfig) -> Iterator[SelectedFile]:
     folder inside it that cannot be read is yielded as an item with ``error`` set, whose
     ``rel_path`` is the folder; the walk goes on with the other folders.
 
-    Parts of one source never cover the same agent (the configuration refuses that), and
-    includes never select files inside an agent folder, but the include patterns of two
-    parts can still map two different files to one archive path. Then the first part's
-    file is archived. If the other file's content differs, it is yielded as an item with
-    ``error`` set, so the run reports it instead of dropping it.
+    Each path comes once: parts of one source never cover the same agent (the
+    configuration refuses that), and each agent's files lie under its own home-relative
+    roots, which no other agent's roots contain.
     """
     _check_configured_folders(source)
-    overrides = tuple(root for part in source.parts for root in part.roots.values())
-    seen: dict[str, SelectedFile] = {}
     for part in source.parts:
-        for item in _iter_part(part, source.platform, overrides):
-            first = seen.get(item.rel_path)
-            if first is None:
-                seen[item.rel_path] = item
-                yield item
-            elif first.error is None and item.error is None and first.path != item.path:
-                problem = _collision(first, item)
-                if problem:
-                    yield replace(item, error=problem)
-
-
-def _collision(first: SelectedFile, other: SelectedFile) -> str | None:
-    """Why ``other`` cannot share ``first``'s archive path, or None if they are the same.
-
-    Files of the same size and modification time count as the same, as in change
-    detection; files of the same size are otherwise compared byte by byte.
-    """
-    try:
-        a, b = os.stat(first.path), os.stat(other.path)
-        if a.st_size == b.st_size and (
-            a.st_mtime_ns == b.st_mtime_ns or filecmp.cmp(first.path, other.path, shallow=False)
-        ):
-            return None
-    except OSError as exc:
-        return f"cannot compare {other.path} with {first.path}: {exc}"
-    return (
-        f"{other.path} differs from {first.path}, which another entry of this source maps "
-        "to the same archive path; it is not archived. Give its folder its own source name."
-    )
+        yield from _iter_part(part, source.platform)
 
 
 def is_within(rel_path: str, folders) -> bool:
     """Whether ``rel_path`` is one of ``folders`` or lies inside one of them."""
     return any(not f or rel_path == f or rel_path.startswith(f + "/") for f in folders)
-
-
-# Source platforms whose file systems compare names without regard to case.
-_CASE_INSENSITIVE_PLATFORMS = ("windows", "darwin")
-
-
-def agent_folders(platform: str, home: Path | None, overrides=()) -> tuple[str, ...]:
-    """The home-relative folders that only the layouts read.
-
-    These are every layout's default roots on ``platform`` and the folders each agent
-    owns beyond them, whether or not the source reads that agent, and every root override in ``overrides`` that lies inside
-    ``home`` ("" when an override is the home itself). Configuration includes never
-    select files inside them.
-    """
-    folders = [root for layout in LAYOUTS for root in layout.roots_for(platform)]
-    folders += [folder for layout in LAYOUTS for folder in layout.owned_folders]
-    if home is not None:
-        fold = _case_fold(platform)
-        base = Path(os.path.normpath(home)).as_posix().rstrip("/")
-        for root in overrides:
-            path = Path(os.path.normpath(root)).as_posix()
-            if fold(path) == fold(base):
-                folders.append("")
-            elif fold(path).startswith(fold(base) + "/"):
-                folders.append(path[len(base) + 1 :])
-    return tuple(dict.fromkeys(folders))
-
-
-def agent_folder_of(rel_path: str, folders, platform: str) -> str | None:
-    """The folder of ``folders`` that ``rel_path`` is or lies inside, if any.
-
-    Names are compared case-insensitively on platforms whose file systems do so.
-    """
-    fold = _case_fold(platform)
-    path = fold(rel_path)
-    for folder in folders:
-        key = fold(folder)
-        if not key or path == key or path.startswith(key + "/"):
-            return folder
-    return None
-
-
-def _case_fold(platform: str):
-    return str.lower if platform in _CASE_INSENSITIVE_PLATFORMS else str
 
 
 def _check_configured_folders(source: SourceConfig) -> None:
@@ -485,14 +396,12 @@ def _check_configured_folders(source: SourceConfig) -> None:
                 ) from exc
 
 
-def _iter_part(part: SourcePart, platform: str, overrides) -> Iterator[SelectedFile]:
+def _iter_part(part: SourcePart, platform: str) -> Iterator[SelectedFile]:
     agents = AGENT_NAMES if part.agents is None else part.agents
     for name in agents:
         layout = _LAYOUTS_BY_NAME[name]
         for abs_root, rel_root in _agent_roots(part, layout, platform):
             yield from _iter_agent_root(part, layout, abs_root, rel_root)
-    if part.home is not None and part.include:
-        yield from _iter_config_includes(part, platform, overrides)
 
 
 def _agent_roots(part: SourcePart, layout: AgentLayout, platform: str) -> list[tuple[Path, str]]:
@@ -528,61 +437,6 @@ def _database_rule(layout: AgentLayout, inner: str) -> DatabaseRule | None:
     return next((rule for rule in layout.databases if _compiled(rule.pattern).match(inner)), None)
 
 
-def _iter_config_includes(part: SourcePart, platform: str, overrides) -> Iterator[SelectedFile]:
-    """Files matched by the configuration's own include patterns, outside agent folders.
-
-    Only the layouts read an agent's folder. Loading the configuration refuses a pattern
-    that names one; the walk does not enter one either, for patterns that start with a
-    wildcard. No folder on a selected path may have a credential name. A SQLite database
-    is snapshotted with :data:`GENERIC_SNAPSHOT`, never copied raw.
-    """
-    home = part.home
-    if home is None:
-        return
-    fold = _case_fold(platform)
-    skipped = {fold(folder) for folder in agent_folders(platform, home, overrides)}
-    if "" in skipped:  # a roots override is the home itself
-        return
-    for found in _walk_matching(home, list(part.include), lambda rel: fold(rel) in skipped):
-        if isinstance(found, _Unreadable):
-            rel_path = found.rel_path
-            if _folders_allowed(rel_path + "/") and not _matches_any(rel_path + "/", part.exclude):
-                yield SelectedFile(rel_path, home / rel_path, OTHER_AGENT, error=found.message)
-            continue
-        if not _name_allowed(found) or not _folders_allowed(found):
-            continue
-        if _matches_any(found, part.exclude):
-            continue
-        rule = GENERIC_SNAPSHOT if _is_sqlite_database(home / found) else None
-        yield SelectedFile(found, home / found, OTHER_AGENT, rule)
-
-
-def _is_sqlite_database(path: Path) -> bool:
-    """Whether a file is a SQLite database, judged by its header, not its name.
-
-    A WAL database can be empty on disk until its first checkpoint, with every row in
-    its ``-wal`` file; an empty file with a non-empty ``-wal`` file beside it counts too.
-    """
-    header = _read_header(path)
-    if header == _SQLITE_HEADER:
-        return True
-    if header != b"":  # not empty, or not readable: the collector reports the latter
-        return False
-    try:
-        return os.lstat(f"{path}-wal").st_size > 0
-    except OSError:
-        return False
-
-
-def _read_header(path: Path) -> bytes | None:
-    """The first bytes of a file, as many as a SQLite header has; None if unreadable."""
-    try:
-        with open(path, "rb") as handle:
-            return handle.read(len(_SQLITE_HEADER))
-    except OSError:
-        return None
-
-
 def _excludes_folder(inner: str, layout_exclude, rel_path: str, part_exclude) -> bool:
     """Whether exclusions drop everything inside a folder, so it need not be read."""
     return _matches_any(inner + "/", layout_exclude) or _matches_any(rel_path + "/", part_exclude)
@@ -593,11 +447,6 @@ def _name_allowed(rel_path: str) -> bool:
     if _is_credential_name(name):
         return False
     return not any(fnmatch.fnmatchcase(name, pattern) for pattern in COMMON_EXCLUDES)
-
-
-def _folders_allowed(rel_path: str) -> bool:
-    """Whether no folder on ``rel_path`` (every segment but the last) is a credential name."""
-    return not any(_is_credential_name(folder) for folder in rel_path.split("/")[:-1])
 
 
 def _is_credential_name(name: str) -> bool:
@@ -612,20 +461,17 @@ class _Unreadable(NamedTuple):
     message: str
 
 
-def _walk_matching(
-    root: Path, patterns: list[str], skip: Callable[[str], bool] | None = None
-) -> Iterator[str | _Unreadable]:
+def _walk_matching(root: Path, patterns: list[str]) -> Iterator[str | _Unreadable]:
     """Yield "/"-separated paths under ``root`` that match any pattern, without symlinks.
 
     Each pattern is followed segment by segment, so a pattern only descends into folders
     it can match; only a ``**`` segment walks a whole subtree. A folder that cannot be
     read is yielded once as :class:`_Unreadable`; a folder that does not exist is empty.
-    Entries whose path ``skip`` accepts are passed over, and folders among them not read.
     """
     found = set()
     for pattern in patterns:
         regex = _compiled(pattern)
-        for item in _walk_segments(root, "", pattern.split("/"), skip, top=True):
+        for item in _walk_segments(root, "", pattern.split("/"), top=True):
             if isinstance(item, _Unreadable):
                 if item.rel_path not in found:
                     found.add(item.rel_path)
@@ -636,11 +482,7 @@ def _walk_matching(
 
 
 def _walk_segments(
-    root: Path,
-    rel_dir: str,
-    segments: list[str],
-    skip: Callable[[str], bool] | None,
-    top: bool = False,
+    root: Path, rel_dir: str, segments: list[str], top: bool = False
 ) -> Iterator[str | _Unreadable]:
     """Walk ``rel_dir`` for ``segments``; folders below the top are checked for profiles."""
     entries = _scan(root, rel_dir)
@@ -657,13 +499,11 @@ def _walk_segments(
         if matcher is not None and not matcher.match(entry.name):
             continue
         rel_path = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
-        if skip is not None and skip(rel_path):
-            continue
         kind = _entry_kind(entry)
         if kind == "error":
             yield _Unreadable(rel_path, f"cannot read {entry.path}")
         elif kind == "dir" and rest:
-            yield from _walk_segments(root, rel_path, rest, skip)
+            yield from _walk_segments(root, rel_path, rest)
         elif kind == "file" and (not rest or segment == "**"):
             yield rel_path
 
