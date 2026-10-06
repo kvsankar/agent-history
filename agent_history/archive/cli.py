@@ -157,8 +157,7 @@ def _print_collect(summary) -> None:
         return
     if summary.dry_run:
         for entry in summary.entries:
-            label = entry.get("action") or entry.get("type")
-            print(f"{label} {entry['path']}")
+            print(_entry_line(entry))
     print(
         f"{summary.source}: {summary.written} written ({summary.versioned} versioned), "
         f"{summary.gone} gone, {summary.errors} errors"
@@ -167,6 +166,20 @@ def _print_collect(summary) -> None:
     for entry in summary.entries:
         if entry.get("type") == "error":
             print(f"  error {entry['path']}: {entry['message']}")
+
+
+def _entry_line(entry: dict[str, Any]) -> str:
+    """One line of a dry run: the action and path, with a log export's row and JWT counts."""
+    line = f"{entry.get('action') or entry.get('type')} {entry['path']}"
+    if entry.get("type") != "rows":
+        return line
+    counts = [f"{entry.get('rows', 0)} rows"]
+    jwts = (entry.get("redacted") or {}).get("jwt")
+    if jwts:
+        counts.append(f"{jwts} JWT{'s' if jwts != 1 else ''} redacted")
+    if entry.get("reset"):
+        counts.append("table recreated")
+    return f"{line} ({', '.join(counts)})"
 
 
 def _summary_dict(summary) -> dict[str, Any]:
@@ -179,6 +192,7 @@ def _summary_dict(summary) -> dict[str, Any]:
         "errors": summary.errors,
         "skipped_reason": summary.skipped_reason,
         "dry_run": summary.dry_run,
+        "entries": summary.entries,  # the manifest entries, or what a dry run would write
     }
 
 

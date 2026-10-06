@@ -128,6 +128,51 @@ def test_dry_run_lists_actions_without_writing(setup, capsys):
     assert not (setup["tmp"] / "archive").exists()
 
 
+JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlc2lnbmF0dXJl"
+
+
+def _logs_db(setup):
+    import sqlite3
+
+    path = setup["home"] / ".codex" / "logs_2.sqlite"
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE logs (id INTEGER PRIMARY KEY, message TEXT)")
+        conn.executemany(
+            "INSERT INTO logs VALUES (?, ?)", [(1, "started"), (2, f"token {JWT} sent")]
+        )
+    conn.close()
+    os.utime(path, (1_700_000_000, 1_700_000_000))
+
+
+def test_dry_run_shows_the_rows_and_jwts_of_a_log_export(setup, capsys):
+    _logs_db(setup)
+
+    assert main(["archive", "collect", "--config", setup["config"], "--dry-run"]) == 0
+
+    out = capsys.readouterr().out
+    assert "rows .codex/logs_2.sqlite (2 rows, 1 JWT redacted)" in out
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_json_output_lists_each_sources_entries(setup, capsys, dry_run):
+    _logs_db(setup)
+    args = ["archive", "collect", "--config", setup["config"], "--json"]
+
+    assert main(args + (["--dry-run"] if dry_run else [])) == 0
+
+    (result,) = json.loads(capsys.readouterr().out)
+    entries = {entry["path"]: entry for entry in result["entries"]}
+    assert entries[SESSION]["action"] == "added"
+    assert (
+        entries[".codex/logs_2.sqlite"]["rows"],
+        entries[".codex/logs_2.sqlite"]["redacted"],
+    ) == (
+        2,
+        {"jwt": 1},
+    )
+
+
 def _two_sources(setup) -> str:
     other = setup["tmp"] / "other-home"
     session = other / SESSION
