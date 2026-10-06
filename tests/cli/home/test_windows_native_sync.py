@@ -109,3 +109,27 @@ def test_unreachable_windows_falls_back_with_a_warning(isolated_home):
 
     assert result.returncode == 0, result.stderr
     assert "could not run cagelens on Windows" in result.stderr
+
+
+def test_only_windows_homes_skip_normal_resolution(isolated_home, monkeypatch):
+    """With only Windows homes requested, nothing else is listed or synced."""
+    from agent_history.cli.orchestrator import CommandOrchestrator
+    from agent_history.scope import resolver as resolver_module
+
+    _claude_session(isolated_home["claude_dir"])
+    _configure(isolated_home, sys.executable)
+    for key, value in isolated_home["env"].items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.chdir(isolated_home["path"])
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("other homes must not be resolved")
+
+    monkeypatch.setattr(resolver_module.ScopeResolver, "resolve", fail)
+
+    exit_code = CommandOrchestrator().run(
+        ["stats", "--sync", "--home", "windows:alex", "--aw", "--quiet"]
+    )
+
+    assert exit_code == 0
+    assert [home for home, _ws, _tokens in _rows(isolated_home)] == ["windows:alex"]

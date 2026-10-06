@@ -531,9 +531,10 @@ class CommandOrchestrator:
                 )
                 progress.set_phase("resolving scope")
             try:
+                only_windows = self._only_windows_homes(request)
                 windows_scope = self._prepare_windows_native(request, context) if syncing else []
                 resolver = ScopeResolver(context)
-                if windows_scope and self._only_windows_homes(request):
+                if windows_scope and only_windows:
                     resolution = ResolutionResult(scope=[], errors=[], warnings=[])
                 else:
                     resolution = resolver.resolve(
