@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -72,8 +73,8 @@ def test_scanner_lists_workflow_sub_agents(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    shutil.which("bash") is None or shutil.which("python3") is None,
-    reason="the remote listing script runs under bash and python3",
+    sys.platform == "win32" or shutil.which("bash") is None or shutil.which("python3") is None,
+    reason="the remote listing script runs under bash and python3 on POSIX hosts",
 )
 def test_remote_listing_script_lists_workflow_sub_agents(tmp_path: Path) -> None:
     home = tmp_path / "home"
