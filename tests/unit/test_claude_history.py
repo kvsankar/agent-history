@@ -4794,6 +4794,13 @@ class TestCLICommands:
         file_paths = [str(s["file"]) for s in sessions]
         assert len(file_paths) == len(set(file_paths))
 
+    def test_collect_sessions_with_dedup_options_are_keyword_only(self, cli_test_env):
+        """Options after the date range must be passed by name."""
+        projects_dir = cli_test_env["projects_dir"]
+
+        with pytest.raises(TypeError):
+            ch.collect_sessions_with_dedup(["project"], None, None, projects_dir)
+
 
 # ============================================================================
 # Home Directory Mocking Tests
