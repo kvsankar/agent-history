@@ -1022,6 +1022,14 @@ def _matches_workspace_pattern(
     if not pattern or pattern in ("", "*", "all"):
         return True
 
+    # Scope resolution passes canonical keys (C:\\a becomes /mnt/c/a), while
+    # Codex on native Windows records C:\\ paths; compare in key form too.
+    from agent_history.utils.workspace_ref import build_workspace_ref
+
+    pattern_key = build_workspace_ref(pattern).key.lower()
+    if pattern_key and pattern_key in build_workspace_ref(workspace).key.lower():
+        return True
+
     workspace_lower = workspace.lower()
     readable_lower = get_readable(workspace).lower() if get_readable else None
 

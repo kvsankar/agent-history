@@ -154,6 +154,7 @@ class ScopeResolver:
             # Stage 4: Resolve sessions (collect actual sessions)
             concrete, stage_errors = self._resolve_sessions_internal(template)
             errors.extend(stage_errors)
+            concrete = dedupe_session_records(concrete)
 
         return ResolutionResult(scope=concrete, errors=errors, warnings=warnings)
 
@@ -1328,3 +1329,26 @@ class ScopeResolver:
             )
 
         return result, errors
+
+
+def dedupe_session_records(scope: ConcreteScope) -> ConcreteScope:
+    """Keep each session file once per home and workspace.
+
+    Different raw names can resolve to the same workspace, for example a
+    Claude folder name and Codex's recorded C:\\ path on native Windows, and
+    each record then collects the same sessions.
+    """
+    from agent_history.utils.workspace_ref import build_workspace_ref
+
+    seen: set[tuple[str, str, str]] = set()
+    for record in scope:
+        key = build_workspace_ref(record.workspace_key or record.workspace or "").key
+        unique = []
+        for session in record.sessions:
+            marker = (record.home, key, str(session.get("file") or id(session)))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            unique.append(session)
+        record.sessions = unique
+    return scope

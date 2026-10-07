@@ -93,3 +93,26 @@ def test_one_process_checks_a_folder_for_stale_entries_once(tmp_path, monkeypatc
 
     assert len(calls) <= 1
     assert first == second
+
+
+def test_windows_workspaces_match_their_canonical_keys():
+    """Scope resolution looks workspaces up by their canonical key (/mnt/c/...),
+    while Codex on native Windows records C:\\... paths, so no Codex session
+    was found for any workspace."""
+    assert codex._matches_workspace_pattern("C:\\Users\\alex", "/mnt/c/Users/alex")
+    assert codex._matches_workspace_pattern(
+        "C:\\alex\\projects\\ledger", "/mnt/c/alex/projects/ledger"
+    )
+    assert not codex._matches_workspace_pattern("C:\\alex\\projects\\ledger", "/mnt/c/other")
+
+
+def test_scan_finds_windows_sessions_by_canonical_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAGELENS_CONFIG_DIR", str(tmp_path / "config"))
+    sessions_dir = tmp_path / "sessions"
+    _rollout(sessions_dir, "2026/03/02", "w", "C:\\alex\\projects\\ledger")
+
+    found = codex.codex_scan_sessions(
+        pattern="/mnt/c/alex/projects/ledger", sessions_dir=sessions_dir, skip_message_count=True
+    )
+
+    assert len(found) == 1
