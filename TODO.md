@@ -1,29 +1,10 @@
 # TODO
 
-## Edge Case Tests
+Release-facing status and follow-up items live in the maintained docs tree:
 
-- [ ] Corrupted/malformed JSONL files (invalid JSON, missing fields)
-- [ ] Empty workspaces (directory exists but no sessions)
-- [ ] Very large sessions (>10k messages) with split
-- [ ] Concurrent database access
-- [ ] Import/export alias round-trip
+- [docs/specs/todo.md](docs/specs/todo.md) - current specification and validation follow-up items.
+- [docs/README.md](docs/README.md) - documentation map and canonical owners.
+- [AGENTS.md](AGENTS.md) - supported agent formats and storage locations.
 
-## Remote Operations
-
-- [ ] SSH timeout coordination (currently varies: 5s, 10s, 30s, 300s)
-- [ ] Filenames with `|` character break remote parsing
-- [ ] Check rsync availability on remote before operations
-- [ ] Multiple Windows users enumeration
-
-## Stats Database
-
-- [ ] Schema migration atomicity (race condition possible)
-- [ ] TOCTOU race (file deleted between stat and open)
-- [ ] Query limits for large databases (>100k sessions)
-- [ ] Codex cache semantics: consider per-turn vs cumulative token_count reporting
-
-## Command Combinations
-
-- [ ] Multiple `-r` flags only use first (document or warn)
-- [ ] `--split --minimal` uses non-minimal line estimates
-- [ ] `--alias` with pattern silently ignores pattern
+Avoid adding dated handoff notes here. Promote durable findings into the relevant
+user, spec, testing, or design document instead.

@@ -1,0 +1,3324 @@
+{
+ "about": "Per-token API list prices in USD, from LiteLLM's price list. Each model lists its prices from the date they took effect in the list.",
+ "repository": "https://github.com/BerriAI/litellm",
+ "retrieved": "2026-10-05",
+ "sources": [
+  {
+   "commit": "06484f6e5a7a2f4e45c490266782ed28b51b7db6",
+   "committed": "2025-05-31",
+   "sha256": "5dd6cd3a102dfce55689d40453f0d584ab34776d5d097e3eff56916d34860662",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/06484f6e5a7a2f4e45c490266782ed28b51b7db6/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "06c86d6130a6f0c1b2449c485dbbf55d607d15a4",
+   "committed": "2025-06-28",
+   "sha256": "d0cdaeefa9a02884661bf636bac6c2dcf89dfe2d746bacd10ee27a0dafb77157",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/06c86d6130a6f0c1b2449c485dbbf55d607d15a4/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "a973202cb1b55d12f1f06400563488230df455da",
+   "committed": "2025-07-31",
+   "sha256": "46ec2df2208badb9eac1f794f9ccb8e8167a08623200af38d42b4f930a6068bd",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/a973202cb1b55d12f1f06400563488230df455da/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "fa4c833e58f8ab9a64a26f2232e01aa9f6499920",
+   "committed": "2025-08-30",
+   "sha256": "6921795a7067a144f08e6a05b1fafeb0a5915c5bb6fd04914db62f164cf50ccb",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/fa4c833e58f8ab9a64a26f2232e01aa9f6499920/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "862736e74b4b697030994078b42c98856ed9911f",
+   "committed": "2025-09-30",
+   "sha256": "71ffd1842b6ef250863da167ff911858b42cccfc32201888c530cbabb551e1af",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/862736e74b4b697030994078b42c98856ed9911f/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "0d84c11bbead2f39247f727f3ddea5855d7d5e6b",
+   "committed": "2025-10-31",
+   "sha256": "d08dbc2cc3a9a734027f5c0c2aca28b427a8af9cf2ad317d29f1ac5a907aa02e",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/0d84c11bbead2f39247f727f3ddea5855d7d5e6b/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "71f41352fa4e1f3e0109634afe74a82232193076",
+   "committed": "2025-11-28",
+   "sha256": "7de38d6a7b957c0734ccdc3666e581fe8f4a46e70981a77c9a4b800875099e76",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/71f41352fa4e1f3e0109634afe74a82232193076/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "f5024624d7b9fdc5fd888edffbb7b388f192b09f",
+   "committed": "2025-12-28",
+   "sha256": "1d33e2cbf509f14c0a35c4a0069c379562c8f6db11dc688fafb48a41fa204783",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/f5024624d7b9fdc5fd888edffbb7b388f192b09f/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "1f83aafe3befe4438f73ebeaea22409cabc8bdbb",
+   "committed": "2026-01-31",
+   "sha256": "c9bfda80437d3bea8857d47ffade0e85096b7baa2c7fd801024ac012bd1b55ad",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/1f83aafe3befe4438f73ebeaea22409cabc8bdbb/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "13e74dd389ef131631ef045620b2c253b1178b8c",
+   "committed": "2026-03-01",
+   "sha256": "dba8a16c70ace441294671a80b1ab51b5279ec09550361e29f766731d1209f08",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/13e74dd389ef131631ef045620b2c253b1178b8c/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "92db2df2f676417fc616b9edd727b3dffaaf15c1",
+   "committed": "2026-03-29",
+   "sha256": "ffe40f10de682c8f95889037fa6c4d516153a19a393775a0277944461f423b0d",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/92db2df2f676417fc616b9edd727b3dffaaf15c1/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "3f5c58925571381af50996b54ca87bf53ebd3180",
+   "committed": "2026-04-29",
+   "sha256": "4cc9e1a33ef6f2c1f8310b58c24beb97a29fc7f60bac05f2dce7890dd7a0067b",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/3f5c58925571381af50996b54ca87bf53ebd3180/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "bae04591b2861eedb26c55ea007d11f9f49deaa7",
+   "committed": "2026-05-29",
+   "sha256": "cc96ba1f61303fdb3e84c56cefc63e870a38517d5d1d1b6f5f927731d1a1e5a2",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/bae04591b2861eedb26c55ea007d11f9f49deaa7/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "6d43c21ec641baee73e486ec3f9b72c1c36a850d",
+   "committed": "2026-06-30",
+   "sha256": "b6cc3b93a2e0ca1b0650835658392ba51416bb42907fcca8d00203c6caaf2e80",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/6d43c21ec641baee73e486ec3f9b72c1c36a850d/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "bf1a8fe40329eb018ef420057766ce95a43baaa3",
+   "committed": "2026-07-31",
+   "sha256": "ba37bb46dc4662f4bfed71db90168644ef917713fa073bd397775376d55a6b1c",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/bf1a8fe40329eb018ef420057766ce95a43baaa3/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "7a02e4163faedcb5736495e4a17e8021c0c0ee4a",
+   "committed": "2026-08-31",
+   "sha256": "01d9ba0176a0044707325b465f0f02c562c73f44c528d6b7123f0c1d1666fb00",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/7a02e4163faedcb5736495e4a17e8021c0c0ee4a/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "025292e75bda0381174a751da320645c971e06c7",
+   "committed": "2026-09-30",
+   "sha256": "a1af9a18fcc830f9bae4aeaa3811ba54bbdd703c0baf00cb92e516f439fdfa00",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/025292e75bda0381174a751da320645c971e06c7/model_prices_and_context_window.json"
+  },
+  {
+   "commit": "02f61c9c420b9aa9de10ff673098ad7132b78f5b",
+   "committed": "2026-10-05",
+   "sha256": "bfa3ced33aad2389eee48c308655a694c3c30d3f6b460004f5aa2044247e3e56",
+   "url": "https://raw.githubusercontent.com/BerriAI/litellm/02f61c9c420b9aa9de10ff673098ad7132b78f5b/model_prices_and_context_window.json"
+  }
+ ],
+ "models": {
+  "chat-latest": [
+   {
+    "from": "2026-08-31",
+    "input": 5e-06,
+    "output": 3e-05,
+    "cache_read": 5e-07
+   }
+  ],
+  "chatgpt-4o-latest": [
+   {
+    "from": "2025-05-31",
+    "input": 5e-06,
+    "output": 1.5e-05
+   }
+  ],
+  "claude-2": [
+   {
+    "from": "2025-05-31",
+    "input": 8e-06,
+    "output": 2.4e-05
+   }
+  ],
+  "claude-2.1": [
+   {
+    "from": "2025-05-31",
+    "input": 8e-06,
+    "output": 2.4e-05
+   }
+  ],
+  "claude-3-5-haiku-20241022": [
+   {
+    "from": "2025-05-31",
+    "input": 8e-07,
+    "output": 4e-06,
+    "cache_read": 8e-08,
+    "cache_write": 1e-06
+   }
+  ],
+  "claude-3-5-haiku-latest": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-06,
+    "output": 5e-06,
+    "cache_read": 1e-07,
+    "cache_write": 1.25e-06
+   }
+  ],
+  "claude-3-5-sonnet-20240620": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   }
+  ],
+  "claude-3-5-sonnet-20241022": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   }
+  ],
+  "claude-3-5-sonnet-latest": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   }
+  ],
+  "claude-3-7-sonnet-20250219": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   }
+  ],
+  "claude-3-7-sonnet-latest": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   }
+  ],
+  "claude-3-haiku-20240307": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-07,
+    "output": 1.25e-06,
+    "cache_read": 3e-08,
+    "cache_write": 3e-07
+   }
+  ],
+  "claude-3-opus-20240229": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.5e-06,
+    "cache_write": 1.875e-05
+   }
+  ],
+  "claude-3-opus-latest": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.5e-06,
+    "cache_write": 1.875e-05
+   }
+  ],
+  "claude-3-sonnet-20240229": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 1.5e-05
+   }
+  ],
+  "claude-4-opus-20250514": [
+   {
+    "from": "2025-06-28",
+    "input": 1.5e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.5e-06,
+    "cache_write": 1.875e-05
+   }
+  ],
+  "claude-4-sonnet-20250514": [
+   {
+    "from": "2025-06-28",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   },
+   {
+    "from": "2025-08-30",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 6e-06,
+      "output": 2.25e-05,
+      "cache_write": 7.5e-06,
+      "cache_read": 6e-07
+     }
+    ]
+   }
+  ],
+  "claude-fable-5": [
+   {
+    "from": "2026-06-30",
+    "input": 1e-05,
+    "output": 5e-05,
+    "cache_read": 1e-06,
+    "cache_write": 1.25e-05
+   }
+  ],
+  "claude-fable-5-1": [
+   {
+    "from": "2026-09-30",
+    "input": 1e-05,
+    "output": 5e-05,
+    "cache_read": 2.5e-07,
+    "cache_write": 1.25e-05
+   }
+  ],
+  "claude-haiku-4-5": [
+   {
+    "from": "2025-10-31",
+    "input": 1e-06,
+    "output": 5e-06,
+    "cache_read": 1e-07,
+    "cache_write": 1.25e-06
+   }
+  ],
+  "claude-haiku-4-5-20251001": [
+   {
+    "from": "2025-10-31",
+    "input": 1e-06,
+    "output": 5e-06,
+    "cache_read": 1e-07,
+    "cache_write": 1.25e-06
+   }
+  ],
+  "claude-instant-1": [
+   {
+    "from": "2025-05-31",
+    "input": 1.63e-06,
+    "output": 5.51e-06
+   }
+  ],
+  "claude-instant-1.2": [
+   {
+    "from": "2025-05-31",
+    "input": 1.63e-07,
+    "output": 5.51e-07
+   }
+  ],
+  "claude-mythos-5": [
+   {
+    "from": "2026-08-31",
+    "input": 1e-05,
+    "output": 5e-05,
+    "cache_read": 1e-06,
+    "cache_write": 1.25e-05
+   }
+  ],
+  "claude-mythos-5-1": [
+   {
+    "from": "2026-09-30",
+    "input": 1e-05,
+    "output": 5e-05,
+    "cache_read": 2.5e-07,
+    "cache_write": 1.25e-05
+   }
+  ],
+  "claude-mythos-preview": [
+   {
+    "from": "2026-08-31",
+    "input": 1e-05,
+    "output": 5e-05,
+    "cache_read": 1e-06,
+    "cache_write": 1.25e-05
+   }
+  ],
+  "claude-opus-4-1": [
+   {
+    "from": "2025-08-30",
+    "input": 1.5e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.5e-06,
+    "cache_write": 1.875e-05
+   }
+  ],
+  "claude-opus-4-1-20250805": [
+   {
+    "from": "2025-08-30",
+    "input": 1.5e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.5e-06,
+    "cache_write": 1.875e-05
+   }
+  ],
+  "claude-opus-4-20250514": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.5e-06,
+    "cache_write": 1.875e-05
+   }
+  ],
+  "claude-opus-4-5": [
+   {
+    "from": "2025-12-28",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06
+   }
+  ],
+  "claude-opus-4-5-20251101": [
+   {
+    "from": "2025-11-28",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06
+   }
+  ],
+  "claude-opus-4-6": [
+   {
+    "from": "2026-03-01",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_write": 1.25e-05,
+      "cache_read": 1e-06,
+      "input": 1e-05,
+      "output": 3.75e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-03-29",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06
+   }
+  ],
+  "claude-opus-4-6-20260205": [
+   {
+    "from": "2026-03-01",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_write": 1.25e-05,
+      "cache_read": 1e-06,
+      "input": 1e-05,
+      "output": 3.75e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-03-29",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06
+   }
+  ],
+  "claude-opus-4-7": [
+   {
+    "from": "2026-04-29",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06
+   }
+  ],
+  "claude-opus-4-7-20260416": [
+   {
+    "from": "2026-04-29",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06
+   }
+  ],
+  "claude-opus-4-8": [
+   {
+    "from": "2026-05-29",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06
+   }
+  ],
+  "claude-opus-5": [
+   {
+    "from": "2026-07-31",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06
+   }
+  ],
+  "claude-opus-5-5": [
+   {
+    "from": "2026-09-30",
+    "input": 4e-06,
+    "output": 2e-05,
+    "cache_read": 2e-07,
+    "cache_write": 5e-06
+   }
+  ],
+  "claude-sonnet-4-20250514": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   },
+   {
+    "from": "2025-09-30",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 6e-06,
+      "output": 2.25e-05,
+      "cache_write": 7.5e-06,
+      "cache_read": 6e-07
+     }
+    ]
+   }
+  ],
+  "claude-sonnet-4-5": [
+   {
+    "from": "2025-09-30",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   },
+   {
+    "from": "2025-10-31",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 6e-06,
+      "output": 2.25e-05,
+      "cache_write": 7.5e-06,
+      "cache_read": 6e-07
+     }
+    ]
+   }
+  ],
+  "claude-sonnet-4-5-20250929": [
+   {
+    "from": "2025-09-30",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   },
+   {
+    "from": "2025-10-31",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 6e-06,
+      "output": 2.25e-05,
+      "cache_write": 7.5e-06,
+      "cache_read": 6e-07
+     }
+    ]
+   }
+  ],
+  "claude-sonnet-4-6": [
+   {
+    "from": "2026-03-01",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_write": 7.5e-06,
+      "cache_read": 6e-07,
+      "input": 6e-06,
+      "output": 2.25e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-03-29",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   }
+  ],
+  "claude-sonnet-5": [
+   {
+    "from": "2026-06-30",
+    "input": 3e-06,
+    "output": 1.5e-05,
+    "cache_read": 3e-07,
+    "cache_write": 3.75e-06
+   },
+   {
+    "from": "2026-07-31",
+    "input": 2e-06,
+    "output": 1e-05,
+    "cache_read": 2e-07,
+    "cache_write": 2.5e-06
+   }
+  ],
+  "claude-sonnet-5-5": [
+   {
+    "from": "2026-09-30",
+    "input": 2e-06,
+    "output": 1e-05,
+    "cache_read": 2e-07,
+    "cache_write": 2.5e-06
+   }
+  ],
+  "codex-mini-latest": [
+   {
+    "from": "2025-06-28",
+    "input": 1.5e-06,
+    "output": 6e-06,
+    "cache_read": 3.75e-07
+   }
+  ],
+  "computer-use-preview": [
+   {
+    "from": "2026-09-30",
+    "input": 3e-06,
+    "output": 1.2e-05
+   }
+  ],
+  "daybreak-blue-latest": [
+   {
+    "from": "2026-08-31",
+    "input": 4e-06,
+    "output": 2e-05,
+    "cache_read": 4e-07,
+    "cache_write": 5e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 1e-05,
+      "cache_read": 8e-07,
+      "input": 8e-06,
+      "output": 3e-05
+     }
+    ]
+   }
+  ],
+  "daybreak-red-latest": [
+   {
+    "from": "2026-08-31",
+    "input": 1.25e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.25e-06,
+    "cache_write": 1.5625e-05,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 3.125e-05,
+      "cache_read": 2.5e-06,
+      "input": 2.5e-05,
+      "output": 0.0001125
+     }
+    ]
+   }
+  ],
+  "deep-research-max-preview-04-2026": [
+   {
+    "from": "2026-09-30",
+    "input": 2e-06,
+    "output": 1.2e-05
+   }
+  ],
+  "deep-research-preview-04-2026": [
+   {
+    "from": "2026-09-30",
+    "input": 2e-06,
+    "output": 1.2e-05
+   }
+  ],
+  "deep-research-pro-preview-12-2025": [
+   {
+    "from": "2026-09-30",
+    "input": 2e-06,
+    "output": 1.2e-05
+   }
+  ],
+  "ft:gpt-3.5-turbo": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 6e-06
+   }
+  ],
+  "ft:gpt-3.5-turbo-0125": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 6e-06
+   }
+  ],
+  "ft:gpt-3.5-turbo-0613": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 6e-06
+   }
+  ],
+  "ft:gpt-3.5-turbo-1106": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 6e-06
+   }
+  ],
+  "ft:gpt-4-0613": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-05,
+    "output": 6e-05
+   }
+  ],
+  "ft:gpt-4.1-2025-04-14": [
+   {
+    "from": "2025-12-28",
+    "input": 3e-06,
+    "output": 1.2e-05,
+    "cache_read": 7.5e-07
+   }
+  ],
+  "ft:gpt-4.1-mini-2025-04-14": [
+   {
+    "from": "2025-12-28",
+    "input": 8e-07,
+    "output": 3.2e-06,
+    "cache_read": 2e-07
+   }
+  ],
+  "ft:gpt-4.1-nano-2025-04-14": [
+   {
+    "from": "2025-12-28",
+    "input": 2e-07,
+    "output": 8e-07,
+    "cache_read": 5e-08
+   }
+  ],
+  "ft:gpt-4o-2024-08-06": [
+   {
+    "from": "2025-05-31",
+    "input": 3.75e-06,
+    "output": 1.5e-05
+   },
+   {
+    "from": "2025-12-28",
+    "input": 3.75e-06,
+    "output": 1.5e-05,
+    "cache_read": 1.875e-06
+   }
+  ],
+  "ft:gpt-4o-2024-11-20": [
+   {
+    "from": "2025-05-31",
+    "input": 3.75e-06,
+    "output": 1.5e-05,
+    "cache_write": 1.875e-06
+   }
+  ],
+  "ft:gpt-4o-mini-2024-07-18": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-07,
+    "output": 1.2e-06,
+    "cache_read": 1.5e-07
+   }
+  ],
+  "ft:o4-mini-2025-04-16": [
+   {
+    "from": "2025-12-28",
+    "input": 4e-06,
+    "output": 1.6e-05,
+    "cache_read": 1e-06
+   }
+  ],
+  "gemini-1.5-flash": [
+   {
+    "from": "2025-05-31",
+    "input": 7.5e-08,
+    "output": 3e-07,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 1.5e-07,
+      "output": 6e-07
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-flash-001": [
+   {
+    "from": "2025-05-31",
+    "input": 7.5e-08,
+    "output": 3e-07,
+    "cache_read": 1.875e-08,
+    "cache_write": 1e-06,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 1.5e-07,
+      "output": 6e-07
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-flash-002": [
+   {
+    "from": "2025-05-31",
+    "input": 7.5e-08,
+    "output": 3e-07,
+    "cache_read": 1.875e-08,
+    "cache_write": 1e-06,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 1.5e-07,
+      "output": 6e-07
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-flash-8b": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-flash-8b-exp-0827": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-flash-8b-exp-0924": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-flash-exp-0827": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-flash-latest": [
+   {
+    "from": "2025-05-31",
+    "input": 7.5e-08,
+    "output": 3e-07,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 1.5e-07,
+      "output": 6e-07
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-pro": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-06,
+    "output": 1.05e-05,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 7e-06,
+      "output": 2.1e-05
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-pro-001": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-06,
+    "output": 1.05e-05,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 7e-06,
+      "output": 2.1e-05
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-pro-002": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-06,
+    "output": 1.05e-05,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 7e-06,
+      "output": 2.1e-05
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-pro-exp-0801": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-06,
+    "output": 1.05e-05,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 7e-06,
+      "output": 2.1e-05
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-pro-exp-0827": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-1.5-pro-latest": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-06,
+    "output": 1.05e-06,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 7e-06,
+      "output": 2.1e-05
+     }
+    ]
+   }
+  ],
+  "gemini-2.0-flash": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-07,
+    "output": 4e-07
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gemini-2.0-flash-001": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-07,
+    "output": 4e-07
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gemini-2.0-flash-exp": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 0,
+    "output": 0,
+    "cache_read": 0.0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-2.0-flash-lite": [
+   {
+    "from": "2025-05-31",
+    "input": 7.5e-08,
+    "output": 3e-07
+   },
+   {
+    "from": "2025-07-31",
+    "input": 7.5e-08,
+    "output": 3e-07,
+    "cache_read": 1.875e-08
+   }
+  ],
+  "gemini-2.0-flash-lite-001": [
+   {
+    "from": "2026-03-01",
+    "input": 7.5e-08,
+    "output": 3e-07,
+    "cache_read": 1.875e-08
+   }
+  ],
+  "gemini-2.0-flash-lite-preview-02-05": [
+   {
+    "from": "2025-05-31",
+    "input": 7.5e-08,
+    "output": 3e-07
+   },
+   {
+    "from": "2025-07-31",
+    "input": 7.5e-08,
+    "output": 3e-07,
+    "cache_read": 1.875e-08
+   }
+  ],
+  "gemini-2.0-flash-live-001": [
+   {
+    "from": "2025-07-31",
+    "input": 3.5e-07,
+    "output": 1.5e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gemini-2.0-flash-preview-image-generation": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-07,
+    "output": 4e-07
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gemini-2.0-flash-thinking-exp": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 0,
+    "output": 0,
+    "cache_read": 0.0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-2.0-flash-thinking-exp-01-21": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 0,
+    "output": 0,
+    "cache_read": 0.0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-2.0-pro-exp-02-05": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 0,
+    "output": 0,
+    "cache_read": 0.0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-2.5-computer-use-preview-10-2025": [
+   {
+    "from": "2025-12-28",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   }
+  ],
+  "gemini-2.5-flash": [
+   {
+    "from": "2025-06-28",
+    "input": 3e-07,
+    "output": 2.5e-06
+   },
+   {
+    "from": "2025-07-31",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 7.5e-08
+   },
+   {
+    "from": "2025-11-28",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 3e-08
+   }
+  ],
+  "gemini-2.5-flash-image-preview": [
+   {
+    "from": "2025-08-30",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gemini-2.5-flash-lite": [
+   {
+    "from": "2025-07-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   },
+   {
+    "from": "2026-01-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 1e-08
+   }
+  ],
+  "gemini-2.5-flash-lite-preview-06-17": [
+   {
+    "from": "2025-06-28",
+    "input": 1e-07,
+    "output": 4e-07
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   },
+   {
+    "from": "2026-08-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 1e-08
+   }
+  ],
+  "gemini-2.5-flash-lite-preview-09-2025": [
+   {
+    "from": "2025-09-30",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   },
+   {
+    "from": "2026-01-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 1e-08
+   }
+  ],
+  "gemini-2.5-flash-native-audio-latest": [
+   {
+    "from": "2026-03-01",
+    "input": 3e-07,
+    "output": 2.5e-06
+   },
+   {
+    "from": "2026-08-31",
+    "input": 5e-07,
+    "output": 2e-06
+   }
+  ],
+  "gemini-2.5-flash-native-audio-preview-09-2025": [
+   {
+    "from": "2026-03-01",
+    "input": 3e-07,
+    "output": 2.5e-06
+   },
+   {
+    "from": "2026-08-31",
+    "input": 5e-07,
+    "output": 2e-06
+   }
+  ],
+  "gemini-2.5-flash-native-audio-preview-12-2025": [
+   {
+    "from": "2026-03-01",
+    "input": 3e-07,
+    "output": 2.5e-06
+   },
+   {
+    "from": "2026-08-31",
+    "input": 5e-07,
+    "output": 2e-06
+   }
+  ],
+  "gemini-2.5-flash-preview-04-17": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1.5e-07,
+    "output": 6e-07,
+    "cache_read": 3.75e-08
+   }
+  ],
+  "gemini-2.5-flash-preview-05-20": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07
+   },
+   {
+    "from": "2025-06-28",
+    "input": 3e-07,
+    "output": 2.5e-06
+   },
+   {
+    "from": "2025-07-31",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gemini-2.5-flash-preview-09-2025": [
+   {
+    "from": "2025-09-30",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 7.5e-08
+   },
+   {
+    "from": "2026-08-31",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 3e-08
+   }
+  ],
+  "gemini-2.5-flash-preview-tts": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1.5e-07,
+    "output": 6e-07,
+    "cache_read": 3.75e-08
+   }
+  ],
+  "gemini-2.5-pro": [
+   {
+    "from": "2025-06-28",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 3.125e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-01-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 2.5e-07,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   }
+  ],
+  "gemini-2.5-pro-exp-03-25": [
+   {
+    "from": "2025-05-31",
+    "input": 0.0,
+    "output": 0.0,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 0.0,
+      "output": 0.0
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 0.0,
+    "output": 0.0,
+    "cache_read": 0.0,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 0.0,
+      "output": 0.0
+     }
+    ]
+   }
+  ],
+  "gemini-2.5-pro-preview-03-25": [
+   {
+    "from": "2025-05-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 3.125e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-01-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 2.5e-07,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   }
+  ],
+  "gemini-2.5-pro-preview-05-06": [
+   {
+    "from": "2025-05-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 3.125e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-01-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 2.5e-07,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   }
+  ],
+  "gemini-2.5-pro-preview-06-05": [
+   {
+    "from": "2025-06-28",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 3.125e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-01-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 2.5e-07,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   }
+  ],
+  "gemini-2.5-pro-preview-tts": [
+   {
+    "from": "2025-05-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2025-07-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 3.125e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-01-31",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 2.5e-07,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-08-31",
+    "input": 1e-06,
+    "output": 2e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gemini-3-flash-preview": [
+   {
+    "from": "2025-12-28",
+    "input": 5e-07,
+    "output": 3e-06,
+    "cache_read": 5e-08
+   }
+  ],
+  "gemini-3-pro-preview": [
+   {
+    "from": "2025-11-28",
+    "input": 2e-06,
+    "output": 1.2e-05,
+    "cache_read": 2e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 4e-07,
+      "input": 4e-06,
+      "output": 1.8e-05
+     }
+    ]
+   }
+  ],
+  "gemini-3.1-flash-lite": [
+   {
+    "from": "2026-05-29",
+    "input": 2.5e-07,
+    "output": 1.5e-06,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gemini-3.1-flash-lite-preview": [
+   {
+    "from": "2026-03-29",
+    "input": 2.5e-07,
+    "output": 1.5e-06,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gemini-3.1-flash-live-preview": [
+   {
+    "from": "2026-03-29",
+    "input": 7.5e-07,
+    "output": 4.5e-06
+   }
+  ],
+  "gemini-3.1-pro-preview": [
+   {
+    "from": "2026-03-01",
+    "input": 2e-06,
+    "output": 1.2e-05,
+    "cache_read": 2e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 4e-07,
+      "input": 4e-06,
+      "output": 1.8e-05
+     }
+    ]
+   }
+  ],
+  "gemini-3.1-pro-preview-customtools": [
+   {
+    "from": "2026-03-01",
+    "input": 2e-06,
+    "output": 1.2e-05,
+    "cache_read": 2e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 4e-07,
+      "input": 4e-06,
+      "output": 1.8e-05
+     }
+    ]
+   }
+  ],
+  "gemini-3.5-flash": [
+   {
+    "from": "2026-05-29",
+    "input": 1.5e-06,
+    "output": 9e-06,
+    "cache_read": 1.5e-07
+   }
+  ],
+  "gemini-3.5-flash-lite": [
+   {
+    "from": "2026-07-31",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 3e-08
+   }
+  ],
+  "gemini-3.5-live-translate-preview": [
+   {
+    "from": "2026-08-31",
+    "input": 3.5e-06,
+    "output": 2.1e-05
+   }
+  ],
+  "gemini-3.6-flash": [
+   {
+    "from": "2026-07-31",
+    "input": 1.5e-06,
+    "output": 7.5e-06,
+    "cache_read": 1.5e-07
+   },
+   {
+    "from": "2026-08-31",
+    "input": 7.5e-07,
+    "output": 3.75e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gemini-3.7-flash": [
+   {
+    "from": "2026-08-31",
+    "input": 7.5e-07,
+    "output": 3.75e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gemini-3.8-flash": [
+   {
+    "from": "2026-09-30",
+    "input": 7.5e-07,
+    "output": 3.75e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gemini-exp-1114": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-exp-1206": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemini-flash-latest": [
+   {
+    "from": "2025-09-30",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 7.5e-08
+   },
+   {
+    "from": "2026-08-31",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 3e-08
+   },
+   {
+    "from": "2026-09-30",
+    "input": 7.5e-07,
+    "output": 3.75e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gemini-flash-lite-latest": [
+   {
+    "from": "2025-09-30",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   },
+   {
+    "from": "2026-08-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 1e-08
+   },
+   {
+    "from": "2026-09-30",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 3e-08
+   }
+  ],
+  "gemini-gemma-2-27b-it": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-07,
+    "output": 1.05e-06
+   }
+  ],
+  "gemini-gemma-2-9b-it": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-07,
+    "output": 1.05e-06
+   }
+  ],
+  "gemini-live-2.5-flash-preview-native-audio-09-2025": [
+   {
+    "from": "2025-11-28",
+    "input": 3e-07,
+    "output": 2e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gemini-omni-1.1-flash": [
+   {
+    "from": "2026-08-31",
+    "input": 1.5e-06,
+    "output": 9e-06
+   }
+  ],
+  "gemini-omni-flash-preview": [
+   {
+    "from": "2026-07-31",
+    "input": 1.5e-06,
+    "output": 9e-06
+   }
+  ],
+  "gemini-pro": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-07,
+    "output": 1.05e-06,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 7e-07,
+      "output": 2.1e-06
+     }
+    ]
+   }
+  ],
+  "gemini-pro-latest": [
+   {
+    "from": "2026-03-01",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 2.5e-07,
+      "input": 2.5e-06,
+      "output": 1.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-09-30",
+    "input": 2e-06,
+    "output": 1.2e-05,
+    "cache_read": 2e-07,
+    "tiers": [
+     {
+      "above_tokens": 200000,
+      "cache_read": 4e-07,
+      "input": 4e-06,
+      "output": 1.8e-05
+     }
+    ]
+   }
+  ],
+  "gemini-pro-vision": [
+   {
+    "from": "2025-05-31",
+    "input": 3.5e-07,
+    "output": 1.05e-06,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 7e-07,
+      "output": 2.1e-06
+     }
+    ]
+   }
+  ],
+  "gemini-robotics-er-1.5-preview": [
+   {
+    "from": "2026-03-01",
+    "input": 3e-07,
+    "output": 2.5e-06,
+    "cache_read": 0
+   }
+  ],
+  "gemini-robotics-er-1.6-preview": [
+   {
+    "from": "2026-08-31",
+    "input": 1e-06,
+    "output": 5e-06
+   }
+  ],
+  "gemini-robotics-er-2-preview": [
+   {
+    "from": "2026-08-31",
+    "input": 2e-06,
+    "output": 1e-05,
+    "cache_read": 2e-07
+   },
+   {
+    "from": "2026-09-30",
+    "input": 1e-06,
+    "output": 5e-06,
+    "cache_read": 1e-07
+   }
+  ],
+  "gemini-robotics-er-2-streaming-preview": [
+   {
+    "from": "2026-08-31",
+    "input": 2e-06,
+    "output": 1e-05
+   },
+   {
+    "from": "2026-09-30",
+    "input": 1e-06,
+    "output": 5e-06
+   }
+  ],
+  "gemma-3-27b-it": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "gemma-4-26b-a4b-it": [
+   {
+    "from": "2026-08-31",
+    "input": 0.0,
+    "output": 0.0
+   }
+  ],
+  "gemma-4-31b-it": [
+   {
+    "from": "2026-08-31",
+    "input": 0.0,
+    "output": 0.0
+   }
+  ],
+  "gpt-3.5-turbo": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-06,
+    "output": 2e-06
+   },
+   {
+    "from": "2025-09-30",
+    "input": 5e-07,
+    "output": 1.5e-06
+   }
+  ],
+  "gpt-3.5-turbo-0125": [
+   {
+    "from": "2025-05-31",
+    "input": 5e-07,
+    "output": 1.5e-06
+   }
+  ],
+  "gpt-3.5-turbo-0301": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-06,
+    "output": 2e-06
+   }
+  ],
+  "gpt-3.5-turbo-0613": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-06,
+    "output": 2e-06
+   }
+  ],
+  "gpt-3.5-turbo-1106": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-06,
+    "output": 2e-06
+   }
+  ],
+  "gpt-3.5-turbo-16k": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 4e-06
+   }
+  ],
+  "gpt-3.5-turbo-16k-0613": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 4e-06
+   }
+  ],
+  "gpt-4": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-05,
+    "output": 6e-05
+   }
+  ],
+  "gpt-4-0125-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 3e-05
+   }
+  ],
+  "gpt-4-0314": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-05,
+    "output": 6e-05
+   }
+  ],
+  "gpt-4-0613": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-05,
+    "output": 6e-05
+   }
+  ],
+  "gpt-4-1106-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 3e-05
+   }
+  ],
+  "gpt-4-1106-vision-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 3e-05
+   }
+  ],
+  "gpt-4-32k": [
+   {
+    "from": "2025-05-31",
+    "input": 6e-05,
+    "output": 0.00012
+   }
+  ],
+  "gpt-4-32k-0314": [
+   {
+    "from": "2025-05-31",
+    "input": 6e-05,
+    "output": 0.00012
+   }
+  ],
+  "gpt-4-32k-0613": [
+   {
+    "from": "2025-05-31",
+    "input": 6e-05,
+    "output": 0.00012
+   }
+  ],
+  "gpt-4-turbo": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 3e-05
+   }
+  ],
+  "gpt-4-turbo-2024-04-09": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 3e-05
+   }
+  ],
+  "gpt-4-turbo-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 3e-05
+   }
+  ],
+  "gpt-4-vision-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 3e-05
+   }
+  ],
+  "gpt-4.1": [
+   {
+    "from": "2025-05-31",
+    "input": 2e-06,
+    "output": 8e-06,
+    "cache_read": 5e-07
+   }
+  ],
+  "gpt-4.1-2025-04-14": [
+   {
+    "from": "2025-05-31",
+    "input": 2e-06,
+    "output": 8e-06,
+    "cache_read": 5e-07
+   }
+  ],
+  "gpt-4.1-mini": [
+   {
+    "from": "2025-05-31",
+    "input": 4e-07,
+    "output": 1.6e-06,
+    "cache_read": 1e-07
+   }
+  ],
+  "gpt-4.1-mini-2025-04-14": [
+   {
+    "from": "2025-05-31",
+    "input": 4e-07,
+    "output": 1.6e-06,
+    "cache_read": 1e-07
+   }
+  ],
+  "gpt-4.1-nano": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gpt-4.1-nano-2025-04-14": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-07,
+    "output": 4e-07,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gpt-4.5-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 7.5e-05,
+    "output": 0.00015,
+    "cache_read": 3.75e-05
+   }
+  ],
+  "gpt-4.5-preview-2025-02-27": [
+   {
+    "from": "2025-05-31",
+    "input": 7.5e-05,
+    "output": 0.00015,
+    "cache_read": 3.75e-05
+   }
+  ],
+  "gpt-4o": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-06
+   }
+  ],
+  "gpt-4o-2024-05-13": [
+   {
+    "from": "2025-05-31",
+    "input": 5e-06,
+    "output": 1.5e-05
+   }
+  ],
+  "gpt-4o-2024-08-06": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-06
+   }
+  ],
+  "gpt-4o-2024-11-20": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-06
+   }
+  ],
+  "gpt-4o-audio-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-06,
+    "output": 1e-05
+   }
+  ],
+  "gpt-4o-audio-preview-2024-10-01": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-06,
+    "output": 1e-05
+   }
+  ],
+  "gpt-4o-audio-preview-2024-12-17": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-06,
+    "output": 1e-05
+   }
+  ],
+  "gpt-4o-audio-preview-2025-06-03": [
+   {
+    "from": "2025-06-28",
+    "input": 2.5e-06,
+    "output": 1e-05
+   }
+  ],
+  "gpt-4o-mini": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gpt-4o-mini-2024-07-18": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gpt-4o-mini-audio-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07
+   }
+  ],
+  "gpt-4o-mini-audio-preview-2024-12-17": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07
+   }
+  ],
+  "gpt-4o-mini-realtime-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 6e-07,
+    "output": 2.4e-06,
+    "cache_read": 3e-07
+   }
+  ],
+  "gpt-4o-mini-realtime-preview-2024-12-17": [
+   {
+    "from": "2025-05-31",
+    "input": 6e-07,
+    "output": 2.4e-06,
+    "cache_read": 3e-07
+   }
+  ],
+  "gpt-4o-mini-search-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gpt-4o-mini-search-preview-2025-03-11": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-07,
+    "output": 6e-07,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gpt-4o-realtime-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 5e-06,
+    "output": 2e-05,
+    "cache_read": 2.5e-06
+   }
+  ],
+  "gpt-4o-realtime-preview-2024-10-01": [
+   {
+    "from": "2025-05-31",
+    "input": 5e-06,
+    "output": 2e-05,
+    "cache_read": 2.5e-06
+   }
+  ],
+  "gpt-4o-realtime-preview-2024-12-17": [
+   {
+    "from": "2025-05-31",
+    "input": 5e-06,
+    "output": 2e-05,
+    "cache_read": 2.5e-06
+   }
+  ],
+  "gpt-4o-realtime-preview-2025-06-03": [
+   {
+    "from": "2025-07-31",
+    "input": 5e-06,
+    "output": 2e-05,
+    "cache_read": 2.5e-06
+   }
+  ],
+  "gpt-4o-search-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-06
+   }
+  ],
+  "gpt-4o-search-preview-2025-03-11": [
+   {
+    "from": "2025-05-31",
+    "input": 2.5e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-06
+   }
+  ],
+  "gpt-5": [
+   {
+    "from": "2025-08-30",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5-2025-08-07": [
+   {
+    "from": "2025-08-30",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5-chat": [
+   {
+    "from": "2025-08-30",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5-chat-latest": [
+   {
+    "from": "2025-08-30",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5-codex": [
+   {
+    "from": "2025-09-30",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5-mini": [
+   {
+    "from": "2025-08-30",
+    "input": 2.5e-07,
+    "output": 2e-06,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gpt-5-mini-2025-08-07": [
+   {
+    "from": "2025-08-30",
+    "input": 2.5e-07,
+    "output": 2e-06,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gpt-5-nano": [
+   {
+    "from": "2025-08-30",
+    "input": 5e-08,
+    "output": 4e-07,
+    "cache_read": 5e-09
+   }
+  ],
+  "gpt-5-nano-2025-08-07": [
+   {
+    "from": "2025-08-30",
+    "input": 5e-08,
+    "output": 4e-07,
+    "cache_read": 5e-09
+   }
+  ],
+  "gpt-5-pro": [
+   {
+    "from": "2025-10-31",
+    "input": 1.5e-05,
+    "output": 0.00012
+   }
+  ],
+  "gpt-5-pro-2025-10-06": [
+   {
+    "from": "2025-10-31",
+    "input": 1.5e-05,
+    "output": 0.00012
+   }
+  ],
+  "gpt-5-search-api": [
+   {
+    "from": "2026-03-01",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5-search-api-2025-10-14": [
+   {
+    "from": "2026-03-01",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5.1": [
+   {
+    "from": "2025-11-28",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5.1-2025-11-13": [
+   {
+    "from": "2025-11-28",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5.1-chat-latest": [
+   {
+    "from": "2025-11-28",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5.1-codex": [
+   {
+    "from": "2025-11-28",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5.1-codex-max": [
+   {
+    "from": "2025-12-28",
+    "input": 1.25e-06,
+    "output": 1e-05,
+    "cache_read": 1.25e-07
+   }
+  ],
+  "gpt-5.1-codex-mini": [
+   {
+    "from": "2025-11-28",
+    "input": 2.5e-07,
+    "output": 2e-06,
+    "cache_read": 2.5e-08
+   }
+  ],
+  "gpt-5.2": [
+   {
+    "from": "2025-12-28",
+    "input": 1.75e-06,
+    "output": 1.4e-05,
+    "cache_read": 1.75e-07
+   }
+  ],
+  "gpt-5.2-2025-12-11": [
+   {
+    "from": "2025-12-28",
+    "input": 1.75e-06,
+    "output": 1.4e-05,
+    "cache_read": 1.75e-07
+   }
+  ],
+  "gpt-5.2-chat-latest": [
+   {
+    "from": "2025-12-28",
+    "input": 1.75e-06,
+    "output": 1.4e-05,
+    "cache_read": 1.75e-07
+   }
+  ],
+  "gpt-5.2-codex": [
+   {
+    "from": "2026-01-31",
+    "input": 1.75e-06,
+    "output": 1.4e-05,
+    "cache_read": 1.75e-07
+   }
+  ],
+  "gpt-5.2-pro": [
+   {
+    "from": "2025-12-28",
+    "input": 2.1e-05,
+    "output": 0.000168
+   }
+  ],
+  "gpt-5.2-pro-2025-12-11": [
+   {
+    "from": "2025-12-28",
+    "input": 2.1e-05,
+    "output": 0.000168
+   }
+  ],
+  "gpt-5.3-chat-latest": [
+   {
+    "from": "2026-03-29",
+    "input": 1.75e-06,
+    "output": 1.4e-05,
+    "cache_read": 1.75e-07
+   }
+  ],
+  "gpt-5.3-codex": [
+   {
+    "from": "2026-03-01",
+    "input": 1.75e-06,
+    "output": 1.4e-05,
+    "cache_read": 1.75e-07
+   }
+  ],
+  "gpt-5.4": [
+   {
+    "from": "2026-03-29",
+    "input": 2.5e-06,
+    "output": 1.5e-05,
+    "cache_read": 2.5e-07,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_read": 5e-07,
+      "input": 5e-06,
+      "output": 2.25e-05
+     }
+    ]
+   }
+  ],
+  "gpt-5.4-2026-03-05": [
+   {
+    "from": "2026-03-29",
+    "input": 2.5e-06,
+    "output": 1.5e-05,
+    "cache_read": 2.5e-07,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_read": 5e-07,
+      "input": 5e-06,
+      "output": 2.25e-05
+     }
+    ]
+   }
+  ],
+  "gpt-5.4-mini": [
+   {
+    "from": "2026-03-29",
+    "input": 7.5e-07,
+    "output": 4.5e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gpt-5.4-mini-2026-03-17": [
+   {
+    "from": "2026-04-29",
+    "input": 7.5e-07,
+    "output": 4.5e-06,
+    "cache_read": 7.5e-08
+   }
+  ],
+  "gpt-5.4-nano": [
+   {
+    "from": "2026-03-29",
+    "input": 2e-07,
+    "output": 1.25e-06,
+    "cache_read": 2e-08
+   }
+  ],
+  "gpt-5.4-nano-2026-03-17": [
+   {
+    "from": "2026-04-29",
+    "input": 2e-07,
+    "output": 1.25e-06,
+    "cache_read": 2e-08
+   }
+  ],
+  "gpt-5.4-pro": [
+   {
+    "from": "2026-03-29",
+    "input": 3e-05,
+    "output": 0.00018,
+    "cache_read": 3e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_read": 6e-06,
+      "input": 6e-05,
+      "output": 0.00027
+     }
+    ]
+   },
+   {
+    "from": "2026-09-30",
+    "input": 3e-05,
+    "output": 0.00018,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "input": 6e-05,
+      "output": 0.00027
+     }
+    ]
+   }
+  ],
+  "gpt-5.4-pro-2026-03-05": [
+   {
+    "from": "2026-03-29",
+    "input": 3e-05,
+    "output": 0.00018,
+    "cache_read": 3e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_read": 6e-06,
+      "input": 6e-05,
+      "output": 0.00027
+     }
+    ]
+   },
+   {
+    "from": "2026-09-30",
+    "input": 3e-05,
+    "output": 0.00018,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "input": 6e-05,
+      "output": 0.00027
+     }
+    ]
+   }
+  ],
+  "gpt-5.5": [
+   {
+    "from": "2026-04-29",
+    "input": 5e-06,
+    "output": 3e-05,
+    "cache_read": 5e-07,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_read": 1e-06,
+      "input": 1e-05,
+      "output": 4.5e-05
+     }
+    ]
+   }
+  ],
+  "gpt-5.5-2026-04-23": [
+   {
+    "from": "2026-04-29",
+    "input": 5e-06,
+    "output": 3e-05,
+    "cache_read": 5e-07,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_read": 1e-06,
+      "input": 1e-05,
+      "output": 4.5e-05
+     }
+    ]
+   }
+  ],
+  "gpt-5.5-cyber": [
+   {
+    "from": "2026-09-30",
+    "input": 1.25e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.25e-06
+   }
+  ],
+  "gpt-5.5-pro": [
+   {
+    "from": "2026-04-29",
+    "input": 3e-05,
+    "output": 0.00018,
+    "cache_read": 3e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_read": 6e-06,
+      "input": 6e-05,
+      "output": 0.00027
+     }
+    ]
+   },
+   {
+    "from": "2026-09-30",
+    "input": 3e-05,
+    "output": 0.00018,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "input": 6e-05,
+      "output": 0.00027
+     }
+    ]
+   }
+  ],
+  "gpt-5.5-pro-2026-04-23": [
+   {
+    "from": "2026-04-29",
+    "input": 3e-05,
+    "output": 0.00018,
+    "cache_read": 3e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_read": 6e-06,
+      "input": 6e-05,
+      "output": 0.00027
+     }
+    ]
+   },
+   {
+    "from": "2026-09-30",
+    "input": 3e-05,
+    "output": 0.00018,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "input": 6e-05,
+      "output": 0.00027
+     }
+    ]
+   }
+  ],
+  "gpt-5.6": [
+   {
+    "from": "2026-07-31",
+    "input": 5e-06,
+    "output": 3e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 1.25e-05,
+      "cache_read": 1e-06,
+      "input": 1e-05,
+      "output": 4.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-08-31",
+    "input": 4e-06,
+    "output": 2e-05,
+    "cache_read": 4e-07,
+    "cache_write": 5e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 1e-05,
+      "cache_read": 8e-07,
+      "input": 8e-06,
+      "output": 3e-05
+     }
+    ]
+   }
+  ],
+  "gpt-5.6-cyber": [
+   {
+    "from": "2026-08-31",
+    "input": 1.25e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.25e-06,
+    "cache_write": 1.5625e-05,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 3.125e-05,
+      "cache_read": 2.5e-06,
+      "input": 2.5e-05,
+      "output": 0.0001125
+     }
+    ]
+   }
+  ],
+  "gpt-5.6-luna": [
+   {
+    "from": "2026-07-31",
+    "input": 2e-07,
+    "output": 1.2e-06,
+    "cache_read": 2e-08,
+    "cache_write": 2.5e-07,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 5e-07,
+      "cache_read": 4e-08,
+      "input": 4e-07,
+      "output": 1.8e-06
+     }
+    ]
+   }
+  ],
+  "gpt-5.6-sol": [
+   {
+    "from": "2026-07-31",
+    "input": 5e-06,
+    "output": 3e-05,
+    "cache_read": 5e-07,
+    "cache_write": 6.25e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 1.25e-05,
+      "cache_read": 1e-06,
+      "input": 1e-05,
+      "output": 4.5e-05
+     }
+    ]
+   },
+   {
+    "from": "2026-08-31",
+    "input": 4e-06,
+    "output": 2e-05,
+    "cache_read": 4e-07,
+    "cache_write": 5e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 1e-05,
+      "cache_read": 8e-07,
+      "input": 8e-06,
+      "output": 3e-05
+     }
+    ]
+   }
+  ],
+  "gpt-5.6-terra": [
+   {
+    "from": "2026-07-31",
+    "input": 2e-06,
+    "output": 1.2e-05,
+    "cache_read": 2e-07,
+    "cache_write": 2.5e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 5e-06,
+      "cache_read": 4e-07,
+      "input": 4e-06,
+      "output": 1.8e-05
+     }
+    ]
+   }
+  ],
+  "gpt-6-astra": [
+   {
+    "from": "2026-09-30",
+    "input": 1e-05,
+    "output": 5e-05,
+    "cache_read": 1e-06,
+    "cache_write": 1.25e-05,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 2.5e-05,
+      "cache_read": 2e-06,
+      "input": 2e-05,
+      "output": 7.5e-05
+     }
+    ]
+   }
+  ],
+  "gpt-6-luna": [
+   {
+    "from": "2026-09-30",
+    "input": 1e-07,
+    "output": 5e-07,
+    "cache_read": 1e-08,
+    "cache_write": 1.25e-07,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 2.5e-07,
+      "cache_read": 2e-08,
+      "input": 2e-07,
+      "output": 7.5e-07
+     }
+    ]
+   }
+  ],
+  "gpt-6-sol": [
+   {
+    "from": "2026-09-30",
+    "input": 2e-06,
+    "output": 1e-05,
+    "cache_read": 2e-07,
+    "cache_write": 2.5e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 5e-06,
+      "cache_read": 4e-07,
+      "input": 4e-06,
+      "output": 1.5e-05
+     }
+    ]
+   }
+  ],
+  "gpt-6.1-sol": [
+   {
+    "from": "2026-09-30",
+    "input": 2e-06,
+    "output": 1e-05,
+    "cache_read": 1e-07,
+    "cache_write": 2.5e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 5e-06,
+      "cache_read": 2e-07,
+      "input": 4e-06,
+      "output": 1.5e-05
+     }
+    ]
+   }
+  ],
+  "gpt-audio": [
+   {
+    "from": "2026-01-31",
+    "input": 2.5e-06,
+    "output": 1e-05
+   }
+  ],
+  "gpt-audio-1.5": [
+   {
+    "from": "2026-03-01",
+    "input": 2.5e-06,
+    "output": 1e-05
+   }
+  ],
+  "gpt-audio-2025-08-28": [
+   {
+    "from": "2026-01-31",
+    "input": 2.5e-06,
+    "output": 1e-05
+   }
+  ],
+  "gpt-audio-mini": [
+   {
+    "from": "2026-01-31",
+    "input": 6e-07,
+    "output": 2.4e-06
+   }
+  ],
+  "gpt-audio-mini-2025-10-06": [
+   {
+    "from": "2026-01-31",
+    "input": 6e-07,
+    "output": 2.4e-06
+   }
+  ],
+  "gpt-audio-mini-2025-12-15": [
+   {
+    "from": "2026-01-31",
+    "input": 6e-07,
+    "output": 2.4e-06
+   }
+  ],
+  "gpt-daybreak-blue-latest": [
+   {
+    "from": "2026-09-30",
+    "input": 4e-06,
+    "output": 2e-05,
+    "cache_read": 4e-07,
+    "cache_write": 5e-06,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 1e-05,
+      "cache_read": 8e-07,
+      "input": 8e-06,
+      "output": 3e-05
+     }
+    ]
+   }
+  ],
+  "gpt-daybreak-red-latest": [
+   {
+    "from": "2026-09-30",
+    "input": 1.25e-05,
+    "output": 7.5e-05,
+    "cache_read": 1.25e-06,
+    "cache_write": 1.5625e-05,
+    "tiers": [
+     {
+      "above_tokens": 272000,
+      "cache_write": 3.125e-05,
+      "cache_read": 2.5e-06,
+      "input": 2.5e-05,
+      "output": 0.0001125
+     }
+    ]
+   }
+  ],
+  "gpt-realtime": [
+   {
+    "from": "2025-08-30",
+    "input": 4e-06,
+    "output": 1.6e-05,
+    "cache_read": 4e-07
+   }
+  ],
+  "gpt-realtime-1.5": [
+   {
+    "from": "2026-03-01",
+    "input": 4e-06,
+    "output": 1.6e-05,
+    "cache_read": 4e-07
+   }
+  ],
+  "gpt-realtime-2": [
+   {
+    "from": "2026-05-29",
+    "input": 4e-06,
+    "output": 1.6e-05,
+    "cache_read": 4e-07
+   }
+  ],
+  "gpt-realtime-2025-08-28": [
+   {
+    "from": "2025-08-30",
+    "input": 4e-06,
+    "output": 1.6e-05,
+    "cache_read": 4e-07
+   }
+  ],
+  "gpt-realtime-mini": [
+   {
+    "from": "2025-10-31",
+    "input": 6e-07,
+    "output": 2.4e-06
+   }
+  ],
+  "gpt-realtime-mini-2025-10-06": [
+   {
+    "from": "2026-03-01",
+    "input": 6e-07,
+    "output": 2.4e-06,
+    "cache_read": 6e-08
+   }
+  ],
+  "gpt-realtime-mini-2025-12-15": [
+   {
+    "from": "2026-03-01",
+    "input": 6e-07,
+    "output": 2.4e-06,
+    "cache_read": 6e-08
+   }
+  ],
+  "gpt-rosalind-research": [
+   {
+    "from": "2026-09-30",
+    "input": 5e-06,
+    "output": 2.5e-05,
+    "cache_read": 5e-07
+   }
+  ],
+  "learnlm-1.5-pro-experimental": [
+   {
+    "from": "2025-05-31",
+    "input": 0,
+    "output": 0,
+    "tiers": [
+     {
+      "above_tokens": 128000,
+      "input": 0,
+      "output": 0
+     }
+    ]
+   }
+  ],
+  "lyria-3-clip-preview": [
+   {
+    "from": "2026-03-29",
+    "input": 0,
+    "output": 0
+   }
+  ],
+  "lyria-3-pro-preview": [
+   {
+    "from": "2026-03-29",
+    "input": 0,
+    "output": 0
+   }
+  ],
+  "lyria-3.5": [
+   {
+    "from": "2026-09-30",
+    "input": 0,
+    "output": 0
+   }
+  ],
+  "lyria-3.5-clip-preview": [
+   {
+    "from": "2026-09-30",
+    "input": 0,
+    "output": 0
+   }
+  ],
+  "lyria-3.5-pro-preview": [
+   {
+    "from": "2026-09-30",
+    "input": 0,
+    "output": 0
+   }
+  ],
+  "lyria-realtime-exp": [
+   {
+    "from": "2026-09-30",
+    "input": 0,
+    "output": 0
+   }
+  ],
+  "o1": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-05,
+    "output": 6e-05,
+    "cache_read": 7.5e-06
+   }
+  ],
+  "o1-2024-12-17": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-05,
+    "output": 6e-05,
+    "cache_read": 7.5e-06
+   }
+  ],
+  "o1-mini": [
+   {
+    "from": "2025-05-31",
+    "input": 1.1e-06,
+    "output": 4.4e-06,
+    "cache_read": 5.5e-07
+   }
+  ],
+  "o1-mini-2024-09-12": [
+   {
+    "from": "2025-05-31",
+    "input": 3e-06,
+    "output": 1.2e-05,
+    "cache_read": 1.5e-06
+   }
+  ],
+  "o1-preview": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-05,
+    "output": 6e-05,
+    "cache_read": 7.5e-06
+   }
+  ],
+  "o1-preview-2024-09-12": [
+   {
+    "from": "2025-05-31",
+    "input": 1.5e-05,
+    "output": 6e-05,
+    "cache_read": 7.5e-06
+   }
+  ],
+  "o1-pro": [
+   {
+    "from": "2025-05-31",
+    "input": 0.00015,
+    "output": 0.0006
+   }
+  ],
+  "o1-pro-2025-03-19": [
+   {
+    "from": "2025-05-31",
+    "input": 0.00015,
+    "output": 0.0006
+   }
+  ],
+  "o3": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 4e-05,
+    "cache_read": 2.5e-06
+   },
+   {
+    "from": "2025-06-28",
+    "input": 2e-06,
+    "output": 8e-06,
+    "cache_read": 5e-07
+   }
+  ],
+  "o3-2025-04-16": [
+   {
+    "from": "2025-05-31",
+    "input": 1e-05,
+    "output": 4e-05,
+    "cache_read": 2.5e-06
+   },
+   {
+    "from": "2025-06-28",
+    "input": 2e-06,
+    "output": 8e-06,
+    "cache_read": 5e-07
+   }
+  ],
+  "o3-deep-research": [
+   {
+    "from": "2025-06-28",
+    "input": 1e-05,
+    "output": 4e-05,
+    "cache_read": 2.5e-06
+   }
+  ],
+  "o3-deep-research-2025-06-26": [
+   {
+    "from": "2025-06-28",
+    "input": 1e-05,
+    "output": 4e-05,
+    "cache_read": 2.5e-06
+   }
+  ],
+  "o3-mini": [
+   {
+    "from": "2025-05-31",
+    "input": 1.1e-06,
+    "output": 4.4e-06,
+    "cache_read": 5.5e-07
+   }
+  ],
+  "o3-mini-2025-01-31": [
+   {
+    "from": "2025-05-31",
+    "input": 1.1e-06,
+    "output": 4.4e-06,
+    "cache_read": 5.5e-07
+   }
+  ],
+  "o3-pro": [
+   {
+    "from": "2025-06-28",
+    "input": 2e-05,
+    "output": 8e-05
+   }
+  ],
+  "o3-pro-2025-06-10": [
+   {
+    "from": "2025-06-28",
+    "input": 2e-05,
+    "output": 8e-05
+   }
+  ],
+  "o4-mini": [
+   {
+    "from": "2025-05-31",
+    "input": 1.1e-06,
+    "output": 4.4e-06,
+    "cache_read": 2.75e-07
+   }
+  ],
+  "o4-mini-2025-04-16": [
+   {
+    "from": "2025-05-31",
+    "input": 1.1e-06,
+    "output": 4.4e-06,
+    "cache_read": 2.75e-07
+   }
+  ],
+  "o4-mini-deep-research": [
+   {
+    "from": "2025-06-28",
+    "input": 2e-06,
+    "output": 8e-06,
+    "cache_read": 5e-07
+   }
+  ],
+  "o4-mini-deep-research-2025-06-26": [
+   {
+    "from": "2025-06-28",
+    "input": 2e-06,
+    "output": 8e-06,
+    "cache_read": 5e-07
+   }
+  ]
+ }
+}

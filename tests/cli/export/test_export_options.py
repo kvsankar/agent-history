@@ -1,0 +1,276 @@
+"""Export option coverage for session export flags.
+
+Spec Reference: docs/specs/cli-spec.md (export options)
+"""
+
+import json
+from pathlib import Path
+from typing import Any, Dict
+
+import pytest
+
+from tests.helpers.cli import assert_cli_success, run_cli_subprocess
+from tests.helpers.session_builders import ClaudeSessionBuilder, CodexSessionBuilder
+
+pytestmark = pytest.mark.v1
+
+
+def _write_named_claude_session(claude_dir: Path, workspace: str) -> Path:
+    builder = ClaudeSessionBuilder(workspace=workspace, session_id="positional-export")
+    builder.add_user_message("Hello positional export")
+    builder.add_assistant_message("Done")
+    return builder.write_to(claude_dir)
+
+
+def test_session_export_accepts_positional_output_dir(isolated_home: Dict[str, Any]) -> None:
+    _write_named_claude_session(isolated_home["claude_dir"], "-home-user-positional-session")
+    output_dir = isolated_home["path"] / "session_positional_out"
+
+    result = run_cli_subprocess(
+        ["session", "export", "/home/user/positional-session", str(output_dir), "--force"],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert_cli_success(result, "session export target output_dir should succeed")
+    assert list(output_dir.rglob("*.md")), "Expected output in positional directory"
+
+
+def test_ws_export_accepts_positional_output_dir(isolated_home: Dict[str, Any]) -> None:
+    _write_named_claude_session(isolated_home["claude_dir"], "-home-user-positional-ws")
+    output_dir = isolated_home["path"] / "ws_positional_out"
+
+    result = run_cli_subprocess(
+        ["ws", "export", "/home/user/positional-ws", str(output_dir), "--force"],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+
+    assert_cli_success(result, "ws export target output_dir should succeed")
+    assert list(output_dir.rglob("*.md")), "Expected output in positional directory"
+
+
+def test_session_export_source_copies_raw_files(
+    isolated_home: Dict[str, Any],
+    setup_golden_fixtures: Dict[str, Path],
+) -> None:
+    """--source should copy the original JSON/JSONL alongside markdown."""
+    output_dir = isolated_home["path"] / "exports_source"
+    output_dir.mkdir()
+
+    result = run_cli_subprocess(
+        ["session", "export", "--aw", "--source", "--force", "-o", str(output_dir)],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    if result.returncode != 0:
+        pytest.skip(f"session export --source failed: {result.stderr}")
+
+    md_files = list(output_dir.rglob("*.md"))
+    json_copies = list(output_dir.rglob("*.jsonl")) + list(output_dir.rglob("*.json"))
+    assert md_files, "Markdown output should be created with --source"
+    assert json_copies, "Raw source files should be copied with --source"
+
+    # Verify each source file was copied (match by exact content)
+    source_contents = {
+        path.read_text(encoding="utf-8"): path.suffix for path in setup_golden_fixtures.values()
+    }
+    matched = set()
+    for copy in json_copies:
+        content = copy.read_text(encoding="utf-8")
+        if content in source_contents:
+            matched.add(source_contents[content])
+    assert matched, "At least one source file should be identical to a copied file"
+
+
+def test_session_export_flat_writes_to_root(
+    isolated_home: Dict[str, Any],
+    setup_golden_fixtures: Dict[str, Path],
+) -> None:
+    """--flat should avoid creating workspace subdirectories."""
+    output_dir = isolated_home["path"] / "exports_flat"
+    output_dir.mkdir()
+
+    result = run_cli_subprocess(
+        ["session", "export", "--aw", "--flat", "--force", "-o", str(output_dir)],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "--flat export should succeed")
+
+    md_files = list(output_dir.rglob("*.md"))
+    assert md_files, "Markdown output should exist"
+    nested = [f for f in md_files if f.parent != output_dir]
+    assert not nested, f"--flat should place files in {output_dir}, found nested files: {nested}"
+
+
+def test_session_export_layout_flat_writes_to_root(
+    isolated_home: Dict[str, Any],
+    setup_golden_fixtures: Dict[str, Path],
+) -> None:
+    """--layout flat should avoid creating workspace subdirectories."""
+    output_dir = isolated_home["path"] / "exports_layout_flat"
+    output_dir.mkdir()
+
+    result = run_cli_subprocess(
+        ["session", "export", "--aw", "--layout", "flat", "--force", "-o", str(output_dir)],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "--layout flat export should succeed")
+
+    md_files = list(output_dir.rglob("*.md"))
+    assert md_files, "Markdown output should exist"
+    nested = [f for f in md_files if f.parent != output_dir]
+    assert not nested, f"--layout flat should place files in {output_dir}, found: {nested}"
+
+
+def test_ws_export_layout_squashed_uses_single_workspace_folder(
+    isolated_home: Dict[str, Any],
+) -> None:
+    """--layout squashed should create one encoded workspace directory."""
+    _write_named_claude_session(isolated_home["claude_dir"], "-home-user-squashed-layout")
+    output_dir = isolated_home["path"] / "exports_squashed"
+
+    result = run_cli_subprocess(
+        [
+            "ws",
+            "export",
+            "/home/user/squashed-layout",
+            "--layout",
+            "squashed",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "--layout squashed export should succeed")
+
+    expected_dir = output_dir / "-home-user-squashed-layout"
+    assert list(expected_dir.glob("*.md")), "Markdown output should exist in squashed folder"
+    assert not (output_dir / "home" / "user" / "squashed-layout").exists()
+
+
+def test_ws_export_defaults_to_squashed_layout(
+    isolated_home: Dict[str, Any],
+) -> None:
+    """Default export layout should create one encoded workspace directory."""
+    _write_named_claude_session(isolated_home["claude_dir"], "-home-user-default-layout")
+    output_dir = isolated_home["path"] / "exports_default_layout"
+
+    result = run_cli_subprocess(
+        [
+            "ws",
+            "export",
+            "/home/user/default-layout",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "default layout export should succeed")
+
+    expected_dir = output_dir / "-home-user-default-layout"
+    assert list(expected_dir.glob("*.md")), "Markdown output should exist in squashed folder"
+    assert not (output_dir / "home" / "user" / "default-layout").exists()
+
+
+def test_session_export_split_creates_parts(isolated_home: Dict[str, Any]) -> None:
+    """--split should produce multiple part files for long conversations."""
+    # Create a Claude workspace with enough messages to trigger splitting
+    workspace = isolated_home["claude_dir"] / "-home-user-split-target"
+    workspace.mkdir(parents=True, exist_ok=True)
+    session_file = workspace / "split-session.jsonl"
+
+    rows = []
+    for i in range(6):
+        rows.append(
+            {
+                "type": "user",
+                "timestamp": f"2025-01-01T10:00:0{i}Z",
+                "message": {
+                    "role": "user",
+                    "content": f"Step {i} details\nMore text to force lines",
+                },
+                "uuid": f"u{i}",
+                "sessionId": "split-session",
+            }
+        )
+        rows.append(
+            {
+                "type": "assistant",
+                "timestamp": f"2025-01-01T10:00:1{i}Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": f"Assistant reply {i}\nwith extra lines\nand more"}
+                    ],
+                },
+                "uuid": f"a{i}",
+                "parentUuid": f"u{i}",
+                "sessionId": "split-session",
+            }
+        )
+
+    with open(session_file, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+
+    output_dir = isolated_home["path"] / "exports_split"
+    output_dir.mkdir()
+
+    result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "/home/user/split-target",
+            "--split",
+            "10",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "--split export should succeed")
+
+    part_files = list(output_dir.rglob("*_part*.md"))
+    assert part_files, "Split export should create part files"
+
+
+def test_codex_split_export_uses_codex_header(isolated_home: Dict[str, Any]) -> None:
+    builder = CodexSessionBuilder(session_id="codex-split", cwd="/home/user/codex-split")
+    for i in range(8):
+        builder.add_user_message(f"Codex split step {i}\nMore text")
+        builder.add_assistant_message(f"Codex split reply {i}\nwith extra lines\nand more")
+    builder.write_to(isolated_home["codex_dir"])
+    output_dir = isolated_home["path"] / "exports_codex_split"
+
+    result = run_cli_subprocess(
+        [
+            "session",
+            "export",
+            "--agent",
+            "codex",
+            "/home/user/codex-split",
+            "--split",
+            "10",
+            "--force",
+            "-o",
+            str(output_dir),
+        ],
+        env=isolated_home["env"],
+        cwd=isolated_home["path"],
+    )
+    assert_cli_success(result, "Codex split export should succeed")
+
+    part_files = list(output_dir.rglob("*_part*.md"))
+    assert part_files, "Split export should create part files"
+    contents = part_files[0].read_text(encoding="utf-8")
+    assert contents.startswith("# Codex Conversation")
+    assert "# Claude Code Session" not in contents

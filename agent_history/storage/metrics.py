@@ -1,0 +1,2777 @@
+"""Metrics database for cagelens.
+
+This module provides functions for managing the SQLite metrics database
+that caches session statistics for fast queries.
+
+The metrics database stores:
+- Session metadata (file path, workspace, agent, timestamps)
+- Message counts and token usage
+- Tool usage statistics
+
+See docs/design-v2/pipeline-architecture.md for specifications.
+"""
+
+import json
+import os
+import re
+import sqlite3
+import sys
+from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Optional, Tuple
+
+from agent_history import pricing
+from agent_history.storage.config import get_config_dir
+from agent_history.utils import progress
+from agent_history.utils.codex_tokens import CodexTokenCounter, is_replayed
+from agent_history.utils.jsonl import (
+    as_count,
+    as_text,
+    as_timestamp,
+    json_objects,
+    open_transcript,
+    without_lone_surrogates,
+)
+from agent_history.utils.session_identity import (
+    CodexSessionMeta,
+    claude_session_identity,
+    gemini_session_identity,
+)
+
+if TYPE_CHECKING:
+    from agent_history.scope.types import ConcreteScope
+
+__all__ = [
+    "default_sync_jobs",
+    "get_metrics_db_path",
+    "get_session_stats_from_db",
+    "get_stats_rollup_from_db",
+    "get_time_stats_from_db",
+    "get_tool_usage_stats_from_db",
+    "init_metrics_db",
+    "sync_file_to_db",
+    "sync_sessions_to_db",
+]
+
+# Schema version for migrations
+METRICS_DB_VERSION = 8
+
+# Version of the transcript parsers that fill a session row. A sync parses a
+# file again when its row was written by another version, even if the file
+# is unchanged. Raise it whenever a parser change alters stored values.
+METRICS_PARSER_VERSION = 9
+
+# Work period gap threshold in seconds (30 minutes per spec)
+WORK_PERIOD_GAP_THRESHOLD = 30 * 60
+
+
+def _apply_secure_permissions(path: Path, mode: int) -> None:
+    """Apply POSIX-style permissions unless on Windows."""
+    if os.name == "nt":
+        return
+    os.chmod(path, mode)
+
+
+def get_metrics_db_path() -> Path:
+    """Get the metrics database file path.
+
+    Returns:
+        Path to the metrics.db file in the config directory.
+    """
+    return get_config_dir() / "metrics.db"
+
+
+def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
+    """Initialize the metrics database, creating tables if needed.
+
+    Opens (or creates) the SQLite metrics database and ensures the schema
+    is up to date. Handles migrations from older schema versions.
+
+    Args:
+        db_path: Path to database file. Defaults to ~/.cagelens/metrics.db
+
+    Returns:
+        Open sqlite3.Connection with row_factory set to sqlite3.Row
+
+    Side Effects:
+        - Creates parent directory (~/.cagelens/) with mode 0o700 if missing
+        - Creates database file with mode 0o600 if missing
+        - Runs schema migrations if database version is outdated
+    """
+    if db_path is None:
+        db_path = get_metrics_db_path()
+
+    # Ensure directory exists with secure permissions
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    _apply_secure_permissions(db_path.parent, 0o700)
+
+    # Track if this is a new database
+    is_new_db = not db_path.exists()
+
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
+    conn.create_function("REGEXP", 2, _sqlite_regexp)
+    conn.create_function("ESTIMATE_COST", 7, _sqlite_estimate_cost)
+
+    # Enable foreign key enforcement (disabled by default in SQLite)
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    # Set secure permissions on new database file
+    if is_new_db:
+        _apply_secure_permissions(db_path, 0o600)
+    conn.row_factory = sqlite3.Row  # Enable column access by name
+
+    # Create tables
+    conn.executescript("""
+        -- Schema version tracking
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY
+        );
+
+        -- Sessions table (one row per session file)
+        CREATE TABLE IF NOT EXISTS sessions (
+            file_path TEXT PRIMARY KEY,
+            session_id TEXT,
+            workspace TEXT NOT NULL,
+            home TEXT NOT NULL DEFAULT 'local',
+            source TEXT NOT NULL DEFAULT 'local',
+            agent TEXT NOT NULL DEFAULT 'claude',
+            file_mtime REAL,
+            is_agent INTEGER DEFAULT 0,
+            parent_session_id TEXT,
+            start_time TEXT,
+            end_time TEXT,
+            message_count INTEGER DEFAULT 0,
+            user_messages INTEGER DEFAULT 0,
+            assistant_messages INTEGER DEFAULT 0,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_creation_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            first_timestamp TEXT,
+            last_timestamp TEXT,
+            git_branch TEXT,
+            claude_version TEXT,
+            cwd TEXT,
+            work_period_seconds REAL DEFAULT 0,
+            num_work_periods INTEGER DEFAULT 1,
+            git_remote_url TEXT,
+            project TEXT,
+            project_short TEXT,
+            parser_version INTEGER DEFAULT 0
+        );
+
+        -- Messages table (aggregated stats per message)
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uuid TEXT,
+            file_path TEXT NOT NULL,
+            session_id TEXT,
+            parent_uuid TEXT,
+            type TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            model TEXT,
+            stop_reason TEXT,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_creation_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            FOREIGN KEY (file_path) REFERENCES sessions(file_path)
+        );
+
+        -- Tool uses table
+        CREATE TABLE IF NOT EXISTS tool_uses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_use_id TEXT,
+            message_uuid TEXT,
+            file_path TEXT NOT NULL,
+            session_id TEXT,
+            tool_name TEXT NOT NULL,
+            is_error INTEGER DEFAULT 0,
+            timestamp TEXT,
+            FOREIGN KEY (file_path) REFERENCES sessions(file_path)
+        );
+
+        -- Synced files tracking (for incremental sync)
+        CREATE TABLE IF NOT EXISTS synced_files (
+            file_path TEXT PRIMARY KEY,
+            mtime REAL NOT NULL,
+            synced_at TEXT NOT NULL
+        );
+
+        -- Create indexes for common queries
+        CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace);
+        CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
+        CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
+        CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent);
+        CREATE INDEX IF NOT EXISTS idx_messages_file_path ON messages(file_path);
+        CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_messages_model ON messages(model);
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+        CREATE INDEX IF NOT EXISTS idx_tool_uses_file_path ON tool_uses(file_path);
+        CREATE INDEX IF NOT EXISTS idx_tool_uses_tool_name ON tool_uses(tool_name);
+        CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id);
+
+        -- Composite indexes for common filter combinations
+        CREATE INDEX IF NOT EXISTS idx_sessions_workspace_source ON sessions(workspace, source);
+        CREATE INDEX IF NOT EXISTS idx_sessions_source_time ON sessions(source, start_time);
+
+        -- Aggregated tool/model usage tables
+        CREATE TABLE IF NOT EXISTS tool_usage (
+            session_id TEXT,
+            tool_name TEXT NOT NULL,
+            call_count INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_usage_session ON tool_usage(session_id);
+
+        CREATE TABLE IF NOT EXISTS model_usage (
+            session_id TEXT,
+            model_name TEXT NOT NULL,
+            message_count INTEGER DEFAULT 0,
+            tokens INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_usage_session ON model_usage(session_id);
+    """)
+
+    # Check/set schema version
+    cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
+    row = cursor.fetchone()
+    current_version = row["version"] if row else 0
+
+    if current_version < METRICS_DB_VERSION:
+        _run_migrations(conn, current_version, row is None)
+
+    conn.commit()
+    return conn
+
+
+def _sqlite_estimate_cost(
+    agent: Optional[str],
+    model: Optional[str],
+    timestamp: Optional[str],
+    input_tokens: Optional[int],
+    output_tokens: Optional[int],
+    cache_read_tokens: Optional[int],
+    cache_creation_tokens: Optional[int],
+) -> Optional[float]:
+    """SQLite ESTIMATE_COST: API list-price cost of one message, NULL if unpriced."""
+    return pricing.estimate_cost(
+        agent,
+        model,
+        timestamp,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+    )
+
+
+# Per-message cost and token total over messages m joined to sessions s.
+_MESSAGE_COST_SQL = (
+    "ESTIMATE_COST(s.agent, m.model, m.timestamp, m.input_tokens, m.output_tokens, "
+    "m.cache_read_tokens, m.cache_creation_tokens)"
+)
+# Codex input counts already include the cached tokens, so they are not added again.
+_MESSAGE_TOKENS_SQL = (
+    "(COALESCE(m.input_tokens, 0) + COALESCE(m.output_tokens, 0) + "
+    "CASE WHEN s.agent = 'codex' THEN 0 ELSE COALESCE(m.cache_read_tokens, 0) END + "
+    "COALESCE(m.cache_creation_tokens, 0))"
+)
+
+
+def _priced_messages_sql(where_sql: str, columns: str = "", join_sql: str = "") -> str:
+    """Return a derived table of messages with their cost and token total."""
+    extra = f", {columns}" if columns else ""
+    return f"""
+        SELECT m.file_path, m.model{extra},
+               {_MESSAGE_COST_SQL} AS cost_usd,
+               {_MESSAGE_TOKENS_SQL} AS tokens
+        FROM messages m
+        JOIN sessions s ON s.file_path = m.file_path
+        {join_sql}
+        {where_sql}
+    """
+
+
+def _sqlite_regexp(pattern: str, value: str | None) -> int:
+    """SQLite REGEXP implementation for workspace filters."""
+    if value is None:
+        return 0
+    try:
+        return 1 if re.search(pattern, str(value)) else 0
+    except re.error:
+        return 0
+
+
+def _run_migrations(conn: sqlite3.Connection, current_version: int, is_new: bool) -> None:
+    """Run database schema migrations.
+
+    Args:
+        conn: Database connection
+        current_version: Current schema version
+        is_new: True if this is a new database
+    """
+    # For new databases, just set the version
+    if is_new:
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (METRICS_DB_VERSION,))
+        return
+
+    # Run migrations for existing databases
+    # Version 3: add time tracking columns
+    if current_version < 3:
+        for col, default in [
+            ("work_period_seconds", "REAL DEFAULT 0"),
+            ("num_work_periods", "INTEGER DEFAULT 1"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {default}")
+            except sqlite3.OperationalError:
+                pass
+
+    # Version 4: add agent column
+    if current_version < 4:
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'")
+        except sqlite3.OperationalError:
+            pass
+
+    # Version 5: add git_remote_url
+    if current_version < 5:
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN git_remote_url TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+    # Version 6: add project columns
+    if current_version < 6:
+        for col in ("project", "project_short"):
+            try:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError:
+                pass
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project)")
+
+    # Version 7: add home and aggregated columns
+    if current_version < 7:
+        new_columns = [
+            ("home", "TEXT DEFAULT 'local'"),
+            ("user_messages", "INTEGER DEFAULT 0"),
+            ("assistant_messages", "INTEGER DEFAULT 0"),
+            ("input_tokens", "INTEGER DEFAULT 0"),
+            ("output_tokens", "INTEGER DEFAULT 0"),
+            ("cache_creation_tokens", "INTEGER DEFAULT 0"),
+            ("cache_read_tokens", "INTEGER DEFAULT 0"),
+            ("first_timestamp", "TEXT"),
+            ("last_timestamp", "TEXT"),
+        ]
+        for col, ddl in new_columns:
+            try:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}")
+            except sqlite3.OperationalError:
+                pass
+        # Backfill home from source
+        try:
+            conn.execute("UPDATE sessions SET home = source WHERE home IS NULL OR home = ''")
+        except sqlite3.OperationalError:
+            pass
+
+    # Version 8: record the parser version of each row. Existing rows get 0,
+    # so the next sync parses their files again.
+    if current_version < 8:
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN parser_version INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
+    # Update version
+    conn.execute("UPDATE schema_version SET version = ?", (METRICS_DB_VERSION,))
+
+
+_CLAUDE_SESSION_FIELDS = (
+    ("cwd", "cwd"),
+    ("git_branch", "gitBranch"),
+    ("claude_version", "version"),
+)
+
+
+def _read_claude_session_fields(
+    session_info: Dict[str, Any], identity: Dict[str, Any], entry: Dict[str, Any]
+) -> None:
+    """Fill session metadata from a Claude transcript line.
+
+    ``identity`` collects the line-level IDs that
+    ``_set_claude_session_identity`` turns into the file's session.
+    """
+    session_id = entry.get("sessionId")
+    if session_id:
+        if session_id not in identity["session_ids"]:
+            identity["session_ids"].append(session_id)
+        if identity["agent_id"] is None and entry.get("agentId"):
+            identity["agent_id"] = entry.get("agentId")
+    # Lines such as queue-operation carry no cwd, branch or version,
+    # so take each from the first line that has it
+    for key, field in _CLAUDE_SESSION_FIELDS:
+        if session_info[key] is None:
+            session_info[key] = entry.get(field)
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """``value`` when it is a JSON object, else an empty one."""
+    return value if isinstance(value, dict) else {}
+
+
+StatsPayload = Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]
+
+_SESSION_TEXT_FIELDS = ("session_id", "cwd", "git_branch", "claude_version", "parent_session_id")
+_SESSION_COUNT_FIELDS = (
+    "message_count",
+    "user_messages",
+    "assistant_messages",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+)
+_MESSAGE_TEXT_FIELDS = ("uuid", "session_id", "parent_uuid", "type", "model", "stop_reason")
+_MESSAGE_COUNT_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+)
+_TOOL_TEXT_FIELDS = ("tool_use_id", "message_uuid", "session_id", "tool_name")
+
+
+def _clean_fields(
+    record: Dict[str, Any],
+    text_fields: Tuple[str, ...],
+    count_fields: Tuple[str, ...],
+    time_fields: Tuple[str, ...],
+    no_time: Optional[str] = None,
+) -> Dict[str, Any]:
+    cleaned = dict(record)
+    for field in text_fields:
+        if field in cleaned:
+            cleaned[field] = as_text(cleaned[field])
+    for field in count_fields:
+        if field in cleaned:
+            cleaned[field] = as_count(cleaned[field])
+    for field in time_fields:
+        value = cleaned.get(field)
+        if isinstance(value, str):
+            cleaned[field] = without_lone_surrogates(value)
+        elif value is not None:
+            cleaned[field] = no_time
+    return cleaned
+
+
+def clean_stats_payload(payload: StatsPayload) -> StatsPayload:
+    """A stats reader's output with every value storable in SQLite.
+
+    IDs, names and models that are not text become their JSON text, counts
+    that are not numbers become 0, and timestamps that are not text become
+    None, so a malformed transcript cannot stop its rows from being stored.
+    """
+    session_info, messages, tool_uses = payload
+    session_info = _clean_fields(
+        session_info,
+        _SESSION_TEXT_FIELDS,
+        _SESSION_COUNT_FIELDS,
+        ("first_timestamp", "last_timestamp"),
+    )
+    session_info["is_agent"] = bool(session_info.get("is_agent"))
+    messages = [
+        _clean_fields(msg, _MESSAGE_TEXT_FIELDS, _MESSAGE_COUNT_FIELDS, ("timestamp",), "")
+        for msg in messages
+    ]
+    tool_uses = [
+        {
+            **_clean_fields(tu, _TOOL_TEXT_FIELDS, (), ("timestamp",)),
+            "is_error": 1 if tu.get("is_error") else 0,
+        }
+        for tu in tool_uses
+    ]
+    return session_info, messages, tool_uses
+
+
+def _set_claude_session_identity(
+    session_info: Dict[str, Any], identity: Dict[str, Any], jsonl_file: Path
+) -> None:
+    """Set session_id, parent_session_id and is_agent for one Claude file.
+
+    ``claude_session_identity`` holds the rules; a sub-agent's ID is
+    ``<parent>:<agentId>``.
+    """
+    resolved = claude_session_identity(jsonl_file, identity["session_ids"], identity["agent_id"])
+    session_info["session_id"] = resolved["session_id"]
+    session_info["parent_session_id"] = resolved["parent_session_id"]
+    session_info["is_agent"] = resolved["is_agent"]
+
+
+def _parse_claude_jsonl(
+    jsonl_file: Path,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Parse a JSONL file and extract session info, messages, and tool uses.
+
+    Args:
+        jsonl_file: Path to the JSONL file
+
+    Returns:
+        Tuple of (session_info, messages_list, tool_uses_list)
+    """
+    session_info: Dict[str, Any] = {
+        "session_id": None,
+        "message_count": 0,
+        "user_messages": 0,
+        "assistant_messages": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "first_timestamp": None,
+        "last_timestamp": None,
+        "cwd": None,
+        "git_branch": None,
+        "claude_version": None,
+        "is_agent": False,
+        "parent_session_id": None,
+    }
+    messages: List[Dict[str, Any]] = []
+    tool_uses: List[Dict[str, Any]] = []
+    timestamps: List[str] = []
+    identity: Dict[str, Any] = {"session_ids": [], "agent_id": None}
+    # First message record of each model response, by response id.
+    responses: Dict[str, Dict[str, Any]] = {}
+
+    try:
+        # A stray invalid byte must not stop the read
+        with open_transcript(jsonl_file) as f:
+            for entry in json_objects(f):
+                entry_type = entry.get("type")
+                timestamp = entry.get("timestamp", "")
+
+                _read_claude_session_fields(session_info, identity, entry)
+
+                if entry_type in ("user", "assistant"):
+                    session_info["message_count"] += 1
+                    if entry_type == "user":
+                        session_info["user_messages"] += 1
+                    else:
+                        session_info["assistant_messages"] += 1
+
+                    if as_timestamp(timestamp):
+                        timestamps.append(timestamp)
+
+                    # Extract token usage
+                    message_obj = _as_dict(entry.get("message"))
+                    usage = _as_dict(message_obj.get("usage"))
+                    input_tokens = as_count(usage.get("input_tokens"))
+                    output_tokens = as_count(usage.get("output_tokens"))
+                    cache_creation = as_count(usage.get("cache_creation_input_tokens"))
+                    cache_read = as_count(usage.get("cache_read_input_tokens"))
+
+                    usage_tokens = {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_creation_tokens": cache_creation,
+                        "cache_read_tokens": cache_read,
+                    }
+                    response_id = message_obj.get("id") if entry_type == "assistant" else None
+                    first_record = responses.get(response_id) if response_id else None
+                    if first_record is not None:
+                        _merge_repeated_response_usage(session_info, first_record, usage_tokens)
+                        input_tokens = output_tokens = cache_creation = cache_read = 0
+                    else:
+                        for field, value in usage_tokens.items():
+                            session_info[field] += value
+
+                    # Build message record
+                    msg_record = {
+                        "uuid": entry.get("uuid"),
+                        "session_id": entry.get("sessionId"),
+                        "parent_uuid": entry.get("parentUuid"),
+                        "type": entry_type,
+                        "timestamp": timestamp,
+                        "model": message_obj.get("model"),
+                        "stop_reason": message_obj.get("stop_reason"),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_creation_tokens": cache_creation,
+                        "cache_read_tokens": cache_read,
+                    }
+                    messages.append(msg_record)
+                    if response_id and first_record is None:
+                        responses[response_id] = msg_record
+
+                    # Extract tool uses from content
+                    content = message_obj.get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict):
+                                block_type = block.get("type")
+                                if block_type == "tool_use":
+                                    tool_uses.append(
+                                        {
+                                            "tool_use_id": block.get("id"),
+                                            "message_uuid": entry.get("uuid"),
+                                            "session_id": entry.get("sessionId"),
+                                            "tool_name": block.get("name", "unknown"),
+                                            "is_error": 0,
+                                            "timestamp": timestamp,
+                                        }
+                                    )
+                                elif block_type == "tool_result":
+                                    # Check for errors in tool results
+                                    if block.get("is_error"):
+                                        # Mark the tool use as error
+                                        tool_use_id = block.get("tool_use_id")
+                                        for tu in tool_uses:
+                                            if tu["tool_use_id"] == tool_use_id:
+                                                tu["is_error"] = 1
+                                                break
+
+    except OSError:
+        pass
+
+    _set_claude_session_identity(session_info, identity, jsonl_file)
+
+    # Set first/last timestamps
+    if timestamps:
+        session_info["first_timestamp"] = min(timestamps)
+        session_info["last_timestamp"] = max(timestamps)
+
+    return session_info, messages, tool_uses
+
+
+def _merge_repeated_response_usage(
+    session_info: Dict[str, Any], first_record: Dict[str, Any], usage: Dict[str, int]
+) -> None:
+    """Count a response's usage once when Claude Code repeats it on later lines.
+
+    Claude Code writes each content block of one response as its own line,
+    each carrying the response's usage. A streamed response's earlier lines
+    carry a partial output count, so the largest value of each field is kept
+    on the response's first message record.
+    """
+    for field, value in usage.items():
+        previous = first_record.get(field) or 0
+        if value > previous:
+            session_info[field] += value - previous
+            first_record[field] = value
+
+
+def _read_codex_session_meta(
+    session_info: Dict[str, Any], identity: CodexSessionMeta, payload: Any
+) -> None:
+    """Fill session fields from a Codex session_meta line.
+
+    ``CodexSessionMeta`` holds the rules: the rollout's first session_meta
+    describes it, and a later one only names a parent the first did not.
+    """
+    describes = identity.add(payload)
+    session_info["session_id"] = identity.session_id
+    session_info["parent_session_id"] = identity.parent_session_id
+    session_info["is_agent"] = identity.is_subagent
+    if not describes:
+        return
+    session_info["cwd"] = payload.get("cwd")
+    git_info = payload.get("git") or {}
+    session_info["git_branch"] = git_info.get("branch") if isinstance(git_info, dict) else None
+    session_info["claude_version"] = payload.get("cli_version")
+
+
+def _add_usage(target: Dict[str, Any], delta: Dict[str, int]) -> None:
+    for field, value in delta.items():
+        target[field] = (target.get(field) or 0) + value
+
+
+def _apply_codex_token_count(
+    session_info: Dict[str, Any],
+    messages: List[Dict[str, Any]],
+    payload: Dict[str, Any],
+    counter: CodexTokenCounter,
+    pending: Dict[str, int],
+    turn_model: Optional[str] = None,
+    replayed: bool = False,
+) -> None:
+    """Add one Codex token_count event's per-response usage.
+
+    The usage goes to the session totals and to the latest assistant message,
+    so sums over the messages table match the session. Usage that arrives
+    before any assistant message (a sub-agent can start with tool calls) is
+    held in ``pending`` until ``_add_pending_codex_usage`` adds it to the
+    first assistant message. A forked sub-agent replays its parent's messages
+    before its first turn_context, so that message may have no model yet; it
+    then takes the current turn's model.
+    """
+    delta = counter.add(_as_dict(payload.get("info")), replayed=replayed)
+    if delta is None:
+        return
+
+    session_info["input_tokens"] = counter.input_tokens
+    session_info["output_tokens"] = counter.output_tokens
+    session_info["cache_read_tokens"] = counter.cache_read_tokens
+
+    for msg in reversed(messages):
+        if msg["type"] == "assistant":
+            _add_usage(msg, delta)
+            if not msg.get("model"):
+                msg["model"] = turn_model
+            return
+    _add_usage(pending, delta)
+
+
+def _add_pending_codex_usage(messages: List[Dict[str, Any]], pending: Dict[str, int]) -> None:
+    """Add usage seen before any assistant message to the first assistant message.
+
+    A rollout without assistant messages keeps that usage in the session
+    totals only.
+    """
+    if not pending:
+        return
+    for msg in messages:
+        if msg["type"] == "assistant":
+            _add_usage(msg, pending)
+            return
+
+
+def _parse_codex_jsonl(
+    jsonl_file: Path,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Parse a Codex JSONL file and extract session info, messages, and tool uses.
+
+    Codex uses a different format:
+    - Session metadata in type="session_meta" entries
+    - Messages in type="response_item" with payload.type="message"
+    - Tool calls in type="response_item" with payload.type="function_call"
+    - Token usage in type="event_msg" with payload.type="token_count"
+
+    Args:
+        jsonl_file: Path to the JSONL file
+
+    Returns:
+        Tuple of (session_info, messages_list, tool_uses_list)
+    """
+    session_info: Dict[str, Any] = {
+        "session_id": None,
+        "message_count": 0,
+        "user_messages": 0,
+        "assistant_messages": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "first_timestamp": None,
+        "last_timestamp": None,
+        "cwd": None,
+        "git_branch": None,
+        "claude_version": None,
+        "is_agent": False,
+        "parent_session_id": None,
+    }
+    messages: List[Dict[str, Any]] = []
+    tool_uses: List[Dict[str, Any]] = []
+    timestamps: List[str] = []
+    turn_model: Optional[str] = None
+    token_counter = CodexTokenCounter()
+    pending_usage: Dict[str, int] = {}
+    codex_identity = CodexSessionMeta()
+    history_start: Optional[int] = None
+
+    from agent_history.backends.codex import ZstandardMissingError, _codex_open_text
+
+    try:
+        # Rollouts may be zstd-compressed; a stray invalid byte must not stop
+        # the read, so undecodable bytes become U+FFFD.
+        with _codex_open_text(jsonl_file, encoding="utf-8-sig", errors="replace") as f:
+            for entry in json_objects(f):
+                entry_type = entry.get("type")
+                timestamp = entry.get("timestamp", "")
+                payload = _as_dict(entry.get("payload"))
+
+                # Extract session metadata
+                if entry_type == "session_meta":
+                    if history_start is None:
+                        # The rollout's own session_meta comes first
+                        history_start = payload.get("subagent_history_start_ordinal")
+                    _read_codex_session_meta(session_info, codex_identity, payload)
+
+                # Each turn names its model; assistant messages carry it
+                elif entry_type == "turn_context":
+                    turn_model = payload.get("model") or turn_model
+
+                # Extract messages
+                elif entry_type == "response_item":
+                    payload_type = payload.get("type")
+                    if payload_type == "message":
+                        role = payload.get("role", "")
+                        if role in ("user", "assistant"):
+                            session_info["message_count"] += 1
+                            if role == "user":
+                                session_info["user_messages"] += 1
+                            else:
+                                session_info["assistant_messages"] += 1
+
+                            if as_timestamp(timestamp):
+                                timestamps.append(timestamp)
+
+                            # Build message record
+                            msg_record = {
+                                "uuid": None,
+                                "session_id": session_info["session_id"],
+                                "parent_uuid": None,
+                                "type": role,
+                                "timestamp": timestamp,
+                                "model": turn_model if role == "assistant" else None,
+                                "stop_reason": None,
+                                "input_tokens": 0,
+                                "output_tokens": 0,
+                                "cache_creation_tokens": 0,
+                                "cache_read_tokens": 0,
+                            }
+                            messages.append(msg_record)
+
+                    elif payload_type == "function_call":
+                        tool_uses.append(
+                            {
+                                "tool_use_id": payload.get("call_id"),
+                                "message_uuid": None,
+                                "session_id": session_info["session_id"],
+                                "tool_name": payload.get("name", "unknown"),
+                                "is_error": 0,
+                                "timestamp": timestamp,
+                            }
+                        )
+
+                # Extract token usage from event_msg
+                elif entry_type == "event_msg" and payload.get("type") == "token_count":
+                    _apply_codex_token_count(
+                        session_info,
+                        messages,
+                        payload,
+                        token_counter,
+                        pending_usage,
+                        turn_model,
+                        replayed=is_replayed(entry, history_start),
+                    )
+
+    except ZstandardMissingError:
+        # Not readable here; a cached empty row would never be replaced,
+        # because an archived rollout's mtime does not change
+        raise
+    except OSError:
+        pass
+
+    _add_pending_codex_usage(messages, pending_usage)
+
+    # Set first/last timestamps
+    if timestamps:
+        session_info["first_timestamp"] = min(timestamps)
+        session_info["last_timestamp"] = max(timestamps)
+
+    return session_info, messages, tool_uses
+
+
+def _lookup_gemini_hash(project_hash: str) -> Optional[str]:
+    """Look up a Gemini project hash in the index file.
+
+    Args:
+        project_hash: The SHA256 hash of the project path
+
+    Returns:
+        The resolved project path, or None if not found
+    """
+    # Check environment variable for test override
+    config_dir_override = os.environ.get("CAGELENS_CONFIG_DIR") or os.environ.get(
+        "AGENT_HISTORY_CONFIG_DIR"
+    )
+    if config_dir_override:
+        index_path = Path(config_dir_override) / "gemini_index.json"
+    else:
+        index_path = get_config_dir() / "gemini_index.json"
+
+    if not index_path.exists():
+        return None
+
+    try:
+        with open(index_path, encoding="utf-8") as f:
+            index_data = json.load(f)
+        return index_data.get("hashes", {}).get(project_hash)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _parse_gemini_json(
+    json_file: Path,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Parse a Gemini chat file and extract session info, messages, and tool uses.
+
+    Gemini chats are legacy single JSON files or current append-only JSONL
+    files; ``gemini_session_records`` reads both into the same form:
+    - Session metadata (sessionId, projectHash, startTime, lastUpdated)
+    - Messages with type="user" or type="gemini"
+    - Token usage in tokens object within each gemini message
+    - Tool calls in toolCalls array within gemini messages
+
+    Args:
+        json_file: Path to the .json or .jsonl chat file
+
+    Returns:
+        Tuple of (session_info, messages_list, tool_uses_list)
+    """
+    from agent_history.backends.gemini import gemini_session_records
+
+    session_info: Dict[str, Any] = {
+        "session_id": None,
+        "message_count": 0,
+        "user_messages": 0,
+        "assistant_messages": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "first_timestamp": None,
+        "last_timestamp": None,
+        "cwd": None,
+        "git_branch": None,
+        "claude_version": None,
+        "is_agent": False,
+        "parent_session_id": None,
+    }
+    messages: List[Dict[str, Any]] = []
+    tool_uses: List[Dict[str, Any]] = []
+    timestamps: List[str] = []
+
+    records = gemini_session_records(json_file)
+    if records is None:
+        return session_info, messages, tool_uses
+    chat_messages, data = records
+
+    session_info["cwd"] = data.get("projectHash")
+    session_info.update(gemini_session_identity(json_file, data.get("kind"), data.get("sessionId")))
+    session_info["first_timestamp"] = data.get("startTime")
+    session_info["last_timestamp"] = data.get("lastUpdated")
+
+    for msg in chat_messages:
+        if not isinstance(msg, dict):
+            continue
+        record = _gemini_message_record(msg, session_info["session_id"])
+        if record is None:
+            continue
+        session_info["message_count"] += 1
+        if record["type"] == "user":
+            session_info["user_messages"] += 1
+        else:
+            session_info["assistant_messages"] += 1
+            session_info["input_tokens"] += record["input_tokens"]
+            session_info["output_tokens"] += record["output_tokens"]
+            tool_uses.extend(_gemini_tool_uses(msg, record))
+        if as_timestamp(record["timestamp"]):
+            timestamps.append(record["timestamp"])
+        messages.append(record)
+
+    # Update first/last timestamps from messages if needed
+    if timestamps:
+        session_info["first_timestamp"] = min(timestamps)
+        session_info["last_timestamp"] = max(timestamps)
+
+    return session_info, messages, tool_uses
+
+
+def _gemini_message_record(msg: Dict[str, Any], session_id: Any) -> Optional[Dict[str, Any]]:
+    """The messages-table record of a Gemini user or gemini message, else None."""
+    msg_type = msg.get("type", "")
+    if msg_type not in ("user", "gemini"):
+        return None
+    tokens = _as_dict(msg.get("tokens")) if msg_type == "gemini" else {}
+    return {
+        "uuid": msg.get("id"),
+        "session_id": session_id,
+        "parent_uuid": None,
+        "type": "user" if msg_type == "user" else "assistant",
+        "timestamp": msg.get("timestamp", ""),
+        "model": msg.get("model") if msg_type == "gemini" else None,
+        "stop_reason": None,
+        "input_tokens": as_count(tokens.get("input")),
+        "output_tokens": as_count(tokens.get("output")),
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": as_count(tokens.get("cached")),
+    }
+
+
+_GEMINI_TOOL_ERROR_STATUSES = ("error", "failed", "failure")
+
+
+def _gemini_tool_uses(msg: Dict[str, Any], record: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The tool-use records of a Gemini message's toolCalls; non-objects are skipped."""
+    tool_calls = msg.get("toolCalls")
+    if not isinstance(tool_calls, list):
+        return []
+    uses = []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        status = tc.get("status")
+        uses.append(
+            {
+                "tool_use_id": tc.get("id"),
+                "message_uuid": record["uuid"],
+                "session_id": record["session_id"],
+                "tool_name": tc.get("name", "unknown"),
+                "is_error": 1
+                if isinstance(status, str) and status.lower() in _GEMINI_TOOL_ERROR_STATUSES
+                else 0,
+                "timestamp": tc.get("timestamp", record["timestamp"]),
+            }
+        )
+    return uses
+
+
+def _calculate_work_periods(
+    timestamps: List[str], gap_threshold: float = WORK_PERIOD_GAP_THRESHOLD
+) -> Tuple[float, int]:
+    """Calculate work period time from a list of timestamps.
+
+    Args:
+        timestamps: List of ISO 8601 timestamp strings
+        gap_threshold: Gap in seconds that defines a new work period
+
+    Returns:
+        Tuple of (total_seconds, num_periods)
+    """
+    if not timestamps or len(timestamps) < 2:
+        return 0.0, 1
+
+    def parse_ts(ts: str) -> Optional[datetime]:
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                return datetime.strptime(ts.rstrip("Z"), fmt.rstrip("Z"))
+            except ValueError:
+                continue
+        return None
+
+    parsed = []
+    for ts in timestamps:
+        dt = parse_ts(ts)
+        if dt:
+            parsed.append(dt)
+
+    if len(parsed) < 2:
+        return 0.0, 1
+
+    parsed.sort()
+    total_seconds = 0.0
+    num_periods = 1
+
+    for i in range(1, len(parsed)):
+        gap = (parsed[i] - parsed[i - 1]).total_seconds()
+        if gap > gap_threshold:
+            num_periods += 1
+        else:
+            total_seconds += gap
+
+    return total_seconds, num_periods
+
+
+def _session_row_is_current(
+    conn: sqlite3.Connection, file_path_str: str, current_mtime: float, source_key: str
+) -> bool:
+    """Whether a file's stored row can be kept without parsing the file again.
+
+    The row is kept only when the file is unchanged, it was reached through
+    the same home, and the current parsers wrote it. An unchanged file reached
+    through a different home is synced again, so one file is never left under
+    the home of an older sync.
+    """
+    row = conn.execute(
+        "SELECT file_mtime, home, parser_version FROM sessions WHERE file_path = ?",
+        (file_path_str,),
+    ).fetchone()
+    return bool(
+        row
+        and row["file_mtime"]
+        and row["file_mtime"] >= current_mtime
+        and row["home"] == source_key
+        and row["parser_version"] == METRICS_PARSER_VERSION
+    )
+
+
+def sync_file_to_db(
+    conn: sqlite3.Connection,
+    jsonl_file: Path,
+    source_key: str = "local",
+    force: bool = False,
+    workspace: Optional[str] = None,
+    agent: str = "claude",
+) -> bool:
+    """Sync a single session file to the database.
+
+    Args:
+        conn: Database connection
+        jsonl_file: Path to the JSONL session file
+        source_key: Source identifier (e.g., "local", "wsl:Ubuntu")
+        force: If True, re-sync even if file hasn't changed
+        workspace: Workspace name (defaults to parent directory name)
+        agent: Agent type (claude, codex, gemini, pi, or a registered backend)
+
+    Returns:
+        True if file was synced, False if skipped
+    """
+    try:
+        current_mtime = jsonl_file.stat().st_mtime
+    except OSError:
+        return False
+
+    if not force and _session_row_is_current(conn, str(jsonl_file), current_mtime, source_key):
+        return False
+
+    record = _extract_file_stats(str(jsonl_file), agent, workspace)
+    _store_file_stats(conn, record, source_key)
+    return True
+
+
+def _extract_file_stats(file_path: str, agent: str, workspace: Optional[str]) -> Dict[str, Any]:
+    """Parse one session file into the rows to store.
+
+    This reads no database, so worker processes can run it in parallel.
+    """
+    from agent_history.backends.registry import require_backend
+
+    jsonl_file = Path(file_path)
+    current_mtime = jsonl_file.stat().st_mtime
+    backend = require_backend(agent)
+    session_info, messages, tool_uses = clean_stats_payload(backend.extract_stats(jsonl_file))
+    resolved_workspace = backend.resolve_stats_workspace(jsonl_file, session_info, workspace)
+    timestamps = [m.get("timestamp", "") for m in messages if m.get("timestamp")]
+    work_seconds, num_periods = _calculate_work_periods(timestamps)
+    return {
+        "file_path": file_path,
+        "mtime": current_mtime,
+        "agent": agent,
+        "workspace": resolved_workspace,
+        "session_info": session_info,
+        "messages": messages,
+        "tool_uses": tool_uses,
+        "work_seconds": work_seconds,
+        "num_periods": num_periods,
+    }
+
+
+def _store_file_stats(conn: sqlite3.Connection, record: Dict[str, Any], source_key: str) -> None:
+    """Replace one file's rows with a parsed record."""
+    file_path_str = record["file_path"]
+    session_info = record["session_info"]
+
+    agent = record["agent"]
+    session_row = (
+        file_path_str,
+        session_info.get("session_id"),
+        record["workspace"],
+        source_key,
+        source_key,
+        agent,
+        record["mtime"],
+        1 if session_info.get("is_agent") else 0,
+        session_info.get("parent_session_id"),
+        session_info.get("first_timestamp"),
+        session_info.get("last_timestamp"),
+        session_info.get("message_count", 0),
+        session_info.get("user_messages", 0),
+        session_info.get("assistant_messages", 0),
+        session_info.get("input_tokens", 0),
+        session_info.get("output_tokens", 0),
+        session_info.get("cache_creation_tokens", 0),
+        session_info.get("cache_read_tokens", 0),
+        session_info.get("first_timestamp"),
+        session_info.get("last_timestamp"),
+        session_info.get("git_branch"),
+        session_info.get("claude_version"),
+        session_info.get("cwd"),
+        record["work_seconds"],
+        record["num_periods"],
+        METRICS_PARSER_VERSION,
+    )
+    paths = [file_path_str]
+    if agent == "gemini" and file_path_str.endswith(".jsonl"):
+        # Gemini CLI resumes <name>.json by copying it, with every message, to
+        # <name>.jsonl beside it; the copy holds the session from then on.
+        paths.append(file_path_str[:-1])
+    _store_file_rows(
+        conn, paths, record["mtime"], session_row, record["messages"], record["tool_uses"]
+    )
+
+
+_FILE_SAVEPOINT = "sync_file"
+
+
+def _store_file_rows(
+    conn: sqlite3.Connection,
+    paths: List[str],
+    current_mtime: float,
+    session_row: Tuple[Any, ...],
+    messages: List[Dict[str, Any]],
+    tool_uses: List[Dict[str, Any]],
+) -> None:
+    """Replace one file's rows, all or none.
+
+    ``paths`` is the file's path, then any other files whose session it now
+    holds; their rows are deleted.
+
+    The rows are written inside a savepoint. If one cannot be stored, the
+    savepoint is rolled back, so the file keeps its earlier rows (or has
+    none) and is read again by the next sync, even if the caller commits.
+    The savepoint does not commit: a sync of many files stays one
+    transaction that the caller commits.
+    """
+    if conn.isolation_level is not None and not conn.in_transaction:
+        # The transaction sqlite3 would open before the first DELETE; opened
+        # here so releasing the savepoint does not commit it
+        conn.execute("BEGIN")
+    conn.execute(f"SAVEPOINT {_FILE_SAVEPOINT}")
+    try:
+        _write_file_rows(conn, paths, current_mtime, session_row, messages, tool_uses)
+    except BaseException:
+        conn.execute(f"ROLLBACK TO SAVEPOINT {_FILE_SAVEPOINT}")
+        conn.execute(f"RELEASE SAVEPOINT {_FILE_SAVEPOINT}")
+        raise
+    conn.execute(f"RELEASE SAVEPOINT {_FILE_SAVEPOINT}")
+
+
+def _write_file_rows(
+    conn: sqlite3.Connection,
+    paths: List[str],
+    current_mtime: float,
+    session_row: Tuple[Any, ...],
+    messages: List[Dict[str, Any]],
+    tool_uses: List[Dict[str, Any]],
+) -> None:
+    file_path_str = paths[0]
+    # Delete existing data for this file and the files it replaces
+    for path in paths:
+        conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (path,))
+        conn.execute("DELETE FROM messages WHERE file_path = ?", (path,))
+        conn.execute("DELETE FROM sessions WHERE file_path = ?", (path,))
+    for path in paths[1:]:
+        conn.execute("DELETE FROM synced_files WHERE file_path = ?", (path,))
+
+    conn.execute(
+        """
+        INSERT INTO sessions (
+            file_path, session_id, workspace, home, source, agent,
+            file_mtime, is_agent, parent_session_id,
+            start_time, end_time, message_count,
+            user_messages, assistant_messages,
+            input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens,
+            first_timestamp, last_timestamp,
+            git_branch, claude_version, cwd,
+            work_period_seconds, num_work_periods, parser_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        session_row,
+    )
+
+    conn.executemany(
+        """
+        INSERT INTO messages (
+            uuid, file_path, session_id, parent_uuid, type, timestamp,
+            model, stop_reason, input_tokens, output_tokens,
+            cache_creation_tokens, cache_read_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                msg.get("uuid"),
+                file_path_str,
+                msg.get("session_id"),
+                msg.get("parent_uuid"),
+                msg.get("type", "unknown"),
+                msg.get("timestamp", ""),
+                msg.get("model"),
+                msg.get("stop_reason"),
+                msg.get("input_tokens", 0),
+                msg.get("output_tokens", 0),
+                msg.get("cache_creation_tokens", 0),
+                msg.get("cache_read_tokens", 0),
+            )
+            for msg in messages
+        ],
+    )
+
+    conn.executemany(
+        """
+        INSERT INTO tool_uses (
+            tool_use_id, message_uuid, file_path, session_id,
+            tool_name, is_error, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                tu.get("tool_use_id"),
+                tu.get("message_uuid"),
+                file_path_str,
+                tu.get("session_id"),
+                tu.get("tool_name", "unknown"),
+                tu.get("is_error", 0),
+                tu.get("timestamp"),
+            )
+            for tu in tool_uses
+        ],
+    )
+
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO synced_files (file_path, mtime, synced_at)
+        VALUES (?, ?, ?)
+        """,
+        (file_path_str, current_mtime, datetime.now().isoformat()),
+    )
+
+
+def sync_sessions_to_db(
+    conn: sqlite3.Connection,
+    sessions_dir: Path,
+    source_key: str = "local",
+    agent: str = "claude",
+    force: bool = False,
+    patterns: Optional[List[str]] = None,
+) -> Dict[str, int]:
+    """Sync all sessions from a directory to the database.
+
+    Args:
+        conn: Database connection
+        sessions_dir: Path to sessions directory (e.g., ~/.claude/projects)
+        source_key: Source identifier
+        agent: Registered agent backend id
+        force: Force re-sync all files
+        patterns: Optional list of workspace patterns to match
+
+    Returns:
+        Dict with counts: {"synced": N, "skipped": N, "errors": N}
+    """
+    stats = {"synced": 0, "skipped": 0, "errors": 0}
+
+    if not sessions_dir or not sessions_dir.exists():
+        return stats
+
+    def matches_pattern(name: str) -> bool:
+        if not patterns:
+            return True
+        name_lower = name.lower()
+        for pattern in patterns:
+            if pattern.lower() in name_lower:
+                return True
+        return False
+
+    from agent_history.backends.registry import get_backend
+
+    backend = get_backend(agent)
+    if backend is None:
+        stats["errors"] += 1
+        return stats
+
+    try:
+        sessions = backend.scan_sessions(sessions_dir)
+    except Exception:
+        stats["errors"] += 1
+        return stats
+
+    for session in sessions:
+        file_value = session.get("file")
+        if not file_value:
+            stats["errors"] += 1
+            continue
+
+        workspace = (
+            session.get("workspace_key")
+            or session.get("workspace")
+            or session.get("workspace_readable")
+            or ""
+        )
+        workspace_display = session.get("workspace_readable") or workspace
+        if not (
+            matches_pattern(str(workspace))
+            or matches_pattern(str(workspace_display))
+            or matches_pattern(str(session.get("filename", "")))
+        ):
+            continue
+
+        try:
+            if sync_file_to_db(
+                conn,
+                Path(str(file_value)),
+                source_key,
+                force,
+                workspace=str(workspace) if workspace else None,
+                agent=agent,
+            ):
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        except Exception:
+            stats["errors"] += 1
+
+    conn.commit()
+    return stats
+
+
+# Fewer files than this are parsed in the calling process.
+PARALLEL_SYNC_MIN_FILES = 8
+# Commit after this many stored files, so the rollback journal stays small.
+SYNC_COMMIT_EVERY = 200
+# Parsed files waiting to be stored, per worker, before more are submitted.
+SYNC_PENDING_PER_WORKER = 4
+# Remote session files copied at the same time.
+REMOTE_COPY_THREADS = 8
+
+
+def default_sync_jobs() -> int:
+    """Worker processes for parsing: CAGELENS_SYNC_JOBS, else up to 8 cores."""
+    value = os.environ.get("CAGELENS_SYNC_JOBS")
+    if value:
+        try:
+            jobs = int(value)
+        except ValueError:
+            jobs = 0
+        if jobs >= 1:
+            return jobs
+    return max(1, min(8, os.cpu_count() or 1))
+
+
+def sync_scope_to_db(
+    conn: sqlite3.Connection,
+    scope: "ConcreteScope",
+    force: bool = False,
+    jobs: Optional[int] = None,
+    prepared: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+) -> Dict[str, int]:
+    """Sync all sessions referenced in a resolved scope to the database.
+
+    Files are parsed in ``jobs`` worker processes (default: default_sync_jobs())
+    while this process does all database writes, committing in batches.
+
+    ``prepared`` maps file paths that were already listed and parsed
+    elsewhere (cagelens on Windows) to their parsed rows, or to None when the
+    file is unchanged; those files are not read here.
+    """
+    stats = {"synced": 0, "skipped": 0, "errors": 0}
+    if prepared:
+        scope = _store_prepared(conn, scope, prepared, stats)
+    progress.set_phase("collecting session files")
+    candidates = _local_session_files(scope, force, stats)
+    progress.set_phase("checking for changes", f"{len(candidates)} files")
+
+    todo: list[tuple[str, str, Optional[str], str]] = []
+    seen_paths: set[str] = set()
+    for file_path, home, workspace, agent in candidates:
+        file_key = str(file_path)
+        if file_key in seen_paths:
+            continue
+        seen_paths.add(file_key)
+        try:
+            current_mtime = file_path.stat().st_mtime
+        except OSError:
+            stats["errors"] += 1
+            continue
+        if not force and _session_row_is_current(conn, file_key, current_mtime, home):
+            stats["skipped"] += 1
+            continue
+        todo.append((file_key, home, workspace, agent))
+
+    progress.add("unchanged", stats["skipped"])
+    jobs = jobs or default_sync_jobs()
+    progress.set_phase("parsing and storing", f"{len(todo)} files, {jobs} workers")
+    if jobs <= 1 or len(todo) < PARALLEL_SYNC_MIN_FILES:
+        results = (_extract_or_error(item) for item in todo)
+        _store_results(conn, results, stats)
+    else:
+        _store_results(conn, _parallel_extract(todo, jobs), stats)
+    return stats
+
+
+def _store_prepared(
+    conn: sqlite3.Connection,
+    scope: "ConcreteScope",
+    prepared: Dict[str, Optional[Dict[str, Any]]],
+    stats: Dict[str, int],
+) -> "ConcreteScope":
+    """Store rows parsed elsewhere; return the scope without those sessions."""
+    from agent_history.scope.types import ConcreteRecord
+
+    progress.set_phase("storing rows parsed on Windows", f"{len(prepared)} files")
+    remaining = []
+    for record in scope:
+        sessions = []
+        for session in record.sessions:
+            file_key = str(session.get("file") or "")
+            if file_key not in prepared:
+                sessions.append(session)
+                continue
+            parsed = prepared[file_key]
+            if parsed is None:
+                stats["skipped"] += 1
+                continue
+            _store_results(conn, [(record.home, parsed)], stats)
+        if sessions:
+            remaining.append(
+                ConcreteRecord(
+                    home=record.home,
+                    workspace=record.workspace,
+                    sessions=sessions,
+                    workspace_key=record.workspace_key,
+                    workspace_display=record.workspace_display,
+                )
+            )
+    conn.commit()
+    return remaining
+
+
+def _local_session_files(
+    scope: "ConcreteScope", force: bool, stats: Dict[str, int]
+) -> list[tuple[Path, str, Optional[str], str]]:
+    """Return (local file, home, workspace, agent) for every session in scope.
+
+    Remote and web sessions are copied into the local cache first; remote
+    copies run on several threads because each is a separate SSH call.
+    """
+    files: list[tuple[Path, str, Optional[str], str]] = []
+    remote_copies: list[tuple[str, Any, Dict[str, Any]]] = []
+
+    for record in scope:
+        home = record.home
+        for session in record.sessions:
+            file_value = session.get("file")
+            if not file_value:
+                stats["errors"] += 1
+                continue
+            agent = session.get("agent") or "claude"
+            file_path = Path(str(file_value))
+            if not file_path.exists() and home.startswith("remote:"):
+                remote_copies.append((home, record, session))
+                continue
+            if not file_path.exists() and home == "web":
+                cached = _web_session_copy(session, force)
+                if cached is None:
+                    stats["errors"] += 1
+                    continue
+                file_path = cached
+            if not file_path.exists():
+                stats["errors"] += 1
+                continue
+            files.append((file_path, home, record.workspace, agent))
+
+    if remote_copies:
+        from concurrent.futures import ThreadPoolExecutor
+
+        progress.set_phase("copying remote sessions", f"{len(remote_copies)} files")
+
+        from agent_history.adapters.remote import SSHRemoteClient
+
+        client = SSHRemoteClient()
+
+        def copy(item: tuple[str, Any, Dict[str, Any]]) -> Optional[Path]:
+            home, record, session = item
+            try:
+                return client.ensure_local_copy(home[7:], record.workspace, session)
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=REMOTE_COPY_THREADS) as pool:
+            for (home, record, session), local_copy in zip(
+                remote_copies, pool.map(copy, remote_copies)
+            ):
+                if local_copy is None or not local_copy.exists():
+                    stats["errors"] += 1
+                    continue
+                files.append((local_copy, home, record.workspace, session.get("agent") or "claude"))
+    return files
+
+
+def _web_session_copy(session: Dict[str, Any], force: bool) -> Optional[Path]:
+    from agent_history.backends.web import (
+        WebSessionsError,
+        ensure_web_session_cache,
+        resolve_web_credentials,
+    )
+
+    session_id = session.get("session_id") or session.get("id") or session.get("filename")
+    if not session_id:
+        return None
+    try:
+        token, org_uuid = resolve_web_credentials()
+        return ensure_web_session_cache(str(session_id), token, org_uuid, force=force)
+    except WebSessionsError:
+        return None
+
+
+def _extract_or_error(
+    item: tuple[str, str, Optional[str], str],
+) -> tuple[str, Optional[Dict[str, Any]]]:
+    """Parse one file in a worker; return (home, record), or (home, None) on failure."""
+    file_path, home, workspace, agent = item
+    try:
+        return home, _extract_file_stats(file_path, agent, workspace)
+    except Exception:
+        return home, None
+
+
+def _parallel_extract(
+    todo: list[tuple[str, str, Optional[str], str]], jobs: int
+) -> Iterator[tuple[str, Optional[Dict[str, Any]]]]:
+    """Parse files in worker processes, yielding results as they finish.
+
+    Only a few results per worker are allowed to wait, so memory stays
+    bounded when storing is slower than parsing.
+    """
+    import multiprocessing
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+
+    # Linux forks, so workers need no re-import of the calling script; other
+    # platforms spawn, which needs the usual `if __name__ == "__main__"` guard.
+    method = "fork" if sys.platform.startswith("linux") else "spawn"
+    context = multiprocessing.get_context(method)
+    limit = jobs * SYNC_PENDING_PER_WORKER
+    items = iter(todo)
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=context) as pool:
+        pending = set()
+        for item in items:
+            pending.add(pool.submit(_extract_or_error, item))
+            if len(pending) >= limit:
+                break
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                yield future.result()
+            for item in items:
+                pending.add(pool.submit(_extract_or_error, item))
+                if len(pending) >= limit:
+                    break
+
+
+def _store_results(
+    conn: sqlite3.Connection,
+    results: Iterable[tuple[str, Optional[Dict[str, Any]]]],
+    stats: Dict[str, int],
+) -> None:
+    stored = 0
+    for home, record in results:
+        if record is None:
+            stats["errors"] += 1
+            progress.add("errors")
+            continue
+        try:
+            _store_file_stats(conn, record, home)
+        except Exception:
+            stats["errors"] += 1
+            continue
+        stats["synced"] += 1
+        progress.add("stored")
+        stored += 1
+        if stored % SYNC_COMMIT_EVERY == 0:
+            conn.commit()
+
+
+def _install_file_scope(conn: sqlite3.Connection, file_paths: Optional[List[str]]) -> str:
+    """Install a temporary file-path scope and return a sessions table suffix.
+
+    When ``file_paths`` is ``None``, callers want the whole database. When it is
+    an empty list, callers want an explicitly empty scope.
+    """
+    if file_paths is None:
+        return ""
+
+    conn.execute("DROP TABLE IF EXISTS temp.metric_file_scope")
+    conn.execute("CREATE TEMP TABLE metric_file_scope (file_path TEXT PRIMARY KEY)")
+    if file_paths:
+        conn.executemany(
+            "INSERT OR IGNORE INTO metric_file_scope (file_path) VALUES (?)",
+            [(path,) for path in file_paths],
+        )
+    return " JOIN metric_file_scope fs ON fs.file_path = sessions.file_path"
+
+
+def _install_tool_file_scope(conn: sqlite3.Connection, file_paths: Optional[List[str]]) -> str:
+    if file_paths is None:
+        return ""
+    _install_file_scope(conn, file_paths)
+    return " JOIN metric_file_scope fs ON fs.file_path = tool_uses.file_path"
+
+
+def _normalize_file_paths(file_paths: Optional[List[str]]) -> Optional[List[str]]:
+    if file_paths is None:
+        return None
+    return [str(path) for path in file_paths if path]
+
+
+def _where_sql(filters: Optional[Dict[str, Any]], alias: str = "sessions") -> tuple[str, list[Any]]:
+    if not filters:
+        return "", []
+
+    clauses: list[str] = []
+    params: list[Any] = []
+    prefix = f"{alias}."
+
+    homes = filters.get("homes")
+    if homes:
+        placeholders = ", ".join("?" for _ in homes)
+        clauses.append(f"{prefix}home IN ({placeholders})")
+        params.extend(homes)
+
+    agent = filters.get("agent")
+    if agent:
+        clauses.append(f"{prefix}agent = ?")
+        params.append(agent)
+
+    workspaces = filters.get("workspaces")
+    if workspaces:
+        placeholders = ", ".join("?" for _ in workspaces)
+        clauses.append(f"{prefix}workspace IN ({placeholders})")
+        params.extend(workspaces)
+
+    workspace_patterns = filters.get("workspace_patterns")
+    if workspace_patterns:
+        pattern_clauses = []
+        for pattern in workspace_patterns:
+            pattern_clauses.append(f"LOWER({prefix}workspace) LIKE ?")
+            params.append(f"%{str(pattern).lower()}%")
+        clauses.append("(" + " OR ".join(pattern_clauses) + ")")
+
+    workspace_globs = filters.get("workspace_globs")
+    if workspace_globs:
+        glob_clauses = []
+        for pattern in workspace_globs:
+            glob_clauses.append(f"{prefix}workspace GLOB ?")
+            params.append(str(pattern))
+        clauses.append("(" + " OR ".join(glob_clauses) + ")")
+
+    workspace_regexes = filters.get("workspace_regexes")
+    if workspace_regexes:
+        regex_clauses = []
+        for pattern in workspace_regexes:
+            regex_clauses.append(f"{prefix}workspace REGEXP ?")
+            params.append(str(pattern))
+        clauses.append("(" + " OR ".join(regex_clauses) + ")")
+
+    since = filters.get("since")
+    if since:
+        clauses.append(
+            f"COALESCE({prefix}start_time, {prefix}first_timestamp, {prefix}last_timestamp) >= ?"
+        )
+        params.append(str(since))
+
+    until = filters.get("until")
+    if until:
+        clauses.append(
+            f"SUBSTR(COALESCE({prefix}start_time, {prefix}first_timestamp, {prefix}last_timestamp), 1, 10) <= ?"
+        )
+        params.append(str(until)[:10])
+
+    if not clauses:
+        return "", []
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def get_scoped_stats_from_db(
+    filters: Optional[Dict[str, Any]] = None,
+    db_path: Optional[Path] = None,
+    include_day: bool = False,
+) -> Dict[str, Any]:
+    """Get aggregate stats directly from SQLite using session predicates."""
+    conn = init_metrics_db(db_path)
+    try:
+        where_sql, params = _where_sql(filters, "sessions")
+        cursor = conn.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                COUNT(*) as sessions,
+                COALESCE(SUM(is_agent), 0) as agent_sessions,
+                COALESCE(SUM(CASE WHEN is_agent THEN 0 ELSE 1 END), 0) as main_sessions,
+                COALESCE(SUM(message_count), 0) as messages,
+                COALESCE(SUM(user_messages), 0) as user_messages,
+                COALESCE(SUM(assistant_messages), 0) as assistant_messages,
+                COALESCE(SUM(work_period_seconds), 0) as total_seconds,
+                SUM(CASE WHEN work_period_seconds > 0 THEN 1 ELSE 0 END) as sessions_with_time,
+                MAX(file_mtime) as last_synced
+            FROM sessions
+            {where_sql}
+            """,
+            params,
+        )
+        row = cursor.fetchone()
+        time_by_day = _time_by_day_query(conn, where_sql, params)
+        total_seconds = sum(time_by_day.values())
+        sessions_with_time = row["sessions_with_time"] if row else 0
+        avg_seconds = total_seconds / sessions_with_time if sessions_with_time else 0
+
+        by_agent = _stats_group_query(conn, "agent", where_sql, params)
+        by_home = _stats_group_query(conn, "home", where_sql, params)
+        by_workspace = _stats_group_query(conn, "workspace", where_sql, params)
+        by_model = _model_stats_query(conn, filters)
+        by_tool = _tool_stats_query(conn, filters)
+        cost = _cost_query(conn, *_where_sql(filters, "s"))
+
+        stats: Dict[str, Any] = {
+            "sessions": row["sessions"] if row else 0,
+            "total_sessions": row["sessions"] if row else 0,
+            "main_sessions": row["main_sessions"] if row else 0,
+            "agent_sessions": row["agent_sessions"] if row else 0,
+            "messages": row["messages"] if row else 0,
+            "total_messages": row["messages"] if row else 0,
+            "user_messages": row["user_messages"] if row else 0,
+            "assistant_messages": row["assistant_messages"] if row else 0,
+            "tokens": {
+                "input": row["input_tokens"] if row else 0,
+                "output": row["output_tokens"] if row else 0,
+                "cache_creation": row["cache_creation_tokens"] if row else 0,
+                "cache_read": row["cache_read_tokens"] if row else 0,
+            },
+            "cost": cost,
+            "by_agent": by_agent,
+            "by_home": by_home,
+            "by_workspace": by_workspace,
+            "by_model": by_model,
+            "by_tool": by_tool,
+            "time_stats": {
+                "total_duration_seconds": total_seconds,
+                "sessions_with_time": sessions_with_time,
+                "total_sessions": row["sessions"] if row else 0,
+                "average_duration_seconds": avg_seconds,
+                "by_day": time_by_day,
+            },
+            "cache": {
+                "cached": True,
+                "last_synced": row["last_synced"] if row else None,
+            },
+        }
+
+        if include_day:
+            stats["by_day"] = _day_stats_query(conn, where_sql, params)
+
+        return stats
+    finally:
+        conn.close()
+
+
+ROLLUP_DIMENSIONS: Dict[str, str] = {
+    "project": "COALESCE(project, project_short, workspace)",
+    "workspace": "workspace",
+    "home": "home",
+    "agent": "agent",
+    "day": "SUBSTR(COALESCE(start_time, first_timestamp, last_timestamp), 1, 10)",
+    "month": "SUBSTR(COALESCE(start_time, first_timestamp, last_timestamp), 1, 7)",
+}
+
+MESSAGE_ROLLUP_DIMENSIONS: Dict[str, str] = {
+    "project": "COALESCE(s.project, s.project_short, s.workspace)",
+    "workspace": "s.workspace",
+    "home": "s.home",
+    "agent": "s.agent",
+    "day": "SUBSTR(COALESCE(s.start_time, s.first_timestamp, s.last_timestamp), 1, 10)",
+    "month": "SUBSTR(COALESCE(s.start_time, s.first_timestamp, s.last_timestamp), 1, 7)",
+    "model": "m.model",
+}
+
+ROLLUP_DIMENSION_ALIASES: Dict[str, str] = {
+    "ws": "workspace",
+    "workspaces": "workspace",
+    "proj": "project",
+    "projects": "project",
+    "homes": "home",
+    "agents": "agent",
+    "days": "day",
+    "months": "month",
+    "models": "model",
+    "tools": "tool",
+}
+
+ROLLUP_SORT_ALIASES: Dict[str, str] = {
+    "metric": "metric",
+    "value": "metric",
+    "tokens": "tokens",
+    "token": "tokens",
+    "total_tokens": "tokens",
+    "time": "time_seconds",
+    "time_seconds": "time_seconds",
+    "seconds": "time_seconds",
+    "hours": "time_hours",
+    "time_hours": "time_hours",
+    "sessions": "sessions",
+    "session": "sessions",
+    "messages": "messages",
+    "message": "messages",
+    "input": "input_tokens",
+    "input_tokens": "input_tokens",
+    "output": "output_tokens",
+    "output_tokens": "output_tokens",
+    "cache_read": "cache_read_tokens",
+    "cache_read_tokens": "cache_read_tokens",
+    "cache_create": "cache_creation_tokens",
+    "cache_creation": "cache_creation_tokens",
+    "cache_creation_tokens": "cache_creation_tokens",
+    "cost": "cost_usd",
+    "usd": "cost_usd",
+    "cost_usd": "cost_usd",
+}
+
+
+def get_stats_rollup_from_db(
+    filters: Optional[Dict[str, Any]] = None,
+    db_path: Optional[Path] = None,
+    by: Optional[List[str]] = None,
+    metric: str = "all",
+    top: Optional[int] = None,
+    sort_by: Optional[List[str]] = None,
+    sort_direction: str = "default",
+) -> list[Dict[str, Any]]:
+    """Return DB-backed stats rollup rows grouped by requested dimensions."""
+    dimensions = _normalize_rollup_dimensions(by or ["project"])
+    dimension_map = MESSAGE_ROLLUP_DIMENSIONS if "model" in dimensions else ROLLUP_DIMENSIONS
+    invalid = [dimension for dimension in dimensions if dimension not in dimension_map]
+    if invalid:
+        raise ValueError(f"Unsupported rollup dimension(s): {', '.join(invalid)}")
+    if metric not in {"time", "tokens", "cost", "all"}:
+        raise ValueError(f"Unsupported rollup metric: {metric}")
+    if metric == "time" and "model" in dimensions:
+        raise ValueError(
+            "Unsupported rollup: --metric time cannot be grouped by model because "
+            "time is tracked per session, not per message/model. Use tokens by model, "
+            "or time by project/workspace/agent/month/day."
+        )
+
+    conn = init_metrics_db(db_path)
+    try:
+        if "model" in dimensions:
+            return _message_stats_rollup(
+                conn, filters, dimensions, metric, top, sort_by, sort_direction
+            )
+        return _session_stats_rollup(
+            conn, filters, dimensions, metric, top, sort_by, sort_direction
+        )
+    finally:
+        conn.close()
+
+
+def _normalize_rollup_dimensions(dimensions: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for dimension in dimensions:
+        canonical = ROLLUP_DIMENSION_ALIASES.get(dimension, dimension)
+        if canonical not in normalized:
+            normalized.append(canonical)
+    return normalized
+
+
+def _date_time_rollup_seconds(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    params: list[Any],
+    dimensions: list[str],
+) -> dict[tuple[str, ...], float]:
+    """Return merged wall-clock seconds for day/month-only rollup buckets."""
+    by_day = _time_by_day_query(conn, where_sql, params)
+    rollup: dict[tuple[str, ...], float] = {}
+    for day, seconds in by_day.items():
+        key = tuple(day if dimension == "day" else day[:7] for dimension in dimensions)
+        rollup[key] = rollup.get(key, 0) + seconds
+    return rollup
+
+
+def _rollup_time_seconds(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    params: list[Any],
+    dimensions: list[str],
+    metric: str,
+) -> dict[tuple[str, ...], float] | None:
+    """Return merged wall-clock seconds for each requested rollup bucket."""
+    if metric not in {"time", "all"}:
+        return None
+    if all(dimension in {"day", "month"} for dimension in dimensions):
+        return _date_time_rollup_seconds(conn, where_sql, params, dimensions)
+
+    day_filter = "COALESCE(start_time, first_timestamp) IS NOT NULL AND work_period_seconds > 0"
+    scoped_where = where_sql
+    if scoped_where:
+        scoped_where += f" AND {day_filter}"
+    else:
+        scoped_where = f" WHERE {day_filter}"
+    dimension_sql = "".join(
+        f",\n            {ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
+        for index, dimension in enumerate(dimensions)
+    )
+    cursor = conn.execute(
+        f"""
+        SELECT
+            COALESCE(start_time, first_timestamp) as start_timestamp,
+            COALESCE(end_time, last_timestamp, start_time, first_timestamp) as end_timestamp,
+            work_period_seconds
+            {dimension_sql}
+        FROM sessions
+        {scoped_where}
+        """,
+        params,
+    )
+    intervals_by_key: dict[tuple[str, ...], list[tuple[datetime, datetime]]] = {}
+    for row in cursor.fetchall():
+        interval = _row_work_interval(row)
+        if not interval:
+            continue
+        start, end = interval
+        for day, day_start, day_end in _split_interval_by_day(start, end):
+            key_parts: list[str] = []
+            for index, dimension in enumerate(dimensions):
+                if dimension == "day":
+                    value = day
+                elif dimension == "month":
+                    value = day[:7]
+                else:
+                    value = row[f"dim_{index}"] or "(none)"
+                key_parts.append(str(value))
+            intervals_by_key.setdefault(tuple(key_parts), []).append((day_start, day_end))
+    return {
+        key: _merged_interval_seconds(intervals)
+        for key, intervals in sorted(intervals_by_key.items())
+    }
+
+
+def _session_stats_rollup(
+    conn: sqlite3.Connection,
+    filters: Optional[Dict[str, Any]],
+    dimensions: list[str],
+    metric: str,
+    top: Optional[int],
+    sort_by: Optional[list[str]],
+    sort_direction: str,
+) -> list[Dict[str, Any]]:
+    where_sql, params = _where_sql(filters, "sessions")
+    date_time_seconds = _rollup_time_seconds(conn, where_sql, params, dimensions, metric)
+    select_parts = [
+        f"{ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
+        for index, dimension in enumerate(dimensions)
+    ]
+    group_parts = [f"dim_{index}" for index in range(len(dimensions))]
+    sql = f"""
+        SELECT
+            {", ".join(select_parts)},
+            COUNT(*) as sessions,
+            COALESCE(SUM(message_count), 0) as messages,
+            COALESCE(SUM(input_tokens), 0) as input_tokens,
+            COALESCE(SUM(output_tokens), 0) as output_tokens,
+            COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+            COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+            COALESCE(SUM(work_period_seconds), 0) as time_seconds,
+            COALESCE(SUM(file_cost.cost_usd), 0) as cost_usd,
+            COALESCE(SUM(file_cost.unpriced_tokens), 0) as unpriced_tokens
+        FROM sessions
+        LEFT JOIN (
+            SELECT file_path,
+                   SUM(cost_usd) as cost_usd,
+                   SUM(CASE WHEN cost_usd IS NULL THEN tokens ELSE 0 END) as unpriced_tokens
+            FROM ({_priced_messages_sql(_where_sql(filters, "s")[0])})
+            GROUP BY file_path
+        ) file_cost ON file_cost.file_path = sessions.file_path
+        {where_sql}
+        GROUP BY {", ".join(group_parts)}
+    """
+    cursor = conn.execute(sql, params + params)
+    rows = [
+        item
+        for row in cursor.fetchall()
+        if (item := _rollup_item_from_session_row(row, dimensions, metric, date_time_seconds))
+    ]
+    return _sort_and_limit_rollup_rows(rows, dimensions, metric, top, sort_by, sort_direction)
+
+
+def _rollup_item_from_session_row(
+    row: sqlite3.Row,
+    dimensions: list[str],
+    metric: str,
+    date_time_seconds: dict[tuple[str, ...], float] | None,
+) -> Dict[str, Any] | None:
+    if date_time_seconds is None and _skip_rollup_row(row, dimensions, metric):
+        return None
+    item: Dict[str, Any] = {
+        "sessions": row["sessions"],
+        "messages": row["messages"],
+        "input_tokens": row["input_tokens"],
+        "output_tokens": row["output_tokens"],
+        "cache_read_tokens": row["cache_read_tokens"],
+        "cache_creation_tokens": row["cache_creation_tokens"],
+        "time_seconds": row["time_seconds"],
+        "time_hms": _format_seconds_hms(row["time_seconds"]),
+        "time_hours": row["time_seconds"] / 3600 if row["time_seconds"] else 0,
+        "cost_usd": row["cost_usd"],
+        "unpriced_tokens": row["unpriced_tokens"],
+    }
+    for index, dimension in enumerate(dimensions):
+        item[dimension] = row[f"dim_{index}"] or "(none)"
+    if date_time_seconds is not None:
+        key = tuple(str(item[dimension]) for dimension in dimensions)
+        item["time_seconds"] = date_time_seconds.get(key, 0)
+        item["time_hms"] = _format_seconds_hms(item["time_seconds"])
+        item["time_hours"] = item["time_seconds"] / 3600 if item["time_seconds"] else 0
+        if metric == "time" and not item["time_seconds"]:
+            return None
+    return item
+
+
+def _message_stats_rollup(
+    conn: sqlite3.Connection,
+    filters: Optional[Dict[str, Any]],
+    dimensions: list[str],
+    metric: str,
+    top: Optional[int],
+    sort_by: Optional[list[str]],
+    sort_direction: str,
+) -> list[Dict[str, Any]]:
+    where_sql, params = _where_sql(filters, "s")
+    model_filter = "m.model IS NOT NULL AND m.model != ''"
+    if where_sql:
+        where_sql += f" AND {model_filter}"
+    else:
+        where_sql = f" WHERE {model_filter}"
+    select_parts = [
+        f"{MESSAGE_ROLLUP_DIMENSIONS[dimension]} AS dim_{index}"
+        for index, dimension in enumerate(dimensions)
+    ]
+    group_parts = [f"dim_{index}" for index in range(len(dimensions))]
+    sql = f"""
+        SELECT
+            {", ".join(select_parts)},
+            COUNT(DISTINCT s.file_path) as sessions,
+            COUNT(*) as messages,
+            COALESCE(SUM(m.input_tokens), 0) as input_tokens,
+            COALESCE(SUM(m.output_tokens), 0) as output_tokens,
+            COALESCE(SUM(m.cache_read_tokens), 0) as cache_read_tokens,
+            COALESCE(SUM(m.cache_creation_tokens), 0) as cache_creation_tokens,
+            0 as time_seconds,
+            COALESCE(SUM({_MESSAGE_COST_SQL}), 0) as cost_usd,
+            COALESCE(
+                SUM(CASE WHEN {_MESSAGE_COST_SQL} IS NULL THEN {_MESSAGE_TOKENS_SQL} ELSE 0 END), 0
+            ) as unpriced_tokens
+        FROM messages m
+        JOIN sessions s ON s.file_path = m.file_path
+        {where_sql}
+        GROUP BY {", ".join(group_parts)}
+    """
+    cursor = conn.execute(sql, params)
+    rows: list[Dict[str, Any]] = []
+    for row in cursor.fetchall():
+        if _skip_rollup_row(row, dimensions, metric):
+            continue
+        item: Dict[str, Any] = {
+            "sessions": row["sessions"],
+            "messages": row["messages"],
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "cache_read_tokens": row["cache_read_tokens"],
+            "cache_creation_tokens": row["cache_creation_tokens"],
+            "time_seconds": None,
+            "time_hms": None,
+            "time_hours": None,
+            "cost_usd": row["cost_usd"],
+            "unpriced_tokens": row["unpriced_tokens"],
+        }
+        for index, dimension in enumerate(dimensions):
+            item[dimension] = row[f"dim_{index}"] or "(none)"
+        rows.append(item)
+    return _sort_and_limit_rollup_rows(rows, dimensions, metric, top, sort_by, sort_direction)
+
+
+def _skip_rollup_row(row: sqlite3.Row, dimensions: list[str], metric: str) -> bool:
+    """Return True when a rollup bucket has no useful metric value."""
+    if metric == "time" and not row["time_seconds"]:
+        return True
+    if metric == "tokens" and _rollup_metric_total(row, metric) == 0:
+        return True
+    if metric == "cost" and not row["cost_usd"] and not row["unpriced_tokens"]:
+        return True
+    if (
+        any(
+            dimension in {"day", "month"} and not row[f"dim_{index}"]
+            for index, dimension in enumerate(dimensions)
+        )
+        and _rollup_metric_total(row, metric) == 0
+    ):
+        return True
+    return False
+
+
+def _rollup_metric_total(row: sqlite3.Row, metric: str) -> float:
+    if metric == "cost":
+        return float(row["cost_usd"] or 0) + float(row["unpriced_tokens"] or 0)
+    if metric == "time":
+        return float(row["time_seconds"] or 0)
+    if metric == "tokens":
+        return float(
+            (row["input_tokens"] or 0)
+            + (row["output_tokens"] or 0)
+            + (row["cache_read_tokens"] or 0)
+            + (row["cache_creation_tokens"] or 0)
+        )
+    return float(
+        (row["time_seconds"] or 0)
+        + (row["input_tokens"] or 0)
+        + (row["output_tokens"] or 0)
+        + (row["cache_read_tokens"] or 0)
+        + (row["cache_creation_tokens"] or 0)
+        + (row["messages"] or 0)
+        + (row["sessions"] or 0)
+    )
+
+
+def _format_seconds_hms(value: Any) -> str:
+    try:
+        seconds = int(float(value))
+    except (TypeError, ValueError):
+        return ""
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}h {minutes}m {seconds}s"
+
+
+def _sort_and_limit_rollup_rows(
+    rows: list[Dict[str, Any]],
+    dimensions: list[str],
+    metric: str,
+    top: Optional[int],
+    sort_by: Optional[list[str]],
+    sort_direction: str,
+) -> list[Dict[str, Any]]:
+    sort_fields = _normalize_rollup_sort_fields(sort_by, dimensions, metric)
+    reverse = _rollup_sort_reverse(sort_by, sort_direction, dimensions)
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: tuple(_rollup_sort_value(row, field, metric) for field in sort_fields),
+        reverse=reverse,
+    )
+    if top:
+        return sorted_rows[:top]
+    return sorted_rows
+
+
+def _normalize_rollup_sort_fields(
+    sort_by: Optional[list[str]], dimensions: list[str], metric: str
+) -> list[str]:
+    if not sort_by:
+        if dimensions and all(dimension in {"day", "month"} for dimension in dimensions):
+            return dimensions
+        return ["metric"]
+
+    fields: list[str] = []
+    valid_dimensions = set(ROLLUP_DIMENSIONS) | {"model"}
+    for raw_field in sort_by:
+        field = raw_field.strip().lower().replace("-", "_")
+        field = ROLLUP_DIMENSION_ALIASES.get(field, field)
+        field = ROLLUP_SORT_ALIASES.get(field, field)
+        if field in valid_dimensions or field in ROLLUP_SORT_ALIASES.values():
+            if field not in fields:
+                fields.append(field)
+            continue
+        raise ValueError(f"Unsupported rollup sort field: {raw_field}")
+    return fields or _normalize_rollup_sort_fields(None, dimensions, metric)
+
+
+def _rollup_sort_reverse(
+    sort_by: Optional[list[str]], sort_direction: str, dimensions: list[str]
+) -> bool:
+    if sort_direction == "asc":
+        return False
+    if sort_direction == "desc":
+        return True
+    if sort_by:
+        return False
+    return not (dimensions and all(dimension in {"day", "month"} for dimension in dimensions))
+
+
+def _rollup_sort_value(row: Dict[str, Any], field: str, metric: str) -> Any:
+    if field == "metric":
+        return _row_metric_total(row, metric)
+    if field == "tokens":
+        return _row_metric_total(row, "tokens")
+    value = row.get(field)
+    if field in {
+        "time_seconds",
+        "time_hours",
+        "sessions",
+        "messages",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "cost_usd",
+    }:
+        return float(value or 0)
+    return "" if value is None else str(value)
+
+
+def rollup_metric_value(row: Dict[str, Any], metric: str) -> float:
+    """Return a rollup row's value for a metric family (time, tokens, cost, all)."""
+    return _row_metric_total(row, metric)
+
+
+def _row_metric_total(row: Dict[str, Any], metric: str) -> float:
+    if metric == "cost":
+        return float(row.get("cost_usd") or 0)
+    if metric == "time":
+        return float(row.get("time_seconds") or 0)
+    if metric == "tokens":
+        return float(
+            (row.get("input_tokens") or 0)
+            + (row.get("output_tokens") or 0)
+            + (row.get("cache_read_tokens") or 0)
+            + (row.get("cache_creation_tokens") or 0)
+        )
+    return float(
+        (row.get("time_seconds") or 0)
+        + (row.get("input_tokens") or 0)
+        + (row.get("output_tokens") or 0)
+        + (row.get("cache_read_tokens") or 0)
+        + (row.get("cache_creation_tokens") or 0)
+        + (row.get("messages") or 0)
+        + (row.get("sessions") or 0)
+    )
+
+
+def _rollup_order_sql(dimensions: list[str], metric: str, message_query: bool = False) -> str:
+    if dimensions and all(dimension in {"day", "month"} for dimension in dimensions):
+        return " ORDER BY " + ", ".join(f"dim_{index}" for index in range(len(dimensions)))
+    if message_query and metric == "tokens":
+        return (
+            " ORDER BY (COALESCE(SUM(m.input_tokens), 0) + "
+            "COALESCE(SUM(m.output_tokens), 0) + "
+            "COALESCE(SUM(m.cache_read_tokens), 0) + "
+            "COALESCE(SUM(m.cache_creation_tokens), 0)) DESC"
+        )
+    if message_query and metric == "all":
+        return (
+            " ORDER BY (COALESCE(SUM(m.input_tokens), 0) + "
+            "COALESCE(SUM(m.output_tokens), 0)) DESC, sessions DESC"
+        )
+    if metric == "time":
+        return " ORDER BY time_seconds DESC"
+    if metric == "tokens":
+        return " ORDER BY (input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) DESC"
+    return " ORDER BY time_seconds DESC, (input_tokens + output_tokens) DESC, sessions DESC"
+
+
+def _stats_group_query(
+    conn: sqlite3.Connection, column: str, where_sql: str, params: list[Any]
+) -> Dict[str, Dict[str, int]]:
+    cursor = conn.execute(
+        f"""
+        SELECT {column} as name,
+               COUNT(*) as sessions,
+               COALESCE(SUM(message_count), 0) as messages
+        FROM sessions
+        {where_sql}
+        GROUP BY {column}
+        ORDER BY sessions DESC
+        """,
+        params,
+    )
+    return {
+        row["name"]: {"sessions": row["sessions"], "messages": row["messages"]}
+        for row in cursor.fetchall()
+        if row["name"]
+    }
+
+
+def _model_stats_query(
+    conn: sqlite3.Connection, filters: Optional[Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    return _priced_model_stats(conn, *_where_sql(filters, "s"))
+
+
+def _priced_model_stats(
+    conn: sqlite3.Connection, where_sql: str, params: list[Any], join_sql: str = ""
+) -> Dict[str, Dict[str, Any]]:
+    if where_sql:
+        where_sql += " AND m.model IS NOT NULL AND m.model != ''"
+    else:
+        where_sql = " WHERE m.model IS NOT NULL AND m.model != ''"
+    cursor = conn.execute(
+        f"""
+        SELECT model,
+               COUNT(*) as messages,
+               COALESCE(SUM(output_tokens), 0) as tokens,
+               SUM(cost_usd) as cost_usd
+        FROM ({_priced_messages_sql(where_sql, "m.output_tokens", join_sql)})
+        GROUP BY model
+        ORDER BY messages DESC
+        """,
+        params,
+    )
+    return {
+        row["model"]: {
+            "messages": row["messages"],
+            "tokens": row["tokens"],
+            "cost_usd": row["cost_usd"],
+        }
+        for row in cursor.fetchall()
+        if row["model"]
+    }
+
+
+def _cost_query(
+    conn: sqlite3.Connection, where_sql: str, params: list[Any], join_sql: str = ""
+) -> Dict[str, Any]:
+    """Return the estimated API cost and what could not be priced."""
+    rows = conn.execute(
+        f"""
+        SELECT model,
+               COALESCE(SUM(cost_usd), 0) as cost_usd,
+               SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) as unpriced_messages,
+               SUM(CASE WHEN cost_usd IS NULL THEN tokens ELSE 0 END) as unpriced_tokens
+        FROM ({_priced_messages_sql(where_sql, join_sql=join_sql)})
+        GROUP BY model
+        """,
+        params,
+    ).fetchall()
+    return {
+        "usd": sum(row["cost_usd"] for row in rows),
+        "unpriced_messages": sum(row["unpriced_messages"] for row in rows),
+        "unpriced_tokens": sum(row["unpriced_tokens"] for row in rows),
+        "unpriced_models": sorted(
+            row["model"] or "(unknown)" for row in rows if row["unpriced_messages"]
+        ),
+    }
+
+
+def _tool_stats_query(
+    conn: sqlite3.Connection, filters: Optional[Dict[str, Any]]
+) -> Dict[str, Dict[str, int]]:
+    where_sql, params = _where_sql(filters, "s")
+    cursor = conn.execute(
+        f"""
+        SELECT t.tool_name,
+               COUNT(*) as uses,
+               COALESCE(SUM(t.is_error), 0) as errors
+        FROM tool_uses t
+        JOIN sessions s ON s.file_path = t.file_path
+        {where_sql}
+        GROUP BY t.tool_name
+        ORDER BY uses DESC
+        """,
+        params,
+    )
+    return {
+        row["tool_name"]: {"uses": row["uses"], "errors": row["errors"]}
+        for row in cursor.fetchall()
+        if row["tool_name"]
+    }
+
+
+def _time_by_day_query(
+    conn: sqlite3.Connection, where_sql: str, params: list[Any]
+) -> Dict[str, float]:
+    rows = _time_interval_rows(conn, where_sql=where_sql, params=params)
+    return _merge_work_intervals_by_day(rows)
+
+
+def _time_interval_rows(
+    conn: sqlite3.Connection,
+    *,
+    from_suffix: str = "",
+    where_sql: str = "",
+    params: list[Any] | None = None,
+) -> list[sqlite3.Row]:
+    """Return candidate session intervals for wall-clock time merging."""
+    day_filter = "COALESCE(start_time, first_timestamp) IS NOT NULL AND work_period_seconds > 0"
+    scoped_where = where_sql
+    if scoped_where:
+        scoped_where += f" AND {day_filter}"
+    else:
+        scoped_where = f" WHERE {day_filter}"
+    cursor = conn.execute(
+        f"""
+        SELECT
+            COALESCE(start_time, first_timestamp) as start_timestamp,
+            COALESCE(end_time, last_timestamp, start_time, first_timestamp) as end_timestamp,
+            work_period_seconds
+        FROM sessions
+        {from_suffix}
+        {scoped_where}
+        """,
+        params or [],
+    )
+    return list(cursor.fetchall())
+
+
+def _merge_work_intervals_by_day(rows: list[sqlite3.Row]) -> Dict[str, float]:
+    """Merge overlapping session intervals into per-day wall-clock seconds."""
+    intervals_by_day: dict[str, list[tuple[datetime, datetime]]] = {}
+    for row in rows:
+        interval = _row_work_interval(row)
+        if not interval:
+            continue
+        start, end = interval
+        for day, day_start, day_end in _split_interval_by_day(start, end):
+            intervals_by_day.setdefault(day, []).append((day_start, day_end))
+
+    return {
+        day: _merged_interval_seconds(intervals)
+        for day, intervals in sorted(intervals_by_day.items())
+    }
+
+
+def _row_work_interval(row: sqlite3.Row) -> tuple[datetime, datetime] | None:
+    start = _parse_metric_timestamp(row["start_timestamp"])
+    if start is None:
+        return None
+    try:
+        work_seconds = float(row["work_period_seconds"] or 0)
+    except (TypeError, ValueError):
+        return None
+    if work_seconds <= 0:
+        return None
+
+    end = _parse_metric_timestamp(row["end_timestamp"])
+    if end is None or end <= start:
+        end = start + timedelta(seconds=work_seconds)
+    else:
+        elapsed = max((end - start).total_seconds(), 0)
+        end = start + timedelta(seconds=min(elapsed, work_seconds))
+    if end <= start:
+        return None
+    return start, end
+
+
+def _parse_metric_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _split_interval_by_day(start: datetime, end: datetime) -> list[tuple[str, datetime, datetime]]:
+    chunks: list[tuple[str, datetime, datetime]] = []
+    current = start
+    while current < end:
+        next_midnight = datetime.combine(current.date() + timedelta(days=1), time.min)
+        chunk_end = min(end, next_midnight)
+        chunks.append((current.strftime("%Y-%m-%d"), current, chunk_end))
+        current = chunk_end
+    return chunks
+
+
+def _merged_interval_seconds(intervals: list[tuple[datetime, datetime]]) -> float:
+    if not intervals:
+        return 0
+    sorted_intervals = sorted(intervals, key=lambda item: item[0])
+    total = 0.0
+    current_start, current_end = sorted_intervals[0]
+    for start, end in sorted_intervals[1:]:
+        if start <= current_end:
+            current_end = max(current_end, end)
+            continue
+        total += (current_end - current_start).total_seconds()
+        current_start, current_end = start, end
+    total += (current_end - current_start).total_seconds()
+    return total
+
+
+def _day_stats_query(
+    conn: sqlite3.Connection, where_sql: str, params: list[Any]
+) -> Dict[str, Dict[str, int]]:
+    day_filter = "first_timestamp IS NOT NULL"
+    scoped_where = where_sql
+    if scoped_where:
+        scoped_where += f" AND {day_filter}"
+    else:
+        scoped_where = f" WHERE {day_filter}"
+    cursor = conn.execute(
+        f"""
+        SELECT SUBSTR(first_timestamp, 1, 10) as day,
+               COUNT(*) as sessions,
+               COALESCE(SUM(message_count), 0) as messages
+        FROM sessions
+        {scoped_where}
+        GROUP BY day
+        ORDER BY day
+        """,
+        params,
+    )
+    return {
+        row["day"]: {"sessions": row["sessions"], "messages": row["messages"]}
+        for row in cursor.fetchall()
+        if row["day"]
+    }
+
+
+def get_session_stats_from_db(
+    db_path: Optional[Path] = None,
+    file_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Get aggregated session statistics from the metrics database.
+
+    Returns aggregate totals for all sessions in the database, including
+    token counts, message counts, and session counts.
+
+    Args:
+        db_path: Optional path to metrics database. Defaults to standard location.
+
+    Returns:
+        Dictionary containing:
+        - input_tokens: Total input tokens across all sessions
+        - output_tokens: Total output tokens across all sessions
+        - cache_creation_tokens: Total cache creation tokens
+        - cache_read_tokens: Total cache read tokens
+        - sessions: Total session count
+        - agent_sessions: Sessions marked as sub-agents (is_agent)
+        - messages: Total message count
+        - user_messages: Total user message count
+        - assistant_messages: Total assistant message count
+    """
+    file_paths = _normalize_file_paths(file_paths)
+    conn = init_metrics_db(db_path)
+    try:
+        scope_join = _install_file_scope(conn, file_paths)
+        cursor = conn.execute(f"""
+            SELECT
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                COUNT(*) as sessions,
+                COALESCE(SUM(is_agent), 0) as agent_sessions,
+                COALESCE(SUM(message_count), 0) as messages,
+                COALESCE(SUM(user_messages), 0) as user_messages,
+                COALESCE(SUM(assistant_messages), 0) as assistant_messages
+            FROM sessions
+            {scope_join}
+        """)
+        row = cursor.fetchone()
+
+        by_agent_cursor = conn.execute(f"""
+            SELECT agent, COUNT(*) as sessions, COALESCE(SUM(message_count), 0) as messages
+            FROM sessions
+            {scope_join}
+            GROUP BY agent
+            ORDER BY sessions DESC
+        """)
+        by_home_cursor = conn.execute(f"""
+            SELECT home, COUNT(*) as sessions, COALESCE(SUM(message_count), 0) as messages
+            FROM sessions
+            {scope_join}
+            GROUP BY home
+            ORDER BY sessions DESC
+        """)
+        by_workspace_cursor = conn.execute(f"""
+            SELECT workspace, COUNT(*) as sessions, COALESCE(SUM(message_count), 0) as messages
+            FROM sessions
+            {scope_join}
+            GROUP BY workspace
+            ORDER BY sessions DESC
+        """)
+        message_scope = (
+            " JOIN metric_file_scope fs ON fs.file_path = m.file_path"
+            if file_paths is not None
+            else ""
+        )
+        by_model = _priced_model_stats(conn, "", [], message_scope)
+        cost = _cost_query(conn, "", [], message_scope)
+        return {
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "cache_creation_tokens": row["cache_creation_tokens"],
+            "cache_read_tokens": row["cache_read_tokens"],
+            "sessions": row["sessions"],
+            "agent_sessions": row["agent_sessions"],
+            "messages": row["messages"],
+            "user_messages": row["user_messages"],
+            "assistant_messages": row["assistant_messages"],
+            "by_agent": {
+                row["agent"]: {"sessions": row["sessions"], "messages": row["messages"]}
+                for row in by_agent_cursor.fetchall()
+                if row["agent"]
+            },
+            "by_home": {
+                row["home"]: {"sessions": row["sessions"], "messages": row["messages"]}
+                for row in by_home_cursor.fetchall()
+                if row["home"]
+            },
+            "by_workspace": {
+                row["workspace"]: {"sessions": row["sessions"], "messages": row["messages"]}
+                for row in by_workspace_cursor.fetchall()
+                if row["workspace"]
+            },
+            "by_model": by_model,
+            "cost": cost,
+        }
+    finally:
+        conn.close()
+
+
+def get_tool_usage_stats_from_db(
+    db_path: Optional[Path] = None,
+    file_paths: Optional[List[str]] = None,
+) -> Dict[str, Dict[str, int]]:
+    """Get aggregated tool usage statistics from the metrics database."""
+    file_paths = _normalize_file_paths(file_paths)
+    conn = init_metrics_db(db_path)
+    try:
+        scope_join = _install_tool_file_scope(conn, file_paths)
+        cursor = conn.execute(
+            f"""
+            SELECT tool_name,
+                   COUNT(*) as uses,
+                   COALESCE(SUM(is_error), 0) as errors
+            FROM tool_uses
+            {scope_join}
+            GROUP BY tool_name
+            """
+        )
+        return {
+            row["tool_name"]: {"uses": row["uses"], "errors": row["errors"]}
+            for row in cursor.fetchall()
+            if row["tool_name"]
+        }
+    finally:
+        conn.close()
+
+
+def get_time_stats_from_db(
+    db_path: Optional[Path] = None,
+    file_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Get aggregated time statistics from the metrics database."""
+    file_paths = _normalize_file_paths(file_paths)
+    conn = init_metrics_db(db_path)
+    try:
+        scope_join = _install_file_scope(conn, file_paths)
+        cursor = conn.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(work_period_seconds), 0) as total_seconds,
+                SUM(CASE WHEN work_period_seconds > 0 THEN 1 ELSE 0 END) as sessions_with_time,
+                COUNT(*) as total_sessions
+            FROM sessions
+            {scope_join}
+            """
+        )
+        row = cursor.fetchone()
+        by_day = _merge_work_intervals_by_day(_time_interval_rows(conn, from_suffix=scope_join))
+        total_seconds = sum(by_day.values())
+        sessions_with_time = row["sessions_with_time"] if row else 0
+        total_sessions = row["total_sessions"] if row else 0
+        avg_seconds = total_seconds / sessions_with_time if sessions_with_time else 0
+
+        return {
+            "total_duration_seconds": total_seconds,
+            "sessions_with_time": sessions_with_time,
+            "total_sessions": total_sessions,
+            "average_duration_seconds": avg_seconds,
+            "by_day": by_day,
+        }
+    finally:
+        conn.close()

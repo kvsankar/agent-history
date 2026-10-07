@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""cagelens: Browse and export AI coding assistant conversation history.
+
+This is the entry point script for the cagelens CLI.
+It delegates to the agent_history package.
+"""
+
+import sys
+
+from agent_history.cli.orchestrator import main
+
+if __name__ == "__main__":
+    sys.exit(main())

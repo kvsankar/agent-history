@@ -1,4 +1,4 @@
-# Agent History Skill - Examples
+# Cagelens Skill - Examples
 
 ## Example 1: Finding a Past Discussion
 
@@ -8,7 +8,7 @@
 
 ```bash
 # Step 1: Export recent sessions
-agent-history export --since 2025-11-24 -o /tmp/history --minimal
+cagelens export --since 2025-11-24 -o /tmp/history --minimal
 
 # Step 2: Search for error-related terms
 grep -r -i -l "error handling" /tmp/history/
@@ -35,7 +35,7 @@ grep -r -i -l "error.*boundary" /tmp/history/
 
 ```bash
 # Export and search
-agent-history export --since 2025-11-01 -o /tmp/history --minimal
+cagelens export --since 2025-11-01 -o /tmp/history --minimal
 
 # Search for auth-related fixes
 grep -r -i -l "auth.*fix\|auth.*bug\|login.*error" /tmp/history/
@@ -55,7 +55,7 @@ grep -r -i -B2 -A5 "fixed\|resolved\|the issue was" /tmp/history/auth-related-fi
 **Claude's approach**:
 
 ```bash
-agent-history stats --time --since 2025-11-24
+cagelens stats --time --since 2025-11-24
 ```
 
 **Response**: "Based on your Claude Code usage this week:
@@ -77,7 +77,7 @@ This excludes idle gaps over 30 minutes."
 **Claude's approach**:
 
 ```bash
-agent-history stats --tools
+cagelens stats --by tool
 ```
 
 **Response**: "Your most-used Claude Code tools:
@@ -102,7 +102,7 @@ Bash has the highest error rate - often from command failures rather than tool i
 
 ```bash
 # Export recent history
-agent-history export -o /tmp/history --minimal
+cagelens export -o /tmp/history --minimal
 
 # Search for caching-related terms
 grep -r -i -l "cache" /tmp/history/
@@ -126,10 +126,10 @@ grep -r -i -B3 -A10 "cache.*implementation\|implement.*cache" /tmp/history/
 mkdir -p ~/backups/claude-$(date +%Y%m%d)
 
 # Export all workspaces from all homes
-agent-history export --ah --aw -o ~/backups/claude-$(date +%Y%m%d) --jobs 4 --quiet
+cagelens export --ah --aw -o ~/backups/claude-$(date +%Y%m%d) --jobs 4 --quiet
 
 # If a remote is offline, skip SSH remotes
-agent-history export --ah --aw -o ~/backups/claude-$(date +%Y%m%d) --no-remote
+cagelens export --ah --aw -o ~/backups/claude-$(date +%Y%m%d) --no-remote
 
 # Verify
 ls -la ~/backups/claude-$(date +%Y%m%d)/
@@ -145,10 +145,10 @@ ls -la ~/backups/claude-$(date +%Y%m%d)/
 
 ```bash
 # List sessions for that workspace
-agent-history lss myproject
+cagelens lss myproject
 
 # See detailed stats
-agent-history stats myproject
+cagelens stats myproject
 ```
 
 ---
@@ -161,7 +161,7 @@ agent-history stats myproject
 
 ```bash
 # Export from all homes (local + WSL + Windows + remotes)
-agent-history export --ah --aw -o /tmp/all-history --minimal
+cagelens export --ah --aw -o /tmp/all-history --minimal
 
 # Search across everything
 grep -r -i -l "docker\|container\|dockerfile" /tmp/all-history/
@@ -177,13 +177,13 @@ grep -r -i -l "docker\|container\|dockerfile" /tmp/all-history/
 
 ```bash
 # Get November stats
-agent-history stats --by-day --since 2025-11-01 --until 2025-11-30
+cagelens stats --by day --since 2025-11-01 --until 2025-11-30
 
 # See per-workspace breakdown
-agent-history stats --by-workspace --since 2025-11-01 --until 2025-11-30
+cagelens stats --by workspace --since 2025-11-01 --until 2025-11-30
 
 # List all November sessions
-agent-history lss --since 2025-11-01 --until 2025-11-30
+cagelens lss --since 2025-11-01 --until 2025-11-30
 ```
 
 ---
@@ -196,10 +196,10 @@ agent-history lss --since 2025-11-01 --until 2025-11-30
 
 ```bash
 # List recent sessions (agent files are prefixed with 'agent-')
-agent-history lss --since 2025-11-30
+cagelens lss --since 2025-11-30
 
 # Export and look at agent files specifically
-agent-history export --since 2025-11-30 -o /tmp/recent --minimal
+cagelens export --since 2025-11-30 -o /tmp/recent --minimal
 
 # Agent conversations are in files like agent-*.md
 ls /tmp/recent/*/agent-*.md

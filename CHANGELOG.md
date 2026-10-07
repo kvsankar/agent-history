@@ -9,14 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Backend registry integration for agent-specific parsing, paths, stats, remote commands, WSL candidate paths, and Markdown presentation metadata.
 - Markdown export detail levels via `--markdown-level 1..4`.
-- Single-session Markdown export to stdout via `agent-history export SESSION.jsonl -o -`.
+- Single-session Markdown export to stdout via `cagelens session export SESSION.jsonl -o -`.
 - Clearer CLI help, docs, and validation errors for stdout exports, including the
   requirement to pass exactly one full `.jsonl`/`.json` session file path.
 
 ### Changed
 
-- Default export directory changed from `./ai-chats` to `./.agent-history/exports`.
+- Default session export directory is now `./.cagelens/exports`.
+- Project export/stats commands accept `--agent` and route through the shared scope pipeline.
 
 ## [2.0.0-alpha.2] - 2026-05-26
 
@@ -53,10 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Renamed**: Project renamed from `claude-history` to `agent-history`
+- **Renamed**: Project renamed from `claude-history` to `cagelens`
   - Wrapper script `claude-history` provided for backward compatibility
-- **Config directory**: Now uses `~/.agent-history/` (migrates from `~/.claude-history/`)
-- **Default export directory**: Changed from `claude-conversations` to `ai-chats`
+- **Config directory**: Now uses `~/.cagelens/` (migrates from `~/.claude-history/`)
+- **Default export directory**: Changed from `claude-conversations` to `.cagelens/exports`
 - **Documentation**: Standardized doc filenames to lowercase
 
 ### Fixed
@@ -70,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2025-12-25
 
-First stable release of claude-history (now agent-history).
+First stable release of claude-history (now cagelens).
 
 ### Features
 
@@ -92,7 +94,7 @@ First stable release of claude-history (now agent-history).
 - Navigation links between related messages
 - Agent conversation detection and labeling
 
-[Unreleased]: https://github.com/kvsankar/agent-history/compare/v2.0.0-alpha.2...HEAD
-[2.0.0-alpha.2]: https://github.com/kvsankar/agent-history/compare/v2.0.0-alpha.1...v2.0.0-alpha.2
-[2.0.0-alpha.1]: https://github.com/kvsankar/agent-history/compare/v1.0...v2.0.0-alpha.1
-[1.0.0]: https://github.com/kvsankar/agent-history/releases/tag/v1.0
+[Unreleased]: https://github.com/kvsankar/cagelens/compare/v2.0.0-alpha.2...HEAD
+[2.0.0-alpha.2]: https://github.com/kvsankar/cagelens/compare/v2.0.0-alpha.1...v2.0.0-alpha.2
+[2.0.0-alpha.1]: https://github.com/kvsankar/cagelens/compare/v1.0...v2.0.0-alpha.1
+[1.0.0]: https://github.com/kvsankar/cagelens/releases/tag/v1.0
