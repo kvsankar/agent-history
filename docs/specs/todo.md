@@ -39,6 +39,9 @@ The design is [`../design-v2/archive-library.md`](../design-v2/archive-library.m
       purpose: collect, verify and catalog agent sessions. Use synthetic homes.
       Do not run selections over whole real home folders; one can take an hour
       and exhaust memory.
+- [ ] Store session titles in the catalog (design section "Session titles",
+      not built). First establish where each agent records titles in its
+      current format, then add the column test-first.
 - [ ] Read an archive as a cagelens home, with transparent `.zst` reading in
       every backend (design section "Reading The Archive With cagelens", not
       built).
