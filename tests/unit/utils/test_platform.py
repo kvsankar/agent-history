@@ -498,3 +498,28 @@ class TestEdgeCases:
                     result = get_wsl_distributions()
                     # Empty names should be filtered out
                     assert isinstance(result, list)
+
+
+def test_path_exists_with_timeout_gives_up_on_a_hanging_check():
+    """An unreachable UNC path must not block past the timeout."""
+    import threading
+    import time
+
+    from agent_history.utils.platform import _path_exists_with_timeout
+
+    release = threading.Event()
+
+    class HangingPath:
+        def exists(self):
+            release.wait(10)
+            return True
+
+    started = time.monotonic()
+    try:
+        result = _path_exists_with_timeout(HangingPath(), timeout=0.2)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+
+    assert result is False
+    assert elapsed < 2
