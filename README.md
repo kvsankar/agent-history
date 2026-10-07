@@ -6,7 +6,7 @@ A CLI tool to browse and export AI coding assistant conversation history with mu
 
 ![How agent-history reads Claude Code, Codex CLI, Gemini CLI and Pi session files across homes and turns them into listings, exports and usage metrics](docs/images/agent-history-infographic.png)
 
-*How agent-history collects fragmented Claude Code, Codex CLI, Gemini CLI, and Pi session files across local, WSL, Windows, and SSH homes, normalizes them into a unified workspace/session model, and produces listings, markdown/HTML exports, and usage metrics. See [docs/agent-history-process-image.md](docs/agent-history-process-image.md) for the diagram brief.*
+*How agent-history collects fragmented Claude Code, Codex CLI, Gemini CLI, and Pi session files across local, WSL, Windows, and SSH homes, normalizes them into a unified workspace/session model, and produces listings, markdown/HTML exports, and usage metrics. The [infographic source](docs/images/agent-history-infographic.html) is kept with the image.*
 
 ## Supported Agents
 
