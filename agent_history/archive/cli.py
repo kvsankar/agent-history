@@ -41,6 +41,11 @@ def build_parser(prog: str = "cagelens archive") -> argparse.ArgumentParser:
     collect.add_argument("--force", action="store_true", help="Ignore min_interval_hours")
     collect.add_argument("--dry-run", action="store_true", help="List actions; write nothing")
     collect.add_argument("--state-dir", help="Collector state folder")
+    collect.add_argument(
+        "--break-lock",
+        action="store_true",
+        help="Remove each source's lock in the archive first; only when no run holds it",
+    )
 
     verify = sub.add_parser("verify", help="Decompress archived files and check their hashes")
     _common(verify)
@@ -95,26 +100,55 @@ def _destination(args, config):
 
 
 def _collect(args: argparse.Namespace) -> int:
-    from agent_history.archive.collect import collect_source
+    """Collect each source in turn. A source that fails does not stop the others.
+
+    A source whose lock another run holds is skipped, as the design asks. Any other
+    failure, including an unexpected exception, is reported and makes the exit code 1
+    once every source has been tried.
+    """
+    from agent_history.archive import collect as collect_module
 
     config, names = _load(args)
-    destination = _destination(args, config)
-    summaries = []
+    _destination(args, config)  # an invalid destination fails before any source runs
+    results: list[dict[str, Any]] = []
+    failed = errors = False
     for name in names:
-        summary = collect_source(
-            config,
-            name,
-            state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
-            force=args.force,
-            dry_run=args.dry_run,
-            destination=destination,
-        )
-        summaries.append(summary)
+        try:
+            summary = collect_module.collect_source(
+                config,
+                name,
+                state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
+                force=args.force,
+                dry_run=args.dry_run,
+                # As written, so --destination keeps its own state and lock.
+                destination=args.destination or config.destination,
+                break_lock=args.break_lock,
+            )
+        except collect_module.CollectLockedError as exc:
+            sys.stderr.write(f"{name}: {exc}\n")
+            summary = collect_module.RunSummary("", name, skipped_reason="locked")
+        except (ArchiveError, OSError) as exc:
+            failed = True
+            results.append(_source_failure(name, str(exc)))
+            continue
+        except Exception as exc:  # a defect for one source must not stop the others
+            failed = True
+            results.append(_source_failure(name, f"{type(exc).__name__}: {exc}"))
+            continue
+        errors = errors or bool(summary.errors)
+        results.append(_summary_dict(summary))
         if not args.json:
             _print_collect(summary)
     if args.json:
-        _print_json([_summary_dict(summary) for summary in summaries])
-    return EXIT_PROBLEMS if any(summary.errors for summary in summaries) else EXIT_OK
+        _print_json(results)
+    if failed:
+        return EXIT_FAILED
+    return EXIT_PROBLEMS if errors else EXIT_OK
+
+
+def _source_failure(name: str, message: str) -> dict[str, Any]:
+    sys.stderr.write(f"Error: {name}: {message}\n")
+    return {"source": name, "error": message}
 
 
 def _print_collect(summary) -> None:
@@ -123,8 +157,7 @@ def _print_collect(summary) -> None:
         return
     if summary.dry_run:
         for entry in summary.entries:
-            label = entry.get("action") or entry.get("type")
-            print(f"{label} {entry['path']}")
+            print(_entry_line(entry))
     print(
         f"{summary.source}: {summary.written} written ({summary.versioned} versioned), "
         f"{summary.gone} gone, {summary.errors} errors"
@@ -133,6 +166,20 @@ def _print_collect(summary) -> None:
     for entry in summary.entries:
         if entry.get("type") == "error":
             print(f"  error {entry['path']}: {entry['message']}")
+
+
+def _entry_line(entry: dict[str, Any]) -> str:
+    """One line of a dry run: the action and path, with a log export's row and JWT counts."""
+    line = f"{entry.get('action') or entry.get('type')} {entry['path']}"
+    if entry.get("type") != "rows":
+        return line
+    counts = [f"{entry.get('rows', 0)} rows"]
+    jwts = (entry.get("redacted") or {}).get("jwt")
+    if jwts:
+        counts.append(f"{jwts} JWT{'s' if jwts != 1 else ''} redacted")
+    if entry.get("reset"):
+        counts.append("table recreated")
+    return f"{line} ({', '.join(counts)})"
 
 
 def _summary_dict(summary) -> dict[str, Any]:
@@ -145,44 +192,71 @@ def _summary_dict(summary) -> dict[str, Any]:
         "errors": summary.errors,
         "skipped_reason": summary.skipped_reason,
         "dry_run": summary.dry_run,
+        "entries": summary.entries,  # the manifest entries, or what a dry run would write
     }
 
 
 def _verify(args: argparse.Namespace) -> int:
+    """Verify each source in turn. A source that cannot be verified, for example because
+    one of its manifests is damaged, is reported with its error, and the next one runs.
+
+    The sources are those in the archive, like catalog sync's, not the configuration's:
+    the archive can also hold another machine's sources and retired ones. The
+    configuration is read only when there is no --destination.
+    """
+    from agent_history.archive.catalog.sync import list_sources
+
+    destination = _catalog_destination(args)
+    found = list_sources(destination)
+    missing = sorted(set(args.sources or ()) - set(found))
+    if missing:
+        raise ArchiveError(f"Not in the archive at {destination.description}: {', '.join(missing)}")
+    results = [_verify_one(destination, name, args.sample) for name in args.sources or found]
+    if args.json:
+        _print_json(results)
+    else:
+        for result in results:
+            _print_verify(result)
+    return EXIT_OK if all(result["ok"] for result in results) else EXIT_PROBLEMS
+
+
+def _verify_one(destination, name: str, sample: int | None) -> dict[str, Any]:
     from agent_history.archive.verify import verify_source
 
-    config, names = _load(args)
-    destination = _destination(args, config)
-    reports = {name: verify_source(destination, name, sample=args.sample) for name in names}
-    if args.json:
-        _print_json(
-            [{"source": name, "ok": report.ok, **vars(report)} for name, report in reports.items()]
-        )
-    else:
-        for name, report in reports.items():
-            print(f"{name}: checked {report.checked}, {'ok' if report.ok else 'PROBLEMS'}")
-            for label in ("mismatched", "missing", "unlisted"):
-                for path in getattr(report, label):
-                    print(f"  {label}: {path}")
-    return EXIT_OK if all(report.ok for report in reports.values()) else EXIT_PROBLEMS
+    try:
+        report = verify_source(destination, name, sample=sample)
+    except (ArchiveError, OSError) as exc:
+        return {"source": name, "ok": False, "error": str(exc)}
+    except Exception as exc:  # a defect for one source must not stop the others
+        return {"source": name, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"source": name, "ok": report.ok, **vars(report)}
+
+
+def _print_verify(result: dict[str, Any]) -> None:
+    name = result["source"]
+    if "error" in result:
+        print(f"{name}: error: {result['error']}")
+        return
+    print(f"{name}: checked {result['checked']}, {'ok' if result['ok'] else 'PROBLEMS'}")
+    for label in ("mismatched", "missing", "unlisted", "errors", "pending"):
+        for path in result[label]:
+            print(f"  {label}: {path}")
 
 
 def _catalog(args: argparse.Namespace) -> int:
-    from agent_history.archive.catalog import catalog_status, open_store, sync_catalog
-    from agent_history.storage.config import get_config_dir
+    from agent_history.archive.catalog import open_store, sync_catalog
 
-    store = open_store(args.store or f"sqlite:{get_config_dir() / 'archive-catalog.db'}")
+    if args.action == "status":
+        return _catalog_status(args)
+    store = open_store(_catalog_spec(args))
     try:
-        if args.action == "status":
-            rows = catalog_status(store)
-            if args.json:
-                _print_json(rows)
-            else:
-                _print_status(rows)
-            return EXIT_OK
-        config, names = _load(args)
+        # The archive's sources, not the configuration's: the archive can also hold
+        # another machine's sources and retired ones.
         summary = sync_catalog(
-            store, _destination(args, config), names, rebuild=args.action == "rebuild"
+            store,
+            _catalog_destination(args),
+            args.sources,
+            rebuild=args.action == "rebuild",
         )
     finally:
         store.close()
@@ -196,6 +270,45 @@ def _catalog(args: argparse.Namespace) -> int:
         for error in summary.errors:
             print(f"  error {error}")
     return EXIT_PROBLEMS if summary.errors else EXIT_OK
+
+
+def _catalog_spec(args: argparse.Namespace) -> str:
+    from agent_history.storage.config import get_config_dir
+
+    return args.store or f"sqlite:{get_config_dir() / 'archive-catalog.db'}"
+
+
+def _catalog_status(args: argparse.Namespace) -> int:
+    """Print the catalog's counts, opening it read-only so that status changes nothing."""
+    from agent_history.archive.catalog import catalog_status, open_store
+
+    store = open_store(_catalog_spec(args), read_only=True)
+    try:
+        with store.transaction():
+            rows = catalog_status(store, args.sources)
+    finally:
+        store.close()
+    if args.json:
+        _print_json(rows)
+    else:
+        _print_status(rows)
+    return EXIT_OK
+
+
+def _catalog_destination(args: argparse.Namespace):
+    """``--destination``, or else the configured destination.
+
+    The configuration file is read only when it is needed, so an archive can be verified
+    and catalogued on a machine that has no archive configuration.
+    """
+    from agent_history.archive.config import load_config
+    from agent_history.archive.transport import open_destination
+    from agent_history.storage.config import get_config_dir
+
+    if args.destination:
+        return open_destination(args.destination)
+    path = Path(args.config).expanduser() if args.config else get_config_dir() / "archive.json"
+    return open_destination(load_config(path).destination)
 
 
 def _print_status(rows: list[dict[str, Any]]) -> None:

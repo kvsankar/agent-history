@@ -16,7 +16,6 @@ import os
 import re
 import sqlite3
 import sys
-from contextlib import closing
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Optional, Tuple
@@ -25,7 +24,19 @@ from agent_history import pricing
 from agent_history.storage.config import get_config_dir
 from agent_history.utils import progress
 from agent_history.utils.codex_tokens import CodexTokenCounter, is_replayed
-from agent_history.utils.jsonl import iter_jsonl_lines
+from agent_history.utils.jsonl import (
+    as_count,
+    as_text,
+    as_timestamp,
+    json_objects,
+    open_transcript,
+    without_lone_surrogates,
+)
+from agent_history.utils.session_identity import (
+    CodexSessionMeta,
+    claude_session_identity,
+    gemini_session_identity,
+)
 
 if TYPE_CHECKING:
     from agent_history.scope.types import ConcreteScope
@@ -43,12 +54,12 @@ __all__ = [
 ]
 
 # Schema version for migrations
-METRICS_DB_VERSION = 7
+METRICS_DB_VERSION = 8
 
-# Version of what a sync derives from a session file: token counts, models,
-# workspace keys. Bump it when parsing changes, so rows written by an older
-# cagelens are synced again even when their files have not changed.
-STATS_FORMAT_VERSION = 1
+# Version of the transcript parsers that fill a session row. A sync parses a
+# file again when its row was written by another version, even if the file
+# is unchanged. Raise it whenever a parser change alters stored values.
+METRICS_PARSER_VERSION = 9
 
 # Work period gap threshold in seconds (30 minutes per spec)
 WORK_PERIOD_GAP_THRESHOLD = 30 * 60
@@ -146,7 +157,7 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
             git_remote_url TEXT,
             project TEXT,
             project_short TEXT,
-            stats_format INTEGER DEFAULT 0
+            parser_version INTEGER DEFAULT 0
         );
 
         -- Messages table (aggregated stats per message)
@@ -229,22 +240,9 @@ def init_metrics_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
     if current_version < METRICS_DB_VERSION:
         _run_migrations(conn, current_version, row is None)
-    _ensure_stats_format_column(conn)
 
     conn.commit()
     return conn
-
-
-def _ensure_stats_format_column(conn: sqlite3.Connection) -> None:
-    """Add sessions.stats_format to databases created before it existed.
-
-    Checked on every open rather than by schema version, because a database
-    can carry a version number from another cagelens build. Rows without it
-    read 0 and are synced again.
-    """
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
-    if "stats_format" not in columns:
-        conn.execute("ALTER TABLE sessions ADD COLUMN stats_format INTEGER DEFAULT 0")
 
 
 def _sqlite_estimate_cost(
@@ -377,6 +375,14 @@ def _run_migrations(conn: sqlite3.Connection, current_version: int, is_new: bool
         except sqlite3.OperationalError:
             pass
 
+    # Version 8: record the parser version of each row. Existing rows get 0,
+    # so the next sync parses their files again.
+    if current_version < 8:
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN parser_version INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
     # Update version
     conn.execute("UPDATE schema_version SET version = ?", (METRICS_DB_VERSION,))
 
@@ -388,19 +394,118 @@ _CLAUDE_SESSION_FIELDS = (
 )
 
 
-def _read_claude_session_fields(session_info: Dict[str, Any], entry: Dict[str, Any]) -> None:
-    """Fill session metadata from a Claude transcript line."""
-    # Extract session metadata from first relevant entry
-    if session_info["session_id"] is None:
-        session_info["session_id"] = entry.get("sessionId")
-        if entry.get("agentId"):
-            session_info["is_agent"] = True
-            session_info["parent_session_id"] = entry.get("parentUuid")
+def _read_claude_session_fields(
+    session_info: Dict[str, Any], identity: Dict[str, Any], entry: Dict[str, Any]
+) -> None:
+    """Fill session metadata from a Claude transcript line.
+
+    ``identity`` collects the line-level IDs that
+    ``_set_claude_session_identity`` turns into the file's session.
+    """
+    session_id = entry.get("sessionId")
+    if session_id:
+        if session_id not in identity["session_ids"]:
+            identity["session_ids"].append(session_id)
+        if identity["agent_id"] is None and entry.get("agentId"):
+            identity["agent_id"] = entry.get("agentId")
     # Lines such as queue-operation carry no cwd, branch or version,
     # so take each from the first line that has it
     for key, field in _CLAUDE_SESSION_FIELDS:
         if session_info[key] is None:
             session_info[key] = entry.get(field)
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """``value`` when it is a JSON object, else an empty one."""
+    return value if isinstance(value, dict) else {}
+
+
+StatsPayload = Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]
+
+_SESSION_TEXT_FIELDS = ("session_id", "cwd", "git_branch", "claude_version", "parent_session_id")
+_SESSION_COUNT_FIELDS = (
+    "message_count",
+    "user_messages",
+    "assistant_messages",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+)
+_MESSAGE_TEXT_FIELDS = ("uuid", "session_id", "parent_uuid", "type", "model", "stop_reason")
+_MESSAGE_COUNT_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+)
+_TOOL_TEXT_FIELDS = ("tool_use_id", "message_uuid", "session_id", "tool_name")
+
+
+def _clean_fields(
+    record: Dict[str, Any],
+    text_fields: Tuple[str, ...],
+    count_fields: Tuple[str, ...],
+    time_fields: Tuple[str, ...],
+    no_time: Optional[str] = None,
+) -> Dict[str, Any]:
+    cleaned = dict(record)
+    for field in text_fields:
+        if field in cleaned:
+            cleaned[field] = as_text(cleaned[field])
+    for field in count_fields:
+        if field in cleaned:
+            cleaned[field] = as_count(cleaned[field])
+    for field in time_fields:
+        value = cleaned.get(field)
+        if isinstance(value, str):
+            cleaned[field] = without_lone_surrogates(value)
+        elif value is not None:
+            cleaned[field] = no_time
+    return cleaned
+
+
+def clean_stats_payload(payload: StatsPayload) -> StatsPayload:
+    """A stats reader's output with every value storable in SQLite.
+
+    IDs, names and models that are not text become their JSON text, counts
+    that are not numbers become 0, and timestamps that are not text become
+    None, so a malformed transcript cannot stop its rows from being stored.
+    """
+    session_info, messages, tool_uses = payload
+    session_info = _clean_fields(
+        session_info,
+        _SESSION_TEXT_FIELDS,
+        _SESSION_COUNT_FIELDS,
+        ("first_timestamp", "last_timestamp"),
+    )
+    session_info["is_agent"] = bool(session_info.get("is_agent"))
+    messages = [
+        _clean_fields(msg, _MESSAGE_TEXT_FIELDS, _MESSAGE_COUNT_FIELDS, ("timestamp",), "")
+        for msg in messages
+    ]
+    tool_uses = [
+        {
+            **_clean_fields(tu, _TOOL_TEXT_FIELDS, (), ("timestamp",)),
+            "is_error": 1 if tu.get("is_error") else 0,
+        }
+        for tu in tool_uses
+    ]
+    return session_info, messages, tool_uses
+
+
+def _set_claude_session_identity(
+    session_info: Dict[str, Any], identity: Dict[str, Any], jsonl_file: Path
+) -> None:
+    """Set session_id, parent_session_id and is_agent for one Claude file.
+
+    ``claude_session_identity`` holds the rules; a sub-agent's ID is
+    ``<parent>:<agentId>``.
+    """
+    resolved = claude_session_identity(jsonl_file, identity["session_ids"], identity["agent_id"])
+    session_info["session_id"] = resolved["session_id"]
+    session_info["parent_session_id"] = resolved["parent_session_id"]
+    session_info["is_agent"] = resolved["is_agent"]
 
 
 def _parse_claude_jsonl(
@@ -434,24 +539,18 @@ def _parse_claude_jsonl(
     messages: List[Dict[str, Any]] = []
     tool_uses: List[Dict[str, Any]] = []
     timestamps: List[str] = []
+    identity: Dict[str, Any] = {"session_ids": [], "agent_id": None}
     # First message record of each model response, by response id.
     responses: Dict[str, Dict[str, Any]] = {}
 
     try:
-        with closing(iter_jsonl_lines(jsonl_file)) as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
+        # A stray invalid byte must not stop the read
+        with open_transcript(jsonl_file) as f:
+            for entry in json_objects(f):
                 entry_type = entry.get("type")
                 timestamp = entry.get("timestamp", "")
 
-                _read_claude_session_fields(session_info, entry)
+                _read_claude_session_fields(session_info, identity, entry)
 
                 if entry_type in ("user", "assistant"):
                     session_info["message_count"] += 1
@@ -460,16 +559,16 @@ def _parse_claude_jsonl(
                     else:
                         session_info["assistant_messages"] += 1
 
-                    if timestamp:
+                    if as_timestamp(timestamp):
                         timestamps.append(timestamp)
 
                     # Extract token usage
-                    message_obj = entry.get("message", {})
-                    usage = message_obj.get("usage", {})
-                    input_tokens = usage.get("input_tokens", 0) or 0
-                    output_tokens = usage.get("output_tokens", 0) or 0
-                    cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
-                    cache_read = usage.get("cache_read_input_tokens", 0) or 0
+                    message_obj = _as_dict(entry.get("message"))
+                    usage = _as_dict(message_obj.get("usage"))
+                    input_tokens = as_count(usage.get("input_tokens"))
+                    output_tokens = as_count(usage.get("output_tokens"))
+                    cache_creation = as_count(usage.get("cache_creation_input_tokens"))
+                    cache_read = as_count(usage.get("cache_read_input_tokens"))
 
                     usage_tokens = {
                         "input_tokens": input_tokens,
@@ -534,6 +633,8 @@ def _parse_claude_jsonl(
     except OSError:
         pass
 
+    _set_claude_session_identity(session_info, identity, jsonl_file)
+
     # Set first/last timestamps
     if timestamps:
         session_info["first_timestamp"] = min(timestamps)
@@ -559,22 +660,51 @@ def _merge_repeated_response_usage(
             first_record[field] = value
 
 
+def _read_codex_session_meta(
+    session_info: Dict[str, Any], identity: CodexSessionMeta, payload: Any
+) -> None:
+    """Fill session fields from a Codex session_meta line.
+
+    ``CodexSessionMeta`` holds the rules: the rollout's first session_meta
+    describes it, and a later one only names a parent the first did not.
+    """
+    describes = identity.add(payload)
+    session_info["session_id"] = identity.session_id
+    session_info["parent_session_id"] = identity.parent_session_id
+    session_info["is_agent"] = identity.is_subagent
+    if not describes:
+        return
+    session_info["cwd"] = payload.get("cwd")
+    git_info = payload.get("git") or {}
+    session_info["git_branch"] = git_info.get("branch") if isinstance(git_info, dict) else None
+    session_info["claude_version"] = payload.get("cli_version")
+
+
+def _add_usage(target: Dict[str, Any], delta: Dict[str, int]) -> None:
+    for field, value in delta.items():
+        target[field] = (target.get(field) or 0) + value
+
+
 def _apply_codex_token_count(
     session_info: Dict[str, Any],
     messages: List[Dict[str, Any]],
     payload: Dict[str, Any],
     counter: CodexTokenCounter,
+    pending: Dict[str, int],
     turn_model: Optional[str] = None,
     replayed: bool = False,
 ) -> None:
     """Add one Codex token_count event's per-response usage.
 
     The usage goes to the session totals and to the latest assistant message,
-    so sums over the messages table match the session. A forked sub-agent
-    replays its parent's messages before its first turn_context, so that
-    message may have no model yet; it then takes the current turn's model.
+    so sums over the messages table match the session. Usage that arrives
+    before any assistant message (a sub-agent can start with tool calls) is
+    held in ``pending`` until ``_add_pending_codex_usage`` adds it to the
+    first assistant message. A forked sub-agent replays its parent's messages
+    before its first turn_context, so that message may have no model yet; it
+    then takes the current turn's model.
     """
-    delta = counter.add(payload.get("info") or {}, replayed=replayed)
+    delta = counter.add(_as_dict(payload.get("info")), replayed=replayed)
     if delta is None:
         return
 
@@ -584,11 +714,25 @@ def _apply_codex_token_count(
 
     for msg in reversed(messages):
         if msg["type"] == "assistant":
-            for field, value in delta.items():
-                msg[field] = (msg.get(field) or 0) + value
+            _add_usage(msg, delta)
             if not msg.get("model"):
                 msg["model"] = turn_model
-            break
+            return
+    _add_usage(pending, delta)
+
+
+def _add_pending_codex_usage(messages: List[Dict[str, Any]], pending: Dict[str, int]) -> None:
+    """Add usage seen before any assistant message to the first assistant message.
+
+    A rollout without assistant messages keeps that usage in the session
+    totals only.
+    """
+    if not pending:
+        return
+    for msg in messages:
+        if msg["type"] == "assistant":
+            _add_usage(msg, pending)
+            return
 
 
 def _parse_codex_jsonl(
@@ -630,31 +774,27 @@ def _parse_codex_jsonl(
     timestamps: List[str] = []
     turn_model: Optional[str] = None
     token_counter = CodexTokenCounter()
+    pending_usage: Dict[str, int] = {}
+    codex_identity = CodexSessionMeta()
     history_start: Optional[int] = None
 
-    try:
-        with closing(iter_jsonl_lines(jsonl_file)) as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+    from agent_history.backends.codex import ZstandardMissingError, _codex_open_text
 
+    try:
+        # Rollouts may be zstd-compressed; a stray invalid byte must not stop
+        # the read, so undecodable bytes become U+FFFD.
+        with _codex_open_text(jsonl_file, encoding="utf-8-sig", errors="replace") as f:
+            for entry in json_objects(f):
                 entry_type = entry.get("type")
                 timestamp = entry.get("timestamp", "")
-                payload = entry.get("payload", {})
+                payload = _as_dict(entry.get("payload"))
 
                 # Extract session metadata
                 if entry_type == "session_meta":
-                    history_start = payload.get("subagent_history_start_ordinal")
-                    session_info["session_id"] = payload.get("id")
-                    session_info["cwd"] = payload.get("cwd")
-                    git_info = payload.get("git", {})
-                    session_info["git_branch"] = git_info.get("branch")
-                    session_info["claude_version"] = payload.get("cli_version")
+                    if history_start is None:
+                        # The rollout's own session_meta comes first
+                        history_start = payload.get("subagent_history_start_ordinal")
+                    _read_codex_session_meta(session_info, codex_identity, payload)
 
                 # Each turn names its model; assistant messages carry it
                 elif entry_type == "turn_context":
@@ -672,7 +812,7 @@ def _parse_codex_jsonl(
                             else:
                                 session_info["assistant_messages"] += 1
 
-                            if timestamp:
+                            if as_timestamp(timestamp):
                                 timestamps.append(timestamp)
 
                             # Build message record
@@ -710,12 +850,19 @@ def _parse_codex_jsonl(
                         messages,
                         payload,
                         token_counter,
+                        pending_usage,
                         turn_model,
                         replayed=is_replayed(entry, history_start),
                     )
 
+    except ZstandardMissingError:
+        # Not readable here; a cached empty row would never be replaced,
+        # because an archived rollout's mtime does not change
+        raise
     except OSError:
         pass
+
+    _add_pending_codex_usage(messages, pending_usage)
 
     # Set first/last timestamps
     if timestamps:
@@ -757,20 +904,23 @@ def _lookup_gemini_hash(project_hash: str) -> Optional[str]:
 def _parse_gemini_json(
     json_file: Path,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Parse a Gemini JSON file and extract session info, messages, and tool uses.
+    """Parse a Gemini chat file and extract session info, messages, and tool uses.
 
-    Gemini uses a single JSON file format:
-    - Session metadata at root level (sessionId, projectHash, startTime, lastUpdated)
-    - Messages in messages array with type="user" or type="gemini"
+    Gemini chats are legacy single JSON files or current append-only JSONL
+    files; ``gemini_session_records`` reads both into the same form:
+    - Session metadata (sessionId, projectHash, startTime, lastUpdated)
+    - Messages with type="user" or type="gemini"
     - Token usage in tokens object within each gemini message
     - Tool calls in toolCalls array within gemini messages
 
     Args:
-        json_file: Path to the JSON file
+        json_file: Path to the .json or .jsonl chat file
 
     Returns:
         Tuple of (session_info, messages_list, tool_uses_list)
     """
+    from agent_history.backends.gemini import gemini_session_records
+
     session_info: Dict[str, Any] = {
         "session_id": None,
         "message_count": 0,
@@ -792,89 +942,33 @@ def _parse_gemini_json(
     tool_uses: List[Dict[str, Any]] = []
     timestamps: List[str] = []
 
-    try:
-        with open(json_file, encoding="utf-8-sig") as f:
-            data = json.load(f)
+    records = gemini_session_records(json_file)
+    if records is None:
+        return session_info, messages, tool_uses
+    chat_messages, data = records
 
-        session_info["session_id"] = data.get("sessionId")
-        session_info["cwd"] = data.get("projectHash")
-        session_info["first_timestamp"] = data.get("startTime")
-        session_info["last_timestamp"] = data.get("lastUpdated")
+    session_info["cwd"] = data.get("projectHash")
+    session_info.update(gemini_session_identity(json_file, data.get("kind"), data.get("sessionId")))
+    session_info["first_timestamp"] = data.get("startTime")
+    session_info["last_timestamp"] = data.get("lastUpdated")
 
-        for msg in data.get("messages", []):
-            msg_type = msg.get("type", "")
-            timestamp = msg.get("timestamp", "")
-
-            if msg_type == "user":
-                session_info["message_count"] += 1
-                session_info["user_messages"] += 1
-                if timestamp:
-                    timestamps.append(timestamp)
-
-                messages.append(
-                    {
-                        "uuid": msg.get("id"),
-                        "session_id": session_info["session_id"],
-                        "parent_uuid": None,
-                        "type": "user",
-                        "timestamp": timestamp,
-                        "model": None,
-                        "stop_reason": None,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "cache_creation_tokens": 0,
-                        "cache_read_tokens": 0,
-                    }
-                )
-
-            elif msg_type == "gemini":
-                session_info["message_count"] += 1
-                session_info["assistant_messages"] += 1
-                if timestamp:
-                    timestamps.append(timestamp)
-
-                # Extract tokens
-                tokens = msg.get("tokens", {})
-                input_tokens = tokens.get("input", 0)
-                output_tokens = tokens.get("output", 0)
-
-                session_info["input_tokens"] += input_tokens
-                session_info["output_tokens"] += output_tokens
-
-                messages.append(
-                    {
-                        "uuid": msg.get("id"),
-                        "session_id": session_info["session_id"],
-                        "parent_uuid": None,
-                        "type": "assistant",
-                        "timestamp": timestamp,
-                        "model": msg.get("model"),
-                        "stop_reason": None,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cache_creation_tokens": 0,
-                        "cache_read_tokens": tokens.get("cached", 0),
-                    }
-                )
-
-                # Extract tool calls
-                for tc in msg.get("toolCalls", []):
-                    status = tc.get("status", "")
-                    tool_uses.append(
-                        {
-                            "tool_use_id": tc.get("id"),
-                            "message_uuid": msg.get("id"),
-                            "session_id": session_info["session_id"],
-                            "tool_name": tc.get("name", "unknown"),
-                            "is_error": 1
-                            if status.lower() in ("error", "failed", "failure")
-                            else 0,
-                            "timestamp": tc.get("timestamp", timestamp),
-                        }
-                    )
-
-    except (OSError, json.JSONDecodeError):
-        pass
+    for msg in chat_messages:
+        if not isinstance(msg, dict):
+            continue
+        record = _gemini_message_record(msg, session_info["session_id"])
+        if record is None:
+            continue
+        session_info["message_count"] += 1
+        if record["type"] == "user":
+            session_info["user_messages"] += 1
+        else:
+            session_info["assistant_messages"] += 1
+            session_info["input_tokens"] += record["input_tokens"]
+            session_info["output_tokens"] += record["output_tokens"]
+            tool_uses.extend(_gemini_tool_uses(msg, record))
+        if as_timestamp(record["timestamp"]):
+            timestamps.append(record["timestamp"])
+        messages.append(record)
 
     # Update first/last timestamps from messages if needed
     if timestamps:
@@ -882,6 +976,55 @@ def _parse_gemini_json(
         session_info["last_timestamp"] = max(timestamps)
 
     return session_info, messages, tool_uses
+
+
+def _gemini_message_record(msg: Dict[str, Any], session_id: Any) -> Optional[Dict[str, Any]]:
+    """The messages-table record of a Gemini user or gemini message, else None."""
+    msg_type = msg.get("type", "")
+    if msg_type not in ("user", "gemini"):
+        return None
+    tokens = _as_dict(msg.get("tokens")) if msg_type == "gemini" else {}
+    return {
+        "uuid": msg.get("id"),
+        "session_id": session_id,
+        "parent_uuid": None,
+        "type": "user" if msg_type == "user" else "assistant",
+        "timestamp": msg.get("timestamp", ""),
+        "model": msg.get("model") if msg_type == "gemini" else None,
+        "stop_reason": None,
+        "input_tokens": as_count(tokens.get("input")),
+        "output_tokens": as_count(tokens.get("output")),
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": as_count(tokens.get("cached")),
+    }
+
+
+_GEMINI_TOOL_ERROR_STATUSES = ("error", "failed", "failure")
+
+
+def _gemini_tool_uses(msg: Dict[str, Any], record: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The tool-use records of a Gemini message's toolCalls; non-objects are skipped."""
+    tool_calls = msg.get("toolCalls")
+    if not isinstance(tool_calls, list):
+        return []
+    uses = []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        status = tc.get("status")
+        uses.append(
+            {
+                "tool_use_id": tc.get("id"),
+                "message_uuid": record["uuid"],
+                "session_id": record["session_id"],
+                "tool_name": tc.get("name", "unknown"),
+                "is_error": 1
+                if isinstance(status, str) and status.lower() in _GEMINI_TOOL_ERROR_STATUSES
+                else 0,
+                "timestamp": tc.get("timestamp", record["timestamp"]),
+            }
+        )
+    return uses
 
 
 def _calculate_work_periods(
@@ -930,6 +1073,29 @@ def _calculate_work_periods(
     return total_seconds, num_periods
 
 
+def _session_row_is_current(
+    conn: sqlite3.Connection, file_path_str: str, current_mtime: float, source_key: str
+) -> bool:
+    """Whether a file's stored row can be kept without parsing the file again.
+
+    The row is kept only when the file is unchanged, it was reached through
+    the same home, and the current parsers wrote it. An unchanged file reached
+    through a different home is synced again, so one file is never left under
+    the home of an older sync.
+    """
+    row = conn.execute(
+        "SELECT file_mtime, home, parser_version FROM sessions WHERE file_path = ?",
+        (file_path_str,),
+    ).fetchone()
+    return bool(
+        row
+        and row["file_mtime"]
+        and row["file_mtime"] >= current_mtime
+        and row["home"] == source_key
+        and row["parser_version"] == METRICS_PARSER_VERSION
+    )
+
+
 def sync_file_to_db(
     conn: sqlite3.Connection,
     jsonl_file: Path,
@@ -956,34 +1122,12 @@ def sync_file_to_db(
     except OSError:
         return False
 
-    if not force and not _needs_sync(conn, str(jsonl_file), current_mtime, source_key):
+    if not force and _session_row_is_current(conn, str(jsonl_file), current_mtime, source_key):
         return False
 
     record = _extract_file_stats(str(jsonl_file), agent, workspace)
     _store_file_stats(conn, record, source_key)
     return True
-
-
-def _needs_sync(
-    conn: sqlite3.Connection, file_path: str, current_mtime: float, source_key: str
-) -> bool:
-    """Return True unless the stored row is current for this file.
-
-    An unchanged file reached through a different home is synced again, so
-    one file is never left under the home of an older sync. So is a file
-    whose row an older cagelens wrote.
-    """
-    row = conn.execute(
-        "SELECT file_mtime, home, stats_format FROM sessions WHERE file_path = ?",
-        (file_path,),
-    ).fetchone()
-    return not (
-        row
-        and row["file_mtime"]
-        and row["file_mtime"] >= current_mtime
-        and row["home"] == source_key
-        and row["stats_format"] == STATS_FORMAT_VERSION
-    )
 
 
 def _extract_file_stats(file_path: str, agent: str, workspace: Optional[str]) -> Dict[str, Any]:
@@ -996,7 +1140,7 @@ def _extract_file_stats(file_path: str, agent: str, workspace: Optional[str]) ->
     jsonl_file = Path(file_path)
     current_mtime = jsonl_file.stat().st_mtime
     backend = require_backend(agent)
-    session_info, messages, tool_uses = backend.extract_stats(jsonl_file)
+    session_info, messages, tool_uses = clean_stats_payload(backend.extract_stats(jsonl_file))
     resolved_workspace = backend.resolve_stats_workspace(jsonl_file, session_info, workspace)
     timestamps = [m.get("timestamp", "") for m in messages if m.get("timestamp")]
     work_seconds, num_periods = _calculate_work_periods(timestamps)
@@ -1018,9 +1162,97 @@ def _store_file_stats(conn: sqlite3.Connection, record: Dict[str, Any], source_k
     file_path_str = record["file_path"]
     session_info = record["session_info"]
 
-    conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (file_path_str,))
-    conn.execute("DELETE FROM messages WHERE file_path = ?", (file_path_str,))
-    conn.execute("DELETE FROM sessions WHERE file_path = ?", (file_path_str,))
+    agent = record["agent"]
+    session_row = (
+        file_path_str,
+        session_info.get("session_id"),
+        record["workspace"],
+        source_key,
+        source_key,
+        agent,
+        record["mtime"],
+        1 if session_info.get("is_agent") else 0,
+        session_info.get("parent_session_id"),
+        session_info.get("first_timestamp"),
+        session_info.get("last_timestamp"),
+        session_info.get("message_count", 0),
+        session_info.get("user_messages", 0),
+        session_info.get("assistant_messages", 0),
+        session_info.get("input_tokens", 0),
+        session_info.get("output_tokens", 0),
+        session_info.get("cache_creation_tokens", 0),
+        session_info.get("cache_read_tokens", 0),
+        session_info.get("first_timestamp"),
+        session_info.get("last_timestamp"),
+        session_info.get("git_branch"),
+        session_info.get("claude_version"),
+        session_info.get("cwd"),
+        record["work_seconds"],
+        record["num_periods"],
+        METRICS_PARSER_VERSION,
+    )
+    paths = [file_path_str]
+    if agent == "gemini" and file_path_str.endswith(".jsonl"):
+        # Gemini CLI resumes <name>.json by copying it, with every message, to
+        # <name>.jsonl beside it; the copy holds the session from then on.
+        paths.append(file_path_str[:-1])
+    _store_file_rows(
+        conn, paths, record["mtime"], session_row, record["messages"], record["tool_uses"]
+    )
+
+
+_FILE_SAVEPOINT = "sync_file"
+
+
+def _store_file_rows(
+    conn: sqlite3.Connection,
+    paths: List[str],
+    current_mtime: float,
+    session_row: Tuple[Any, ...],
+    messages: List[Dict[str, Any]],
+    tool_uses: List[Dict[str, Any]],
+) -> None:
+    """Replace one file's rows, all or none.
+
+    ``paths`` is the file's path, then any other files whose session it now
+    holds; their rows are deleted.
+
+    The rows are written inside a savepoint. If one cannot be stored, the
+    savepoint is rolled back, so the file keeps its earlier rows (or has
+    none) and is read again by the next sync, even if the caller commits.
+    The savepoint does not commit: a sync of many files stays one
+    transaction that the caller commits.
+    """
+    if conn.isolation_level is not None and not conn.in_transaction:
+        # The transaction sqlite3 would open before the first DELETE; opened
+        # here so releasing the savepoint does not commit it
+        conn.execute("BEGIN")
+    conn.execute(f"SAVEPOINT {_FILE_SAVEPOINT}")
+    try:
+        _write_file_rows(conn, paths, current_mtime, session_row, messages, tool_uses)
+    except BaseException:
+        conn.execute(f"ROLLBACK TO SAVEPOINT {_FILE_SAVEPOINT}")
+        conn.execute(f"RELEASE SAVEPOINT {_FILE_SAVEPOINT}")
+        raise
+    conn.execute(f"RELEASE SAVEPOINT {_FILE_SAVEPOINT}")
+
+
+def _write_file_rows(
+    conn: sqlite3.Connection,
+    paths: List[str],
+    current_mtime: float,
+    session_row: Tuple[Any, ...],
+    messages: List[Dict[str, Any]],
+    tool_uses: List[Dict[str, Any]],
+) -> None:
+    file_path_str = paths[0]
+    # Delete existing data for this file and the files it replaces
+    for path in paths:
+        conn.execute("DELETE FROM tool_uses WHERE file_path = ?", (path,))
+        conn.execute("DELETE FROM messages WHERE file_path = ?", (path,))
+        conn.execute("DELETE FROM sessions WHERE file_path = ?", (path,))
+    for path in paths[1:]:
+        conn.execute("DELETE FROM synced_files WHERE file_path = ?", (path,))
 
     conn.execute(
         """
@@ -1033,37 +1265,10 @@ def _store_file_stats(conn: sqlite3.Connection, record: Dict[str, Any], source_k
             cache_creation_tokens, cache_read_tokens,
             first_timestamp, last_timestamp,
             git_branch, claude_version, cwd,
-            work_period_seconds, num_work_periods, stats_format
+            work_period_seconds, num_work_periods, parser_version
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (
-            file_path_str,
-            session_info.get("session_id"),
-            record["workspace"],
-            source_key,
-            source_key,
-            record["agent"],
-            record["mtime"],
-            1 if session_info.get("is_agent") else 0,
-            session_info.get("parent_session_id"),
-            session_info.get("first_timestamp"),
-            session_info.get("last_timestamp"),
-            session_info.get("message_count", 0),
-            session_info.get("user_messages", 0),
-            session_info.get("assistant_messages", 0),
-            session_info.get("input_tokens", 0),
-            session_info.get("output_tokens", 0),
-            session_info.get("cache_creation_tokens", 0),
-            session_info.get("cache_read_tokens", 0),
-            session_info.get("first_timestamp"),
-            session_info.get("last_timestamp"),
-            session_info.get("git_branch"),
-            session_info.get("claude_version"),
-            session_info.get("cwd"),
-            record["work_seconds"],
-            record["num_periods"],
-            STATS_FORMAT_VERSION,
-        ),
+        session_row,
     )
 
     conn.executemany(
@@ -1089,7 +1294,7 @@ def _store_file_stats(conn: sqlite3.Connection, record: Dict[str, Any], source_k
                 msg.get("cache_creation_tokens", 0),
                 msg.get("cache_read_tokens", 0),
             )
-            for msg in record["messages"]
+            for msg in messages
         ],
     )
 
@@ -1110,7 +1315,7 @@ def _store_file_stats(conn: sqlite3.Connection, record: Dict[str, Any], source_k
                 tu.get("is_error", 0),
                 tu.get("timestamp"),
             )
-            for tu in record["tool_uses"]
+            for tu in tool_uses
         ],
     )
 
@@ -1119,7 +1324,7 @@ def _store_file_stats(conn: sqlite3.Connection, record: Dict[str, Any], source_k
         INSERT OR REPLACE INTO synced_files (file_path, mtime, synced_at)
         VALUES (?, ?, ?)
         """,
-        (file_path_str, record["mtime"], datetime.now().isoformat()),
+        (file_path_str, current_mtime, datetime.now().isoformat()),
     )
 
 
@@ -1268,7 +1473,7 @@ def sync_scope_to_db(
         except OSError:
             stats["errors"] += 1
             continue
-        if not force and not _needs_sync(conn, file_key, current_mtime, home):
+        if not force and _session_row_is_current(conn, file_key, current_mtime, home):
             stats["skipped"] += 1
             continue
         todo.append((file_key, home, workspace, agent))
@@ -2422,6 +2627,7 @@ def get_session_stats_from_db(
         - cache_creation_tokens: Total cache creation tokens
         - cache_read_tokens: Total cache read tokens
         - sessions: Total session count
+        - agent_sessions: Sessions marked as sub-agents (is_agent)
         - messages: Total message count
         - user_messages: Total user message count
         - assistant_messages: Total assistant message count
@@ -2437,6 +2643,7 @@ def get_session_stats_from_db(
                 COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
                 COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
                 COUNT(*) as sessions,
+                COALESCE(SUM(is_agent), 0) as agent_sessions,
                 COALESCE(SUM(message_count), 0) as messages,
                 COALESCE(SUM(user_messages), 0) as user_messages,
                 COALESCE(SUM(assistant_messages), 0) as assistant_messages
@@ -2479,6 +2686,7 @@ def get_session_stats_from_db(
             "cache_creation_tokens": row["cache_creation_tokens"],
             "cache_read_tokens": row["cache_read_tokens"],
             "sessions": row["sessions"],
+            "agent_sessions": row["agent_sessions"],
             "messages": row["messages"],
             "user_messages": row["user_messages"],
             "assistant_messages": row["assistant_messages"],

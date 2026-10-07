@@ -59,6 +59,12 @@ def overlay_metrics(stats: dict[str, Any], metrics: dict[str, Any]) -> dict[str,
         if key in metrics:
             stats[key] = metrics[key]
 
+    # Session discovery does not read the files, so only the database knows
+    # which sessions are sub-agents; sessions it has not read count as main.
+    if "agent_sessions" in metrics:
+        stats["agent_sessions"] = metrics["agent_sessions"]
+        stats["main_sessions"] = max(stats.get("sessions", 0) - metrics["agent_sessions"], 0)
+
     tokens = stats.get("tokens", {})
     tokens["input"] = metrics.get("input_tokens", tokens.get("input", 0))
     tokens["output"] = metrics.get("output_tokens", tokens.get("output", 0))

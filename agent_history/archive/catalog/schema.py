@@ -2,16 +2,39 @@
 
 ``{TS}``, ``{JSON}``, ``{BIG}`` and ``{BOOL}`` are replaced per store: PostgreSQL gets
 ``timestamptz``, ``jsonb``, ``bigint`` and ``boolean``; SQLite gets ``TEXT`` and ``INTEGER``.
+``{BYTES}`` names each store's byte-order collation (``"C"`` and ``BINARY``), so text sorts
+the same way on both whatever the database's locale.
 The catalog holds metadata only, never message text.
+
+Views hold no data, so changing one needs no new schema version: every open for
+writing (catalog sync and rebuild) drops and creates each view, so a view's query and
+columns can both change. Catalog status opens read-only and changes nothing.
 """
 
 from __future__ import annotations
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
+
+# Older versions that opening for writing upgrades in place. Each later version only added tables
+# (created by the CREATE ... IF NOT EXISTS statements below), so upgrading only records
+# the new version. Version 2 added ``pending_sessions``.
+UPGRADABLE_VERSIONS = ("1",)
 
 TYPES = {
-    "sqlite": {"TS": "TEXT", "JSON": "TEXT", "BIG": "INTEGER", "BOOL": "INTEGER"},
-    "postgres": {"TS": "TIMESTAMPTZ", "JSON": "JSONB", "BIG": "BIGINT", "BOOL": "BOOLEAN"},
+    "sqlite": {
+        "TS": "TEXT",
+        "JSON": "TEXT",
+        "BIG": "INTEGER",
+        "BOOL": "INTEGER",
+        "BYTES": "BINARY",
+    },
+    "postgres": {
+        "TS": "TIMESTAMPTZ",
+        "JSON": "JSONB",
+        "BIG": "BIGINT",
+        "BOOL": "BOOLEAN",
+        "BYTES": '"C"',
+    },
 }
 
 TABLES = (
@@ -102,21 +125,42 @@ TABLES = (
         file_sha256 TEXT,
         PRIMARY KEY (source, path, session_id)
     )""",
+    # Session files whose last read failed, with the SHA-256 the manifest gave them;
+    # every sync retries them. ``error_type`` is the exception's class name only, so
+    # no file content can reach the catalog.
+    """CREATE TABLE IF NOT EXISTS pending_sessions (
+        source TEXT NOT NULL,
+        path TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        error_type TEXT,
+        PRIMARY KEY (source, path)
+    )""",
     """CREATE INDEX IF NOT EXISTS sessions_by_id ON sessions (agent, session_id)""",
     """CREATE INDEX IF NOT EXISTS runs_by_source ON runs (source)""",
+    # Session files count messages and a database may count turns, so the largest count
+    # of each kind has its own column.
     """CREATE VIEW IF NOT EXISTS session_copies AS
         SELECT agent, session_id,
                COUNT(DISTINCT source) AS sources,
                COUNT(*) AS copies,
-               MAX(message_count) AS max_messages,
+               MAX(CASE WHEN from_database THEN NULL ELSE message_count END)
+                   AS max_file_messages,
+               MAX(CASE WHEN from_database THEN message_count END) AS max_database_count,
                MAX(last_timestamp) AS last_timestamp
         FROM sessions
         GROUP BY agent, session_id""",
+    # Session files before database rows (a database may count turns, a file counts
+    # messages), then the most messages, then the latest message. "x IS NULL" puts
+    # NULLs last on both stores: they sort last in SQLite but first in PostgreSQL.
+    # The last tie-break compares bytes, as PostgreSQL would otherwise use its locale.
     """CREATE VIEW IF NOT EXISTS session_longest_copy AS
         SELECT * FROM (
             SELECT s.*, ROW_NUMBER() OVER (
                 PARTITION BY agent, session_id
-                ORDER BY message_count DESC, last_timestamp DESC, source, path
+                ORDER BY from_database,
+                         message_count IS NULL, message_count DESC,
+                         last_timestamp IS NULL, last_timestamp DESC,
+                         source COLLATE {BYTES}, path COLLATE {BYTES}
             ) AS copy_rank
             FROM sessions s
         ) ranked
@@ -124,7 +168,18 @@ TABLES = (
 )
 
 # Deleted in this order when the catalog is rebuilt.
-DATA_TABLES = ("sessions", "row_exports", "file_versions", "files", "runs", "sources")
+DATA_TABLES = (
+    "pending_sessions",
+    "sessions",
+    "row_exports",
+    "file_versions",
+    "files",
+    "runs",
+    "sources",
+)
+
+
+_CREATE_VIEW = "CREATE VIEW IF NOT EXISTS "
 
 
 def statements(dialect: str) -> list[str]:
@@ -134,7 +189,9 @@ def statements(dialect: str) -> list[str]:
         sql = template
         for name, value in types.items():
             sql = sql.replace("{" + name + "}", value)
-        if dialect == "postgres":
-            sql = sql.replace("CREATE VIEW IF NOT EXISTS", "CREATE OR REPLACE VIEW")
+        if sql.startswith(_CREATE_VIEW):
+            view = sql[len(_CREATE_VIEW) :].split()[0]
+            result.append(f"DROP VIEW IF EXISTS {view}")
+            sql = "CREATE VIEW " + sql[len(_CREATE_VIEW) :]
         result.append(sql)
     return result

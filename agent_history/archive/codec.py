@@ -68,6 +68,10 @@ def compress_file(
 
     ``prefix_length`` asks for the SHA-256 of the first that many bytes as well; it is None
     when the file is shorter. A file that shrinks while being read raises ``OSError``.
+
+    Once written and closed, ``dst`` is decompressed again and must hold exactly the bytes
+    that were read; otherwise it is removed and ``OSError`` is raised. Decompressing costs
+    little next to compressing at a high level.
     """
     _zstd()
     if size is None:
@@ -94,6 +98,7 @@ def compress_file(
                 writer.write(chunk)
                 remaining -= len(chunk)
             writer.close()
+        check_compressed(dst, size, whole.hexdigest())
     except BaseException:
         dst.unlink(missing_ok=True)
         raise
@@ -147,6 +152,22 @@ def decompressed_sha256(path: Path) -> tuple[str, int]:
             digest.update(chunk)
             total += len(chunk)
     return digest.hexdigest(), total
+
+
+def check_compressed(path: Path, size: int, sha256: str) -> None:
+    """Raise ``OSError`` unless ``path`` decompresses to ``size`` bytes with ``sha256``.
+
+    A frame cut short decompresses without an error up to its last complete block, so the
+    length and hash are compared, not only the decompression.
+    """
+    try:
+        found, length = decompressed_sha256(path)
+    except _zstd().ZstdError as exc:
+        raise OSError(f"The compressed copy cannot be decompressed: {exc}") from exc
+    if (length, found) != (size, sha256):
+        raise OSError(
+            f"The compressed copy does not hold the {size} bytes that were read (it holds {length})"
+        )
 
 
 def open_maybe_compressed(path: Path, encoding: str = "utf-8") -> IO[str]:

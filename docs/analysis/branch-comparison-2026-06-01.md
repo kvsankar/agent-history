@@ -63,6 +63,6 @@ longer time out. Key line-count checks:
 - Remote Claude sessions for `claude-history`: master `77`, feature `77`.
 - Windows Claude sessions for `claude-history`: master `64`, feature `64`.
 - Remote Claude workspace for `claude-history`: both report
-  `/home/alex/alex/projects/claude-history`.
+  `/home/alex/projects/claude-history`.
 - Windows Claude workspace for `claude-history`: both report
   `/mnt/c/alex/projects/claude-history`.

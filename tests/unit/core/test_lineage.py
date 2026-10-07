@@ -169,6 +169,7 @@ def test_codex_lineage_tolerates_non_dict_source_metadata(tmp_path: Path) -> Non
 
 
 def test_codex_lineage_tolerates_non_dict_nested_source_metadata(tmp_path: Path) -> None:
+    """Codex writes review and compaction threads as {'subagent': 'review'}."""
     session_file = tmp_path / "rollout-main.jsonl"
     _write_jsonl(
         session_file,
@@ -179,7 +180,7 @@ def test_codex_lineage_tolerates_non_dict_nested_source_metadata(tmp_path: Path)
                 "payload": {
                     "id": "main-thread",
                     "cwd": "/tmp/workspace",
-                    "source": {"subagent": "unexpected"},
+                    "source": {"subagent": "review"},
                 },
             }
         ],
@@ -188,7 +189,7 @@ def test_codex_lineage_tolerates_non_dict_nested_source_metadata(tmp_path: Path)
     lineage = build_timeline_lineage([_session(session_file, AGENT_CODEX)])
 
     assert lineage[0]["session_id"] == "main-thread"
-    assert lineage[0]["kind"] == "main"
+    assert lineage[0]["kind"] == "subagent"
 
 
 def test_claude_lineage_discovers_nested_subagent_and_notification(
@@ -602,7 +603,7 @@ def test_gemini_jsonl_lineage_recognizes_nested_child_transcript(tmp_path: Path)
     lineage = build_timeline_lineage([_session(gemini_file, AGENT_GEMINI)])
 
     assert lineage[0]["kind"] == "subagent"
-    assert lineage[0]["session_id"] == "child-session"
+    assert lineage[0]["session_id"] == "parent-session:child-session"
     assert lineage[0]["parent_session_id"] == "parent-session"
     assert lineage[0]["agent_id"] == "child-agent"
 
@@ -728,3 +729,31 @@ def test_pi_lineage_captures_extension_subagent_tool_call(tmp_path: Path) -> Non
     assert completion_event["timestamp"] == "2026-06-09T10:00:02.000Z"
     assert completion_event["status"] == "completed"
     assert completion_event["summary"] == "done"
+
+
+def test_gemini_jsonl_lineage_drops_the_message_a_rewind_names(tmp_path: Path) -> None:
+    gemini_file = tmp_path / "session-rewind-named.jsonl"
+    _write_jsonl(
+        gemini_file,
+        [
+            {"sessionId": "gemini-rewind-named", "startTime": "2026-06-09T10:00:00.000Z"},
+            {
+                "id": "removed",
+                "timestamp": "2026-06-09T10:00:10.000Z",
+                "type": "gemini",
+                "toolCalls": [
+                    {
+                        "id": "codebase_investigator-removed",
+                        "name": "codebase_investigator",
+                        "displayName": "Codebase Investigator Agent",
+                        "status": "success",
+                    }
+                ],
+            },
+            {"$rewindTo": "removed"},
+        ],
+    )
+
+    lineage = build_timeline_lineage([_session(gemini_file, AGENT_GEMINI)])
+
+    assert [record["kind"] for record in lineage] == ["main"]

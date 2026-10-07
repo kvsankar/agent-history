@@ -152,11 +152,11 @@ def _export_command(argv: list[str]) -> int:
 
 def known_mtimes(conn: sqlite3.Connection, home: str) -> dict[str, float]:
     """Stored mtimes of current rows for a Windows home, keyed by Windows path."""
-    from agent_history.storage.metrics import STATS_FORMAT_VERSION
+    from agent_history.storage.metrics import METRICS_PARSER_VERSION
 
     rows = conn.execute(
-        "SELECT file_path, file_mtime FROM sessions WHERE home = ? AND stats_format = ?",
-        (home, STATS_FORMAT_VERSION),
+        "SELECT file_path, file_mtime FROM sessions WHERE home = ? AND parser_version = ?",
+        (home, METRICS_PARSER_VERSION),
     ).fetchall()
     return {to_windows_path(row[0]): float(row[1] or 0) for row in rows}
 

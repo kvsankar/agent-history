@@ -57,7 +57,7 @@ def _rows(conn):
     return {
         "sessions": conn.execute(
             "SELECT file_path, workspace, home, agent, message_count, input_tokens, "
-            "output_tokens, start_time, end_time, work_period_seconds, stats_format "
+            "output_tokens, start_time, end_time, work_period_seconds, parser_version "
             "FROM sessions ORDER BY file_path"
         ).fetchall(),
         "messages": conn.execute(
@@ -102,10 +102,12 @@ def test_parallel_sync_skips_unchanged_files(tmp_path, scope):
         conn.close()
 
 
-def test_unreadable_file_counts_as_an_error(tmp_path, scope):
+def test_a_file_that_cannot_be_parsed_counts_as_an_error(tmp_path, scope):
+    # Undecodable bytes are replaced while reading, so the failure here is a
+    # file whose agent has no parser.
     broken = tmp_path / "broken.jsonl"
-    broken.write_bytes(b"\xff\xfe not utf-8\n")
-    scope[0].sessions.append({"file": str(broken), "agent": "claude"})
+    broken.write_text("{}\n", encoding="utf-8")
+    scope[0].sessions.append({"file": str(broken), "agent": "no-such-agent"})
 
     conn, stats = _sync(tmp_path, scope, "db", jobs=4)
     try:

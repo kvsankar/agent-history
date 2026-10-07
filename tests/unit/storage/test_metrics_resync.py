@@ -45,7 +45,7 @@ def test_unchanged_file_from_an_older_format_is_synced_again(tmp_path):
         assert _sync(conn, path)
         current = _workspace(conn, path)
         conn.execute(
-            "UPDATE sessions SET workspace = 'with-ai', stats_format = 0 WHERE file_path = ?",
+            "UPDATE sessions SET workspace = 'with-ai', parser_version = 0 WHERE file_path = ?",
             (str(path),),
         )
         conn.commit()
@@ -62,26 +62,5 @@ def test_unchanged_file_in_the_current_format_is_skipped(tmp_path):
     try:
         assert _sync(conn, path)
         assert not _sync(conn, path)
-    finally:
-        conn.close()
-
-
-def test_database_from_an_older_cagelens_gains_the_format_column(tmp_path):
-    """Older databases lack the column; every row then counts as outdated."""
-    path = _session_file(tmp_path)
-    db = tmp_path / "metrics.db"
-    conn = metrics.init_metrics_db(db)
-    try:
-        assert _sync(conn, path)
-        conn.execute("ALTER TABLE sessions DROP COLUMN stats_format")
-        conn.commit()
-    finally:
-        conn.close()
-
-    conn = metrics.init_metrics_db(db)
-    try:
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
-        assert "stats_format" in columns
-        assert conn.execute("SELECT stats_format FROM sessions").fetchone()[0] == 0
     finally:
         conn.close()

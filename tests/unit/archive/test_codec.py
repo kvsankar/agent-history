@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 import zstandard
@@ -123,3 +124,24 @@ def test_multithreaded_compressors_are_not_kept(tmp_path):
     assert (
         zstandard.ZstdDecompressor().decompress((tmp_path / "o.zst").read_bytes()) == b"z" * 10000
     )
+
+
+def test_compress_file_refuses_a_copy_that_does_not_hold_the_content(tmp_path, monkeypatch):
+    """The copy is read back: a frame that was never ended must not pass as complete."""
+    from agent_history.archive import codec
+
+    real = zstandard.ZstdCompressor(level=3, write_content_size=True)
+
+    class Unfinished:
+        def stream_writer(self, raw, **kwargs):
+            writer = real.stream_writer(raw, **kwargs)
+            return SimpleNamespace(write=writer.write, close=lambda: None)
+
+    monkeypatch.setattr(codec, "_thread_compressor", lambda level, threads=0: Unfinished())
+    src = tmp_path / "s.jsonl"
+    src.write_bytes(b'{"a": 1}\n' * 1000)
+    dst = tmp_path / "s.jsonl.zst"
+
+    with pytest.raises(OSError, match="does not hold"):
+        compress_file(src, dst, level=3)
+    assert not dst.exists()

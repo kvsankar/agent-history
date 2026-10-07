@@ -13,6 +13,7 @@ from agent_history.export.markdown import (
     MARKDOWN_DEFAULT_LEVEL,
     parse_jsonl_to_markdown,
 )
+from agent_history.utils.jsonl import dict_field, id_key, json_objects, open_transcript
 from agent_history.utils.platform import AGENT_PI
 
 PI_WRAPPED_WORKSPACE_MARKER_LEN = len("----")
@@ -132,8 +133,8 @@ def _pi_extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
         for block in content:
             if isinstance(block, dict) and block.get("type") == "toolCall":
                 call_id = block.get("id")
-                if call_id:
-                    seen_ids.add(call_id)
+                if key := id_key(call_id):
+                    seen_ids.add(key)
                 calls.append(
                     {
                         "id": call_id,
@@ -142,16 +143,16 @@ def _pi_extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
                     }
                 )
 
-    metadata_calls = (message.get("metadata") or {}).get("toolCalls")
+    metadata_calls = dict_field(message, "metadata").get("toolCalls")
     if isinstance(metadata_calls, list):
         for call in metadata_calls:
             if not isinstance(call, dict):
                 continue
-            call_id = call.get("id")
-            if call_id and call_id in seen_ids:
+            key = id_key(call.get("id"))
+            if key and key in seen_ids:
                 continue
-            if call_id:
-                seen_ids.add(call_id)
+            if key:
+                seen_ids.add(key)
             calls.append(call)
     return calls
 
@@ -281,24 +282,34 @@ def _pi_normalize_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
     return normalized
 
 
+def _pi_branch_ids(leaf: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> set[str]:
+    """The text IDs on the path from ``leaf`` up through its parents."""
+    branch_ids: set[str] = set()
+    current: dict[str, Any] | None = leaf
+    while current and (key := id_key(current.get("id"))) and key not in branch_ids:
+        branch_ids.add(key)
+        current = by_id.get(id_key(current.get("parent_id")) or "")
+    return branch_ids
+
+
 def _pi_active_branch_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return messages on Pi's latest active branch path."""
-    by_id = {msg.get("id"): msg for msg in messages if msg.get("id")}
+    """Return messages on Pi's latest active branch path.
+
+    IDs are compared in their text form, so an ID that is a list or object
+    in a malformed entry still links its messages.
+    """
+    by_id = {key: msg for msg in messages if (key := id_key(msg.get("id")))}
     if not by_id or not any(msg.get("parent_id") for msg in messages):
         return messages
 
-    leaf = next((msg for msg in reversed(messages) if msg.get("id")), None)
+    leaf = next((msg for msg in reversed(messages) if id_key(msg.get("id"))), None)
     if not leaf:
         return messages
 
-    active_ids = set()
-    current = leaf
-    while current and current.get("id") and current.get("id") not in active_ids:
-        active_ids.add(current["id"])
-        current = by_id.get(current.get("parent_id"))
-
-    omitted = sum(1 for msg in messages if msg.get("id") and msg.get("id") not in active_ids)
-    active = [msg for msg in messages if not msg.get("id") or msg.get("id") in active_ids]
+    active_ids = _pi_branch_ids(leaf, by_id)
+    keys = [id_key(msg.get("id")) for msg in messages]
+    omitted = sum(1 for key in keys if key and key not in active_ids)
+    active = [msg for msg, key in zip(messages, keys) if not key or key in active_ids]
     if omitted:
         for msg in active:
             msg["pi_omitted_branch_entries"] = omitted
@@ -311,12 +322,8 @@ def pi_read_jsonl_messages(
     """Read messages from a Pi JSONL session file."""
     messages: list[dict[str, Any]] = []
     session_meta = None
-    with open(jsonl_file, encoding="utf-8") as f:
-        for line in f:
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    with open_transcript(jsonl_file) as f:
+        for entry in json_objects(f):
             entry_type = entry.get("type")
             if entry_type in ("session", "tree"):
                 session_meta = entry
@@ -349,15 +356,14 @@ def _pi_decode_workspace_dir(name: str) -> str:
 def pi_get_workspace_from_session(jsonl_file: Path) -> str:
     """Extract workspace path from Pi session header or encoded parent folder."""
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
-            for line in f:
-                entry = json.loads(line)
+        with open_transcript(jsonl_file) as f:
+            for entry in json_objects(f):
                 if entry.get("type") in ("session", "tree"):
                     cwd = entry.get("cwd") or entry.get("workspace")
                     if cwd:
                         return str(cwd)
                     break
-    except (OSError, json.JSONDecodeError):
+    except OSError:
         pass
     try:
         return _pi_decode_workspace_dir(jsonl_file.parent.name)

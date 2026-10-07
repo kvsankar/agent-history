@@ -42,7 +42,7 @@ def test_stats_table_shows_workspace_glob_scope() -> None:
         "by_home": {"local": {"sessions": 7}},
         "by_workspace": {
             "shopapp-main": {"sessions": 5},
-            "/home/alex/alex/projects/shopapp-main": {"sessions": 1},
+            "/home/alex/projects/shopapp-main": {"sessions": 1},
             "shopapp-mobile": {"sessions": 1},
         },
     }
@@ -50,7 +50,7 @@ def test_stats_table_shows_workspace_glob_scope() -> None:
         "homes": ["local"],
         "workspaces": [
             "shopapp-main",
-            "/home/alex/alex/projects/shopapp-main",
+            "/home/alex/projects/shopapp-main",
             "shopapp-mobile",
         ],
         "scope_request": {"type": "workspace_glob", "values": ["*shopapp*"]},
@@ -384,11 +384,11 @@ def test_stats_rollup_scope_workspaces_use_multiline_summary() -> None:
         "metric": "time",
         "homes": ["local", "windows:alex"],
         "workspaces": [
-            "/home/alex/alex/projects/auth",
-            "/home/alex/alex/projects/auth-infra-test-tagging",
-            "/home/alex/alex/projects/auth/docs",
-            "/home/alex/alex/projects/auth/docs/consolidation",
-            "/home/alex/alex/projects/auth/infra",
+            "/home/alex/projects/auth",
+            "/home/alex/projects/auth-infra-test-tagging",
+            "/home/alex/projects/auth/docs",
+            "/home/alex/projects/auth/docs/consolidation",
+            "/home/alex/projects/auth/infra",
         ],
         "scope_request": {"type": "project", "values": ["shopapp"]},
         "total_sessions": 571,
@@ -397,7 +397,7 @@ def test_stats_rollup_scope_workspaces_use_multiline_summary() -> None:
     output = formatter.format(rows, "stats_rollup", metadata)
 
     assert "Workspaces: 5\n" in output
-    assert "    - /home/alex/alex/projects/auth\n" in output
+    assert "    - /home/alex/projects/auth\n" in output
     assert "    - ... 1 more\n" in output
     assert "Workspaces: 5 (/home" not in output
 

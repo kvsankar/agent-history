@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import zstandard
@@ -112,6 +114,30 @@ def test_recently_modified_file_is_checked_again(env):
     assert _archived(env, SESSION) == b"xyz\n"
 
 
+def test_racy_check_uses_the_time_the_file_was_read(env, monkeypatch):
+    """Slow compression must not hide that the file was modified just before it was read."""
+    import time as time_module
+
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"abc\n")  # modified just now
+    real_time_ns = time_module.time_ns
+    offset = [0]
+    monkeypatch.setattr(time_module, "time_ns", lambda: real_time_ns() + offset[0])
+    real_compress = collect_module.compress_file
+
+    def slow_compress(*args, **kwargs):
+        result = real_compress(*args, **kwargs)
+        offset[0] = 10_000_000_000  # compression took ten seconds
+        return result
+
+    monkeypatch.setattr(collect_module, "compress_file", slow_compress)
+
+    summary = _collect(env)
+
+    assert _entries(env, summary.run_id)[SESSION]["racy"] is True
+
+
 def test_appended_file_is_updated_in_place(env):
     _write(env, SESSION, b"a\n", mtime=1_790_000_000)
     _collect(env)
@@ -177,6 +203,666 @@ def test_missing_state_is_rebuilt_from_manifests(env):
     assert summary.written == 0
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not json",
+        '{"files": {"a.jsonl": {"size": 2, "mtime_ns": 1, "sha256": "", "added_later": 1}}}',
+        '{"files": {"a.jsonl": {"size": 2}}}',
+        '{"files": {"a.jsonl": 5}}',
+        '{"files": []}',
+        '{"log_keys": 5}',
+        "[]",
+    ],
+    ids=["not-json", "new-field", "missing-field", "number", "list", "log-keys", "not-object"],
+)
+def test_a_state_file_of_another_shape_is_rebuilt_with_a_warning(env, capsys, content):
+    from agent_history.archive.state import state_path
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    path = state_path(env["state"], str(env["dest"]), "src")
+    path.write_text(content, encoding="utf-8")
+    capsys.readouterr()
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (summary.written, summary.errors) == (0, 0)
+    assert str(path) in capsys.readouterr().err
+
+
+def _first_file(state, **change):
+    (rel, value), *_ = state["files"].items()
+    return {"files": {**state["files"], rel: {**value, **change}}}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda state: {"last_success": "yesterday"},
+        lambda state: {"last_success": "2026-10-02T06:15:00"},
+        lambda state: {"last_success": 5},
+        lambda state: {"last_run_id": 5},
+        lambda state: {"runs": [1, 2]},
+        lambda state: {"log_keys": []},
+        lambda state: _first_file(state, size=str(state["files"][SESSION]["size"])),
+        lambda state: _first_file(state, mtime_ns=1.5),
+        lambda state: _first_file(state, sha256=7),
+        lambda state: _first_file(state, gone="no"),
+        lambda state: _first_file(state, signature="1,2"),
+        lambda state: _first_file(state, size=True),
+    ],
+    ids=[
+        "last-success-text",
+        "last-success-without-zone",
+        "last-success-number",
+        "last-run-id-number",
+        "run-ids-numbers",
+        "log-keys-list",
+        "size-text",
+        "mtime-fraction",
+        "hash-number",
+        "gone-text",
+        "signature-text",
+        "size-boolean",
+    ],
+)
+def test_a_state_file_with_values_of_another_type_is_rebuilt_with_a_warning(env, capsys, change):
+    import json
+
+    from agent_history.archive.state import state_path
+
+    config = _config(env, min_interval_hours=1)
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env, config=config)
+    path = state_path(env["state"], str(env["dest"]), "src")
+    good = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**good, **change(good)}), encoding="utf-8")
+    capsys.readouterr()
+
+    summary = _collect(env, config=config, now=T0 + timedelta(hours=2))
+
+    assert (summary.written, summary.errors) == (0, 0)
+    assert str(path) in capsys.readouterr().err
+    again = _collect(env, config=config, now=T0 + timedelta(hours=4))
+    assert (again.written, again.errors, again.skipped_reason) == (0, 0, None)
+    assert str(path) not in capsys.readouterr().err
+
+
+def test_unmounted_destination_is_refused(env):
+    """An empty mount point must not be taken for the archive the state describes."""
+    import shutil
+
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    shutil.move(str(env["dest"]), str(env["dest"].with_name("real")))
+    env["dest"].mkdir()  # the mount point of an unmounted network share
+    _write(env, ".claude/projects/p/b2.jsonl", b"new\n", mtime=1_790_000_100)
+
+    with pytest.raises(ArchiveError, match="mounted"):
+        _collect(env, now=T0 + timedelta(hours=1))
+    with pytest.raises(ArchiveError, match="mounted"):
+        _collect(env, now=T0 + timedelta(hours=1), dry_run=True)
+
+    assert list(env["dest"].iterdir()) == []
+
+
+def _record_pings(monkeypatch) -> list[str]:
+    from agent_history.archive import collect as collect_module
+
+    pings: list[str] = []
+
+    class _Response:
+        def close(self):
+            pass
+
+    def urlopen(url, timeout=None):
+        pings.append(url)
+        return _Response()
+
+    monkeypatch.setattr(collect_module.urllib.request, "urlopen", urlopen)
+    return pings
+
+
+HEALTH = "https://health.example/ping/0000"
+
+
+def test_a_refused_destination_sends_the_failure_ping(env, monkeypatch):
+    import shutil
+
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    config = _config(env, health_url=HEALTH)
+    pings = _record_pings(monkeypatch)
+    _collect(env, config=config)
+    shutil.move(str(env["dest"]), str(env["dest"].with_name("real")))
+    env["dest"].mkdir()  # the mount point of an unmounted network share
+    pings.clear()
+
+    with pytest.raises(ArchiveError, match="mounted"):
+        _collect(env, now=T0 + timedelta(hours=1), config=config)
+
+    assert pings == [f"{HEALTH}/fail"]  # refused before the run started
+
+
+def test_a_successful_run_sends_start_and_success_pings(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    pings = _record_pings(monkeypatch)
+
+    _collect(env, config=_config(env, health_url=HEALTH))
+
+    assert pings == [f"{HEALTH}/start", HEALTH]
+
+
+def _failing_health_requests(monkeypatch, error: Exception) -> None:
+    from agent_history.archive import collect as collect_module
+
+    def urlopen(url, timeout=None):
+        raise error
+
+    monkeypatch.setattr(collect_module.urllib.request, "urlopen", urlopen)
+
+
+@pytest.mark.parametrize("error", [ValueError("unknown url type"), RuntimeError("unforeseen")])
+def test_a_failing_health_request_only_warns(env, monkeypatch, capsys, error):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _failing_health_requests(monkeypatch, error)
+
+    summary = _collect(env, config=_config(env, health_url=HEALTH))
+
+    assert summary.written == 1
+    assert f"health request failed: {error}" in capsys.readouterr().err
+
+
+def test_a_failing_failure_request_does_not_replace_the_runs_error(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _failing_health_requests(monkeypatch, ValueError("unknown url type"))
+
+    with pytest.raises(OSError, match="connection dropped during put_tree"):
+        _collect(
+            env,
+            config=_config(env, health_url=HEALTH),
+            destination=_FailingDestination.make(env, "put_tree"),
+        )
+
+
+@pytest.mark.parametrize("state", ["kept", "rebuilt"])
+def test_run_with_errors_does_not_delay_the_next_run(env, monkeypatch, state):
+    """min_interval_hours counts from the last run without errors, so failures are retried."""
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    config = _config(env, min_interval_hours=20)
+    real = collect_module.compress_file
+
+    def failing(src, *args, **kwargs):
+        raise OSError("device busy")
+
+    monkeypatch.setattr(collect_module, "compress_file", failing)
+    first = _collect(env, config=config)
+    monkeypatch.setattr(collect_module, "compress_file", real)
+    if state == "rebuilt":
+        for state_file in env["state"].rglob("*.json"):
+            state_file.unlink()
+
+    second = _collect(env, now=T0 + timedelta(hours=1), config=config)
+
+    assert first.errors == 1
+    assert second.skipped_reason is None
+    assert second.written == 1
+    third = _collect(env, now=T0 + timedelta(hours=2), config=config)
+    assert third.skipped_reason == "min_interval"
+
+
+def test_new_source_is_refused_when_another_source_has_history(env):
+    import shutil
+
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    shutil.rmtree(env["dest"])
+    env["dest"].mkdir()
+    config = parse_config(
+        {
+            "archive": {"destination": str(env["dest"]), "compression_level": 3},
+            "sources": [
+                {"name": "other", "kind": "live", "platform": "linux", "home": str(env["home"])}
+            ],
+        }
+    )
+
+    with pytest.raises(ArchiveError, match="mounted"):
+        collect_source(config, "other", state_dir=env["state"], now=T0 + timedelta(hours=1))
+
+    assert list(env["dest"].iterdir()) == []
+
+
+def test_destination_restored_to_an_older_copy_is_refused(env):
+    import shutil
+
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    shutil.copytree(env["dest"], env["dest"].with_name("old-copy"))
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    _collect(env, now=T0 + timedelta(hours=1))
+    shutil.rmtree(env["dest"])
+    shutil.copytree(env["dest"].with_name("old-copy"), env["dest"])
+    before = sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*"))
+
+    with pytest.raises(ArchiveError, match="older copy"):
+        _collect(env, now=T0 + timedelta(hours=2))
+
+    assert sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*")) == before
+
+
+def test_restored_archive_is_accepted_after_the_state_is_removed(env):
+    import shutil
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    shutil.copytree(env["dest"], env["dest"].with_name("old-copy"))
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    _collect(env, now=T0 + timedelta(hours=1))
+    shutil.rmtree(env["dest"])
+    shutil.copytree(env["dest"].with_name("old-copy"), env["dest"])
+    for state_file in env["state"].rglob("*.json"):
+        state_file.unlink()
+
+    summary = _collect(env, now=T0 + timedelta(hours=2))
+
+    assert _entries(env, summary.run_id)[SESSION]["action"] == "updated"
+    assert _archived(env, SESSION) == b"a\nb\n"
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_crash_after_manifest_before_state_save_is_reconciled(env, monkeypatch):
+    """A manifest newer than the state is applied first, so nothing is versioned twice."""
+    from agent_history.archive import collect as collect_module
+
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+    real = collect_module.save_state
+
+    def crash(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(collect_module, "save_state", crash)
+    with pytest.raises(KeyboardInterrupt):
+        _collect(env, now=T0 + timedelta(hours=1))
+    monkeypatch.setattr(collect_module, "save_state", real)
+
+    third = _collect(env, now=T0 + timedelta(hours=2))
+
+    assert third.versioned == 0
+    assert _entries(env, third.run_id) == {}
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+
+
+def _decompress(path: Path) -> bytes:
+    return zstandard.ZstdDecompressor().decompress(path.read_bytes())
+
+
+def _assert_archive_consistent(env, originals: dict[str, bytes]):
+    """verify is clean, and every listed version holds the content its manifest names."""
+    destination = open_destination(str(env["dest"]))
+    report = verify_source(destination, "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+    versions = {}
+    for _run, entries in read_manifests(destination, "src"):
+        for entry in entries:
+            if entry.get("version_path"):
+                versions[entry["path"]] = entry
+    for path, content in originals.items():
+        entry = versions[path]
+        kept = _decompress(env["dest"] / "sources" / "src" / entry["version_path"])
+        assert kept == content
+        assert entry["previous_sha256"] == hashlib.sha256(content).hexdigest()
+
+
+class _FailingDestination:
+    """A local destination that fails one kind of operation, like a dropped connection."""
+
+    @staticmethod
+    def make(env, fail_on: str):
+        from agent_history.archive.transport import LocalDestination
+
+        class Failing(LocalDestination):
+            def _maybe_fail(self, what: str):
+                if what == fail_on:
+                    raise OSError(f"connection dropped during {what}")
+
+            def put_tree(self, staging):
+                self._maybe_fail("put_tree")
+                return super().put_tree(staging)
+
+            def write_bytes(self, rel, data):
+                if "manifest" in rel:
+                    self._maybe_fail("manifest")
+                return super().write_bytes(rel, data)
+
+            def move(self, src, dst):
+                if "/manifests/" in dst:
+                    self._maybe_fail("commit")
+                return super().move(src, dst)
+
+        return Failing(env["dest"])
+
+
+@pytest.mark.parametrize("fail_on", ["put_tree", "manifest", "commit"])
+def test_interrupted_rewrite_keeps_versions_consistent(env, fail_on):
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            destination=_FailingDestination.make(env, fail_on),
+        )
+    _collect(env, now=T0 + timedelta(hours=2))
+
+    assert _archived(env, SESSION) == b"rewritten\n"
+    _assert_archive_consistent(env, {SESSION: b"original\n"})
+
+
+def test_run_stopped_while_placing_files_is_finished_by_the_next_run(env):
+    """Stopped after the version moves, before the new copies moved into place."""
+    from agent_history.archive.transport import LocalDestination
+
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _write(env, ".codex/history.jsonl", b"h\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+    _write(env, ".codex/history.jsonl", b"h\nmore\n", mtime=1_790_000_100)
+
+    class StopsWhilePlacing(LocalDestination):
+        def place(self, keeps, puts):
+            super().place(keeps, [])
+            raise OSError("connection dropped")
+
+    with pytest.raises(OSError):
+        _collect(env, now=T0 + timedelta(hours=1), destination=StopsWhilePlacing(env["dest"]))
+    third = _collect(env, now=T0 + timedelta(hours=2))
+
+    assert third.written == 0  # the interrupted run was finished, not repeated
+    assert _archived(env, SESSION) == b"rewritten\n"
+    assert _archived(env, ".codex/history.jsonl") == b"h\nmore\n"
+    _assert_archive_consistent(env, {SESSION: b"original\n"})
+    assert not (env["dest"] / "sources" / "src" / "incoming").exists()
+
+
+class _StopsWhilePlacing:
+    @staticmethod
+    def make(env, puts: bool):
+        """Stops after the version moves, and after the new copies too when ``puts``."""
+        from agent_history.archive.transport import LocalDestination
+
+        class Stops(LocalDestination):
+            def place(self, keeps, new_copies):
+                super().place(keeps, new_copies if puts else [])
+                raise OSError("connection dropped")
+
+        return Stops(env["dest"])
+
+
+def _interrupt_a_rewrite(env, config, puts: bool):
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _write(env, ".codex/history.jsonl", b"h\n", mtime=1_790_000_000)
+    _collect(env, config=config)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+    _write(env, ".codex/history.jsonl", b"h\nmore\n", mtime=1_790_000_100)
+    _write(env, ".claude/projects/p/new.jsonl", b"n\n", mtime=1_790_000_100)
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            config=config,
+            force=True,
+            destination=_StopsWhilePlacing.make(env, puts),
+        )
+
+
+def test_an_interrupted_run_is_finished_before_min_interval_applies(env):
+    config = _config(env, min_interval_hours=20)
+    _interrupt_a_rewrite(env, config, puts=False)
+
+    dry = _collect(env, now=T0 + timedelta(hours=2), config=config, dry_run=True)
+    assert dry.skipped_reason == "min_interval"
+    third = _collect(env, now=T0 + timedelta(hours=2), config=config)
+
+    assert third.skipped_reason is None
+    assert _archived(env, SESSION) == b"rewritten\n"
+    assert not (env["dest"] / "sources" / "src" / "incoming").exists()
+    _assert_archive_consistent(env, {SESSION: b"original\n"})
+    fourth = _collect(env, now=T0 + timedelta(hours=3), config=config)
+    assert fourth.skipped_reason == "min_interval"
+
+
+@pytest.mark.parametrize("puts", [False, True], ids=["versions-moved", "all-moved"])
+def test_verify_reports_an_interrupted_run_as_pending(env, puts):
+    _interrupt_a_rewrite(env, _config(env), puts)
+    (pending,) = (env["dest"] / "sources" / "src" / "incoming").iterdir()
+
+    report = verify_source(open_destination(str(env["dest"])), "src")
+
+    assert report.pending == [pending.name]
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+    assert not report.ok
+    _collect(env, now=T0 + timedelta(hours=2))
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_verify_still_reports_damage_next_to_a_pending_run(env):
+    _interrupt_a_rewrite(env, _config(env), puts=True)
+    archived = env["dest"] / "sources" / "src" / "files" / f"{SESSION}.zst"
+    archived.write_bytes(zstandard.ZstdCompressor().compress(b"tampered\n"))
+
+    report = verify_source(open_destination(str(env["dest"])), "src")
+
+    assert report.mismatched == [SESSION]
+
+
+def test_dry_run_does_not_finish_an_interrupted_run(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            destination=_FailingDestination.make(env, "commit"),
+        )
+    incoming = env["dest"] / "sources" / "src" / "incoming"
+    before = sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*"))
+
+    _collect(env, now=T0 + timedelta(hours=2), dry_run=True)
+
+    assert incoming.exists()
+    assert sorted(p.relative_to(env["dest"]) for p in env["dest"].rglob("*")) == before
+
+
+def test_an_undecodable_pending_manifest_is_discarded(env, capsys):
+    """Placing starts only after the manifest was written whole, so a damaged one placed
+    nothing; it is discarded with a warning instead of failing every later run."""
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    incoming = env["dest"] / "sources" / "src" / "incoming" / "20261002T070000Z-src-aaaa"
+    (incoming / "files").mkdir(parents=True)
+    (incoming / "files" / "stray.jsonl.zst").write_bytes(b"partial")
+    (incoming / "manifest.jsonl.zst").write_bytes(b"\x28\xb5\x2f\xfd cut short")
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert summary.written == 1
+    assert "20261002T070000Z-src-aaaa" in capsys.readouterr().err
+    assert not incoming.parent.exists()
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+
+
+def test_interrupted_append_leaves_the_committed_copy(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            destination=_FailingDestination.make(env, "manifest"),
+        )
+
+    assert _archived(env, SESSION) == b"a\n"
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+
+
+def test_interrupted_multi_batch_run_keeps_versions_consistent(env, monkeypatch):
+    """Batches transfer long before the manifest exists; a later failure loses nothing."""
+    from agent_history.archive import collect as collect_module
+
+    originals = {}
+    for index in range(4):
+        rel = f".claude/projects/p/s{index}.jsonl"
+        originals[rel] = f"original {index}\n".encode() * 50
+        _write(env, rel, originals[rel], mtime=1_790_000_000)
+    config = _config(env, workers=1)
+    _collect(env, config=config)
+    for index, rel in enumerate(originals):
+        _write(env, rel, f"rewritten {index}\n".encode() * 50, mtime=1_790_000_100)
+    monkeypatch.setattr(collect_module, "BATCH_BYTES", 1)
+
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            config=config,
+            destination=_FailingDestination.make(env, "manifest"),
+        )
+    third = _collect(env, now=T0 + timedelta(hours=2), config=config)
+
+    assert third.versioned == 4
+    _assert_archive_consistent(env, originals)
+
+
+def test_interrupted_run_leaves_no_unlisted_files_after_the_next_run(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, ".claude/projects/p/new.jsonl", b"n\n", mtime=1_790_000_100)
+    with pytest.raises(OSError):
+        _collect(
+            env,
+            now=T0 + timedelta(hours=1),
+            destination=_FailingDestination.make(env, "manifest"),
+        )
+
+    _collect(env, now=T0 + timedelta(hours=2))
+
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+    leftovers = [p for p in (env["dest"] / "sources" / "src").rglob("*") if p.is_file()]
+    top = {p.relative_to(env["dest"] / "sources" / "src").parts[0] for p in leftovers}
+    assert top <= {"files", "versions", "manifests", "SOURCE.json"}
+
+
+def test_missing_archived_copy_is_not_listed_as_a_version(env):
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    (env["dest"] / "sources" / "src" / "files" / f"{SESSION}.zst").unlink()
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    entry = _entries(env, summary.run_id)[SESSION]
+    assert "version_path" not in entry
+    assert summary.errors == 1
+    assert _archived(env, SESSION) == b"rewritten\n"
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched, report.unlisted) == ([], [], [])
+
+
+def test_state_without_a_run_list_is_reconciled_by_run_order(env):
+    """State files written before the run list existed still pick up newer manifests."""
+    import json
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    (state_file,) = env["state"].rglob("src.json")
+    data = json.loads(state_file.read_text(encoding="utf-8"))
+    data.pop("runs", None)
+    state_file.write_text(json.dumps(data), encoding="utf-8")
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert summary.written == 0
+    assert "runs" in json.loads(state_file.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("step", [timedelta(0), timedelta(minutes=-5)], ids=["same", "back"])
+def test_runs_apply_in_the_order_they_ran(env, monkeypatch, step):
+    """A run in the same second as the last one, or after the clock stepped back, still
+    sorts after it, so a state rebuilt from the manifests ends at the newest content."""
+    from agent_history.archive import manifest as manifest_module
+
+    suffixes = iter(["ffff", "0000", "8888"])
+    monkeypatch.setattr(
+        manifest_module, "secrets", SimpleNamespace(token_hex=lambda n: next(suffixes))
+    )
+    _write(env, SESSION, b"v1\n", mtime=1_790_000_000)
+    first = _collect(env)
+    _write(env, SESSION, b"v2 rewritten\n", mtime=1_790_000_100)
+    second = _collect(env, now=T0 + step)
+    destination = open_destination(str(env["dest"]))
+
+    assert [run["run_id"] for run, _ in read_manifests(destination, "src")] == [
+        first.run_id,
+        second.run_id,
+    ]
+    assert verify_source(destination, "src").ok
+    for state_file in env["state"].rglob("*.json"):
+        state_file.unlink()  # a new machine: the state is rebuilt from the manifests
+    third = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert third.written == 0
+    assert verify_source(destination, "src").ok
+    assert _archived(env, SESSION) == b"v2 rewritten\n"
+
+
+def test_run_ids_follow_the_newest_collector_run_id():
+    from agent_history.archive.manifest import new_run_id
+
+    after = ["20261002T061500Z-src-ffff", "imported-by-hand", "20261002T061459Z-src-0000"]
+
+    assert new_run_id(T0, "src", after).startswith("20261002T061501Z-src-")
+    assert new_run_id(T0 + timedelta(hours=1), "src", after).startswith("20261002T071500Z-")
+    assert new_run_id(T0, "src", ["imported-by-hand"]).startswith("20261002T061500Z-")
+
+
+def test_versions_of_runs_in_the_same_second_do_not_collide(env, monkeypatch):
+    from agent_history.archive import manifest as manifest_module
+
+    monkeypatch.setattr(manifest_module, "secrets", SimpleNamespace(token_hex=lambda n: "abcd"))
+    _write(env, SESSION, b"v1\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"v2\n", mtime=1_790_000_100)
+    _collect(env)
+    _write(env, SESSION, b"v3\n", mtime=1_790_000_200)
+    _collect(env)
+
+    _assert_archive_consistent(env, {})
+    versions = sorted((env["dest"] / "sources" / "src" / "versions").rglob("*.zst"))
+    assert [_decompress(path) for path in versions] == [b"v1\n", b"v2\n"]
+
+
 def test_dry_run_writes_nothing(env):
     _write(env, SESSION, b"a\n")
 
@@ -195,6 +881,329 @@ def test_a_held_lock_stops_a_second_run(env):
     with source_lock(env["state"], config.destination, "src"):
         with pytest.raises(CollectLockedError):
             _collect(env, config=config)
+
+
+def _lock_folder(env):
+    return env["dest"] / "sources" / "src" / "LOCK"
+
+
+def _overlap_after_transfer(monkeypatch, overlapping):
+    """Run ``overlapping`` once, after the first run's files arrived in its incoming folder."""
+    from agent_history.archive import collect as collect_module
+
+    real = collect_module._Run._check_transfer
+    calls = []
+
+    def check_then_overlap(self):
+        real(self)
+        if not calls:
+            calls.append(self.run_id)
+            overlapping()
+
+    monkeypatch.setattr(collect_module._Run, "_check_transfer", check_then_overlap)
+    return calls
+
+
+def test_a_run_with_another_state_folder_is_kept_out_by_the_destination_lock(env, monkeypatch):
+    """The local lock is per state folder; the destination lock keeps such runs apart."""
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    _write(env, ".claude/projects/p/new.jsonl", b"n\n", mtime=1_790_000_100)
+
+    def overlapping():
+        with pytest.raises(CollectLockedError, match="--break-lock"):
+            collect_source(
+                _config(env),
+                "src",
+                state_dir=env["state"].with_name("other-state"),
+                now=T0 + timedelta(hours=2),
+            )
+
+    calls = _overlap_after_transfer(monkeypatch, overlapping)
+    first = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert calls
+    assert first.written == 2
+    assert verify_source(open_destination(str(env["dest"])), "src").ok
+    assert not _lock_folder(env).exists()
+
+
+def test_the_destination_lock_is_released_when_a_run_fails(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+
+    with pytest.raises(OSError):
+        _collect(env, destination=_FailingDestination.make(env, "put_tree"))
+
+    assert (env["dest"] / "sources" / "src").is_dir()
+    assert not _lock_folder(env).exists()
+
+
+def test_a_lock_left_by_a_killed_run_on_this_machine_is_taken_over(env, monkeypatch, capsys):
+    from agent_history.archive.transport import LocalDestination
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    real = LocalDestination.remove_lock
+    monkeypatch.setattr(LocalDestination, "remove_lock", lambda self, rel: None)  # killed
+    _collect(env)
+    assert _lock_folder(env).is_dir()
+    monkeypatch.setattr(LocalDestination, "remove_lock", real)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    second = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert second.written == 1
+    assert "interrupted run" in capsys.readouterr().err
+    assert not _lock_folder(env).exists()
+
+
+def _same_host_owner(env, kind):
+    """A lock owner of another machine with this host name and this local lock path.
+
+    For example a second WSL distribution on the same PC, whose state folder has the
+    same path. ``earlier`` is an owner file of an earlier version, which identified the
+    collector by a hash of the host name and the local lock path alone.
+    """
+    import hashlib
+    import socket
+
+    from agent_history.archive.state import lock_path
+
+    host = socket.gethostname()
+    local = lock_path(env["state"], str(env["dest"]), "src")
+    owner = {
+        "host": host,
+        "pid": 4242,
+        "started_at": (T0 + timedelta(minutes=50)).isoformat(),
+        "token": "0123456789abcdef",
+    }
+    if kind == "earlier":
+        digest = hashlib.sha256(f"{host}\n{local.resolve()}".encode()).hexdigest()
+        owner["collector"] = digest[:16]
+    else:
+        owner["collector_id"] = "f" * 32
+        owner["local_lock"] = f"{local.parent.name}/{local.name}"
+    return owner
+
+
+@pytest.mark.parametrize("kind", ["earlier", "other-state-folder"])
+def test_a_live_lock_of_a_machine_with_the_same_host_and_path_is_not_taken_over(env, kind):
+    import json
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _lock_folder(env).mkdir()
+    owner = json.dumps(_same_host_owner(env, kind))
+    (_lock_folder(env) / "owner.json").write_text(owner, encoding="utf-8")
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    with pytest.raises(CollectLockedError, match="process 4242"):
+        _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (_lock_folder(env) / "owner.json").read_text(encoding="utf-8") == owner
+    assert _archived(env, SESSION) == b"a\n"
+
+
+def test_the_collector_id_is_made_once_per_state_folder(tmp_path):
+    from agent_history.archive.state import collector_id
+
+    first = collector_id(tmp_path / "state")
+
+    assert re.fullmatch(r"[0-9a-f]{32}", first)
+    assert collector_id(tmp_path / "state") == first
+    assert collector_id(tmp_path / "other-state") != first
+    assert [p.name for p in (tmp_path / "state").iterdir()] == ["collector-id"]
+
+
+def test_a_damaged_collector_id_is_replaced(tmp_path):
+    from agent_history.archive.state import collector_id
+
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "collector-id").write_text("", encoding="utf-8")
+
+    made = collector_id(tmp_path / "state")
+
+    assert re.fullmatch(r"[0-9a-f]{32}", made)
+    assert collector_id(tmp_path / "state") == made
+
+
+def _foreign_lock(env, started_at=T0.isoformat()):
+    import json
+
+    _lock_folder(env).mkdir(parents=True)
+    owner = {"host": "other-laptop", "pid": 4242, "started_at": started_at}
+    (_lock_folder(env) / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
+
+
+def test_a_lock_held_by_another_machine_stops_the_run(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _foreign_lock(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    with pytest.raises(CollectLockedError, match="other-laptop"):
+        _collect(env, now=T0 + timedelta(hours=1))
+
+    assert _lock_folder(env).is_dir()
+    assert _archived(env, SESSION) == b"a\n"
+
+
+@pytest.mark.parametrize(
+    "started_at",
+    [(T0 - timedelta(hours=24, minutes=1)).isoformat(), "at some point", None],
+    ids=["over-a-day", "unreadable-time", "no-time"],
+)
+def test_a_foreign_lock_older_than_a_day_fails_the_run(env, monkeypatch, started_at):
+    """A lock that a killed run of another state folder left is reported, not skipped forever."""
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env, now=T0 - timedelta(days=2))
+    _foreign_lock(env, started_at)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    pings = _pings(monkeypatch)
+
+    with pytest.raises(ArchiveError, match=r"other-laptop.*--break-lock") as raised:
+        _collect(env)
+
+    assert not isinstance(raised.value, CollectLockedError)
+    assert pings == ["/fail"]
+    assert _lock_folder(env).is_dir()
+    assert _archived(env, SESSION) == b"a\n"
+
+
+def test_a_foreign_lock_younger_than_a_day_is_a_skip(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env, now=T0 - timedelta(days=2))
+    _foreign_lock(env, (T0 - timedelta(hours=23, minutes=59)).isoformat())
+    pings = _pings(monkeypatch)
+
+    with pytest.raises(CollectLockedError, match="other-laptop"):
+        _collect(env)
+
+    assert pings == []
+
+
+def test_break_lock_removes_another_machines_lock(env, capsys):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _foreign_lock(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1), break_lock=True)
+
+    assert summary.written == 1
+    assert "other-laptop" in capsys.readouterr().err
+    assert not _lock_folder(env).exists()
+
+
+def test_dry_run_ignores_the_destination_lock(env):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _foreign_lock(env)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1), dry_run=True)
+
+    assert summary.errors == 0
+    assert _lock_folder(env).is_dir()
+
+
+@pytest.mark.parametrize(
+    "leftover",
+    [{}, {"owner.json.part": b'{"host": "x'}, {"._owner.json": b"AppleDouble"}],
+    ids=["empty", "partial-owner", "stray-file"],
+)
+def test_a_lock_folder_without_an_owner_file_is_no_lock(env, leftover):
+    """The owner file is the lock: a folder left without one does not block runs."""
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _lock_folder(env).mkdir()
+    for name, data in leftover.items():
+        (_lock_folder(env) / name).write_bytes(data)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert summary.written == 1
+    assert not _lock_folder(env).exists()
+
+
+def test_a_file_that_appears_in_the_lock_folder_does_not_outlive_the_run(env, monkeypatch):
+    """For example macOS writes ._owner.json next to owner.json on some network shares."""
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _overlap_after_transfer(
+        monkeypatch, lambda: (_lock_folder(env) / "._owner.json").write_bytes(b"AppleDouble")
+    )
+
+    first = _collect(env)
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+    second = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (first.written, second.written) == (1, 1)
+    assert not _lock_folder(env).exists()
+
+
+def _pings(monkeypatch):
+    from agent_history.archive import collect as collect_module
+
+    sent: list[str] = []
+    monkeypatch.setattr(collect_module._Run, "_ping", lambda self, suffix: sent.append(suffix))
+    return sent
+
+
+@pytest.mark.parametrize("content", [b"", b'{"host": "lap', b"[]", b"{}"])
+def test_a_lock_without_a_readable_owner_fails_the_run_and_names_break_lock(
+    env, monkeypatch, content
+):
+    from agent_history.archive import state
+    from agent_history.archive.errors import ArchiveError
+
+    monkeypatch.setattr(state, "LOCK_SETTLE_SECONDS", 0)
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _lock_folder(env).mkdir()
+    (_lock_folder(env) / "owner.json").write_bytes(content)
+    pings = _pings(monkeypatch)
+
+    with pytest.raises(ArchiveError, match="--break-lock") as raised:
+        _collect(env, now=T0 + timedelta(hours=1))
+
+    assert not isinstance(raised.value, CollectLockedError)
+    assert pings == ["/fail"]
+    assert (_lock_folder(env) / "owner.json").read_bytes() == content
+
+
+def test_an_owner_file_being_written_is_read_again(env, monkeypatch):
+    import json
+
+    from agent_history.archive import state
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _lock_folder(env).mkdir()
+    owner = _lock_folder(env) / "owner.json"
+    owner.write_bytes(b"")
+    finished = {"host": "other-laptop", "pid": 4242, "started_at": T0.isoformat()}
+    monkeypatch.setattr(state.time, "sleep", lambda seconds: owner.write_text(json.dumps(finished)))
+
+    with pytest.raises(CollectLockedError, match="other-laptop"):
+        _collect(env, now=T0 + timedelta(hours=1))
+
+
+def test_break_lock_removes_everything_in_the_lock_folder(env, capsys):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    _foreign_lock(env)
+    (_lock_folder(env) / "._owner.json").write_bytes(b"AppleDouble")
+    (_lock_folder(env) / "nested").mkdir()
+    (_lock_folder(env) / "nested" / "file").write_bytes(b"x")
+    _write(env, SESSION, b"a\nb\n", mtime=1_790_000_100)
+
+    summary = _collect(env, now=T0 + timedelta(hours=1), break_lock=True)
+
+    assert summary.written == 1
+    assert "other-laptop" in capsys.readouterr().err
+    assert not _lock_folder(env).exists()
 
 
 def test_unreadable_file_is_recorded_and_retried(env, monkeypatch):
@@ -259,6 +1268,71 @@ def test_archive_with_unknown_format_is_refused(env):
         _collect(env)
 
 
+@pytest.mark.parametrize(
+    "content", [b"{not json", b"\xff\xfe", b"[1, 2]"], ids=["json", "utf-8", "not-an-object"]
+)
+def test_damaged_archive_json_is_an_archive_error(env, content):
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    (env["dest"] / "ARCHIVE.json").write_bytes(content)
+
+    with pytest.raises(ArchiveError, match=r"ARCHIVE\.json"):
+        _collect(env, now=T0 + timedelta(hours=1))
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"\x28\xb5\x2f\xfd not a zstd frame",
+        zstandard.ZstdCompressor().compress(b"not json\n"),
+        zstandard.ZstdCompressor().compress(b"\xff\xfe\n"),
+        zstandard.ZstdCompressor().compress(b'["a list"]\n'),
+        zstandard.ZstdCompressor().compress(b'{"type": "file"}\n'),
+    ],
+    ids=["zstd", "json", "utf-8", "not-an-object", "no-run-record"],
+)
+def test_damaged_manifest_is_an_archive_error_naming_the_file(env, content):
+    from agent_history.archive.errors import ArchiveError
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    _collect(env)
+    name = "20991231T000000Z-src-ffff.jsonl.zst"
+    (env["dest"] / "sources" / "src" / "manifests" / name).write_bytes(content)
+
+    with pytest.raises(ArchiveError, match=re.escape(name)):
+        _collect(env, now=T0 + timedelta(hours=1))
+    with pytest.raises(ArchiveError, match=re.escape(name)):
+        verify_source(open_destination(str(env["dest"])), "src")
+
+
+def _archive_with_sources(root):
+    for name in ("alpha", "beta"):
+        (root / "sources" / name / "files" / "deep").mkdir(parents=True)
+        (root / "sources" / name / "files" / "deep" / "x.zst").write_bytes(b"x")
+        (root / "sources" / name / "SOURCE.json").write_text("{}", encoding="utf-8")
+    (root / "sources" / "no-descriptor" / "files").mkdir(parents=True)
+    (root / "sources" / "stray.txt").write_text("not a source", encoding="utf-8")
+
+
+def test_catalog_lists_sources_without_walking_archived_files(env, monkeypatch):
+    from agent_history.archive.catalog.sync import list_sources
+    from agent_history.archive.transport import LocalDestination
+
+    _archive_with_sources(env["dest"])
+    destination = LocalDestination(env["dest"])
+
+    def no_walk(rel_dir):
+        raise AssertionError(f"walked {rel_dir}")
+
+    monkeypatch.setattr(destination, "list_files", no_walk)
+
+    assert destination.list_dirs("sources") == ["alpha", "beta", "no-descriptor"]
+    assert destination.list_dirs("missing") == []
+    assert list_sources(destination) == ["alpha", "beta"]
+
+
 def test_source_kind_is_recorded(env):
     import json
 
@@ -296,8 +1370,29 @@ def test_staging_lives_in_the_state_folder_and_is_removed(env, monkeypatch):
     _collect(env)
 
     assert seen
-    assert all(env["state"] in path.parents for path in seen)
+    # On Windows the work folder is written in the extended form (\\?\C:\...).
+    state = collect_module.long_path(env["state"])
+    assert all(state in path.parents for path in seen)
     assert not list((env["state"]).rglob("*.zst"))
+
+
+def test_staging_left_by_a_killed_run_is_removed(env):
+    from agent_history.archive.state import state_path
+
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    config = _config(env)
+    work = state_path(env["state"], config.destination, "src").parent / "work"
+    stale = [work / "src" / "staging-abc123", work / "src" / "db-def456"]
+    for folder in stale:
+        (folder / "sources").mkdir(parents=True)
+        (folder / "sources" / "big.zst").write_bytes(b"x" * 1000)
+    other = work / "other" / "staging-789"  # another source's run may be using it
+    other.mkdir(parents=True)
+
+    _collect(env, config=config)
+
+    assert not any(folder.exists() for folder in stale)
+    assert other.exists()
 
 
 def test_large_runs_transfer_in_batches(env, monkeypatch):
@@ -437,3 +1532,182 @@ def test_only_one_large_file_uses_extra_threads_at_a_time(env, monkeypatch):
 
     assert summary.written == 4
     assert peak[0] == 1
+
+
+def _durability_events(monkeypatch):
+    """Record os.fsync (by path) and os.replace calls, in order."""
+    events: list[tuple[str, str]] = []
+    paths: dict[int, str] = {}
+    real_open, real_fsync, real_replace = os.open, os.fsync, os.replace
+
+    def tracking_open(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        paths[fd] = os.path.abspath(os.fspath(path))
+        return fd
+
+    def tracking_fsync(fd):
+        events.append(("fsync", paths.get(fd, f"fd {fd}")))
+        return real_fsync(fd)
+
+    def tracking_replace(src, dst, *args, **kwargs):
+        events.append(("replace", f"{os.path.abspath(src)} -> {os.path.abspath(dst)}"))
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(os, "fsync", tracking_fsync)
+    monkeypatch.setattr(os, "replace", tracking_replace)
+    return events
+
+
+def _index(events, kind, predicate):
+    for index, (event_kind, detail) in enumerate(events):
+        if event_kind == kind and predicate(detail):
+            return index
+    raise AssertionError(f"no {kind} event matched in {events}")
+
+
+def test_files_are_flushed_before_they_are_renamed_into_place(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    events = _durability_events(monkeypatch)
+
+    _collect(env)
+
+    replaces = [detail for kind, detail in events if kind == "replace"]
+    assert replaces
+    for index, (kind, detail) in enumerate(events):
+        if kind == "replace" and detail.split(" -> ")[0].endswith(".part"):
+            source = detail.split(" -> ")[0]
+            assert ("fsync", source) in events[:index], f"{source} replaced before fsync"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="directories cannot be flushed on Windows")
+def test_folders_are_flushed_before_the_commit_and_the_state(env, monkeypatch):
+    _write(env, SESSION, b"a\n", mtime=1_790_000_000)
+    events = _durability_events(monkeypatch)
+
+    _collect(env)
+
+    source_dir = str(env["dest"] / "sources" / "src")
+    placed_dir = os.path.dirname(f"{source_dir}/files/{SESSION}.zst")
+    commit = _index(events, "replace", lambda d: "/manifests/" in d.split(" -> ")[1])
+    assert ("fsync", placed_dir) in events[:commit]
+    save = _index(events, "replace", lambda d: d.endswith("src.json"))
+    assert ("fsync", f"{source_dir}/manifests") in events[commit:save]
+    assert ("fsync", str(next(env["state"].rglob("src.json")).parent)) in events[save:]
+
+
+def test_a_copy_ending_in_ctrl_z_is_archived_whole(env, tmp_path, windows_text_mode):
+    """On Windows, reopening a file in text mode to flush it dropped a final 0x1A byte.
+
+    A frame ends in any byte; a short file is stored in a raw block, so its copy ends in
+    the file's own last byte, which makes the case certain here.
+    """
+    data = b'{"n": 1}\n\x1a'
+    _write(env, SESSION, data, mtime=1_790_000_000)
+    staged_copy = zstandard.ZstdCompressor(level=3, write_content_size=True).compress(data)
+    assert staged_copy.endswith(b"\x1a")
+
+    summary = _collect(env)
+
+    assert summary.errors == 0
+    assert _archived(env, SESSION) == data
+    report = verify_source(open_destination(str(env["dest"])), "src")
+    assert (report.missing, report.mismatched) == ([], [])
+    for _run, entries in read_manifests(open_destination(str(env["dest"])), "src"):
+        assert entries  # the manifest, a zstd frame as well, decodes
+
+
+class _CutsCopiesShort:
+    """A local destination whose transfer drops the last byte of the copies of one file."""
+
+    @staticmethod
+    def make(env, name: str):
+        from agent_history.archive.transport import LocalDestination
+
+        class CutsShort(LocalDestination):
+            def put_tree(self, staging):
+                super().put_tree(staging)
+                incoming = env["dest"] / "sources" / "src" / "incoming"
+                for copy in incoming.rglob(f"{name}.zst"):
+                    copy.write_bytes(copy.read_bytes()[:-1])
+
+        return CutsShort(env["dest"])
+
+
+def _errors(env, run_id):
+    destination = open_destination(str(env["dest"]))
+    for run, entries in read_manifests(destination, "src"):
+        if run["run_id"] == run_id:
+            return {entry["path"]: entry for entry in entries if entry["type"] == "error"}
+    raise AssertionError(f"no manifest for {run_id}")
+
+
+def test_a_copy_cut_short_in_transfer_is_not_committed(env):
+    other = ".codex/history.jsonl"
+    _write(env, SESSION, b'{"n": 1}\n' * 100, mtime=1_790_000_000)
+    _write(env, other, b"h\n", mtime=1_790_000_000)
+
+    first = _collect(env, destination=_CutsCopiesShort.make(env, "a1.jsonl"))
+
+    assert (first.written, first.errors) == (1, 1)
+    assert SESSION not in _entries(env, first.run_id)
+    assert "cut short" in _errors(env, first.run_id)[SESSION]["message"]
+    assert not (env["dest"] / "sources" / "src" / "files" / f"{SESSION}.zst").exists()
+    assert _archived(env, other) == b"h\n"
+
+    second = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (second.written, second.errors) == (1, 0)
+    assert _archived(env, SESSION) == b'{"n": 1}\n' * 100
+    _assert_archive_consistent(env, {})
+
+
+def test_a_rewrite_cut_short_in_transfer_keeps_the_archived_copy(env):
+    _write(env, SESSION, b"original\n", mtime=1_790_000_000)
+    _collect(env)
+    _write(env, SESSION, b"rewritten\n", mtime=1_790_000_100)
+
+    second = _collect(
+        env, now=T0 + timedelta(hours=1), destination=_CutsCopiesShort.make(env, "a1.jsonl")
+    )
+
+    assert (second.written, second.versioned, second.errors) == (0, 0, 1)
+    assert _archived(env, SESSION) == b"original\n"
+    assert not (env["dest"] / "sources" / "src" / "versions").exists()
+
+    third = _collect(env, now=T0 + timedelta(hours=2))
+
+    assert (third.versioned, third.errors) == (1, 0)
+    assert _archived(env, SESSION) == b"rewritten\n"
+    _assert_archive_consistent(env, {SESSION: b"original\n"})
+
+
+def test_a_compressed_copy_that_is_not_finished_is_not_archived(env, monkeypatch):
+    """A compressor that never ends its frame leaves a short copy; the next run retries."""
+    from agent_history.archive import codec
+
+    _write(env, SESSION, b'{"n": 1}\n' * 100, mtime=1_790_000_000)
+    monkeypatch.setattr(codec, "_thread_compressor", _unfinished_compressor)
+
+    first = _collect(env)
+
+    assert (first.written, first.errors) == (0, 1)
+    assert not (env["dest"] / "sources" / "src" / "files" / f"{SESSION}.zst").exists()
+    monkeypatch.undo()
+
+    second = _collect(env, now=T0 + timedelta(hours=1))
+
+    assert (second.written, second.errors) == (1, 0)
+    assert _archived(env, SESSION) == b'{"n": 1}\n' * 100
+
+
+def _unfinished_compressor(level: int, threads: int = 0):
+    """A compressor whose stream writers never end their frame, like one not flushed."""
+    real = zstandard.ZstdCompressor(level=level, write_content_size=True)
+
+    class Unfinished:
+        def stream_writer(self, raw, **kwargs):
+            writer = real.stream_writer(raw, **kwargs)
+            return SimpleNamespace(write=writer.write, close=lambda: None)
+
+    return Unfinished()

@@ -42,7 +42,7 @@ class CodexTokenCounter:
         running total only becomes the baseline for the next event.
         """
         total = info.get("total_token_usage")
-        if not total:
+        if not total or not isinstance(total, dict):
             return None
         if replayed:
             self._previous_total = total
@@ -51,7 +51,7 @@ class CodexTokenCounter:
             return None
 
         last = info.get("last_token_usage")
-        if last:
+        if last and isinstance(last, dict):
             usage = {field: last.get(field, 0) or 0 for field in _FIELDS}
         else:
             previous = self._previous_total or {}

@@ -1,13 +1,28 @@
 """Bring a catalog up to date with an archive by replaying manifests it has not ingested.
 
-Each run's manifest is applied in one transaction. Session metadata is then extracted once
-per changed session file, with the same backend parsers the cagelens commands use.
+Session metadata is extracted once per changed session file, with the same backend parsers
+the cagelens commands use; then each run's manifest is applied in one transaction. A session
+file that cannot be read, whose content does not match its manifest's SHA-256, or whose
+rows the store refuses, is kept in ``pending_sessions`` and read again by every later
+sync until it succeeds; the source's other files and runs are recorded. Text values are
+stored as text without NUL characters, which PostgreSQL refuses. When the
+reader version recorded in ``schema_meta`` differs from the current one, every catalogued
+session file is queued there too, so rows written by an older reader are replaced.
+
+A source whose manifests cannot be read, or lack a field the catalog records, is
+reported in the summary's errors and left unrecorded; the other sources are synced.
+
+A ``displaced`` entry (see ``collect.DISPLACED``) says that a path's archived copy moved
+to its version path, so that a path whose name differs only in letter case could take
+its name on a destination that ignores case. The catalog records the path as gone with
+no current archive path, points its last version at the version path, and deletes its
+session rows: the session now lives under the path that took the name.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-import shutil
 import sqlite3
 import sys
 import tempfile
@@ -18,10 +33,24 @@ from pathlib import Path
 from typing import Any
 
 from agent_history.archive.catalog.store import CatalogStore
-from agent_history.archive.codec import _zstd
+from agent_history.archive.codec import CHUNK_SIZE, _zstd
+from agent_history.archive.collect import DISPLACED
+from agent_history.archive.errors import ArchiveError
 from agent_history.archive.layouts import SessionTarget, archive_file_path, session_target
 from agent_history.archive.manifest import read_manifests
 from agent_history.archive.transport import Destination
+from agent_history.backends.gemini import gemini_resumed_copy_name
+from agent_history.storage.metrics import METRICS_PARSER_VERSION
+from agent_history.utils.jsonl import without_lone_surrogates
+
+# The catalog's own part of how session files become rows (which archived paths hold
+# sessions, how the workspace is derived). Raise it when that changes;
+# METRICS_PARSER_VERSION covers the parsers.
+_EXTRACTION_REVISION = 6
+# Recorded in schema_meta. A catalog whose rows were written under another version has
+# every session file read again on its next sync.
+READER_VERSION = f"{METRICS_PARSER_VERSION}.{_EXTRACTION_REVISION}"
+_READER_VERSION_KEY = "reader_version"
 
 _WRITTEN = ("added", "updated", "versioned")
 _PRESENT = (*_WRITTEN, "touched", "returned")
@@ -36,12 +65,10 @@ class SyncSummary:
 
 
 def list_sources(destination: Destination) -> list[str]:
-    names = set()
-    for rel in destination.list_files("sources"):
-        parts = rel.split("/")
-        if len(parts) == 2 and parts[1] == "SOURCE.json":
-            names.add(parts[0])
-    return sorted(names)
+    """The folders under sources/ that hold a SOURCE.json, without walking their files."""
+    descriptors = {f"sources/{name}/SOURCE.json": name for name in destination.list_dirs("sources")}
+    missing = set(destination.missing(list(descriptors)))
+    return sorted(name for rel, name in descriptors.items() if rel not in missing)
 
 
 def sync_catalog(
@@ -51,42 +78,155 @@ def sync_catalog(
     rebuild: bool = False,
     work_dir: Path | None = None,
 ) -> SyncSummary:
-    """Ingest new manifests of each source; ``rebuild`` first empties the catalog.
+    """Ingest new manifests of ``sources`` (default: every source in the archive).
 
+    ``rebuild`` first deletes those sources' rows, or every row when no sources are named.
     Session files are decompressed into ``work_dir`` (default: under the cagelens config
     folder, not the system temp folder, which is often a small tmpfs).
     """
+    available = list_sources(destination)
+    unknown = sorted(set(sources or ()) - set(available))
+    if unknown:
+        raise ArchiveError(f"Not in the archive: {', '.join(unknown)}")
     if work_dir is None:
         from agent_history.storage.config import get_config_dir
 
         work_dir = get_config_dir() / "archive-work"
     Path(work_dir).mkdir(parents=True, exist_ok=True)
     if rebuild:
-        store.clear()
+        store.clear(sources or None)
+    _queue_for_new_reader(store)
     summary = SyncSummary()
-    for name in sources or list_sources(destination):
-        _sync_source(store, destination, name, summary, Path(work_dir))
+    for name in sources or available:
+        try:
+            _sync_source(store, destination, name, summary, Path(work_dir))
+        except ArchiveError as exc:
+            summary.errors.append(f"{name}: {exc}")
+            continue
+        except Exception as exc:  # a defect for one source must not stop the others
+            summary.errors.append(f"{name}: {type(exc).__name__}: {exc}")
+            continue
         summary.sources += 1
     return summary
+
+
+def _queue_for_new_reader(store: CatalogStore) -> None:
+    """Queue every catalogued session file to be read again if the reader has changed.
+
+    A catalog written by another reader version (or by one that recorded none) holds
+    rows that the current reader would write differently, and syncs read only new runs.
+    So every session file in ``files`` goes to ``pending_sessions`` at its current
+    SHA-256, unless it is pending already, and the new version is recorded in the same
+    transaction: a sync that stops part way leaves the rest queued for the next sync.
+    Session and pending rows of paths that the current layouts no longer read sessions
+    from are deleted in that transaction too, since no later read would replace them.
+    """
+    with store.transaction():
+        found = store.fetchall(
+            "SELECT value FROM schema_meta WHERE key = ?", (_READER_VERSION_KEY,)
+        )
+        if found and found[0][0] == READER_VERSION:
+            return
+        # A displaced path has no archive path: its copy is a version, and its name
+        # now holds another path's content.
+        rows = store.fetchall(
+            "SELECT f.source, f.path, f.sha256, s.platform FROM files f "
+            "JOIN sources s ON s.name = f.source "
+            "WHERE f.sha256 IS NOT NULL AND f.archive_path IS NOT NULL"
+        )
+        for source, path, sha256, platform in rows:
+            if session_target(path, platform) is not None:
+                store.execute(
+                    "INSERT INTO pending_sessions (source, path, sha256) VALUES (?, ?, ?) "
+                    "ON CONFLICT (source, path) DO NOTHING",
+                    (source, path, sha256),
+                )
+        _delete_rows_of_non_session_paths(store)
+        store.execute(
+            "INSERT INTO schema_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (_READER_VERSION_KEY, READER_VERSION),
+        )
+
+
+def _delete_rows_of_non_session_paths(store: CatalogStore) -> None:
+    rows = store.fetchall(
+        "SELECT x.source, x.path, s.platform FROM (SELECT source, path FROM sessions "
+        "UNION SELECT source, path FROM pending_sessions) x "
+        "JOIN sources s ON s.name = x.source"
+    )
+    for source, path, platform in rows:
+        if session_target(path, platform) is None:
+            _delete_path_rows(store, source, path)
+
+
+def _delete_path_rows(store: CatalogStore, source: str, path: str) -> None:
+    """Delete a path's session rows and its pending entry (call inside a transaction)."""
+    for table in ("pending_sessions", "sessions"):
+        store.execute(f"DELETE FROM {table} WHERE source = ? AND path = ?", (source, path))
 
 
 def _sync_source(store, destination, name: str, summary: SyncSummary, work_dir: Path) -> None:
     descriptor = json.loads(destination.read_bytes(f"sources/{name}/SOURCE.json") or b"{}")
     done = {row[0] for row in store.fetchall("SELECT run_id FROM runs WHERE source = ?", (name,))}
     runs = list(read_manifests(destination, name, skip_run_ids=done))
-    changed: dict[str, str] = {}
-    for _run, entries in runs:
-        for entry in entries:
-            if entry.get("type") == "file" and entry.get("action") in _WRITTEN:
-                changed[entry["path"]] = entry["sha256"]
+    # Before anything is written: a bad manifest leaves every new run of the source
+    # unrecorded, so the next sync reads them all again once it is fixed.
+    for run, entries in runs:
+        _check_manifest(run, entries)
+    changed = _pending_session_files(store, name, descriptor.get("platform", "linux"))
+    displaced = _apply_runs(changed, runs)
     # Sessions first, runs last: a sync stopped part way records no run, so the next
     # sync reads the same sessions again instead of skipping them.
+    if displaced:
+        with store.transaction():
+            for path in sorted(displaced):
+                _delete_path_rows(store, name, path)
     _sync_sessions(store, destination, name, descriptor, changed, summary, work_dir)
     for run, entries in runs:
         with store.transaction():
             _upsert_source(store, name, descriptor, run)
             _record_run(store, name, run, entries)
         summary.runs += 1
+
+
+def _apply_runs(changed: dict[str, str], runs: list) -> set[str]:
+    """Update ``changed`` (path to SHA-256) with the runs' files; return displaced paths.
+
+    ``changed`` starts with the files that failed before, and a newer run's hash replaces
+    a pending one. A displaced path leaves ``changed``, since its archived copy moved to
+    versions/ and its name holds another path's content, until a later run writes it
+    again. The paths returned are displaced by the last run that names them.
+    """
+    displaced: set[str] = set()
+    for _run, entries in runs:
+        for entry in entries:
+            if entry.get("type") != "file":
+                continue
+            if entry.get("action") in _WRITTEN:
+                changed[entry["path"]] = entry["sha256"]
+                displaced.discard(entry["path"])
+            elif entry.get("action") == DISPLACED:
+                changed.pop(entry["path"], None)
+                displaced.add(entry["path"])
+    return displaced
+
+
+def _pending_session_files(store, source: str, platform: str) -> dict[str, str]:
+    """The source's pending session files and their SHA-256s.
+
+    A pending path that the current layouts read no sessions from is forgotten with its
+    session rows: no later read would replace them or clear it.
+    """
+    pending: dict[str, str] = {}
+    rows = store.fetchall("SELECT path, sha256 FROM pending_sessions WHERE source = ?", (source,))
+    for path, sha256 in rows:
+        if session_target(path, platform) is not None:
+            pending[path] = sha256
+            continue
+        with store.transaction():
+            _delete_path_rows(store, source, path)
+    return pending
 
 
 def _sync_sessions(
@@ -103,16 +243,67 @@ def _sync_sessions(
         target = session_target(path, platform)
         if target is None:
             continue
+        if _has_resumed_copy(store, name, path, target, changed):
+            with store.transaction():
+                _delete_path_rows(store, name, path)
+            continue
         try:
             rows = _extract_sessions(destination, name, path, target, sha256, work_dir)
+            _replace_sessions(store, name, path, rows, _resumed_original(path, target))
         except Exception as exc:  # one bad file must not stop the sync
             summary.errors.append(f"{name}:{path}: {exc}")
+            _mark_pending(store, name, path, sha256, exc)
             continue
-        with store.transaction():
-            store.execute("DELETE FROM sessions WHERE source = ? AND path = ?", (name, path))
-            for row in rows:
-                _insert_session(store, row)
         summary.sessions += len(rows)
+
+
+def _replace_sessions(
+    store, source: str, path: str, rows: list[dict[str, Any]], replaces: str | None = None
+) -> None:
+    """Replace a session file's rows and clear its pending entry, in one transaction.
+
+    ``replaces`` is another path whose rows and pending entry go too, because this
+    file now holds its session.
+    """
+    with store.transaction():
+        if replaces is not None:
+            _delete_path_rows(store, source, replaces)
+        store.execute("DELETE FROM sessions WHERE source = ? AND path = ?", (source, path))
+        for row in rows:
+            _insert_session(store, row)
+        store.execute("DELETE FROM pending_sessions WHERE source = ? AND path = ?", (source, path))
+
+
+def _has_resumed_copy(store, source: str, path: str, target: SessionTarget, changed) -> bool:
+    """Whether ``path`` is a legacy Gemini chat that Gemini CLI resumed.
+
+    Gemini CLI resumes ``<name>.json`` by writing ``<name>.jsonl`` beside it with every
+    message, and keeps the JSON file, so the session is read from the copy only. The
+    copy counts once it is in this sync's changed files or in the catalog's files.
+    """
+    copy = gemini_resumed_copy_name(path) if target.backend == "gemini" else None
+    if copy is None:
+        return False
+    if copy in changed:
+        return True
+    return bool(store.fetchall("SELECT 1 FROM files WHERE source = ? AND path = ?", (source, copy)))
+
+
+def _resumed_original(path: str, target: SessionTarget) -> str | None:
+    """The legacy Gemini chat that ``path`` would be the resumed copy of, if any."""
+    if target.backend == "gemini" and path.endswith(".jsonl"):
+        return path[:-1]
+    return None
+
+
+def _mark_pending(store, source: str, path: str, sha256: str, exc: Exception) -> None:
+    with store.transaction():
+        store.execute(
+            "INSERT INTO pending_sessions (source, path, sha256, error_type) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (source, path) DO UPDATE SET "
+            "sha256 = excluded.sha256, error_type = excluded.error_type",
+            (source, path, sha256, type(exc).__name__),
+        )
 
 
 def _upsert_source(store, name: str, descriptor: dict, run: dict) -> None:
@@ -156,12 +347,51 @@ def _record_run(store, source: str, run: dict, entries: list[dict]) -> None:
             _record_file(store, source, run_id, entry)
 
 
+# The file actions that keep the path's earlier copy at a version path, and the verb
+# that names each in an error.
+_KEEPS_A_VERSION = {"versioned": "versions", DISPLACED: "displaces"}
+
+
+def _check_manifest(run: dict, entries: list[dict]) -> None:
+    """Raise ArchiveError naming the run, path and field of an entry the catalog cannot record."""
+    run_id = run.get("run_id")
+    for entry in entries:
+        kind = entry.get("type")
+        if kind not in ("file", "rows"):
+            continue
+        path = entry.get("path")
+        if not isinstance(path, str) or not path:
+            raise ArchiveError(f"Run {run_id}'s manifest has a {kind} entry without a path")
+        action = entry.get("action")
+        verb = _KEEPS_A_VERSION.get(action) if kind == "file" and isinstance(action, str) else None
+        version_path = entry.get("version_path")
+        if verb and (not isinstance(version_path, str) or not version_path):
+            raise ArchiveError(f"Run {run_id} {verb} {path} but its manifest gives no version_path")
+        for name in _required_fields(kind, entry):
+            if entry.get(name) is None:
+                raise ArchiveError(f"Run {run_id}'s manifest gives no {name} for {path}")
+
+
+def _required_fields(kind: str, entry: dict) -> tuple[str, ...]:
+    """The fields, besides the path, that the catalog reads from a manifest entry."""
+    if kind == "rows":
+        return ("export_path", "table") if entry.get("rows") else ()
+    if "action" not in entry:
+        return ("action",)
+    if entry["action"] == DISPLACED:
+        return ("previous_sha256",)
+    return ("size", "mtime_ns", "sha256") if entry["action"] in _PRESENT else ()
+
+
 def _record_file(store, source: str, run_id: str, entry: dict) -> None:
     path, action = entry["path"], entry["action"]
     if action == "gone":
         store.execute(
             "UPDATE files SET gone_run_id = ? WHERE source = ? AND path = ?", (run_id, source, path)
         )
+        return
+    if action == DISPLACED:
+        _record_displaced(store, source, run_id, entry)
         return
     if action not in _PRESENT:
         return
@@ -173,6 +403,7 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
         "agent = excluded.agent, kind = excluded.kind, size = excluded.size, "
         "mtime_ns = excluded.mtime_ns, sha256 = excluded.sha256, "
         "compressed_size = COALESCE(excluded.compressed_size, files.compressed_size), "
+        "archive_path = excluded.archive_path, "
         "last_written_run_id = COALESCE(excluded.last_written_run_id, files.last_written_run_id), "
         "gone_run_id = NULL",
         (
@@ -201,6 +432,41 @@ def _record_file(store, source: str, run_id: str, entry: dict) -> None:
         "INSERT INTO file_versions (source, path, run_id, sha256, size, mtime_ns, archive_path, "
         "superseded_run_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
         (source, path, run_id, entry["sha256"], entry["size"], entry["mtime_ns"], archive_path),
+    )
+
+
+def _record_displaced(store, source: str, run_id: str, entry: dict) -> None:
+    """Record that a path's archived copy moved to its version path.
+
+    The path is gone from the source and has no current copy, so its ``files`` row gets
+    this run as its gone run and no archive path (it gets one again if the path is
+    archived again). Its current version is superseded by this run and points at the
+    version path, as for a versioned rewrite; when the catalog has no current version
+    of the path, one is added from the entry. Its session rows are deleted by
+    :func:`_sync_source`.
+    """
+    path = entry["path"]
+    kept = f"sources/{source}/{entry['version_path']}"
+    store.execute(
+        "UPDATE files SET gone_run_id = ?, archive_path = NULL WHERE source = ? AND path = ?",
+        (run_id, source, path),
+    )
+    current = store.fetchall(
+        "SELECT 1 FROM file_versions WHERE source = ? AND path = ? AND superseded_run_id IS NULL",
+        (source, path),
+    )
+    if current:
+        store.execute(
+            "UPDATE file_versions SET superseded_run_id = ?, archive_path = ? "
+            "WHERE source = ? AND path = ? AND superseded_run_id IS NULL",
+            (run_id, kept, source, path),
+        )
+        return
+    store.execute(
+        "INSERT INTO file_versions (source, path, run_id, sha256, size, mtime_ns, archive_path, "
+        "superseded_run_id) VALUES (?, ?, ?, ?, ?, NULL, ?, ?) "
+        "ON CONFLICT (source, path, run_id) DO NOTHING",
+        (source, path, run_id, entry["previous_sha256"], entry.get("previous_size"), kept, run_id),
     )
 
 
@@ -246,21 +512,47 @@ def _extract_sessions(
     with tempfile.TemporaryDirectory(prefix="session-", dir=work_dir) as tmp:
         local = Path(tmp) / path  # keep folder names: some parsers read them
         local.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open_binary(archive_file_path(source, path)) as raw, local.open(
-            "wb"
-        ) as out:
-            with _zstd().ZstdDecompressor().stream_reader(raw) as reader:
-                shutil.copyfileobj(reader, out)
+        _decompress_checked(destination, archive_file_path(source, path), local, sha256)
         base = {"source": source, "path": path, "agent": target.backend, "file_sha256": sha256}
         if target.database is not None:
             return [
                 {**base, **row}
                 for row in _database_sessions(local, str(target.database.sessions_sql))
             ]
-        return [{**base, **_file_session(local, target.backend)}]
+        return [{**base, **_file_session(local, target.backend, target.workspace)}]
 
 
-def _file_session(local: Path, backend_id: str) -> dict[str, Any]:
+class ContentMismatchError(Exception):
+    """An archived file's content differs from the SHA-256 its manifest records."""
+
+
+def _decompress_checked(destination: Destination, archived: str, local: Path, sha256: str):
+    """Decompress ``archived`` into ``local``, checking the content's SHA-256.
+
+    A mismatch usually means a collect is rewriting the file and has not yet written the
+    manifest that describes the new content.
+    """
+    digest = hashlib.sha256()
+    with destination.open_binary(archived) as raw, local.open("wb") as out:
+        with _zstd().ZstdDecompressor().stream_reader(raw) as reader:
+            while chunk := reader.read(CHUNK_SIZE):
+                digest.update(chunk)
+                out.write(chunk)
+    if digest.hexdigest() != sha256:
+        raise ContentMismatchError(
+            f"content does not match the manifest's SHA-256 {sha256[:12]}; "
+            "a collect may be rewriting it"
+        )
+
+
+def _file_session(local: Path, backend_id: str, workspace: str | None) -> dict[str, Any]:
+    """Session metadata of one session file.
+
+    ``workspace`` is the workspace the archived path names, if any. Each backend's
+    resolver may prefer what the file records (such as its working directory); without
+    it, the Claude and Gemini resolvers fall back to the file's parent folder, which for
+    a sub-agent is ``subagents`` and for a Gemini chat is ``chats``.
+    """
     from agent_history.backends.registry import get_backend
 
     backend = get_backend(backend_id)
@@ -269,16 +561,16 @@ def _file_session(local: Path, backend_id: str) -> dict[str, Any]:
     stats, messages, tool_uses = backend.extract_stats(local)
     stats = stats or {}
     try:
-        workspace = backend.resolve_stats_workspace(local, stats, None)
+        workspace = backend.resolve_stats_workspace(local, stats, workspace)
     except Exception:
-        workspace = None
-    models = sorted({str(m["model"]) for m in messages if m.get("model")})
+        pass
+    models = sorted({_as_text(m["model"]) for m in messages if m.get("model")})
     return {
-        "session_id": stats.get("session_id") or local.name.split(".")[0],
+        "session_id": _clean_text(stats.get("session_id")) or local.name.split(".")[0],
         "from_database": False,
-        "workspace": workspace,
-        "cwd": stats.get("cwd"),
-        "git_branch": stats.get("git_branch"),
+        "workspace": _clean_text(workspace),
+        "cwd": _clean_text(stats.get("cwd")),
+        "git_branch": _clean_text(stats.get("git_branch")),
         "models": json.dumps(models),
         "first_timestamp": _timestamp(stats.get("first_timestamp")),
         "last_timestamp": _timestamp(stats.get("last_timestamp")),
@@ -290,7 +582,7 @@ def _file_session(local: Path, backend_id: str) -> dict[str, Any]:
         "output_tokens": stats.get("output_tokens"),
         "cache_read_tokens": stats.get("cache_read_tokens"),
         "cache_creation_tokens": stats.get("cache_creation_tokens"),
-        "parent_session_id": stats.get("parent_session_id"),
+        "parent_session_id": _clean_text(stats.get("parent_session_id")),
         "is_subagent": bool(stats.get("is_agent")),
     }
 
@@ -300,10 +592,10 @@ def _database_sessions(local: Path, sql: str) -> list[dict[str, Any]]:
         rows = conn.execute(sql).fetchall()
     return [
         {
-            "session_id": str(session_id),
+            "session_id": _clean_text(session_id),
             "from_database": True,
-            "cwd": cwd,
-            "git_branch": branch,
+            "cwd": _clean_text(cwd),
+            "git_branch": _clean_text(branch),
             "first_timestamp": _timestamp(first),
             "last_timestamp": _timestamp(last),
             "message_count": count,
@@ -373,8 +665,33 @@ def _text(value: Any) -> str | None:
     return None if value is None else str(value)
 
 
-def catalog_status(store: CatalogStore) -> list[dict[str, Any]]:
-    """Counts and the newest run per source."""
+def _clean_text(value: Any) -> str | None:
+    """``value`` as text that both stores accept (see :func:`_as_text`), or None."""
+    return None if value is None else _as_text(value)
+
+
+def _as_text(value: Any) -> str:
+    """``value`` as text that both stores accept.
+
+    A transcript can hold any JSON value where a reader expects text, such as an object
+    as a session ID; such values are stored as their JSON text. NUL characters are
+    removed, because PostgreSQL text cannot hold them, and lone UTF-16 surrogates become
+    U+FFFD, because neither store can encode them.
+    """
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, bytes):
+        text = value.decode("utf-8", "replace")
+    else:
+        text = json.dumps(value, sort_keys=True, default=str)
+    return without_lone_surrogates(text.replace("\x00", ""))
+
+
+def catalog_status(store: CatalogStore, sources: list[str] | None = None) -> list[dict[str, Any]]:
+    """Counts and the newest run per source, for ``sources`` (default: every source).
+
+    A named source that the catalog does not hold is an error, as it is for sync.
+    """
     rows = store.fetchall(
         "SELECT s.name, s.kind, "
         "(SELECT COUNT(*) FROM runs r WHERE r.source = s.name), "
@@ -384,6 +701,9 @@ def catalog_status(store: CatalogStore) -> list[dict[str, Any]]:
         "(SELECT MAX(started_at) FROM runs r WHERE r.source = s.name) "
         "FROM sources s ORDER BY s.name"
     )
+    unknown = sorted(set(sources or ()) - {row[0] for row in rows})
+    if unknown:
+        raise ArchiveError(f"Not in the catalog: {', '.join(unknown)}")
     return [
         {
             "source": name,
@@ -395,4 +715,5 @@ def catalog_status(store: CatalogStore) -> list[dict[str, Any]]:
             "last_run_at": _timestamp(last if not isinstance(last, datetime) else last.isoformat()),
         }
         for name, kind, runs, files, gone, sessions, last in rows
+        if not sources or name in sources
     ]

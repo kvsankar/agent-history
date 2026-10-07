@@ -105,19 +105,10 @@ class SSHRemoteClient:
             raise RemoteClientError("Unsafe remote filename")
 
         agent = session.get("agent", "claude")
+        if not _is_safe_component(str(agent)):
+            raise RemoteClientError("Unsafe agent name")
         workspace_value = session.get("workspace") or workspace
-        cache_dir = _remote_cache_dir(remote_host, agent, workspace_value)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        dest = cache_dir / filename
-        remote_mtime = session.get("mtime")
-        if dest.exists():
-            if isinstance(remote_mtime, (int, float)):
-                local_mtime = dest.stat().st_mtime
-                if local_mtime >= float(remote_mtime):
-                    return dest
-            else:
-                return dest
-
+        # Both checks come before anything touches the local file system.
         remote_path = session.get("remote_path")
         if not remote_path:
             backend = get_backend(agent)
@@ -127,6 +118,17 @@ class SSHRemoteClient:
                 remote_path = str(file_value)
         if ".." in remote_path:
             raise RemoteClientError("Unsafe remote path")
+        dest = _cache_destination(remote_host, agent, workspace_value, session, filename)
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        remote_mtime = session.get("mtime")
+        if dest.exists():
+            if isinstance(remote_mtime, (int, float)):
+                local_mtime = dest.stat().st_mtime
+                if local_mtime >= float(remote_mtime):
+                    return dest
+            else:
+                return dest
 
         # ssh joins its remote arguments with spaces, so pass one already-quoted command.
         cmd = ["ssh", remote_host, f"cat {shlex.quote(remote_path)}"]
@@ -169,19 +171,65 @@ class SSHRemoteClient:
 
 
 def _remote_cache_dir(remote_host: str, agent: str, workspace: str) -> Path:
-    safe_host = re.sub(r"[^A-Za-z0-9._-]", "_", remote_host)
+    safe_host = _not_dots(re.sub(r"[^A-Za-z0-9._-]", "_", remote_host))
     safe_ws = _safe_cache_component(workspace)
     return get_config_dir() / "remote-cache" / safe_host / agent / safe_ws
+
+
+def _cache_destination(
+    remote_host: str, agent: str, workspace: str, session: dict[str, Any], filename: str
+) -> Path:
+    """Where a remote session file is cached; it always lies inside its workspace's folder.
+
+    The path is checked with symbolic links resolved, so a link inside the cache cannot
+    lead outside it either.
+    """
+    cache_root = (get_config_dir() / "remote-cache").resolve()
+    cache_dir = _remote_cache_dir(remote_host, agent, workspace)
+    dest = cache_dir / _cache_relative_path(session, workspace, filename)
+    resolved_dir = cache_dir.resolve()
+    if not (_is_within(dest.resolve(), resolved_dir) and _is_within(resolved_dir, cache_root)):
+        raise RemoteClientError("Unsafe cache path")
+    return dest
+
+
+def _is_within(path: Path, folder: Path) -> bool:
+    """Whether ``path`` is ``folder`` or lies below it (both resolved)."""
+    return path == folder or folder in path.parents
+
+
+def _cache_relative_path(session: dict[str, Any], workspace: str, filename: str) -> Path:
+    """Where a remote session file goes inside its workspace's cache folder.
+
+    Sub-agent transcripts of different sessions can share a file name, so the
+    cache mirrors the remote path below the workspace folder (for example
+    ``<session>/subagents/agent-a1.jsonl``). A remote path that does not contain
+    the workspace folder, or holds an unsafe name, is cached by its file name.
+    """
+    remote_path = str(session.get("remote_path") or "").replace("\\", "/")
+    parts = [part for part in remote_path.split("/") if part]
+    if workspace in parts:
+        start = len(parts) - parts[::-1].index(workspace)
+        relative = parts[start:]
+        if relative and relative[-1] == filename and all(map(_is_safe_component, relative)):
+            return Path(*relative)
+    return Path(filename)
 
 
 def _safe_cache_component(value: str) -> str:
     cleaned = value.strip().replace("\\", "/").strip("/")
     cleaned = cleaned.replace("/", "-")
-    return re.sub(r"[^A-Za-z0-9._-]", "_", cleaned)
+    return _not_dots(re.sub(r"[^A-Za-z0-9._-]", "_", cleaned))
+
+
+def _not_dots(name: str) -> str:
+    """``name``, with ``.`` and ``..`` (which name no folder of their own) made ``_`` and ``__``."""
+    return name.replace(".", "_") if name in (".", "..") else name
 
 
 def _is_safe_component(value: str) -> bool:
-    return bool(re.match(r"^[A-Za-z0-9._-]+$", value))
+    """Whether ``value`` is one file or folder name: safe characters, not ``.`` or ``..``."""
+    return bool(re.fullmatch(r"[A-Za-z0-9._-]+", value)) and value not in (".", "..")
 
 
 def _purge_missing_cache_files(cache_dir: Path, keep_files: set[str]) -> None:

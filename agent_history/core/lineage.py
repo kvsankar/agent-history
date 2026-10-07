@@ -8,8 +8,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agent_history.backends.gemini import gemini_rewind
 from agent_history.types import SessionDict
+from agent_history.utils.jsonl import id_key, json_objects, open_transcript
 from agent_history.utils.platform import AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI
+from agent_history.utils.session_identity import (
+    CodexSessionMeta,
+    claude_session_identity,
+    claude_subagent_files,
+    gemini_session_identity,
+)
 
 LineageRecord = dict[str, Any]
 
@@ -115,9 +123,7 @@ def extract_codex_lineage(
 ) -> tuple[LineageRecord | None, dict[str, dict[str, Any]]]:
     """Extract one Codex session lineage record plus parent spawn invocations."""
     parts, invocations = _collect_codex_lineage_parts(jsonl_file)
-    session_meta = parts.get("session_meta") or {}
-    session_id = session_meta.get("id")
-    if not session_id:
+    if not parts["identity"].session_id:
         return None, invocations
     return _codex_lineage_record(jsonl_file, parts), invocations
 
@@ -128,7 +134,7 @@ def _collect_codex_lineage_parts(
     from agent_history.backends.codex import _codex_open_text
 
     parts: dict[str, Any] = {
-        "session_meta": {},
+        "identity": CodexSessionMeta(),
         "first_ts": None,
         "last_ts": None,
         "task_complete": None,
@@ -137,19 +143,23 @@ def _collect_codex_lineage_parts(
     invocations_by_agent_id: dict[str, dict[str, Any]] = {}
 
     try:
-        with _codex_open_text(jsonl_file) as handle:
+        with _codex_open_text(jsonl_file, encoding="utf-8-sig", errors="replace") as handle:
             for raw_line in handle:
                 try:
                     entry = json.loads(raw_line)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, RecursionError):
+                    continue
+                if not isinstance(entry, dict):
                     continue
                 timestamp = entry.get("timestamp")
                 parts["first_ts"] = parts["first_ts"] or timestamp
                 parts["last_ts"] = timestamp or parts["last_ts"]
                 entry_type = entry.get("type")
-                payload = entry.get("payload") or {}
+                payload = entry.get("payload")
+                if not isinstance(payload, dict):
+                    payload = {}
                 if entry_type == "session_meta":
-                    parts["session_meta"] = payload
+                    parts["identity"].add(payload)
                 elif entry_type == "response_item":
                     _collect_codex_invocation(
                         jsonl_file,
@@ -175,11 +185,11 @@ def _collect_codex_invocation(
 ) -> None:
     payload_type = payload.get("type")
     if payload_type == "function_call" and payload.get("name") == "spawn_agent":
-        pending_spawn_calls[payload.get("call_id", "")] = _codex_spawn_invocation(
+        pending_spawn_calls[id_key(payload.get("call_id")) or ""] = _codex_spawn_invocation(
             jsonl_file, timestamp, payload
         )
     elif payload_type == "function_call_output":
-        invocation = pending_spawn_calls.get(payload.get("call_id", ""))
+        invocation = pending_spawn_calls.get(id_key(payload.get("call_id")) or "")
         if completed := _codex_completed_spawn_invocation(jsonl_file, payload, invocation):
             invocations_by_agent_id[completed["agent_id"]] = completed
 
@@ -224,22 +234,12 @@ def _codex_completed_spawn_invocation(
 
 
 def _codex_lineage_record(jsonl_file: Path, parts: dict[str, Any]) -> LineageRecord:
-    session_meta = parts["session_meta"]
-    session_id = session_meta.get("id")
+    identity: CodexSessionMeta = parts["identity"]
+    session_meta = identity.payload or {}
+    session_id = identity.session_id
     task_complete = parts.get("task_complete") or {}
-    source = session_meta.get("source") if isinstance(session_meta.get("source"), dict) else {}
-    subagent_source = source.get("subagent")
-    if not isinstance(subagent_source, dict):
-        subagent_source = {}
-    spawn = subagent_source.get("thread_spawn")
-    if not isinstance(spawn, dict):
-        spawn = {}
-    parent_session_id = (
-        session_meta.get("parent_thread_id")
-        or spawn.get("parent_thread_id")
-        or session_meta.get("forked_from_id")
-    )
-    is_subagent = session_meta.get("thread_source") == "subagent" or bool(spawn)
+    parent_session_id = identity.parent_session_id
+    is_subagent = identity.is_subagent
     record: LineageRecord = {
         "agent": AGENT_CODEX,
         "kind": "subagent" if is_subagent else "main",
@@ -282,81 +282,72 @@ def _collect_claude_lineage_parts(
         "has_records": False,
         "first_ts": None,
         "last_ts": None,
-        "session_id": None,
+        "session_ids": [],
         "agent_id": None,
-        "is_sidechain": False,
+        "notifications": [],
     }
-    notifications: dict[tuple[str, str], dict[str, Any]] = {}
 
     try:
-        with open(jsonl_file, encoding="utf-8") as handle:
+        with open(jsonl_file, encoding="utf-8-sig", errors="replace") as handle:
             for raw_line in handle:
                 try:
                     entry = json.loads(raw_line)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, RecursionError):
+                    continue
+                if not isinstance(entry, dict):
                     continue
                 state["has_records"] = True
                 _update_claude_lineage_state(state, entry)
-                _collect_claude_notifications(state, entry, jsonl_file, notifications)
+                state["notifications"].extend(_claude_notifications_from_entry(entry, jsonl_file))
     except OSError:
-        return {}, notifications
+        return {}, {}
 
-    return state, notifications
+    state["identity"] = claude_session_identity(jsonl_file, state["session_ids"], state["agent_id"])
+    return state, _claude_notifications_by_task(state)
 
 
 def _update_claude_lineage_state(state: dict[str, Any], entry: dict[str, Any]) -> None:
     timestamp = entry.get("timestamp")
     state["first_ts"] = state["first_ts"] or timestamp
     state["last_ts"] = timestamp or state["last_ts"]
-    state["session_id"] = state["session_id"] or entry.get("sessionId")
+    session_id = entry.get("sessionId")
+    if session_id and session_id not in state["session_ids"]:
+        state["session_ids"].append(session_id)
     state["agent_id"] = state["agent_id"] or entry.get("agentId")
-    state["is_sidechain"] = state["is_sidechain"] or bool(entry.get("isSidechain"))
 
 
-def _collect_claude_notifications(
+def _claude_notifications_by_task(
     state: dict[str, Any],
-    entry: dict[str, Any],
-    jsonl_file: Path,
-    notifications: dict[tuple[str, str], dict[str, Any]],
-) -> None:
-    session_id = state.get("session_id")
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Key the file's task notifications by (its session ID, task ID)."""
+    session_id = state["identity"]["session_id"]
+    notifications: dict[tuple[str, str], dict[str, Any]] = {}
     if not session_id:
-        return
-    for notification in _claude_notifications_from_entry(entry, jsonl_file):
+        return notifications
+    for notification in state["notifications"]:
         task_id = notification.get("task_id")
         if task_id:
             notifications[(str(session_id), str(task_id))] = notification
+    return notifications
 
 
 def _claude_lineage_record(jsonl_file: Path, state: dict[str, Any]) -> LineageRecord:
-    session_id = state.get("session_id") or _session_id_from_claude_path(jsonl_file)
-    task_id = _task_id_from_claude_path(jsonl_file)
-    agent_id = state.get("agent_id")
-    if not agent_id and task_id:
-        agent_id = task_id
-    is_subagent = (
-        bool(state.get("is_sidechain")) or bool(task_id) or jsonl_file.name.startswith("agent-")
-    )
-    record_session_id = (
-        f"{session_id}:{agent_id}"
-        if is_subagent and session_id and agent_id
-        else session_id
-        if not is_subagent
-        else None
-    )
+    identity = state["identity"]
+    is_subagent = identity["is_agent"]
+    session_id = identity["session_id"]
 
     record: LineageRecord = {
         "agent": AGENT_CLAUDE,
         "kind": "subagent" if is_subagent else "main",
-        "session_id": record_session_id,
-        "parent_session_id": session_id if is_subagent else None,
-        "agent_id": agent_id,
+        "session_id": session_id,
+        "parent_session_id": identity["parent_session_id"],
+        "agent_id": identity["agent_id"],
         "agent_name": None,
         "start_ts": state.get("first_ts"),
         "end_ts": state.get("last_ts"),
         "status": None,
         "confidence": "confirmed",
-        "evidence": [_evidence(jsonl_file, "jsonl", "sessionId/agentId/isSidechain")],
+        "evidence": [_evidence(jsonl_file, "jsonl", "sessionId/agentId")],
         "source_file": str(jsonl_file),
     }
     return _drop_none(record)
@@ -367,9 +358,9 @@ def extract_gemini_lineage(json_file: Path) -> list[LineageRecord]:
     if json_file.name.endswith(".jsonl"):
         return _extract_gemini_jsonl_lineage(json_file)
     try:
-        with open(json_file, encoding="utf-8") as handle:
+        with open_transcript(json_file) as handle:
             data = json.load(handle) if json_file.suffix == ".json" else None
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):
         return []
 
     if not isinstance(data, dict):
@@ -400,12 +391,8 @@ def _extract_gemini_jsonl_lineage(jsonl_file: Path) -> list[LineageRecord]:
     first_ts = None
     last_ts = None
     try:
-        with open(jsonl_file, encoding="utf-8") as handle:
-            for raw_line in handle:
-                try:
-                    entry = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
+        with open_transcript(jsonl_file) as handle:
+            for entry in json_objects(handle):
                 timestamp = entry.get("timestamp")
                 first_ts = first_ts or timestamp
                 last_ts = timestamp or last_ts
@@ -413,9 +400,14 @@ def _extract_gemini_jsonl_lineage(jsonl_file: Path) -> list[LineageRecord]:
     except OSError:
         return []
 
-    session_id = session_meta.get("sessionId") or session_meta.get("id") or jsonl_file.stem
-    nested_parent_id = _gemini_nested_jsonl_parent_session_id(jsonl_file)
-    is_nested_child = nested_parent_id is not None
+    identity = gemini_session_identity(
+        jsonl_file,
+        session_meta.get("kind"),
+        session_meta.get("sessionId") or session_meta.get("id") or jsonl_file.stem,
+    )
+    session_id = identity["session_id"]
+    nested_parent_id = identity["parent_session_id"]
+    is_nested_child = identity["is_agent"]
     records = [
         _drop_none(
             {
@@ -446,8 +438,8 @@ def _collect_gemini_jsonl_record(
     session_meta: dict[str, Any],
     messages: list[dict[str, Any]],
 ) -> None:
-    if "$rewindTo" in entry:
-        _rewind_gemini_messages(messages, entry.get("$rewindTo"))
+    if isinstance(entry.get("$rewindTo"), str):
+        gemini_rewind(messages, entry["$rewindTo"])
         return
     if "$set" in entry:
         _apply_gemini_set_record(session_meta, messages, entry.get("$set"))
@@ -470,13 +462,6 @@ def _collect_gemini_jsonl_record(
         session_meta.update({key: value for key, value in entry.items() if key != "messages"})
 
 
-def _rewind_gemini_messages(messages: list[dict[str, Any]], target_id: Any) -> None:
-    for index, message in enumerate(messages):
-        if message.get("id") == target_id:
-            del messages[index + 1 :]
-            return
-
-
 def _apply_gemini_set_record(
     session_meta: dict[str, Any],
     messages: list[dict[str, Any]],
@@ -496,9 +481,14 @@ def _gemini_subagent_records(
     messages: list[dict[str, Any]],
 ) -> list[LineageRecord]:
     records: list[LineageRecord] = []
+    if not isinstance(messages, list):
+        return records
     for message_index, message in enumerate(messages):
-        for tool_call in message.get("toolCalls", []) or []:
-            if _is_gemini_subagent_tool(tool_call):
+        tool_calls = message.get("toolCalls") if isinstance(message, dict) else None
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if isinstance(tool_call, dict) and _is_gemini_subagent_tool(tool_call):
                 records.append(
                     _gemini_subagent_record(
                         json_file, session_id, message_index, message, tool_call
@@ -547,12 +537,8 @@ def extract_pi_lineage(jsonl_file: Path) -> list[LineageRecord]:
     pending_subagent_calls: dict[str, dict[str, Any]] = {}
 
     try:
-        with open(jsonl_file, encoding="utf-8") as handle:
-            for raw_line in handle:
-                try:
-                    entry = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
+        with open_transcript(jsonl_file) as handle:
+            for entry in json_objects(handle):
                 timestamp = entry.get("timestamp")
                 first_ts = first_ts or timestamp
                 last_ts = timestamp or last_ts
@@ -752,12 +738,10 @@ def _claude_notifications_from_entry(
 def _discover_claude_nested_subagents(session_file: Path) -> list[Path]:
     if session_file.name.startswith("agent-") or "subagents" in session_file.parts:
         return []
-    nested_dir = session_file.with_suffix("") / "subagents"
-    if not nested_dir.is_dir():
+    session_dir = session_file.with_suffix("")
+    if not (session_dir / "subagents").is_dir():
         return []
-    return sorted(
-        path for path in nested_dir.glob("agent-*.jsonl") if _is_claude_task_subagent_file(path)
-    )
+    return sorted(claude_subagent_files(session_dir))
 
 
 def _is_gemini_subagent_tool(tool_call: dict[str, Any]) -> bool:
@@ -767,13 +751,6 @@ def _is_gemini_subagent_tool(tool_call: dict[str, Any]) -> bool:
     return (
         display.endswith(" agent") or "subagent" in result_display or name.endswith("_investigator")
     )
-
-
-def _gemini_nested_jsonl_parent_session_id(jsonl_file: Path) -> str | None:
-    parent = jsonl_file.parent
-    if parent.parent.name != "chats":
-        return None
-    return parent.name
 
 
 def _collect_pi_subagent_lineage(
@@ -884,10 +861,6 @@ def _pi_result_content(content: Any) -> str | None:
     return json.dumps(content, ensure_ascii=False)
 
 
-def _is_claude_task_subagent_file(path: Path) -> bool:
-    return path.name.startswith("agent-") and not path.name.startswith("agent-acompact-")
-
-
 def _main_record_for_session(jsonl_file: Path, agent: str) -> LineageRecord:
     return {
         "agent": agent,
@@ -919,21 +892,6 @@ def _lineage_sort_key(record: LineageRecord) -> tuple[str, str, str]:
     )
 
 
-def _session_id_from_claude_path(jsonl_file: Path) -> str | None:
-    parts = jsonl_file.parts
-    if len(parts) >= 3 and parts[-2] == "subagents":
-        return parts[-3]
-    if not jsonl_file.name.startswith("agent-"):
-        return jsonl_file.stem
-    return None
-
-
-def _task_id_from_claude_path(jsonl_file: Path) -> str | None:
-    if not jsonl_file.name.startswith("agent-"):
-        return None
-    return jsonl_file.stem.removeprefix("agent-")
-
-
 def _loads_json_object(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -941,7 +899,7 @@ def _loads_json_object(value: Any) -> dict[str, Any]:
         return {}
     try:
         loaded = json.loads(value)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
 

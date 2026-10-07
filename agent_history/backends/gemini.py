@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional, TypedDict
 
 from ..storage.config import get_config_dir
+from ..utils.jsonl import dict_field, json_objects, open_transcript
 from ..utils.platform import AGENT_GEMINI
 
 __all__ = [
@@ -224,26 +225,26 @@ def _extract_gemini_content_part(part) -> str:
         return ""
 
     if "text" in part:
-        return part["text"]
+        return str(part["text"] or "")
     if "functionCall" in part:
-        call = part["functionCall"]
+        call = dict_field(part, "functionCall")
         name = call.get("name", "unknown")
         args = call.get("args", {})
         return f"**[Function Call: {name}]**\n```json\n{json.dumps(args, indent=2)}\n```"
     if "functionResponse" in part:
-        response = part["functionResponse"]
+        response = dict_field(part, "functionResponse")
         name = response.get("name", "unknown")
         payload = response.get("response", response)
         return f"**[Function Response: {name}]**\n```json\n{json.dumps(payload, indent=2)}\n```"
     if "inlineData" in part:
-        mime = part["inlineData"].get("mimeType", "unknown")
+        mime = dict_field(part, "inlineData").get("mimeType", "unknown")
         return f"[Inline data: {mime}]"
     if "executableCode" in part:
-        code = part["executableCode"]
+        code = dict_field(part, "executableCode")
         lang = code.get("language", "")
         return f"```{lang}\n{code.get('code', '')}\n```"
     if "codeExecutionResult" in part:
-        result = part["codeExecutionResult"]
+        result = dict_field(part, "codeExecutionResult")
         return f"**Output:**\n```\n{result.get('output', '')}\n```"
     return ""
 
@@ -266,88 +267,151 @@ def _build_gemini_message(msg: dict, content: str) -> Optional[dict]:
     if msg_type == "user":
         return {"role": "user", "content": content, "timestamp": timestamp}
     if msg_type in ("gemini", "assistant", "model"):
+        # Fields of the wrong type in a malformed message are dropped
+        thoughts = msg.get("thoughts")
+        tokens = msg.get("tokens")
+        tool_calls = msg.get("toolCalls")
         return {
             "role": "assistant",
             "content": content,
             "timestamp": timestamp,
-            "thoughts": msg.get("thoughts", []),
-            "tokens": msg.get("tokens"),
+            "thoughts": thoughts if isinstance(thoughts, list) else [],
+            "tokens": tokens if isinstance(tokens, dict) else None,
             "model": msg.get("model"),
-            "tool_calls": msg.get("toolCalls", []),
+            "tool_calls": [tc for tc in tool_calls if isinstance(tc, dict)]
+            if isinstance(tool_calls, list)
+            else [],
         }
     if msg_type in ("info", "error", "warning"):
         return {"role": msg_type, "content": content, "timestamp": timestamp}
     return None
 
 
+_GEMINI_MESSAGE_TYPES = ("user", "gemini", "assistant", "model", "info", "error", "warning")
+
+
+class _GeminiJsonlChat:
+    """The current state of an append-only Gemini JSONL chat.
+
+    Gemini CLI writes a message again, in full and under the same ID, each
+    time it changes (a tool call finishes, say); the later copy replaces the
+    earlier one in place. ``$rewindTo`` removes the named message and every
+    later one (see :func:`gemini_rewind`), and ``$set`` updates the metadata
+    or replaces all messages.
+    """
+
+    def __init__(self) -> None:
+        self.meta: dict[str, Any] = {}
+        self.messages: list[dict] = []
+        self._positions: dict[str, int] = {}
+
+    def _reindex(self) -> None:
+        self._positions = {}
+        for index, msg in enumerate(self.messages):
+            key = _gemini_message_key(msg)
+            if key is not None:
+                self._positions[key] = index
+
+    def add(self, record: dict[str, Any]) -> None:
+        if isinstance(record.get("$rewindTo"), str):
+            gemini_rewind(self.messages, record["$rewindTo"])
+            self._reindex()
+            return
+        if "$set" in record:
+            updates = record.get("$set") or {}
+            if not isinstance(updates, dict):
+                return
+            if isinstance(updates.get("messages"), list):
+                self.messages = list(updates["messages"])
+                self._reindex()
+            self.meta.update({k: v for k, v in updates.items() if k != "messages"})
+            return
+        if (record.get("type") or record.get("role")) in _GEMINI_MESSAGE_TYPES:
+            self._add_message(record)
+            return
+        # Metadata records usually have no type and appear first.
+        self.meta.update(record)
+
+    def _add_message(self, record: dict[str, Any]) -> None:
+        key = _gemini_message_key(record)
+        if key is not None and key in self._positions:
+            self.messages[self._positions[key]] = record
+            return
+        if key is not None:
+            self._positions[key] = len(self.messages)
+        self.messages.append(record)
+
+
+def gemini_rewind(messages: list[Any], message_id: str) -> None:
+    """Apply a ``$rewindTo`` record to a chat's messages, in place.
+
+    As Gemini CLI's loader does, the named message and every later one are
+    removed, and every message is removed when none has that ID. Gemini CLI
+    reads a record as a rewind only when its ``$rewindTo`` is text.
+    """
+    for index, msg in enumerate(messages):
+        if isinstance(msg, dict) and msg.get("id") == message_id:
+            del messages[index:]
+            return
+    messages.clear()
+
+
+def _gemini_message_key(msg: Any) -> str | None:
+    """The ID that names a Gemini message across its copies, or None."""
+    if not isinstance(msg, dict):
+        return None
+    msg_id = msg.get("id")
+    return msg_id if isinstance(msg_id, str) and msg_id else None
+
+
+def _gemini_jsonl_chat(jsonl_file: Path) -> _GeminiJsonlChat | None:
+    """The chat state an append-only JSONL file records, or None if unreadable."""
+    chat = _GeminiJsonlChat()
+    try:
+        with open_transcript(jsonl_file) as f:
+            for record in json_objects(f):
+                chat.add(record)
+    except OSError:
+        return None
+    return chat
+
+
+def gemini_session_records(session_file: Path) -> tuple[list[Any], dict[str, Any]] | None:
+    """The raw messages and session metadata of a Gemini chat, JSON or JSONL.
+
+    The metadata has the legacy JSON keys (``sessionId``, ``projectHash``,
+    ``startTime``, ``lastUpdated``). Returns None when the file cannot be read
+    or holds no session object.
+    """
+    if session_file.name.endswith(".jsonl"):
+        chat = _gemini_jsonl_chat(session_file)
+        if chat is None:
+            return None
+        meta = chat.meta
+        return chat.messages, {
+            "sessionId": meta.get("sessionId") or meta.get("id"),
+            "projectHash": meta.get("projectHash") or meta.get("cwd"),
+            "startTime": meta.get("startTime"),
+            "lastUpdated": meta.get("lastUpdated"),
+            "summary": meta.get("summary"),
+            "memoryScratchpad": meta.get("memoryScratchpad"),
+            "directories": meta.get("directories"),
+            "kind": meta.get("kind"),
+        }
+    data = _gemini_load_json_session(session_file)
+    if data is None:
+        return None
+    messages = data.get("messages")
+    return (messages if isinstance(messages, list) else []), data
+
+
 def _gemini_read_jsonl_messages(jsonl_file: Path) -> tuple[list[dict], dict | None]:
     """Read current Gemini append-only JSONL session files."""
-    session_meta: dict[str, Any] = {}
-    messages: list[dict] = []
-
-    try:
-        with open(jsonl_file, encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                if "$rewindTo" in record:
-                    rewind_id = record.get("$rewindTo")
-                    for index, msg in enumerate(messages):
-                        if msg.get("id") == rewind_id:
-                            messages = messages[: index + 1]
-                            break
-                    continue
-
-                if "$set" in record:
-                    updates = record.get("$set") or {}
-                    if not isinstance(updates, dict):
-                        continue
-                    if isinstance(updates.get("messages"), list):
-                        messages = updates["messages"]
-                    session_meta.update({k: v for k, v in updates.items() if k != "messages"})
-                    continue
-
-                record_type = record.get("type") or record.get("role")
-                if record_type in (
-                    "user",
-                    "gemini",
-                    "assistant",
-                    "model",
-                    "info",
-                    "error",
-                    "warning",
-                ):
-                    messages.append(record)
-                    continue
-
-                # Metadata records usually have no type and appear first.
-                session_meta.update(record)
-    except OSError:
+    records = gemini_session_records(jsonl_file)
+    if records is None:
         return [], None
-
-    normalized_messages = []
-    for msg in messages:
-        content = _extract_gemini_content(msg.get("content", ""))
-        normalized = _build_gemini_message(msg, content)
-        if normalized:
-            normalized_messages.append(normalized)
-
-    meta = {
-        "sessionId": session_meta.get("sessionId") or session_meta.get("id"),
-        "projectHash": session_meta.get("projectHash") or session_meta.get("cwd"),
-        "startTime": session_meta.get("startTime"),
-        "lastUpdated": session_meta.get("lastUpdated"),
-        "summary": session_meta.get("summary"),
-        "memoryScratchpad": session_meta.get("memoryScratchpad"),
-        "directories": session_meta.get("directories"),
-        "kind": session_meta.get("kind"),
-    }
-    return normalized_messages, meta
+    messages, meta = records
+    return _gemini_normalize_messages(messages), meta
 
 
 def gemini_read_json_messages(json_file: Path) -> tuple:
@@ -368,10 +432,8 @@ def gemini_read_json_messages(json_file: Path) -> tuple:
     if json_file.name.endswith(".jsonl"):
         return _gemini_read_jsonl_messages(json_file)
 
-    try:
-        with open(json_file, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    data = _gemini_load_json_session(json_file)
+    if data is None:
         return [], None
 
     session_meta = {
@@ -381,15 +443,31 @@ def gemini_read_json_messages(json_file: Path) -> tuple:
         "lastUpdated": data.get("lastUpdated"),
         "summary": data.get("summary"),
     }
+    return _gemini_normalize_messages(data.get("messages")), session_meta
 
-    messages = []
-    for msg in data.get("messages", []):
-        content = _extract_gemini_content(msg.get("content", ""))
-        normalized = _build_gemini_message(msg, content)
+
+def _gemini_load_json_session(json_file: Path) -> dict[str, Any] | None:
+    """The object in a legacy single-JSON session file, or None."""
+    try:
+        with open_transcript(json_file) as f:
+            data = json.load(f)
+    except (OSError, ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _gemini_normalize_messages(messages: Any) -> list[dict]:
+    """Normalized messages of a session; entries that are not objects are skipped."""
+    if not isinstance(messages, list):
+        return []
+    normalized_messages = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        normalized = _build_gemini_message(msg, _extract_gemini_content(msg.get("content", "")))
         if normalized:
-            messages.append(normalized)
-
-    return messages, session_meta
+            normalized_messages.append(normalized)
+    return normalized_messages
 
 
 # =============================================================================
@@ -421,12 +499,13 @@ def gemini_format_tool_call(tool_call: dict) -> str:
         lines.append(f"```json\n{args_str}\n```")
 
     # Extract result output if present
-    if result:
+    if isinstance(result, list):
         for r in result:
             if isinstance(r, dict):
-                func_resp = r.get("functionResponse", {})
-                output = func_resp.get("response", {}).get("output", "")
+                func_resp = dict_field(r, "functionResponse")
+                output = dict_field(func_resp, "response").get("output", "")
                 if output:
+                    output = output if isinstance(output, str) else str(output)
                     # Use helper for consistent truncation (M4)
                     output = _truncate_tool_output(output)
                     lines.append(f"**Result:**\n```\n{output}\n```")
@@ -478,14 +557,8 @@ def gemini_get_first_timestamp(json_file: Path) -> Optional[str]:
     """
     if json_file.name.endswith(".jsonl"):
         try:
-            with open(json_file, encoding="utf-8") as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
+            with open_transcript(json_file) as f:
+                for record in json_objects(f):
                     start_time = record.get("startTime")
                     if start_time:
                         return start_time
@@ -496,13 +569,8 @@ def gemini_get_first_timestamp(json_file: Path) -> Optional[str]:
             pass
         return None
 
-    try:
-        with open(json_file, encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("startTime", "")
-    except (OSError, json.JSONDecodeError):
-        pass
-    return None
+    data = _gemini_load_json_session(json_file)
+    return data.get("startTime", "") if data is not None else None
 
 
 # =============================================================================
@@ -1158,6 +1226,18 @@ def _gemini_session_matches_filters(
     return _is_date_in_range(modified, since_date, until_date)
 
 
+def gemini_resumed_copy_name(name: str) -> str | None:
+    """The file Gemini CLI writes when it resumes the legacy chat ``name``, if it is one.
+
+    ``name`` is a file name or a path, and the result is of the same kind.
+
+    Gemini CLI resumes ``<name>.json`` by writing ``<name>.jsonl`` beside it, holding
+    the metadata and every message, and appends later messages there; it keeps the
+    JSON file. Its session list shows one file per session ID, the latest.
+    """
+    return name + "l" if name.endswith(".json") else None
+
+
 def gemini_scan_sessions(
     pattern: str = "",
     since_date=None,
@@ -1194,7 +1274,11 @@ def gemini_scan_sessions(
         + list(sessions_dir.glob("*/chats/session-*.jsonl"))
         + list(sessions_dir.glob("*/chats/*/*.jsonl"))
     )
+    found = set(session_files)
     for json_file in session_files:
+        copy_name = gemini_resumed_copy_name(json_file.name)
+        if copy_name and json_file.with_name(copy_name) in found:
+            continue  # read from its copy, which holds every message
         workspace = gemini_get_workspace_from_session(json_file)
         modified = datetime.fromtimestamp(json_file.stat().st_mtime)
 

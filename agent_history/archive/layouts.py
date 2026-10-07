@@ -1,8 +1,10 @@
 """Which files to archive for each agent, and where they go in the archive.
 
-Each agent has an allowlist of glob patterns relative to its root folder. A credential
-denylist applies to every file whatever the configuration says. Archived paths mirror the
-source's home directory, so ``.claude/history.jsonl`` is stored at
+Each agent has an allowlist of glob patterns relative to its root folder. The archive
+takes only the files these layouts select, less any that the configuration excludes;
+nothing outside the agents' folders is read. A credential denylist on file names applies
+to every selected file as a second line of defence. Archived paths mirror the source's
+home directory, so ``.claude/history.jsonl`` is stored at
 ``sources/<source>/files/.claude/history.jsonl.zst``.
 """
 
@@ -14,25 +16,56 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Pattern
+from typing import TYPE_CHECKING, Iterator, NamedTuple, Pattern
+
+from agent_history.archive.errors import ArchiveError
+from agent_history.utils.session_identity import CLAUDE_COMPACTION_PREFIX
 
 if TYPE_CHECKING:
     from agent_history.archive.config import SourceConfig, SourcePart
 
 ARCHIVE_SUFFIX = ".zst"
-OTHER_AGENT = "other"
 
-# Matched against file names only, everywhere. Never archived.
+# Matched against the name of every file the layouts select, as a second line of defence
+# behind the layouts' own patterns; matching files are never archived. Folder names are
+# not checked: a Claude project folder is named after any working folder, such as one
+# called "oauth-proxy". The layouts exclude the agents' own credential folders instead.
 CREDENTIAL_DENYLIST = (
     "auth.json",
     "*oauth*",
+    "*.token",
+    "*tokens.json",
     "*.pem",
     "*.key",
     ".credentials.json",
     "credentials*",
     "google_accounts.json",
+    # MCP server configurations, which carry API keys in env or headers.
+    "*mcp*config*",
+    "mcp.json*",
+    ".mcp.json*",
+    # Sign-in status and logs, such as Claude's daemon-auth-status.json and Codex's
+    # codex-login.log.
+    "*auth-status*",
+    "*login*.log",
+    # SSH and other private keys and certificate stores.
+    "id_rsa*",
+    "id_dsa*",
+    "id_ecdsa*",
+    "id_ed25519*",
+    "*.ppk",
+    "*.p12",
+    "*.pfx",
+    # Files that hold passwords or tokens for other tools.
+    ".netrc",
+    "_netrc",
+    ".git-credentials",
+    ".pgpass",
+    ".npmrc",
+    ".pypirc",
     # Browser credential stores (also caught by skipping whole profiles, below).
-    "cookies",
+    "*cookies",
+    "cookies.txt",
     "cookies.sqlite*",
     "login data*",
     "web data*",
@@ -42,8 +75,22 @@ CREDENTIAL_DENYLIST = (
 )
 
 # A folder holding any of these is a browser profile: cookies, saved logins and caches,
-# never session content. Such folders are not descended into.
-BROWSER_PROFILE_MARKERS = ("Local State", "cookies.sqlite", "logins.json", "key4.db")
+# never session content. Such folders are not descended into. "Local State" marks the
+# top folder of a Chromium user-data directory; the others mark one profile folder (such
+# as "Default"), which can also be found on its own. Compared case-insensitively.
+BROWSER_PROFILE_MARKERS = (
+    "Local State",
+    "Login Data",
+    "Cookies",
+    "Web Data",
+    "cookies.sqlite",
+    "logins.json",
+    "key4.db",
+)
+# A Chromium profile keeps both of these; either alone is too common a name.
+BROWSER_PROFILE_MARKER_PAIR = ("Preferences", "Secure Preferences")
+# Newer Chromium versions keep cookies in this subfolder of a profile.
+BROWSER_PROFILE_COOKIES = ("Network", "Cookies")
 
 # Matched against file names only, in every layout.
 COMMON_EXCLUDES = ("*.tmp", "*.part", "*-wal", "*-shm", "*-journal", "*.lock")
@@ -73,6 +120,9 @@ class AgentLayout:
     databases: tuple[DatabaseRule, ...] = ()
     backend: str | None = None  # cagelens backend id that reads this agent's sessions
     sessions: tuple[str, ...] = ()  # session file patterns, relative to the root
+    # The folder, relative to the root, whose subfolders name each session's workspace
+    # (Claude's projects/<workspace>/), when the agent keeps sessions that way.
+    workspace_folder: str | None = None
 
     def roots_for(self, platform: str) -> tuple[str, ...]:
         return self.roots.get(platform) or self.roots.get("*", ())
@@ -80,12 +130,14 @@ class AgentLayout:
 
 @dataclass(frozen=True)
 class SelectedFile:
-    """A source file chosen for archiving."""
+    """A source file chosen for archiving, or a path that could not be read."""
 
     rel_path: str  # home-relative, "/"-separated
     path: Path
     agent: str
     database: DatabaseRule | None = None
+    # Set when this path could not be read; nothing at or below it can be judged deleted.
+    error: str | None = None
 
 
 _VSCODE_USER_DIRS = {
@@ -111,13 +163,33 @@ LAYOUTS: tuple[AgentLayout, ...] = (
             "file-history/**",
             "usage-data/**",
         ),
+        # The background daemon's sign-in state.
+        exclude=("daemon-auth-*",),
         backend="claude",
-        sessions=("projects/*/*.jsonl", "projects/*/*/subagents/*.jsonl"),
+        sessions=(
+            "projects/*/*.jsonl",
+            "projects/*/*/subagents/*.jsonl",
+            # Sub-agents of a workflow; the folder's journal.jsonl holds no session.
+            "projects/*/*/subagents/workflows/*/agent-*.jsonl",
+        ),
+        workspace_folder="projects",
     ),
     AgentLayout(
         name="codex",
         roots={"*": (".codex",)},
         include=("sessions/**", "archived_sessions/**", "history.jsonl", "session_index.jsonl"),
+        exclude=(
+            # Built from the rollout files, recording how far into each one it has read.
+            "thread_history_*.sqlite",
+            # config.toml can hold MCP server keys and bearer tokens; so can its
+            # backups, editor backups and undo files.
+            "config.toml",
+            "config.toml?*",
+            ".config.toml.*",
+            "backups/**/config.toml*",
+            "computer-use/config.json",
+            "mcp-oauth-locks/**",
+        ),
         databases=(
             DatabaseRule(
                 "state_*.sqlite",
@@ -143,12 +215,16 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         include=("history/**", "tmp/**", "antigravity/**"),
         exclude=("tmp/*/tool-outputs/**", "tmp/bin/**"),
         backend="gemini",
-        sessions=("tmp/*/chats/*.json", "tmp/*/chats/*.jsonl"),
+        # Main chats, then sub-agent chats in a folder named after their parent session.
+        sessions=("tmp/*/chats/*.json", "tmp/*/chats/*.jsonl", "tmp/*/chats/*/*.jsonl"),
+        workspace_folder="tmp",
     ),
     AgentLayout(
         name="pi",
         roots={"*": (".pi/agent",)},
         include=("sessions/**",),
+        # Custom model providers keep their API keys in models.json.
+        exclude=("models.json", "models.json.*"),
         backend="pi",
         sessions=("sessions/**/*.jsonl",),
     ),
@@ -156,6 +232,17 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="copilot-cli",
         roots={"*": (".copilot",)},
         include=("session-state/**", "chats/**", "history-session-state/**"),
+        exclude=(
+            # A cache of repository details that Copilot rebuilds.
+            "repo-metadata-cache.db",
+            # Settings that can hold signed-in users' tokens, and logs that can record
+            # request headers.
+            "config.json",
+            "settings.json",
+            "logs/**",
+            # MCP servers' OAuth clients and tokens.
+            "mcp-oauth-config/**",
+        ),
         databases=(
             DatabaseRule("session-state/*/session.db", "snapshot"),
             DatabaseRule(
@@ -184,6 +271,13 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="copilot-vscode",
         roots=_VSCODE_USER_DIRS,
         include=("workspaceStorage/*/GitHub.copilot-chat/**", "workspaceStorage/*/chatSessions/**"),
+        # SQLite files here are indexes of the workspace's files (path, size, time and
+        # hash per file) that Copilot rebuilds; they hold no chat content.
+        exclude=(
+            "workspaceStorage/*/GitHub.copilot-chat/**/*.sqlite",
+            "workspaceStorage/*/GitHub.copilot-chat/**/*.sqlite3",
+            "workspaceStorage/*/GitHub.copilot-chat/**/*.db",
+        ),
         backend="copilot-vscode",
         sessions=("workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl",),
     ),
@@ -191,6 +285,15 @@ LAYOUTS: tuple[AgentLayout, ...] = (
         name="cagelens",
         roots={"*": (".agent-history", ".cagelens")},
         include=("config.json", "aliases*.json", "project_tags*"),
+        # Caches, which hold copies of other machines' sessions or data rebuilt from
+        # sessions, and the work folder of catalog sync.
+        exclude=(
+            "remote_*/**",
+            "remote-cache/**",
+            "**/metrics.db*",
+            "*_index.json",
+            "archive-work/**",
+        ),
     ),
 )
 
@@ -217,10 +320,17 @@ class SessionTarget:
 
     backend: str
     database: DatabaseRule | None = None
+    # The workspace that the file's path names, for agents with a workspace_folder.
+    workspace: str | None = None
 
 
 def session_target(rel_path: str, platform: str) -> SessionTarget | None:
-    """The backend that reads sessions from a home-relative path, if it holds any."""
+    """The backend that reads sessions from a home-relative path, if it holds any.
+
+    A Claude compaction transcript (``agent-acompact-*``) is archived but holds no
+    session: it repeats most of its parent session, and the stats, list, export and
+    lineage commands leave it out too.
+    """
     for layout in LAYOUTS:
         if layout.backend is None:
             continue
@@ -228,32 +338,71 @@ def session_target(rel_path: str, platform: str) -> SessionTarget | None:
             if not rel_path.startswith(root + "/"):
                 continue
             inner = rel_path[len(root) + 1 :]
-            if _matches_any(inner, layout.sessions):
-                return SessionTarget(layout.backend)
+            if _is_session_file(layout, inner):
+                return SessionTarget(layout.backend, workspace=_path_workspace(layout, inner))
             for rule in layout.databases:
                 if rule.sessions_sql and _compiled(rule.pattern).match(inner):
                     return SessionTarget(layout.backend, rule)
     return None
 
 
+def _is_session_file(layout: AgentLayout, inner: str) -> bool:
+    if layout.backend == "claude" and inner.rsplit("/", 1)[-1].startswith(CLAUDE_COMPACTION_PREFIX):
+        return False
+    return _matches_any(inner, layout.sessions)
+
+
+def _path_workspace(layout: AgentLayout, inner: str) -> str | None:
+    """The workspace folder that a root-relative path lies in, if the layout has one."""
+    if layout.workspace_folder is None or not inner.startswith(layout.workspace_folder + "/"):
+        return None
+    rest = inner[len(layout.workspace_folder) + 1 :].split("/")
+    return rest[0] if len(rest) > 1 else None
+
+
 def iter_source_files(source: SourceConfig) -> Iterator[SelectedFile]:
-    """Yield every file of a source that should be archived, each path once."""
-    seen = set()
+    """Yield every file of a source that should be archived, each path once.
+
+    A configured home or agent root that is missing or cannot be read raises
+    :class:`ArchiveError`, because walking it would make every file look deleted. A
+    folder inside it that cannot be read is yielded as an item with ``error`` set, whose
+    ``rel_path`` is the folder; the walk goes on with the other folders.
+
+    Each path comes once: parts of one source never cover the same agent (the
+    configuration refuses that), and each agent's files lie under its own home-relative
+    roots, which no other agent's roots contain.
+    """
+    _check_configured_folders(source)
     for part in source.parts:
-        for item in _iter_part(part, source.platform):
-            if item.rel_path not in seen:
-                seen.add(item.rel_path)
-                yield item
+        yield from _iter_part(part, source.platform)
+
+
+def is_within(rel_path: str, folders) -> bool:
+    """Whether ``rel_path`` is one of ``folders`` or lies inside one of them."""
+    return any(not f or rel_path == f or rel_path.startswith(f + "/") for f in folders)
+
+
+def _check_configured_folders(source: SourceConfig) -> None:
+    for part in source.parts:
+        agents = AGENT_NAMES if part.agents is None else part.agents
+        folders = [part.home] if part.home is not None else []
+        folders += [root for agent, root in part.roots.items() if agent in agents]
+        for folder in folders:
+            try:
+                with os.scandir(folder):
+                    pass
+            except OSError as exc:
+                raise ArchiveError(
+                    f"Source {source.name}: cannot read {folder}: {exc.strerror or exc}"
+                ) from exc
 
 
 def _iter_part(part: SourcePart, platform: str) -> Iterator[SelectedFile]:
-    agents = part.agents or AGENT_NAMES
+    agents = AGENT_NAMES if part.agents is None else part.agents
     for name in agents:
         layout = _LAYOUTS_BY_NAME[name]
         for abs_root, rel_root in _agent_roots(part, layout, platform):
             yield from _iter_agent_root(part, layout, abs_root, rel_root)
-    if part.home is not None and part.include:
-        yield from _iter_config_includes(part, platform)
 
 
 def _agent_roots(part: SourcePart, layout: AgentLayout, platform: str) -> list[tuple[Path, str]]:
@@ -269,98 +418,135 @@ def _iter_agent_root(
     part: SourcePart, layout: AgentLayout, abs_root: Path, rel_root: str
 ) -> Iterator[SelectedFile]:
     patterns = list(layout.include) + [rule.pattern for rule in layout.databases]
-    for inner in _walk_matching(abs_root, patterns):
-        if _matches_any(inner, layout.exclude) or not _name_allowed(inner):
+    for found in _walk_matching(abs_root, patterns):
+        if isinstance(found, _Unreadable):
+            rel_path = f"{rel_root}/{found.rel_path}" if found.rel_path else rel_root
+            if not _excludes_folder(found.rel_path, layout.exclude, rel_path, part.exclude):
+                yield SelectedFile(
+                    rel_path, abs_root / found.rel_path, layout.name, error=found.message
+                )
             continue
-        rel_path = f"{rel_root}/{inner}"
+        if _matches_any(found, layout.exclude) or not _name_allowed(found):
+            continue
+        rel_path = f"{rel_root}/{found}"
         if _matches_any(rel_path, part.exclude):
             continue
-        database = next(
-            (rule for rule in layout.databases if _compiled(rule.pattern).match(inner)), None
-        )
-        yield SelectedFile(rel_path, abs_root / inner, layout.name, database)
+        yield SelectedFile(rel_path, abs_root / found, layout.name, _database_rule(layout, found))
 
 
-def _iter_config_includes(part: SourcePart, platform: str) -> Iterator[SelectedFile]:
-    home = part.home
-    if home is None:
-        return
-    for rel_path in _walk_matching(home, list(part.include)):
-        if not _name_allowed(rel_path) or _matches_any(rel_path, part.exclude):
-            continue
-        yield SelectedFile(rel_path, home / rel_path, _agent_for(rel_path, platform))
+def _database_rule(layout: AgentLayout, inner: str) -> DatabaseRule | None:
+    return next((rule for rule in layout.databases if _compiled(rule.pattern).match(inner)), None)
 
 
-def _agent_for(rel_path: str, platform: str) -> str:
-    for layout in LAYOUTS:
-        for root in layout.roots_for(platform):
-            if rel_path.startswith(root + "/"):
-                return layout.name
-    return OTHER_AGENT
+def _excludes_folder(inner: str, layout_exclude, rel_path: str, part_exclude) -> bool:
+    """Whether exclusions drop everything inside a folder, so it need not be read."""
+    return _matches_any(inner + "/", layout_exclude) or _matches_any(rel_path + "/", part_exclude)
 
 
 def _name_allowed(rel_path: str) -> bool:
     name = rel_path.rsplit("/", 1)[-1]
-    lowered = name.lower()
-    if any(fnmatch.fnmatchcase(lowered, pattern) for pattern in CREDENTIAL_DENYLIST):
+    if _is_credential_name(name):
         return False
     return not any(fnmatch.fnmatchcase(name, pattern) for pattern in COMMON_EXCLUDES)
 
 
-def _walk_matching(root: Path, patterns: list[str]) -> Iterator[str]:
+def _is_credential_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(fnmatch.fnmatchcase(lowered, pattern) for pattern in CREDENTIAL_DENYLIST)
+
+
+class _Unreadable(NamedTuple):
+    """A folder or entry under the walk root that could not be read."""
+
+    rel_path: str  # "/"-separated, relative to the walk root; "" for the root itself
+    message: str
+
+
+def _walk_matching(root: Path, patterns: list[str]) -> Iterator[str | _Unreadable]:
     """Yield "/"-separated paths under ``root`` that match any pattern, without symlinks.
 
     Each pattern is followed segment by segment, so a pattern only descends into folders
-    it can match; only a ``**`` segment walks a whole subtree.
+    it can match; only a ``**`` segment walks a whole subtree. A folder that cannot be
+    read is yielded once as :class:`_Unreadable`; a folder that does not exist is empty.
     """
     found = set()
     for pattern in patterns:
         regex = _compiled(pattern)
-        for rel_path in _walk_segments(root, "", pattern.split("/")):
-            if rel_path not in found and regex.match(rel_path):
-                found.add(rel_path)
-                yield rel_path
+        for item in _walk_segments(root, "", pattern.split("/"), top=True):
+            if isinstance(item, _Unreadable):
+                if item.rel_path not in found:
+                    found.add(item.rel_path)
+                    yield item
+            elif item not in found and regex.match(item):
+                found.add(item)
+                yield item
 
 
-def _walk_segments(root: Path, rel_dir: str, segments: list[str]) -> Iterator[str]:
+def _walk_segments(
+    root: Path, rel_dir: str, segments: list[str], top: bool = False
+) -> Iterator[str | _Unreadable]:
+    """Walk ``rel_dir`` for ``segments``; folders below the top are checked for profiles."""
+    entries = _scan(root, rel_dir)
+    if isinstance(entries, _Unreadable):
+        yield entries
+        return
+    if not top and _is_browser_profile(entries):
+        return
     segment, rest = segments[0], segments[1:]
     if segment == "**":
-        yield from _walk_tree(root, rel_dir)
-        return
-    matcher = _compiled(segment)
-    for entry in _scan(root / rel_dir if rel_dir else root):
-        if not matcher.match(entry.name) or entry.is_symlink():
+        rest = segments
+    matcher = None if segment == "**" else _compiled(segment)
+    for entry in entries:
+        if matcher is not None and not matcher.match(entry.name):
             continue
         rel_path = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
-        if rest and entry.is_dir(follow_symlinks=False):
-            if not _is_browser_profile(Path(entry.path)):
-                yield from _walk_segments(root, rel_path, rest)
-        elif not rest and entry.is_file(follow_symlinks=False):
+        kind = _entry_kind(entry)
+        if kind == "error":
+            yield _Unreadable(rel_path, f"cannot read {entry.path}")
+        elif kind == "dir" and rest:
+            yield from _walk_segments(root, rel_path, rest)
+        elif kind == "file" and (not rest or segment == "**"):
             yield rel_path
 
 
-def _walk_tree(root: Path, rel_dir: str) -> Iterator[str]:
-    for entry in _scan(root / rel_dir if rel_dir else root):
+def _entry_kind(entry: os.DirEntry) -> str:
+    """ "dir", "file", "other" (symbolic links too, which are never followed) or "error"."""
+    try:
         if entry.is_symlink():
-            continue
-        rel_path = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
+            return "other"
         if entry.is_dir(follow_symlinks=False):
-            if not _is_browser_profile(Path(entry.path)):
-                yield from _walk_tree(root, rel_path)
-        elif entry.is_file(follow_symlinks=False):
-            yield rel_path
+            return "dir"
+        return "file" if entry.is_file(follow_symlinks=False) else "other"
+    except OSError:
+        return "error"
 
 
-def _is_browser_profile(folder: Path) -> bool:
-    return any((folder / marker).exists() for marker in BROWSER_PROFILE_MARKERS)
+def _is_browser_profile(entries: list[os.DirEntry]) -> bool:
+    names = {entry.name.lower(): entry for entry in entries}
+    if any(marker.lower() in names for marker in BROWSER_PROFILE_MARKERS):
+        return True
+    if all(marker.lower() in names for marker in BROWSER_PROFILE_MARKER_PAIR):
+        return True
+    folder, cookies = BROWSER_PROFILE_COOKIES
+    network = names.get(folder.lower())
+    if network is None or _entry_kind(network) != "dir":
+        return False
+    try:
+        with os.scandir(network.path) as inner:
+            return any(entry.name.lower() == cookies.lower() for entry in inner)
+    except OSError:
+        return False  # the walk reports the folder when it tries to read it
 
 
-def _scan(folder: Path) -> list[os.DirEntry]:
+def _scan(root: Path, rel_dir: str) -> list[os.DirEntry] | _Unreadable:
+    folder = root / rel_dir if rel_dir else root
     try:
         with os.scandir(folder) as entries:
             return sorted(entries, key=lambda entry: entry.name)
-    except (FileNotFoundError, NotADirectoryError, PermissionError):
-        return []
+    except (FileNotFoundError, NotADirectoryError):
+        return []  # the agent has no such folder, or it was deleted during the walk
+    except OSError as exc:
+        return _Unreadable(rel_dir, str(exc))
 
 
 def _matches_any(rel_path: str, patterns) -> bool:

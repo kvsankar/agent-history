@@ -32,7 +32,14 @@ from typing import Any, Callable, Iterator, TextIO, TypedDict
 from agent_history.storage.config import get_config_dir
 from agent_history.utils import progress
 from agent_history.utils.codex_tokens import CodexTokenCounter, is_replayed
+from agent_history.utils.jsonl import (
+    TRANSCRIPT_ENCODING,
+    TRANSCRIPT_ERRORS,
+    dict_field,
+    json_objects,
+)
 from agent_history.utils.paths import normalize_workspace_name
+from agent_history.utils.session_identity import CodexSessionMeta
 
 __all__ = [
     # Constants
@@ -153,18 +160,26 @@ def codex_get_home_dir() -> Path:
 # =============================================================================
 
 
+class ZstandardMissingError(OSError):
+    """A compressed rollout cannot be read because zstandard is not installed."""
+
+
 @contextmanager
-def _codex_open_text(jsonl_file: Path) -> Iterator[TextIO]:
+def _codex_open_text(
+    jsonl_file: Path, encoding: str = "utf-8", errors: str = "strict"
+) -> Iterator[TextIO]:
     """Open plain or zstd-compressed Codex rollout files as text."""
     if jsonl_file.name.endswith(".jsonl.zst"):
         try:
             import zstandard as zstd
         except ImportError as exc:
-            raise OSError("Reading .jsonl.zst Codex rollouts requires zstandard") from exc
+            raise ZstandardMissingError(
+                "Reading .jsonl.zst Codex rollouts requires zstandard"
+            ) from exc
 
         with open(jsonl_file, "rb") as raw:
             reader = zstd.ZstdDecompressor().stream_reader(raw)
-            wrapper = io.TextIOWrapper(reader, encoding="utf-8")
+            wrapper = io.TextIOWrapper(reader, encoding=encoding, errors=errors)
             try:
                 yield wrapper
             finally:
@@ -172,8 +187,17 @@ def _codex_open_text(jsonl_file: Path) -> Iterator[TextIO]:
                 reader.close()
         return
 
-    with open(jsonl_file, encoding="utf-8") as f:
+    with open(jsonl_file, encoding=encoding, errors=errors) as f:
         yield f
+
+
+@contextmanager
+def _codex_open_entries(jsonl_file: Path) -> Iterator[Iterator[dict[str, Any]]]:
+    """The JSON-object lines of a rollout; a bad byte decodes as U+FFFD."""
+    with _codex_open_text(
+        jsonl_file, encoding=TRANSCRIPT_ENCODING, errors=TRANSCRIPT_ERRORS
+    ) as handle:
+        yield json_objects(handle)
 
 
 def codex_extract_content(payload: dict) -> str:
@@ -191,6 +215,8 @@ def codex_extract_content(payload: dict) -> str:
     content = payload.get("content", [])
     if isinstance(content, str):
         return content
+    if not isinstance(content, list):
+        return ""
     parts = []
     for item in content:
         if isinstance(item, dict) and item.get("type") in CODEX_TEXT_TYPES:
@@ -233,7 +259,7 @@ def _codex_parse_subagent_notification(content: str) -> dict[str, Any] | None:
         return None
     try:
         data = json.loads(match.group("body"))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -282,24 +308,30 @@ def _codex_has_any(mapping: dict[str, Any], *keys: str) -> bool:
     return any(key in mapping for key in keys)
 
 
+def _codex_session_linkage(identity: CodexSessionMeta) -> dict[str, Any]:
+    """Session-level linkage that every message of a rollout carries.
+
+    ``CodexSessionMeta`` names the parent as the stats reader does: from
+    the first session_meta's parent fields or spawn source, or else from a
+    later session_meta that repeats the parent's.
+    """
+    payload = identity.payload or {}
+    linkage = {
+        "session_id": identity.session_id,
+        "parent_session_id": identity.parent_session_id,
+        "forked_from_id": payload.get("forked_from_id"),
+        "thread_source": payload.get("thread_source"),
+    }
+    return {key: value for key, value in linkage.items() if value}
+
+
 def _codex_record_linkage(
     entry: dict[str, Any],
     payload: dict[str, Any],
-    session_meta: dict[str, Any] | None,
     current_turn_id: str | None,
 ) -> dict[str, Any]:
     """Extract optional Codex linkage metadata from a rollout record."""
     linkage: dict[str, Any] = {}
-
-    if session_meta:
-        if session_id := session_meta.get("id"):
-            linkage["session_id"] = session_id
-        if parent_session_id := session_meta.get("parent_thread_id"):
-            linkage["parent_session_id"] = parent_session_id
-        if forked_from_id := session_meta.get("forked_from_id"):
-            linkage["forked_from_id"] = forked_from_id
-        if thread_source := session_meta.get("thread_source"):
-            linkage["thread_source"] = thread_source
 
     if _codex_has_any(payload, "id"):
         linkage["id"] = payload.get("id")
@@ -338,85 +370,96 @@ def codex_read_jsonl_messages(jsonl_file: Path) -> tuple:
         is_tool_call or is_tool_result flags
     """
     messages = []
-    session_meta = None
+    identity = CodexSessionMeta()
     current_turn_id = None
 
     try:
-        with _codex_open_text(jsonl_file) as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
-                    entry_type = entry.get("type")
-                    timestamp = entry.get("timestamp", "")
-                    payload = entry.get("payload", {})
-
-                    if entry_type == "session_meta":
-                        session_meta = payload
-                    elif entry_type == "turn_context":
-                        if turn_id := payload.get("turn_id"):
-                            current_turn_id = turn_id
-                    elif entry_type == "event_msg":
-                        payload_type = payload.get("type")
-                        if payload_type in ("task_started", "turn_started"):
-                            if turn_id := payload.get("turn_id"):
-                                current_turn_id = turn_id
-                    elif entry_type == "response_item":
-                        payload_type = payload.get("type")
-                        linkage = _codex_record_linkage(
-                            entry,
-                            payload,
-                            session_meta,
-                            current_turn_id,
-                        )
-                        if payload_type == "message":
-                            content = codex_extract_content(payload)
-                            role = payload.get("role")
-                            notification_fields = _codex_subagent_notification_fields(content)
-                            parent_agent_fields = (
-                                {"is_parent_agent_message": True}
-                                if role == "user"
-                                and session_meta
-                                and session_meta.get("thread_source") == "subagent"
-                                else {}
-                            )
-                            messages.append(
-                                {
-                                    "role": role,
-                                    "content": content,
-                                    "timestamp": timestamp,
-                                    **linkage,
-                                    **parent_agent_fields,
-                                    **notification_fields,
-                                }
-                            )
-                        elif payload_type in ("function_call", "custom_tool_call"):
-                            messages.append(
-                                {
-                                    "role": "assistant",
-                                    "content": codex_format_function_call(payload),
-                                    "timestamp": timestamp,
-                                    "is_tool_call": True,
-                                    "tool_call_id": payload.get("call_id"),
-                                    **linkage,
-                                }
-                            )
-                        elif payload_type in ("function_call_output", "custom_tool_call_output"):
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "content": codex_format_function_result(payload),
-                                    "timestamp": timestamp,
-                                    "is_tool_result": True,
-                                    "tool_call_id": payload.get("call_id"),
-                                    **linkage,
-                                }
-                            )
-                except json.JSONDecodeError:
-                    continue
+        with _codex_open_entries(jsonl_file) as entries:
+            for entry in entries:
+                entry_type = entry.get("type")
+                payload = dict_field(entry, "payload")
+                if entry_type == "session_meta":
+                    # The first session_meta describes the rollout; a
+                    # sub-agent later repeats its parent's
+                    identity.add(payload)
+                elif entry_type in ("turn_context", "event_msg"):
+                    current_turn_id = _codex_turn_id(entry_type, payload) or current_turn_id
+                elif entry_type == "response_item":
+                    linkage = _codex_record_linkage(entry, payload, current_turn_id)
+                    message = _codex_response_message(entry, payload, linkage, identity)
+                    if message is not None:
+                        messages.append(message)
     except OSError:
         return [], None
 
-    return messages, session_meta
+    # The parent can be named after the first messages, so the session's
+    # linkage is added once the whole rollout is read
+    session_linkage = _codex_session_linkage(identity)
+    for message in messages:
+        message.update(session_linkage)
+    return messages, identity.payload
+
+
+def _codex_turn_id(entry_type: str, payload: dict[str, Any]) -> Any:
+    """Turn ID that a turn_context or a turn-start event opens, if any."""
+    if entry_type == "turn_context":
+        return payload.get("turn_id")
+    if payload.get("type") in ("task_started", "turn_started"):
+        return payload.get("turn_id")
+    return None
+
+
+def _codex_response_message(
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    linkage: dict[str, Any],
+    identity: CodexSessionMeta,
+) -> dict[str, Any] | None:
+    """Message for one response_item: a message, a tool call or a tool result."""
+    payload_type = payload.get("type")
+    timestamp = entry.get("timestamp", "")
+    if payload_type == "message":
+        content = codex_extract_content(payload)
+        role = payload.get("role")
+        parent_agent_fields = (
+            {"is_parent_agent_message": True} if role == "user" and identity.is_subagent else {}
+        )
+        return {
+            "role": role,
+            "content": content,
+            "timestamp": timestamp,
+            **linkage,
+            **parent_agent_fields,
+            **_codex_subagent_notification_fields(content),
+        }
+    if payload_type in ("function_call", "custom_tool_call"):
+        return {
+            "role": "assistant",
+            "content": codex_format_function_call(payload),
+            "timestamp": timestamp,
+            "is_tool_call": True,
+            "tool_call_id": payload.get("call_id"),
+            **linkage,
+        }
+    if payload_type in ("function_call_output", "custom_tool_call_output"):
+        return {
+            "role": "tool",
+            "content": codex_format_function_result(payload),
+            "timestamp": timestamp,
+            "is_tool_result": True,
+            "tool_call_id": payload.get("call_id"),
+            **linkage,
+        }
+    return None
+
+
+def _codex_first_entry(jsonl_file: Path) -> dict[str, Any] | None:
+    """The first JSON-object line of a rollout, or None."""
+    try:
+        with _codex_open_entries(jsonl_file) as entries:
+            return next(entries, None)
+    except OSError:
+        return None
 
 
 def codex_get_first_timestamp(jsonl_file: Path) -> str | None:
@@ -428,14 +471,9 @@ def codex_get_first_timestamp(jsonl_file: Path) -> str | None:
     Returns:
         ISO 8601 timestamp string or None if not found
     """
-    try:
-        with _codex_open_text(jsonl_file) as f:
-            first_line = f.readline()
-            entry = json.loads(first_line)
-            if entry.get("type") == "session_meta":
-                return entry.get("timestamp", "")
-    except (OSError, json.JSONDecodeError):
-        pass
+    entry = _codex_first_entry(jsonl_file)
+    if entry is not None and entry.get("type") == "session_meta":
+        return entry.get("timestamp", "")
     return None
 
 
@@ -469,7 +507,7 @@ def codex_parse_jsonl_to_markdown(jsonl_file: Path, minimal: bool = False) -> st
     md_lines.extend(["---", ""])
 
     for i, msg in enumerate(messages, 1):
-        role = msg.get("role", "unknown")
+        role = str(msg.get("role") or "unknown")
         content = msg.get("content", "")
         timestamp = msg.get("timestamp", "")
 
@@ -538,15 +576,10 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
     last_token_timestamp = None
     history_start = (session_meta or {}).get("subagent_history_start_ordinal")
     try:
-        with _codex_open_text(jsonl_file) as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
+        with _codex_open_entries(jsonl_file) as entries:
+            for entry in entries:
                 entry_type = entry.get("type")
-                payload = entry.get("payload", {})
+                payload = dict_field(entry, "payload")
 
                 if entry_type == "turn_context" and not metrics["session"]["model"]:
                     metrics["session"]["model"] = payload.get("model")
@@ -554,7 +587,10 @@ def codex_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:
 
                 if entry_type == "event_msg" and payload.get("type") == "token_count":
                     replayed = is_replayed(entry, history_start)
-                    if token_counter.add(payload.get("info") or {}, replayed=replayed) is not None:
+                    if (
+                        token_counter.add(dict_field(payload, "info"), replayed=replayed)
+                        is not None
+                    ):
                         last_token_timestamp = entry.get("timestamp")
     except OSError:
         pass
@@ -603,16 +639,11 @@ def codex_get_workspace_from_session(jsonl_file: Path) -> str:
     Returns:
         Workspace path from session_meta.cwd (e.g., '/home/user/project') or 'unknown'
     """
-    try:
-        with _codex_open_text(jsonl_file) as f:
-            first_line = f.readline()
-            entry = json.loads(first_line)
-            if entry.get("type") == "session_meta":
-                cwd = entry.get("payload", {}).get("cwd", "")
-                if cwd:
-                    return cwd
-    except (OSError, json.JSONDecodeError):
-        pass
+    entry = _codex_first_entry(jsonl_file)
+    if entry is not None and entry.get("type") == "session_meta":
+        cwd = dict_field(entry, "payload").get("cwd")
+        if cwd and isinstance(cwd, str):
+            return cwd
     return "unknown"
 
 
@@ -637,16 +668,13 @@ def codex_count_messages(jsonl_file: Path) -> int:
     """
     count = 0
     try:
-        with _codex_open_text(jsonl_file) as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
-                    if entry.get("type") == "response_item":
-                        payload = entry.get("payload", {})
-                        if payload.get("type") == "message":
-                            count += 1
-                except json.JSONDecodeError:
-                    continue
+        with _codex_open_entries(jsonl_file) as entries:
+            for entry in entries:
+                if (
+                    entry.get("type") == "response_item"
+                    and dict_field(entry, "payload").get("type") == "message"
+                ):
+                    count += 1
     except OSError:
         pass
     return count

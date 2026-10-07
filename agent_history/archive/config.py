@@ -1,7 +1,11 @@
 """Loading and validating the archive configuration file.
 
 The configuration names the archive destination and the sources to collect. Entries in
-``sources`` that share a name merge into one source; each entry becomes one *part*.
+``sources`` that share a name merge into one source; each entry becomes one *part*. Two
+parts of one source may not cover the same agent, because its files would map to the
+same archive paths. The archive takes only the files that the built-in agent layouts
+select; an entry's ``exclude`` patterns can leave some of them out, and there is no
+setting that adds other files.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from agent_history.archive.errors import ArchiveConfigError
 from agent_history.archive.layouts import AGENT_NAMES
@@ -20,8 +25,9 @@ DEFAULT_COMPRESSION_LEVEL = 19
 SOURCE_KINDS = ("live", "imported", "restored")
 PLATFORMS = ("linux", "darwin", "windows")
 _SOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_TOP_KEYS = {"archive", "sources"}
 _ARCHIVE_KEYS = {"destination", "compression_level", "min_interval_hours", "health_url", "workers"}
-_SOURCE_KEYS = {"name", "kind", "platform", "note", "home", "roots", "agents", "include", "exclude"}
+_SOURCE_KEYS = {"name", "kind", "platform", "note", "home", "roots", "agents", "exclude"}
 
 
 @dataclass(frozen=True)
@@ -30,8 +36,7 @@ class SourcePart:
 
     home: Path | None
     roots: dict[str, Path] = field(default_factory=dict)
-    agents: tuple[str, ...] | None = None
-    include: tuple[str, ...] = ()
+    agents: tuple[str, ...] | None = None  # None: every agent; never empty
     exclude: tuple[str, ...] = ()
 
 
@@ -81,6 +86,7 @@ def parse_config(data: dict[str, Any]) -> ArchiveConfig:
     """Validate configuration data already loaded from JSON."""
     if not isinstance(data, dict):
         raise ArchiveConfigError("Archive configuration must be a JSON object")
+    _reject_unknown(data, _TOP_KEYS, "the configuration")
     archive = data.get("archive") or {}
     _reject_unknown(archive, _ARCHIVE_KEYS, "archive")
     destination = archive.get("destination")
@@ -90,7 +96,7 @@ def parse_config(data: dict[str, Any]) -> ArchiveConfig:
         destination=destination,
         compression_level=_compression_level(archive),
         min_interval_hours=_min_interval(archive),
-        health_url=archive.get("health_url") or None,
+        health_url=_health_url(archive),
         sources=_merge_sources(data.get("sources") or []),
         workers=_workers(archive),
     )
@@ -123,9 +129,27 @@ def _min_interval(archive: dict[str, Any]) -> float:
     return float(value)
 
 
+def _health_url(archive: dict[str, Any]) -> str | None:
+    url = archive.get("health_url") or None
+    if url is None:
+        return None
+    message = f"archive.health_url must be an http:// or https:// URL: {url!r}"
+    if not isinstance(url, str):
+        raise ArchiveConfigError(message)
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018 - raises ValueError for a port that is not a number
+    except ValueError as exc:
+        raise ArchiveConfigError(message) from exc
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ArchiveConfigError(message)
+    return url
+
+
 def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:
     merged: dict[str, SourceConfig] = {}
     for entry in entries:
+        _reject_include(entry)
         _reject_unknown(entry, _SOURCE_KEYS, f"source {entry.get('name')!r}")
         name, kind, platform, note = _source_identity(entry)
         part = _source_part(entry, name)
@@ -138,7 +162,38 @@ def _merge_sources(entries: list[dict[str, Any]]) -> tuple[SourceConfig, ...]:
         merged[name] = SourceConfig(
             name, kind, platform, existing.note or note, (*existing.parts, part)
         )
+    for source in merged.values():
+        _reject_overlapping_parts(source)
     return tuple(merged.values())
+
+
+def _reject_include(entry: dict[str, Any]) -> None:
+    """Refuse the ``include`` setting, which no longer exists, with a clear message."""
+    if "include" in entry:
+        raise ArchiveConfigError(
+            f"Source {entry.get('name')!r}: include is not supported. The archive takes only "
+            "the files that the agent layouts select; use exclude to leave some of them out."
+        )
+
+
+def _reject_overlapping_parts(source: SourceConfig) -> None:
+    """Refuse two parts that cover one agent: their files would share archive paths."""
+    first_part: dict[str, int] = {}
+    for number, part in enumerate(source.parts, start=1):
+        for agent in _covered_agents(part):
+            if agent in first_part:
+                raise ArchiveConfigError(
+                    f"Source {source.name}: entries {first_part[agent]} and {number} both "
+                    f"cover agent {agent}, so their files would share archive paths. Give the "
+                    'other copy its own source name, for example with kind "imported".'
+                )
+            first_part[agent] = number
+
+
+def _covered_agents(part: SourcePart) -> tuple[str, ...]:
+    """The agents whose folders a part reads, from its home or its root overrides."""
+    agents = AGENT_NAMES if part.agents is None else part.agents
+    return tuple(agent for agent in agents if part.home is not None or agent in part.roots)
 
 
 def _source_identity(entry: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -159,10 +214,16 @@ def _source_part(entry: dict[str, Any], name: str) -> SourcePart:
     roots = entry.get("roots") or {}
     if not home and not roots:
         raise ArchiveConfigError(f"Source {name}: give a home or roots")
+    if entry.get("agents") == []:
+        raise ArchiveConfigError(
+            f"Source {name}: agents is empty, so this entry would archive nothing. List the "
+            "agents to read, or leave agents out to read every agent."
+        )
     for agent in list(roots) + list(entry.get("agents") or []):
         if agent not in AGENT_NAMES:
             raise ArchiveConfigError(f"Source {name}: unknown agent {agent}")
-    for pattern in list(entry.get("include") or ()) + list(entry.get("exclude") or ()):
+    exclude = _exclude_patterns(entry, name)
+    for pattern in exclude:
         parts = pattern.replace("\\", "/").split("/")
         if pattern.startswith(("/", "\\")) or ".." in parts or ":" in parts[0]:
             raise ArchiveConfigError(
@@ -172,7 +233,22 @@ def _source_part(entry: dict[str, Any], name: str) -> SourcePart:
     return SourcePart(
         home=Path(home).expanduser() if home else None,
         roots={agent: Path(root).expanduser() for agent, root in roots.items()},
-        agents=tuple(agents) if agents else None,
-        include=tuple(entry.get("include") or ()),
-        exclude=tuple(entry.get("exclude") or ()),
+        agents=None if agents is None else tuple(agents),
+        exclude=exclude,
     )
+
+
+def _exclude_patterns(entry: dict[str, Any], name: str) -> tuple[str, ...]:
+    """The ``exclude`` patterns of an entry: a list of strings, or absent.
+
+    A single string is refused rather than read as a list of its characters.
+    """
+    value = entry.get("exclude")
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ArchiveConfigError(
+            f"Source {name}: exclude must be a list of glob patterns, such as "
+            f'[".claude/projects/scratch/**"]; got {json.dumps(value)}'
+        )
+    return tuple(value)
