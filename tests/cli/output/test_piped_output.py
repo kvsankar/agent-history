@@ -4,19 +4,13 @@ import shlex
 import subprocess
 import sys
 
-from tests.helpers.cli import get_script_path
+from tests.helpers.cli import run_cli_subprocess
 
 
 def _run_piped(args_str: str) -> subprocess.CompletedProcess:
-    """Run CLI command through a pipe to test auto-format detection."""
-    script = get_script_path()
+    """Run CLI command through a pipe, in an isolated home, to test auto-format detection."""
     split_args = shlex.split(args_str, posix=sys.platform != "win32")
-    return subprocess.run(
-        [sys.executable, str(script), *split_args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    return run_cli_subprocess(split_args)
 
 
 def test_ws_list_piped_outputs_tsv():

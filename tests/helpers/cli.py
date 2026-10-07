@@ -128,6 +128,15 @@ def run_cli_subprocess(
                 run_env["USERPROFILE"] = str(root)
         else:
             run_env.update(env)
+            # Windows resolves the home folder from USERPROFILE; follow a fixture's
+            # HOME unless the fixture chose its own USERPROFILE.
+            if (
+                sys.platform == "win32"
+                and env.get("HOME")
+                and env.get("USERPROFILE", os.environ.get("USERPROFILE"))
+                == os.environ.get("USERPROFILE")
+            ):
+                run_env["USERPROFILE"] = env["HOME"]
 
         run_env.setdefault("CAGELENS_TEST_MODE", "1")
 

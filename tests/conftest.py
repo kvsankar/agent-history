@@ -1,16 +1,30 @@
 """Root pytest fixtures for all tests."""
 
+import atexit
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Generator
 from unittest.mock import patch
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Home Isolation
+# ---------------------------------------------------------------------------
+
+if sys.platform == "win32":
+    # Windows resolves the home folder from USERPROFILE, not HOME. Point it at an
+    # empty folder before any test imports the package, so no test reads the real
+    # agent folders. run_cli_subprocess mirrors a fixture's HOME into USERPROFILE.
+    _EMPTY_HOME = tempfile.mkdtemp(prefix="cagelens-test-home-")
+    os.environ["USERPROFILE"] = _EMPTY_HOME
+    atexit.register(shutil.rmtree, _EMPTY_HOME, ignore_errors=True)
 
 # ---------------------------------------------------------------------------
 # Pytest CLI Options
