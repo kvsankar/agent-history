@@ -28,6 +28,47 @@ Stats sync avoids this by running cagelens on Windows (`windows_native`).
   export, and decide whether `windows_native` is still needed.
 - Source: https://boxofcables.dev/wsl2-per-device-swiotlb-pools-for-virtiofs-and-virtioproxy
 
+### Archive Library (`agent_history/archive`)
+
+**Status:** Built and reviewed. Higher-layer tools configure and run it; this
+section covers only the library.
+
+The design is [`../design-v2/archive-library.md`](../design-v2/archive-library.md).
+
+- [ ] Run another independent review of the archive library, limited to its
+      purpose: collect, verify and catalog agent sessions. Use synthetic homes.
+      Do not run selections over whole real home folders; one can take an hour
+      and exhaust memory.
+- [ ] Read an archive as a cagelens home, with transparent `.zst` reading in
+      every backend (design section "Reading The Archive With cagelens", not
+      built).
+- [ ] Remove the backends' imports of `storage.metrics` and `export` (design
+      section "Changes To Existing Code", not built).
+- [ ] `pyproject.toml` declares Python 3.8, but the package needs 3.10: some
+      modules evaluate `str | None` annotations at import. Set
+      `requires-python = ">=3.10"` and the matching ruff target.
+- [ ] Align the ruff versions: `uv.lock` has 0.15.18 and the pre-commit hook
+      pins 0.8.4. They format 26 files differently, so a whole-tree
+      `ruff format --check` fails on files nobody changed.
+- [ ] Archive homes decode encoded Claude project folder names without a live
+      folder to check, so a hyphen in a folder name reads as a path separator.
+      Prefer the working directory the sessions record.
+- [ ] The workspace inventory counts a Gemini `X.json` chat and its resumed
+      `X.jsonl` copy twice. The remote listing does not list Gemini sub-agent
+      chats (`chats/<parent>/<id>.jsonl`).
+- [ ] Rows for the old flat remote-cache paths stay in `metrics.db` after the
+      cache moved to per-path folders; nothing removes them.
+- [ ] Stats SQL adds counts with `SUM`, which can still overflow SQLite's
+      integers on extreme inputs. Consider `TOTAL` or clamped sums.
+- [ ] On a destination that ignores letter case, two live source files whose
+      names differ only in case cannot both be archived; the second is
+      reported as an error on every run. Decide whether to store it under
+      another name.
+- [ ] Some catalogued sessions have no working folder (a few hundred Claude
+      sessions) or no model (Codex sessions without assistant messages, and
+      Copilot in VS Code, which records none). Check whether the readers can
+      recover them.
+
 ### Real Agent Session Generation / Validation
 
 **Status:** Complete for current release validation
