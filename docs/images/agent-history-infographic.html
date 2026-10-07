@@ -1,0 +1,165 @@
+<!doctype html>
+<!-- Infographic source. Render with the project-infographic skill:
+     render.py agent-history-infographic.html agent-history-infographic.png
+     Facts come from README.md, AGENTS.md and docs/usage.md; update them together. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="infographic.css">
+<style>
+  /* Layout only: zone, arrow, zone, arrow, zone. */
+  .flow { grid-template-columns: 1fr 44px 1.5fr 44px 1.05fr; }
+  .input-grid { display: grid; grid-template-rows: auto 1fr 1fr 1fr; gap: 10px; flex: 1; min-height: 0; }
+  .input-grid .tiles { grid-template-columns: 1fr; }
+  .core-grid { display: grid; grid-template-rows: auto auto auto auto auto; gap: 10px; flex: 1; min-height: 0; }
+  .steps { grid-template-columns: repeat(2, 1fr); }
+  .homes { grid-template-columns: 1fr 1fr; }
+  .output-grid { display: grid; grid-template-rows: 1fr 1fr 1fr auto 1fr; gap: 10px; flex: 1; min-height: 0; }
+  .metrics { grid-template-columns: 1fr 1fr; }
+</style>
+</head>
+<body>
+
+<header class="title">
+  <h1>agent-history</h1>
+  <p>Browse and export AI coding assistant conversation history</p>
+</header>
+
+<main class="flow">
+
+  <section class="zone input">
+    <h2>Session files</h2>
+    <div class="input-grid">
+      <div class="sub">
+        <h4>Four agents, four layouts</h4>
+        <div class="tiles">
+          <div class="tile"><i data-icon="bot"></i><div><b>Claude Code</b><span>JSONL in encoded-path folders, plus subagent files</span></div></div>
+          <div class="tile"><i data-icon="square-terminal"></i><div><b>Codex CLI</b><span>JSONL in date folders; workspace read from cwd</span></div></div>
+          <div class="tile"><i data-icon="braces"></i><div><b>Gemini CLI</b><span>JSON in folders named by a path hash</span></div></div>
+          <div class="tile"><i data-icon="terminal"></i><div><b>Pi</b><span>JSONL in encoded-path folders</span></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <i data-icon="server"></i>
+        <div><h3>Scattered across homes</h3>
+          <p>local, WSL, Windows from WSL and SSH remotes</p></div>
+      </div>
+      <div class="card">
+        <i data-icon="file-question"></i>
+        <div><h3>Named by session id</h3>
+          <p>past work is hard to find by project</p></div>
+      </div>
+      <div class="card">
+        <i data-icon="timer-off"></i>
+        <div><h3>Purged unless kept</h3>
+          <p>Claude Code deletes history after 30 days; install sets retention</p></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="arrow"><i data-icon="arrow-right"></i></div>
+
+  <section class="zone core">
+    <h2>One CLI, one model</h2>
+    <div class="core-grid">
+      <div class="steps">
+        <div class="step">
+          <div class="head"><span class="num">1</span><i data-icon="file-search"></i></div><h3>Read each agent's files</h3>
+          <p>one reader per layout; a hash index names Gemini workspaces</p>
+        </div>
+        <div class="step">
+          <div class="head"><span class="num">2</span><i data-icon="layers"></i></div><h3>Unify into workspaces</h3>
+          <p>home, workspace and session; found by project, not session id</p>
+        </div>
+        <div class="step">
+          <div class="head"><span class="num">3</span><i data-icon="tags"></i></div><h3>Group with aliases</h3>
+          <p>one @name joins a project's workspaces across homes</p>
+        </div>
+        <div class="step">
+          <div class="head"><span class="num">4</span><i data-icon="database"></i></div><h3>Sync metrics to SQLite</h3>
+          <p>stats gathers every home into a small local db</p>
+        </div>
+      </div>
+      <div class="sub">
+        <h4>Each session carries</h4>
+        <div class="chips">
+          <span class="chip">messages</span>
+          <span class="chip">dates</span>
+          <span class="chip">size</span>
+          <span class="chip">tokens</span>
+          <span class="chip">tool calls</span>
+          <span class="chip">subagent links</span>
+          <span class="chip">reasoning <small>where stored</small></span>
+        </div>
+      </div>
+      <div class="sub">
+        <h4>Reaches every home</h4>
+        <div class="tiles homes">
+          <div class="tile"><i data-icon="hard-drive"></i><div><b>Local</b><span>the current machine's home</span></div></div>
+          <div class="tile"><i data-icon="box"></i><div><b>WSL</b><span>distros auto-detected</span></div></div>
+          <div class="tile"><i data-icon="monitor"></i><div><b>Windows from WSL</b><span>Windows users auto-detected</span></div></div>
+          <div class="tile"><i data-icon="cable"></i><div><b>SSH remotes</b><span>saved once, read over SSH</span></div></div>
+        </div>
+      </div>
+      <div class="sub">
+        <h4>Choose the scope</h4>
+        <div class="chips">
+          <span class="chip">this workspace</span>
+          <span class="chip">all workspaces</span>
+          <span class="chip">all homes</span>
+          <span class="chip">a date range</span>
+          <span class="chip">one agent</span>
+        </div>
+      </div>
+      <div class="note"><i data-icon="map-pin-off"></i><span><b>[missing]</b> marks a moved workspace with its closest match.</span></div>
+    </div>
+  </section>
+
+  <div class="arrow"><i data-icon="arrow-right"></i></div>
+
+  <section class="zone output">
+    <h2>What you get</h2>
+    <div class="output-grid">
+      <div class="card">
+        <i data-icon="list"></i>
+        <div><h3>Terminal listings</h3>
+          <p>homes, workspaces and sessions with messages, dates and size</p></div>
+      </div>
+      <div class="card">
+        <i data-icon="file-text"></i>
+        <div><h3>Markdown exports</h3>
+          <p>a workspace or one session; four detail levels; minimal, flat or split</p></div>
+      </div>
+      <div class="card">
+        <i data-icon="file-code"></i>
+        <div><h3>Offline HTML exports</h3>
+          <p>turn by turn; toggles for actions, full tool I/O and trace; light or dark</p></div>
+      </div>
+      <div class="sub">
+        <h4>Usage metrics</h4>
+        <div class="tiles metrics">
+          <div class="tile"><i data-icon="messages-square"></i><div><b>Sessions</b><span>main vs subagent, messages</span></div></div>
+          <div class="tile"><i data-icon="coins"></i><div><b>Tokens</b><span>in, out, cache hit ratio</span></div></div>
+          <div class="tile"><i data-icon="wrench"></i><div><b>Tools</b><span>counts and error rates</span></div></div>
+          <div class="tile"><i data-icon="calendar-days"></i><div><b>Time</b><span>daily breakdown and trends</span></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <i data-icon="bot"></i>
+        <div><h3>Claude Code skill</h3>
+          <p>Claude searches your past sessions through the same CLI</p></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="strip">
+  <span class="item"><i data-icon="pencil-off"></i>Reads sessions, never edits them</span>
+  <span class="item"><i data-icon="file-code"></i>Single stdlib-only Python file</span>
+  <span class="item"><i data-icon="package-x"></i>No pip installs</span>
+  <span class="item"><i data-icon="database"></i>Small SQLite db for metrics</span>
+</footer>
+
+</body>
+</html>

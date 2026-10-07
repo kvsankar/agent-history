@@ -1,0 +1,180 @@
+/* project-infographic style v2.
+   Copy this file unchanged next to each infographic page. Pages may add a
+   <style> block only for grid layout (grid-template-columns/rows, spans,
+   gaps); colours, fonts, sizes and the title block come from here. */
+
+:root {
+  --ink: #14213d;
+  --muted: #475569;
+  --faint: #64748b;
+  --line: #cbd5e1;
+  --panel: #f8fafc;
+  --card: #ffffff;
+
+  /* Role colours: the same meaning on every infographic. */
+  --input: #2563eb;      /* sources, triggers, when-to-use */
+  --input-tint: #eff6ff;
+  --core: #0f766e;       /* the tool's own process */
+  --core-tint: #f0fdfa;
+  --output: #6d28d9;     /* results, artefacts */
+  --output-tint: #f5f3ff;
+  --caution: #c2410c;    /* optional, cost-bearing, risk */
+  --caution-tint: #fff7ed;
+
+  --radius: 14px;
+  --font: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 1600px; height: 1000px; background: #fff; }
+
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  padding: 34px 48px 32px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Title block: identical on every infographic ---- */
+.title { text-align: center; margin-bottom: 20px; }
+.title h1 {
+  font-size: 60px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+.title p {
+  margin-top: 6px;
+  font-size: 24px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* ---- Body: columns of zones, separated by flow arrows ---- */
+.flow { flex: 1; display: grid; gap: 0; align-items: stretch; min-height: 0; }
+.arrow { display: flex; align-items: center; justify-content: center; color: var(--faint); }
+.arrow svg { width: 30px; height: 30px; stroke-width: 2.5; }
+
+.zone {
+  border: 2px solid var(--zc);
+  background: var(--zt);
+  border-radius: var(--radius);
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.zone.input { --zc: var(--input); --zt: var(--input-tint); }
+.zone.core { --zc: var(--core); --zt: var(--core-tint); }
+.zone.output { --zc: var(--output); --zt: var(--output-tint); }
+.zone.caution { --zc: var(--caution); --zt: var(--caution-tint); }
+
+.zone h2 {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--zc);
+}
+
+.card {
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 13px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex: 1;
+}
+.card svg { flex: none; width: 30px; height: 30px; color: var(--zc); stroke-width: 1.8; }
+.card h3 { font-size: 20px; font-weight: 600; line-height: 1.2; }
+.card p { font-size: 16px; color: var(--muted); line-height: 1.3; margin-top: 2px; }
+
+/* Numbered steps inside a zone */
+.steps { display: grid; gap: 10px; }
+.step {
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.step .head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.step .num {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--zc); color: #fff;
+  font-size: 16px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex: none;
+}
+.step svg { width: 24px; height: 24px; color: var(--zc); stroke-width: 1.8; flex: none; }
+.step h3 { font-size: 19px; font-weight: 600; line-height: 1.2; }
+.step p { font-size: 15px; color: var(--muted); line-height: 1.3; margin-top: 2px; }
+
+/* Sub-panel inside a zone */
+.sub {
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 13px;
+}
+.sub h4 {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--zc); margin-bottom: 8px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font-size: 15px; font-weight: 600;
+  border: 1.5px solid var(--zc); color: var(--ink);
+  border-radius: 999px; padding: 2px 11px; background: var(--zt);
+}
+.chip small { font-weight: 400; color: var(--muted); font-size: 14px; }
+
+.note { display: flex; align-items: center; gap: 8px; font-size: 16px; color: var(--muted); }
+.note svg { width: 22px; height: 22px; color: var(--zc); stroke-width: 2; flex: none; }
+.note b { color: var(--ink); font-weight: 600; }
+
+/* ---- Footer strip: principles or takeaway, identical placement ---- */
+.strip {
+  margin-top: 16px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  gap: 18px;
+}
+.strip .item { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 600; }
+.strip svg { width: 24px; height: 24px; color: var(--ink); stroke-width: 1.8; }
+
+/* Tile grid: a set of named items, each with an icon and a short qualifier */
+.tiles { display: grid; gap: 10px; }
+.tile {
+  display: flex; align-items: center; gap: 12px;
+  border: 1.5px solid var(--line); border-radius: 10px;
+  padding: 6px 11px; background: var(--card);
+}
+.tile svg { width: 26px; height: 26px; color: var(--zc); stroke-width: 1.8; flex: none; }
+.tile b { font-size: 18px; font-weight: 600; display: block; line-height: 1.15; }
+.tile span { font-size: 14px; color: var(--muted); display: block; line-height: 1.2; }
+
+/* Badge: a small outlined label, e.g. "optional" or "completed" */
+.badge {
+  display: inline-block; font-size: 13px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  border: 1.5px solid var(--zc, var(--faint)); color: var(--zc, var(--faint));
+  border-radius: 999px; padding: 1px 10px; margin-left: 6px; vertical-align: middle;
+}
+
+/* Loop bar: a full-width return path under the flow, for iterative processes */
+.loop {
+  margin-top: 12px;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  border: 2px dashed var(--core); border-radius: var(--radius);
+  color: var(--core); font-size: 18px; font-weight: 600; padding: 7px 16px;
+}
+.loop svg { width: 24px; height: 24px; stroke-width: 2; }
