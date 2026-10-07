@@ -615,9 +615,33 @@ side cannot be started, the sync warns and reads `/mnt/c` as before.
 
 `python` is Windows' Python as WSL sees it; `code` is this cagelens checkout
 as Windows sees it, put first on Windows' import path so both sides run the
-same code. Starting Windows programs from WSL needs WSL interop (the
-`WSLInterop` binfmt rule); cagelens supplies `WSL_INTEROP` when a shell
-started over SSH lacks it.
+same code.
+
+Starting Windows programs from WSL needs WSL interop: the `WSLInterop`
+binfmt_misc rule, which hands Windows executables to WSL's `/init`. With
+systemd enabled in `/etc/wsl.conf`, the rule can be missing after boot,
+because systemd mounts binfmt_misc itself and WSL masks `systemd-binfmt`.
+Starting any `.exe` then fails with "Exec format error", and the sync falls
+back to `/mnt/c` with a warning. Register the rule at boot with a oneshot
+systemd unit:
+
+```ini
+[Unit]
+Description=Register WSL interop so Linux can start Windows programs
+ConditionPathExists=/init
+After=proc-sys-fs-binfmt_misc.automount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'test -e /proc/sys/fs/binfmt_misc/WSLInterop || echo ":WSLInterop:M::MZ::/init:PF" > /proc/sys/fs/binfmt_misc/register'
+
+[Install]
+WantedBy=multi-user.target
+```
+
+A shell started over SSH also lacks `WSL_INTEROP`; cagelens sets it to the
+newest socket in `/run/WSL/` when starting the Windows export.
 
 ### Session Data Paths
 
