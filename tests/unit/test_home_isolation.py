@@ -96,3 +96,52 @@ def test_windows_user_discovery_does_not_probe_the_host(monkeypatch: pytest.Monk
 
     assert platform_mod.get_windows_users_with_claude() == []
     assert scanned == []
+
+
+def test_windows_home_lookup_does_not_probe_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Finding the Windows home from WSL must not run cmd.exe or scan drives during tests."""
+    from agent_history.utils import platform as platform_mod
+
+    calls = []
+
+    def record(name):
+        def recorder(*args, **kwargs):
+            calls.append(name)
+
+        return recorder
+
+    monkeypatch.setattr(platform_mod, "_get_userprofile_via_cmd", record("cmd.exe"))
+    monkeypatch.setattr(platform_mod, "_scan_drives_for_claude_user", record("drive scan"))
+    monkeypatch.setattr(platform_mod, "_find_user_home_on_drives", record("user lookup"))
+
+    with platform_mod.windows_home_cache_context():
+        assert platform_mod.get_windows_home_from_wsl() is None
+        assert platform_mod.get_windows_home_from_wsl("someone") is None
+    assert calls == []
+
+
+def test_wsl_home_lookup_does_not_probe_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Finding a WSL user and home from Windows must not run wsl.exe or touch UNC paths."""
+    from agent_history.utils import platform as platform_mod
+
+    calls = []
+
+    def record_run(*args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 1, "", "")
+
+    def record_exists(path, timeout=0.0):
+        calls.append(path)
+        return False
+
+    monkeypatch.setattr(platform_mod.subprocess, "run", record_run)
+    monkeypatch.setattr(platform_mod, "_path_exists_with_timeout", record_exists)
+    platform_mod._get_wsl_username.cache_clear()
+    platform_mod._wsl_unc_available.cache_clear()
+    try:
+        assert platform_mod._get_wsl_username("Ubuntu") is None
+        assert platform_mod._wsl_unc_available("Ubuntu") is False
+    finally:
+        platform_mod._get_wsl_username.cache_clear()
+        platform_mod._wsl_unc_available.cache_clear()
+    assert calls == []

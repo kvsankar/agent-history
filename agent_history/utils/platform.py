@@ -322,6 +322,8 @@ def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
         "CAGELENS_HOME", "AGENT_HISTORY_HOME"
     ):
         return None
+    if _host_probe_disabled():
+        return None
 
     cache_key = username or "_default_"
     cache = _get_windows_home_cache()
@@ -353,11 +355,13 @@ def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
 
 
 def _host_probe_disabled() -> bool:
-    """Return True when CAGELENS_NO_HOST_PROBE asks not to discover WSL or Windows homes.
+    """Return True when CAGELENS_NO_HOST_PROBE asks not to look for WSL or Windows homes.
 
-    The test suite sets it so that no test reaches the real homes of the machine
-    running it. Explicit test overrides (CLAUDE_WSL_TEST_DISTRO and the like) are
-    checked before this and still apply.
+    It covers listing WSL distributions and Windows users, and locating a WSL
+    user's home (wsl.exe, UNC paths) or the Windows home from WSL (cmd.exe, drive
+    scans). The test suite sets it so that no test reaches the real homes of the
+    machine running it. Explicit test overrides (CLAUDE_WSL_TEST_DISTRO,
+    CAGELENS_HOME_WINDOWS and the like) are checked before this and still apply.
     """
     return get_bool_env("CAGELENS_NO_HOST_PROBE")
 
@@ -476,6 +480,8 @@ def _path_exists_with_timeout(path: Path, timeout: float = 5.0) -> bool:
 @lru_cache(maxsize=32)
 def _wsl_unc_available(distro_name: str) -> bool:
     """Check whether the WSL UNC base path is reachable."""
+    if _host_probe_disabled():
+        return False
     timeout = _get_unc_timeout()
     bases = [
         Path(f"//wsl.localhost/{distro_name}/home"),
@@ -763,6 +769,8 @@ def _get_wsl_username(distro_name: str) -> Optional[str]:
     Returns:
         Username string or None on failure
     """
+    if _host_probe_disabled():
+        return None
     try:
         result = subprocess.run(
             [get_command_path("wsl"), "-d", distro_name, "whoami"],
