@@ -15,7 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from agent_history.utils.env import get_env, has_env
+from agent_history.utils.env import get_bool_env, get_env, has_env
 
 # Agent backend identifiers (needed for WSL distro info)
 AGENT_CLAUDE = "claude"
@@ -352,6 +352,16 @@ def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
 # ============================================================================
 
 
+def _host_probe_disabled() -> bool:
+    """Return True when CAGELENS_NO_HOST_PROBE asks not to discover WSL or Windows homes.
+
+    The test suite sets it so that no test reaches the real homes of the machine
+    running it. Explicit test overrides (CLAUDE_WSL_TEST_DISTRO and the like) are
+    checked before this and still apply.
+    """
+    return get_bool_env("CAGELENS_NO_HOST_PROBE")
+
+
 def _is_valid_windows_drive(drive: Path) -> bool:
     """Check if path is a valid single-letter Windows drive mount."""
     return drive.is_dir() and len(drive.name) == 1 and drive.name.isalpha()
@@ -394,6 +404,8 @@ def get_windows_users_with_claude():
     ):
         return []
     if os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+        return []
+    if _host_probe_disabled():
         return []
 
     results = []
@@ -591,6 +603,8 @@ def _get_wsl_distro_names() -> list:
         the BOM correctly), fall back to UTF-8 if needed, and strip any BOM or
         nulls per line before returning clean distro names.
     """
+    if _host_probe_disabled():
+        return []
     try:
         result = subprocess.run(
             [get_command_path("wsl"), "--list", "--quiet"],
