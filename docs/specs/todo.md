@@ -11,6 +11,40 @@ canonicality: primary
 
 Items that need investigation or clarification before full specification.
 
+## 2.0 Release Readiness
+
+`feature/2.0-exploration` merges to `master` only after these items, in this
+order:
+
+- [ ] **Parser check.** Compare each agent's current concrete format with its
+      format spec and parser: Claude Code, Codex, Gemini, Copilot (CLI and VS
+      Code) and Pi. Inputs: recent real session files, release notes, and the
+      source of the open-source agents. Use the real-agent capture harness only
+      for gaps.
+- [ ] **Code audit.** Functional defects, and design and simplicity, across
+      backends, export, core and storage. Findings first; fixes follow.
+- [ ] **Unified model.** Enhance the unified model (the NDJSON schema in
+      [`schema/unified-json-schema.md`](schema/unified-json-schema.md) and the
+      lineage model) so it represents every agent's concrete format without
+      loss: shared concepts in common fields, agent-only attributes kept per
+      entity, unrecognized records kept raw. This may add turns and events and
+      change how sessions and messages are modelled. Existing readers keep
+      working, and the schema version records the change. See "Unified Event
+      Envelope / Lossless Schema" below.
+- [ ] **Per-agent converters.** Convert each agent into the enhanced model,
+      Copilot first. Copilot reaches parity with the other agents on every
+      command and is added to the lineage model.
+- [ ] **Markdown and HTML exports** show the attributes the model keeps.
+- [ ] **HTML export.** Clear at every level of detail for every agent, written
+      for a general reader, with sub-agents shown through lineage. Finish or
+      remove the agent graph (built, turned off) and the timeline index. The
+      branches `codex/html-timeline-export` (with its spec,
+      `docs/specs/html-timeline-export.md`) and
+      `wip/html-agent-graph-ui-playwright` are design references; delete them
+      once this work replaces them. Split `agent_history/export/html.py`.
+- [ ] Resolve the conflicts between `feature/2.0-exploration` and `master`,
+      then merge.
+
 ## Pending Investigation
 
 ### Windows Drive Access From WSL (virtiofs)
@@ -257,7 +291,8 @@ or agent-friendly interpretation.
 
 ### Unified Event Envelope / Lossless Schema
 
-**Status:** Planned for a post-release v2.1 schema round
+**Status:** Part of 2.0 release readiness (see the "Unified model" item above),
+covering Copilot as well as the agents listed here.
 
 **Why:** The current unified NDJSON model is good enough for message-level
 list/export/stats compatibility, but it is intentionally not a lossless model
