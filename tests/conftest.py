@@ -14,22 +14,6 @@ from unittest.mock import patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Home Isolation
-# ---------------------------------------------------------------------------
-
-if sys.platform == "win32":
-    # Windows resolves the home folder from USERPROFILE, not HOME. Point it at an
-    # empty folder before any test imports the package, so no test reads the real
-    # agent folders. run_cli_subprocess mirrors a fixture's HOME into USERPROFILE.
-    _EMPTY_HOME = tempfile.mkdtemp(prefix="cagelens-test-home-")
-    os.environ["USERPROFILE"] = _EMPTY_HOME
-    atexit.register(shutil.rmtree, _EMPTY_HOME, ignore_errors=True)
-
-# ---------------------------------------------------------------------------
-# Pytest CLI Options
-# ---------------------------------------------------------------------------
-
 
 def _in_docker_environment() -> bool:
     """Detect if we're running inside the Docker test environment."""
@@ -38,6 +22,38 @@ def _in_docker_environment() -> bool:
         or os.environ.get("NODE_BETA") is not None
         or Path("/.dockerenv").exists()
     )
+
+
+# ---------------------------------------------------------------------------
+# Home Isolation
+# ---------------------------------------------------------------------------
+
+
+def _isolate_home() -> None:
+    """Keep the test run away from the real homes of the machine running it.
+
+    HOME (and USERPROFILE, which Windows uses instead) point at an empty folder,
+    and CAGELENS_NO_HOST_PROBE stops discovery of WSL distributions and Windows
+    users. CLI subprocesses inherit all three; run_cli_subprocess mirrors a
+    fixture's HOME into USERPROFILE.
+    """
+    empty_home = tempfile.mkdtemp(prefix="cagelens-test-home-")
+    atexit.register(shutil.rmtree, empty_home, ignore_errors=True)
+    os.environ["HOME"] = empty_home
+    if sys.platform == "win32":
+        os.environ["USERPROFILE"] = empty_home
+    os.environ["CAGELENS_NO_HOST_PROBE"] = "1"
+
+
+# Runs at import, before any test module imports the package (some modules read
+# Path.home() at import). Docker E2E runs read the container's own home, and the
+# Docker CLI on the host needs the real one.
+if "--docker" not in sys.argv and not _in_docker_environment():
+    _isolate_home()
+
+# ---------------------------------------------------------------------------
+# Pytest CLI Options
+# ---------------------------------------------------------------------------
 
 
 def _is_e2e_docker_path(path: Path) -> bool:

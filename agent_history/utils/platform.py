@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from agent_history.utils.env import get_env, has_env
+from agent_history.utils.env import get_bool_env, get_env, has_env
 
 # Agent backend identifiers (needed for WSL distro info)
 AGENT_CLAUDE = "claude"
@@ -321,6 +321,8 @@ def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
         "CAGELENS_HOME", "AGENT_HISTORY_HOME"
     ):
         return None
+    if _host_probe_disabled():
+        return None
 
     cache_key = username or "_default_"
     cache = _get_windows_home_cache()
@@ -349,6 +351,18 @@ def get_windows_home_from_wsl(username: Optional[str] = None) -> Optional[Path]:
 # ============================================================================
 # Windows Users with Claude Detection
 # ============================================================================
+
+
+def _host_probe_disabled() -> bool:
+    """Return True when CAGELENS_NO_HOST_PROBE asks not to look for WSL or Windows homes.
+
+    It covers listing WSL distributions and Windows users, and locating a WSL
+    user's home (wsl.exe, UNC paths) or the Windows home from WSL (cmd.exe, drive
+    scans). The test suite sets it so that no test reaches the real homes of the
+    machine running it. Explicit test overrides (CLAUDE_WSL_TEST_DISTRO,
+    CAGELENS_HOME_WINDOWS and the like) are checked before this and still apply.
+    """
+    return get_bool_env("CAGELENS_NO_HOST_PROBE")
 
 
 def _is_valid_windows_drive(drive: Path) -> bool:
@@ -393,6 +407,8 @@ def get_windows_users_with_claude():
     ):
         return []
     if os.environ.get("CLAUDE_WINDOWS_PROJECTS_DIR"):
+        return []
+    if _host_probe_disabled():
         return []
 
     results = []
@@ -468,6 +484,8 @@ def _path_exists_with_timeout(path: Path, timeout: float = 5.0) -> bool:
 @lru_cache(maxsize=32)
 def _wsl_unc_available(distro_name: str) -> bool:
     """Check whether the WSL UNC base path is reachable."""
+    if _host_probe_disabled():
+        return False
     timeout = _get_unc_timeout()
     bases = [
         Path(f"//wsl.localhost/{distro_name}/home"),
@@ -595,6 +613,8 @@ def _get_wsl_distro_names() -> list:
         the BOM correctly), fall back to UTF-8 if needed, and strip any BOM or
         nulls per line before returning clean distro names.
     """
+    if _host_probe_disabled():
+        return []
     try:
         result = subprocess.run(
             [get_command_path("wsl"), "--list", "--quiet"],
@@ -753,6 +773,8 @@ def _get_wsl_username(distro_name: str) -> Optional[str]:
     Returns:
         Username string or None on failure
     """
+    if _host_probe_disabled():
+        return None
     try:
         result = subprocess.run(
             [get_command_path("wsl"), "-d", distro_name, "whoami"],
