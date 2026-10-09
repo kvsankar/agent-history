@@ -733,3 +733,112 @@ def test_remote_writes_flush_only_the_archives_file_system(tmp_path, monkeypatch
 
     assert not bare_calls.exists(), bare_calls.read_text(encoding="utf-8")
     assert verify_source(dest, "src").ok
+
+
+# Like FAKE_SSH, but it logs every call, and a call that starts a shared connection
+# (ControlMaster=yes) creates the control socket as a plain file and returns.
+FAKE_SSH_MULTIPLEX = FAKE_SSH.replace(
+    "#!/bin/sh\n",
+    "#!/bin/sh\n"
+    'echo "$*" >> "$SSH_LOG"\n'
+    'for a in "$@"; do\n'
+    '  case "$a" in\n'
+    '    ControlPath=*) control="${a#ControlPath=}" ;;\n'
+    "    ControlMaster=yes) master=1 ;;\n"
+    "  esac\n"
+    "done\n"
+    '[ -n "$master" ] && { : > "$control"; exit 0; }\n',
+    1,
+)
+
+
+@pytest.fixture
+def multiplex_ssh(tmp_path, monkeypatch):
+    path = tmp_path / "bin" / "ssh-multiplex"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(FAKE_SSH_MULTIPLEX, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    log = tmp_path / "ssh.log"
+    monkeypatch.setenv("SSH_LOG", str(log))
+    return str(path), log
+
+
+def _options(command):
+    return [command[i + 1] for i, word in enumerate(command[:-1]) if word == "-o"]
+
+
+def _calls(log, needle):
+    return [c for c in log.read_text(encoding="utf-8").splitlines() if needle in c]
+
+
+def test_commands_share_one_connection(tmp_path, multiplex_ssh):
+    """One ssh connection per command made verifying a large archive take hours."""
+    ssh, log = multiplex_ssh
+    dest = SshDestination("nas", str(tmp_path / "archive"), ssh=[ssh])
+
+    dest.write_bytes("a.txt", b"x")
+    assert dest.read_bytes("a.txt") == b"x"
+    options = _options(dest._command("true"))
+
+    assert len(_calls(log, "ControlMaster=yes")) == 1
+    assert "ControlMaster=no" in options
+    socket = next(o.split("=", 1)[1] for o in options if o.startswith("ControlPath="))
+    assert all(f"ControlPath={socket}" in c for c in _calls(log, "sh -c"))
+    assert stat.S_IMODE(os.stat(os.path.dirname(socket)).st_mode) == 0o700
+    # macOS allows 104 bytes for a Unix socket path.
+    assert len(socket) < 104
+    dest.close()
+
+
+def test_a_shared_connection_that_ended_is_started_again(tmp_path, multiplex_ssh):
+    ssh, log = multiplex_ssh
+    dest = SshDestination("nas", str(tmp_path / "archive"), ssh=[ssh])
+    dest.write_bytes("a.txt", b"x")
+    socket = next(
+        o.split("=", 1)[1] for o in _options(dest._command("true")) if o.startswith("ControlPath=")
+    )
+
+    os.remove(socket)  # the connection ended after being idle
+    assert dest.read_bytes("a.txt") == b"x"
+
+    assert len(_calls(log, "ControlMaster=yes")) == 2
+    dest.close()
+
+
+def test_commands_connect_directly_when_no_shared_connection_starts(tmp_path, fake_ssh):
+    dest = SshDestination("nas", str(tmp_path / "archive"), ssh=[fake_ssh])
+
+    dest.write_bytes("a.txt", b"x")
+
+    assert dest.read_bytes("a.txt") == b"x"
+    assert not any(o.startswith("Control") for o in _options(dest._command("true")))
+    dest.close()
+
+
+def test_no_shared_connection_where_ssh_cannot_share(tmp_path, multiplex_ssh, monkeypatch):
+    import agent_history.archive.ssh_destination as module
+
+    ssh, log = multiplex_ssh
+    monkeypatch.setattr(module, "_CAN_SHARE", False)
+    dest = SshDestination("nas", str(tmp_path / "archive"), ssh=[ssh])
+
+    dest.write_bytes("a.txt", b"x")
+
+    assert not any(o.startswith("Control") for o in _options(dest._command("true")))
+    assert _calls(log, "ControlMaster=yes") == []
+    dest.close()
+
+
+def test_close_stops_the_shared_connection_and_removes_its_folder(tmp_path, multiplex_ssh):
+    ssh, log = multiplex_ssh
+    dest = SshDestination("nas", str(tmp_path / "archive"), ssh=[ssh])
+    dest.write_bytes("a.txt", b"x")
+    socket = next(
+        o.split("=", 1)[1] for o in _options(dest._command("true")) if o.startswith("ControlPath=")
+    )
+
+    dest.close()
+    dest.close()  # a second close does nothing
+
+    assert len(_calls(log, "-O exit")) == 1
+    assert not os.path.exists(os.path.dirname(socket))

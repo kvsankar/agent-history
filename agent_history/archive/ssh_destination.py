@@ -12,14 +12,25 @@ operation sends ssh one already-quoted command string: ssh joins its remote argu
 spaces, so passing them separately would lose the quoting. The remote login shell runs
 that string, and it need not be sh (csh, tcsh and fish parse differently), so the string
 is always ``sh -c '<script>'``, which any of them runs as one simple command.
+
+Commands share one SSH connection where ssh can do that, because a new connection per
+command made reading a large archive take hours. The destination starts the shared
+connection itself, in the background with no input or output attached (``ssh -fN``):
+a connection started by a command's own ssh would keep that command's output pipe open,
+and Python would wait on it. A shared connection that ended after being idle is started
+again; when none can start, commands connect directly.
 """
 
 from __future__ import annotations
 
+import atexit
+import os
 import secrets
 import shlex
+import shutil
 import subprocess
 import tarfile
+import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -40,6 +51,11 @@ from agent_history.archive.transport import (
 _MISSING = 3
 _EXISTS = 3
 _CHUNK = 1 << 20
+# OpenSSH for Windows cannot share a connection: it has no Unix socket for ControlPath.
+_CAN_SHARE = os.name != "nt"
+# A shared connection ends after this many idle seconds, and is started again when needed.
+_SHARE_IDLE_SECONDS = 600
+_SHARE_START_TIMEOUT = 60
 
 
 class SshDestination(Destination):
@@ -55,6 +71,9 @@ class SshDestination(Destination):
         self.port = port
         self.ssh = list(ssh or ["ssh"])
         self.description = f"ssh://{host}{self.root}"
+        self._share_folder: str | None = None
+        self._share_failed = False
+        self._share_lock = threading.Lock()
 
     @classmethod
     def from_url(cls, url: str) -> SshDestination:
@@ -71,11 +90,78 @@ class SshDestination(Destination):
     def _remote(self, rel: str) -> str:
         return shlex.quote(f"{self.root}/{_check_rel(rel)}")
 
-    def _command(self, script: str) -> list[str]:
+    def _base(self) -> list[str]:
         args = [*self.ssh, "-o", "BatchMode=yes"]
         if self.port:
             args += ["-p", str(self.port)]
-        return [*args, self.host, f"sh -c {shlex.quote(script)}"]
+        return args
+
+    def _command(self, script: str) -> list[str]:
+        return [*self._base(), *self._shared(), self.host, f"sh -c {shlex.quote(script)}"]
+
+    def _shared(self) -> list[str]:
+        """ssh options that use the shared connection, starting it when it is not running."""
+        if not _CAN_SHARE:
+            return []
+        with self._share_lock:
+            if self._share_failed:
+                return []
+            if self._share_folder is None:
+                self._share_folder = tempfile.mkdtemp(prefix="cagelens-ssh-", dir=_short_tmp())
+                atexit.register(self.close)
+            socket = f"{self._share_folder}/s"
+            if not os.path.exists(socket):
+                self._start_shared(socket)
+            if not os.path.exists(socket):
+                self._share_failed = True
+                return []
+            return ["-o", f"ControlPath={socket}", "-o", "ControlMaster=no"]
+
+    def _start_shared(self, socket: str) -> None:
+        command = [
+            *self._base(),
+            "-o",
+            f"ControlPath={socket}",
+            "-o",
+            "ControlMaster=yes",
+            "-o",
+            f"ControlPersist={_SHARE_IDLE_SECONDS}",
+            "-f",
+            "-N",
+            self.host,
+        ]
+        try:
+            subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=_SHARE_START_TIMEOUT,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    def close(self) -> None:
+        """Stop the shared connection, if one was started, and remove its folder."""
+        with self._share_lock:
+            folder, self._share_folder = self._share_folder, None
+        if folder is None:
+            return
+        atexit.unregister(self.close)
+        socket = f"{folder}/s"
+        if os.path.exists(socket):
+            try:
+                subprocess.run(
+                    [*self._base(), "-o", f"ControlPath={socket}", "-O", "exit", self.host],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=_SHARE_START_TIMEOUT,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        shutil.rmtree(folder, ignore_errors=True)
 
     def _run(self, script: str, data: bytes | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -372,3 +458,9 @@ def _finished(process: subprocess.Popen, timeout: float = 0.5) -> int | None:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         return None
+
+
+def _short_tmp() -> str | None:
+    """A folder with a short path for the control socket: a Unix socket path may hold
+    only about 104 bytes, and macOS gives each user a long temporary folder."""
+    return "/tmp" if os.path.isdir("/tmp") else None

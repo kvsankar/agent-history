@@ -657,6 +657,21 @@ than a command line can hold. Listings run `find` with `-exec printf '%s\0' {} +
 names are separated by NUL bytes and a name that holds a line break stays whole. Reads
 are streamed from `cat`.
 
+Commands share one SSH connection where the local ssh can do that, which is everywhere
+except OpenSSH for Windows (it has no Unix socket for `ControlPath`). A new connection
+per command made verifying an archive of about 100,000 files take hours; sharing one
+brings the cost to tens of milliseconds a file.
+- The destination starts the shared connection itself with `ssh -fN`,
+  `ControlMaster=yes` and `ControlPersist` of 600 seconds, with no input or output
+  attached. A connection that a command's own ssh started would keep that command's
+  output pipe open, and the collector would wait on it.
+- The socket is in a private folder (mode 700) under `/tmp`, whose short path fits a
+  Unix socket name. Commands use it with `ControlMaster=no`.
+- A shared connection that ended after being idle is started again before the next
+  command. When none can start, commands connect directly, as before.
+- At exit the destination stops the shared connection (`ssh -O exit`) and removes the
+  folder.
+
 ### Manifest format
 
 A manifest is a compressed JSON Lines file. The first line describes the run, and
@@ -1159,7 +1174,9 @@ next runs.
   version is kept. After the next run, `verify` reports nothing and no incoming
   folder remains.
 - **SSH destination:** unit tests run the SSH destination through a stand-in `ssh`
-  that runs each command with the local `sh`.
+  that runs each command with the local `sh`. A variant of it creates the control
+  socket as a plain file, to test that commands share, restart and close the shared
+  connection.
 - **Not built yet:** an archive test in `tests/e2e_docker`, with a destination node
   that has only the tools the SSH destination needs.
 - **Catalog:**
