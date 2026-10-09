@@ -247,6 +247,9 @@ def test_databases_are_marked(tmp_path):
     assert selected[".codex/logs_2.sqlite"].database.log_table == "logs"
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="creating symlinks needs Developer Mode or administrator rights"
+)
 def test_symlinks_are_not_followed(tmp_path):
     outside = tmp_path / "outside"
     _touch(outside, "secret.jsonl")
