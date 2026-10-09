@@ -8,8 +8,7 @@ import os
 import platform
 import shutil
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeoutError
+import threading
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -450,15 +449,20 @@ def _path_exists_with_timeout(path: Path, timeout: float = 5.0) -> bool:
         True if path exists, False if doesn't exist or timeout reached.
     """
 
-    def check_exists() -> bool:
-        return path.exists()
+    result: list = []
 
-    try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(check_exists)
-            return future.result(timeout=timeout)
-    except (FuturesTimeoutError, OSError):
-        return False
+    def check_exists() -> None:
+        try:
+            result.append(path.exists())
+        except OSError:
+            result.append(False)
+
+    # A daemon thread, not an executor: leaving an executor (or exiting the
+    # interpreter) waits for its threads, so a stuck check would still block.
+    worker = threading.Thread(target=check_exists, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    return bool(result and result[0])
 
 
 @lru_cache(maxsize=32)
