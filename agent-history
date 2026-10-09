@@ -706,9 +706,7 @@ def validate_markdown_level(value):
     try:
         ivalue = int(value)
     except ValueError as e:
-        raise argparse.ArgumentTypeError(
-            f"markdown level must be an integer, got '{value}'"
-        ) from e
+        raise argparse.ArgumentTypeError(f"markdown level must be an integer, got '{value}'") from e
     if ivalue < 1 or ivalue > MARKDOWN_MAX_LEVEL:
         raise argparse.ArgumentTypeError(
             f"markdown level must be between 1 and {MARKDOWN_MAX_LEVEL}, got '{value}'"
@@ -3863,7 +3861,9 @@ def _html_code_panel(
                 rendered_pre,
                 "</div>",
                 '<div data-view-content="raw" hidden>',
-                _html_pre(text, " ".join(part for part in (pre_class, "raw-text") if part), trim=trim),
+                _html_pre(
+                    text, " ".join(part for part in (pre_class, "raw-text") if part), trim=trim
+                ),
                 "</div>",
             ]
         )
@@ -3871,7 +3871,9 @@ def _html_code_panel(
         body = rendered_pre
     return "\n".join(
         [
-            f'<section class="{_html_attr(section_class)}"' + (" data-view-panel" if raw_toggle else "") + ">",
+            f'<section class="{_html_attr(section_class)}"'
+            + (" data-view-panel" if raw_toggle else "")
+            + ">",
             _html_code_title(title, raw_toggle=raw_toggle, rendered_label="Highlighted"),
             '<div class="code-body">',
             body,
@@ -3944,9 +3946,7 @@ def _html_render_paragraph(lines: list[str]) -> str:
 def _html_render_list(items: list[str], ordered: bool) -> str:
     """Render a Markdown list."""
     tag = "ol" if ordered else "ul"
-    rendered_items = "\n".join(
-        f"<li>{_html_inline_markdown(item.strip())}</li>" for item in items
-    )
+    rendered_items = "\n".join(f"<li>{_html_inline_markdown(item.strip())}</li>" for item in items)
     return f"<{tag}>\n{rendered_items}\n</{tag}>"
 
 
@@ -3979,9 +3979,7 @@ def _html_render_table(table_lines: list[str]) -> str:
     def normalize(row: list[str]) -> list[str]:
         return (row + [""] * column_count)[:column_count]
 
-    header_html = "".join(
-        f"<th>{_html_inline_markdown(cell)}</th>" for cell in normalize(headers)
-    )
+    header_html = "".join(f"<th>{_html_inline_markdown(cell)}</th>" for cell in normalize(headers))
     body_rows = []
     for row in rows:
         cells = "".join(f"<td>{_html_inline_markdown(cell)}</td>" for cell in normalize(row))
@@ -4127,9 +4125,7 @@ def _html_markdown(text: str) -> str:  # noqa: C901, PLR0915
     )
 
 
-def _html_level_attrs(
-    min_level: int, initial_level: int, max_level: Optional[int] = None
-) -> str:
+def _html_level_attrs(min_level: int, initial_level: int, max_level: Optional[int] = None) -> str:
     """Return progressive-disclosure attributes for an HTML element."""
     attrs = [f'data-level="{min_level}"']
     if max_level is not None:
@@ -4243,7 +4239,7 @@ def _render_trace_block(
         open_attr = " open" if initial_level >= HTML_FULL_ACTION_LEVEL else ""
         parts.extend(
             [
-                f'<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} '
+                f"<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} "
                 f'data-open-level="{HTML_FULL_ACTION_LEVEL}"{open_attr}>',
                 f"<summary>{_html_escape(full_label)}</summary>",
                 (
@@ -4291,14 +4287,14 @@ def _html_line_range_label(start_line, num_lines, total_lines) -> str:
 def _html_file_heading(action: str, file_path: str, meta: str = "") -> str:
     """Render a compact file-action heading."""
     filename = _html_basename(file_path)
-    heading = f'<strong>{_html_escape(action)}</strong>'
+    heading = f"<strong>{_html_escape(action)}</strong>"
     if filename:
         heading += f" <code>{_html_escape(filename)}</code>"
     parts = [f"<div>{heading}</div>"]
     if file_path:
         path_line = _html_escape(file_path)
         if meta:
-            path_line = f"{path_line} <span class=\"file-meta\">{_html_escape(meta)}</span>"
+            path_line = f'{path_line} <span class="file-meta">{_html_escape(meta)}</span>'
         parts.append(f'<div class="snippet">{path_line}</div>')
     return "\n".join(parts)
 
@@ -4386,8 +4382,8 @@ def _html_diff_panel(title: str, text: str, trim: bool = True) -> str:
         body_parts.extend(
             [
                 '<div class="trim-panel" data-trim-panel data-expanded="false">',
-                f'<div data-trim-short>{_html_render_diff_lines(short_text)}</div>',
-                f'<div data-trim-full hidden>{_html_render_diff_lines(text)}</div>',
+                f"<div data-trim-short>{_html_render_diff_lines(short_text)}</div>",
+                f"<div data-trim-full hidden>{_html_render_diff_lines(text)}</div>",
                 '<button class="trim-toggle" type="button" data-trim-toggle>Show more</button>',
                 "</div>",
             ]
@@ -4416,7 +4412,7 @@ def _render_raw_tool_input(full_text: str, initial_level: int) -> str:
     open_attr = " open" if initial_level >= HTML_FULL_ACTION_LEVEL else ""
     return "\n".join(
         [
-            f'<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} '
+            f"<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} "
             f'data-open-level="{HTML_FULL_ACTION_LEVEL}"{open_attr}>',
             "<summary>Raw input</summary>",
             _html_code_panel("Raw input", full_text, trim=True, language="json"),
@@ -4430,7 +4426,7 @@ def _render_raw_tool_output(full_text: str, initial_level: int) -> str:
     open_attr = " open" if initial_level >= HTML_FULL_ACTION_LEVEL else ""
     return "\n".join(
         [
-            f'<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} '
+            f"<details {_html_level_attrs(HTML_FULL_ACTION_LEVEL, initial_level)} "
             f'data-open-level="{HTML_FULL_ACTION_LEVEL}"{open_attr}>',
             "<summary>Raw output</summary>",
             _html_code_panel("Raw output", full_text, trim=True, language="console"),
@@ -4842,9 +4838,7 @@ def _render_gemini_tool_blocks(msg: dict, initial_level: int) -> list:
                     ]
                 )
             else:
-                parts.append(
-                    _html_code_panel("Result", result_text, trim=True, language="console")
-                )
+                parts.append(_html_code_panel("Result", result_text, trim=True, language="console"))
         parts.extend(["</div>", "</section>"])
         rendered.append("\n".join(parts))
     return rendered
@@ -4856,7 +4850,9 @@ def _render_pi_tool_blocks(msg: dict, initial_level: int) -> list:
     for tool_call in msg.get("tool_calls", []):
         name = tool_call.get("name", "unknown")
         call_id = tool_call.get("id", "")
-        arguments = tool_call.get("arguments") or tool_call.get("args") or tool_call.get("input") or {}
+        arguments = (
+            tool_call.get("arguments") or tool_call.get("args") or tool_call.get("input") or {}
+        )
         full = _html_json(arguments)
         title = f"Tool call: {name}" + (f" ({call_id})" if call_id else "")
         command = _html_shell_command(name, arguments)
@@ -4891,8 +4887,12 @@ def _render_pi_tool_blocks(msg: dict, initial_level: int) -> list:
                         f'<section class="trace-block tool-block" {_html_level_attrs(2, initial_level)}>',
                         f'<div class="trace-title">{_html_escape(title)}</div>',
                         '<div class="trace-body">',
-                        _html_code_panel("Command", str(command), trim=True, language="bash", raw_toggle=True),
-                        _html_code_panel("Output", full, trim=True, language="console", raw_toggle=True),
+                        _html_code_panel(
+                            "Command", str(command), trim=True, language="bash", raw_toggle=True
+                        ),
+                        _html_code_panel(
+                            "Output", full, trim=True, language="console", raw_toggle=True
+                        ),
                         "</div>",
                         "</section>",
                     ]
@@ -4953,9 +4953,7 @@ def _conversation_message_text(msg: dict, agent: str) -> str:
             if block.get("kind") == "text"
         ]
         return "\n".join(text for text in text_blocks if text)
-    if agent in (AGENT_CODEX, AGENT_PI) and (
-        msg.get("is_tool_call") or msg.get("is_tool_result")
-    ):
+    if agent in (AGENT_CODEX, AGENT_PI) and (msg.get("is_tool_call") or msg.get("is_tool_result")):
         return ""
     return msg.get("content", "")
 
@@ -4974,8 +4972,7 @@ def _html_message_has_tools(msg: dict, agent: str) -> bool:
     if agent == AGENT_GEMINI:
         return bool(msg.get("tool_calls"))
     return any(
-        block.get("kind") in ("tool_call", "tool_result")
-        for block in msg.get("content_blocks", [])
+        block.get("kind") in ("tool_call", "tool_result") for block in msg.get("content_blocks", [])
     )
 
 
@@ -5186,9 +5183,7 @@ def _conversation_group_messages_by_turn(messages: list) -> list[tuple[int, list
     order = []
     for msg in messages:
         turn_index = int(
-            msg.get(CONVERSATION_SESSION_TURN_INDEX)
-            or msg.get("_html_session_turn_index")
-            or 0
+            msg.get(CONVERSATION_SESSION_TURN_INDEX) or msg.get("_html_session_turn_index") or 0
         )
         if turn_index not in grouped:
             grouped[turn_index] = []
@@ -5329,7 +5324,7 @@ def _render_html_message(
     message_kind = _html_message_kind(msg)
     parts = [
         f'<article class="message message-{_html_attr(message_kind)}" '
-        f'{_html_level_attrs(min_level, initial_level)}>',
+        f"{_html_level_attrs(min_level, initial_level)}>",
         '<div class="message-header">',
         f'<div class="role">{_html_escape(role)}</div>',
         f'<div class="timestamp">{_html_escape(timestamp)}</div>',
@@ -5371,13 +5366,9 @@ def _html_turn_action_summary(messages: list) -> str:
     if tool_results:
         parts.append(f"{tool_results} tool result{'s' if tool_results != 1 else ''}")
     if assistant_notes:
-        parts.append(
-            f"{assistant_notes} assistant note{'s' if assistant_notes != 1 else ''}"
-        )
+        parts.append(f"{assistant_notes} assistant note{'s' if assistant_notes != 1 else ''}")
     if internal_contexts:
-        parts.append(
-            f"{internal_contexts} internal context{'s' if internal_contexts != 1 else ''}"
-        )
+        parts.append(f"{internal_contexts} internal context{'s' if internal_contexts != 1 else ''}")
     return ", ".join(parts) if parts else "No recorded actions"
 
 
@@ -5415,7 +5406,11 @@ def _render_html_turn(
 ) -> str:
     """Render one annotated conversation turn."""
     export_turn = next(
-        (msg.get("_html_export_turn_index") for msg in messages if msg.get("_html_export_turn_index")),
+        (
+            msg.get("_html_export_turn_index")
+            for msg in messages
+            if msg.get("_html_export_turn_index")
+        ),
         None,
     )
     display_turn = export_turn or turn_index
@@ -5428,10 +5423,7 @@ def _render_html_turn(
     action_messages = [
         msg
         for msg in messages
-        if (
-            msg.get("_html_detail_level") in (2, 3)
-            or msg.get("_html_has_tools")
-        )
+        if (msg.get("_html_detail_level") in (2, 3) or msg.get("_html_has_tools"))
         and msg.get("_html_conversation_role") != "user_input"
     ]
     raw_messages = [
@@ -5455,10 +5447,10 @@ def _render_html_turn(
         _render_html_turn_detail_controls(),
         "</div>",
         '<div class="turn-meta">',
-        f'<div>{_html_escape(first_ts)}</div>' if first_ts else "",
+        f"<div>{_html_escape(first_ts)}</div>" if first_ts else "",
         (
-            f'<div {_html_level_attrs(4, initial_level)}>session turn '
-            f'{_html_escape(turn_index)}</div>'
+            f"<div {_html_level_attrs(4, initial_level)}>session turn "
+            f"{_html_escape(turn_index)}</div>"
         ),
         "</div>",
         "</header>",
@@ -5498,7 +5490,9 @@ def _render_html_turn(
                     msg,
                     agent,
                     initial_level,
-                    min_level=max(HTML_ACTION_SUMMARY_LEVEL, int(msg.get("_html_detail_level") or 2)),
+                    min_level=max(
+                        HTML_ACTION_SUMMARY_LEVEL, int(msg.get("_html_detail_level") or 2)
+                    ),
                     label=_html_conversation_label(msg, agent),
                     include_details=True,
                 )
@@ -5591,19 +5585,19 @@ def _render_html_session(session: dict, initial_level: int, total_turns: int) ->
     parts = [
         '<section class="session">',
         '<header class="session-header">',
-        f'<h2>{_html_escape(session["filename"])}</h2>',
+        f"<h2>{_html_escape(session['filename'])}</h2>",
         f'<div class="meta-row">{"".join(badges)}</div>',
         f'<div class="meta-row" {_html_level_attrs(4, initial_level)}>',
-        f'<span>{_html_escape(session["message_count"])} messages</span>',
-        f'<span>{_html_escape(turn_count)} turns</span>',
+        f"<span>{_html_escape(session['message_count'])} messages</span>",
+        f"<span>{_html_escape(turn_count)} turns</span>",
     ]
     if session.get("first_timestamp"):
-        parts.append(f'<span>first: {_html_escape(session["first_timestamp"])}</span>')
+        parts.append(f"<span>first: {_html_escape(session['first_timestamp'])}</span>")
     if session.get("last_timestamp"):
-        parts.append(f'<span>last: {_html_escape(session["last_timestamp"])}</span>')
+        parts.append(f"<span>last: {_html_escape(session['last_timestamp'])}</span>")
     parts.extend(
         [
-            f'<span>{_html_escape(session["file"])}</span>',
+            f"<span>{_html_escape(session['file'])}</span>",
             "</div>",
             "</header>",
         ]
@@ -5614,7 +5608,7 @@ def _render_html_session(session: dict, initial_level: int, total_turns: int) ->
             "Subagent transcript hidden until level 4."
             "</div>"
         )
-        parts.append(f'<div {_html_level_attrs(4, initial_level)}>')
+        parts.append(f"<div {_html_level_attrs(4, initial_level)}>")
 
     if session.get("meta"):
         parts.append(
@@ -7409,9 +7403,7 @@ def _pi_normalize_entry(entry: dict) -> Optional[dict]:
         output = message.get("output", content)
         command = message.get("command", "")
         exit_code = message.get("exitCode")
-        is_error = bool(message.get("cancelled")) or (
-            exit_code is not None and exit_code != 0
-        )
+        is_error = bool(message.get("cancelled")) or (exit_code is not None and exit_code != 0)
         normalized.update(
             {
                 "is_tool_result": True,
@@ -7610,7 +7602,9 @@ def pi_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:  # noqa: C90
     messages, session_meta = pi_read_jsonl_messages(jsonl_file)
     session: SessionMetrics = {
         "id": session_meta.get("id") if session_meta else None,
-        "cwd": session_meta.get("cwd") if session_meta else pi_get_workspace_from_session(jsonl_file),
+        "cwd": session_meta.get("cwd")
+        if session_meta
+        else pi_get_workspace_from_session(jsonl_file),
         "cli_version": None,
         "model": None,
         "startTime": None,
@@ -7649,14 +7643,14 @@ def pi_extract_metrics_from_jsonl(jsonl_file: Path) -> MetricsDict:  # noqa: C90
                     "role": role,
                     "timestamp": timestamp,
                     "model": msg.get("model"),
-                        "input_tokens": tokens.get("input", 0) if isinstance(tokens, dict) else 0,
-                        "output_tokens": tokens.get("output", 0) if isinstance(tokens, dict) else 0,
-                        "cache_creation_tokens": tokens.get("cacheWrite", 0)
-                        if isinstance(tokens, dict)
-                        else 0,
-                        "cache_read_tokens": tokens.get("cacheRead", 0)
-                        if isinstance(tokens, dict)
-                        else 0,
+                    "input_tokens": tokens.get("input", 0) if isinstance(tokens, dict) else 0,
+                    "output_tokens": tokens.get("output", 0) if isinstance(tokens, dict) else 0,
+                    "cache_creation_tokens": tokens.get("cacheWrite", 0)
+                    if isinstance(tokens, dict)
+                    else 0,
+                    "cache_read_tokens": tokens.get("cacheRead", 0)
+                    if isinstance(tokens, dict)
+                    else 0,
                 }
             )
         for tool_call in msg.get("tool_calls", []):
@@ -12189,13 +12183,10 @@ def _export_session_file(
 
     # Check incremental skip
     if not opts["force"] and output_file.exists():
-        if (
-            output_file.stat().st_mtime >= jsonl_file.stat().st_mtime
-            and (
-                opts.get("output_format", EXPORT_FORMAT_MARKDOWN) != EXPORT_FORMAT_MARKDOWN
-                or _markdown_export_options_match(
-                    output_file, opts.get("markdown_level", MARKDOWN_DEFAULT_LEVEL)
-                )
+        if output_file.stat().st_mtime >= jsonl_file.stat().st_mtime and (
+            opts.get("output_format", EXPORT_FORMAT_MARKDOWN) != EXPORT_FORMAT_MARKDOWN
+            or _markdown_export_options_match(
+                output_file, opts.get("markdown_level", MARKDOWN_DEFAULT_LEVEL)
             )
         ):
             stats["skipped"] += 1
@@ -12273,9 +12264,7 @@ def _export_alias_html_group(
 
     title = f"agent-history - {group[0]['workspace_name']}"
     output_file.write_text(
-        render_html_document(
-            title, rendered_sessions, html_level, html_split=HTML_SPLIT_WORKSPACE
-        ),
+        render_html_document(title, rendered_sessions, html_level, html_split=HTML_SPLIT_WORKSPACE),
         encoding="utf-8",
     )
     stats["exported"] += 1
@@ -12306,10 +12295,7 @@ def _alias_export_or_collect_html(
     alias_html_items: list,
 ) -> None:
     """Export an alias session, or collect it for workspace-level HTML bundling."""
-    if (
-        opts["output_format"] == EXPORT_FORMAT_HTML
-        and opts["html_split"] == HTML_SPLIT_WORKSPACE
-    ):
+    if opts["output_format"] == EXPORT_FORMAT_HTML and opts["html_split"] == HTML_SPLIT_WORKSPACE:
         alias_html_items.append(
             {
                 "session": session,
@@ -12404,9 +12390,7 @@ def cmd_alias_export(alias_name: str, output_dir: Union[str, Path], args):
         _export_alias_claude_sessions(alias_config, opts, output_path, stats, alias_html_items)
 
     if agent_filter in ("auto", AGENT_CODEX, AGENT_GEMINI, AGENT_PI):
-        _export_alias_non_claude_sessions(
-            alias_config, opts, output_path, stats, alias_html_items
-        )
+        _export_alias_non_claude_sessions(alias_config, opts, output_path, stats, alias_html_items)
 
     if alias_html_items:
         _export_alias_html_workspace_sessions(alias_html_items, output_path, opts, stats)
@@ -13533,7 +13517,9 @@ def _sync_ssh_remote_pi_to_db(
                 continue
 
         try:
-            if sync_file_to_db(conn, jsonl_file, f"remote:{hostname}", force, agent_override=AGENT_PI):
+            if sync_file_to_db(
+                conn, jsonl_file, f"remote:{hostname}", force, agent_override=AGENT_PI
+            ):
                 stats["synced"] += 1
             else:
                 stats["skipped"] += 1
@@ -14795,7 +14781,9 @@ def _list_windows_sessions(args, patterns: list, since_date, until_date):
     username = remote_host[10:] if remote_host and remote_host.startswith("windows://") else None
 
     all_sessions = []
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+    agents_to_scan = (
+        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+    )
 
     for scan_agent in agents_to_scan:
         sessions_dir = get_agent_windows_dir(username, scan_agent)
@@ -14867,7 +14855,9 @@ def _list_wsl_sessions(args, patterns: list, since_date, until_date):
     distro_name = remote_host[WSL_PREFIX_LEN:]
 
     all_sessions = []
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+    agents_to_scan = (
+        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+    )
     source = f"wsl:{distro_name}"
     skip_counts = _should_skip_wsl_message_count(args, workspaces_only)
     use_cached_counts = getattr(args, "counts", False) or getattr(args, "wsl_counts", False)
@@ -15118,7 +15108,9 @@ def _list_remote_workspaces_only(remote_host: Optional[str], patterns: list, age
     """List workspaces for remote host, dispatching by agent type."""
     all_workspaces = []
 
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
+    agents_to_scan = (
+        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
+    )
 
     for scan_agent in agents_to_scan:
         if scan_agent == AGENT_CLAUDE:
@@ -15151,7 +15143,9 @@ def _collect_remote_session_details(
     """Collect detailed session info from remote workspaces, dispatching by agent type."""
     all_sessions = []
 
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
+    agents_to_scan = (
+        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
+    )
 
     for scan_agent in agents_to_scan:
         if scan_agent == AGENT_CLAUDE:
@@ -15512,7 +15506,9 @@ def _get_batch_wsl_sessions(args, patterns: list, since_date, until_date) -> lis
     distro_name = remote_host[WSL_PREFIX_LEN:]  # Remove 'wsl://' prefix
 
     agent = getattr(args, "agent", None) or "auto"
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+    agents_to_scan = (
+        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+    )
 
     sessions = []
     for scan_agent in agents_to_scan:
@@ -15812,7 +15808,9 @@ def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> lis
     hostname = get_remote_hostname(remote_host)
     all_sessions = []
 
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
+    agents_to_scan = (
+        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
+    )
 
     for scan_agent in agents_to_scan:
         if scan_agent == AGENT_CLAUDE:
@@ -15835,9 +15833,7 @@ def _get_batch_ssh_sessions(args, patterns: list, since_date, until_date) -> lis
             )
         elif scan_agent == AGENT_PI:
             all_sessions.extend(
-                _get_batch_ssh_pi_sessions(
-                    remote_host, patterns, since_date, until_date, hostname
-                )
+                _get_batch_ssh_pi_sessions(remote_host, patterns, since_date, until_date, hostname)
             )
 
     return all_sessions
@@ -16058,9 +16054,8 @@ def _export_sessions(sessions: list, args, output_dir: Path):  # noqa: C901
         )
 
         up_to_date = _is_export_up_to_date(output_file, jsonl_file, force)
-        html_options_match = (
-            output_format != EXPORT_FORMAT_HTML
-            or _html_export_options_match(output_file, html_level, HTML_SPLIT_SESSION)
+        html_options_match = output_format != EXPORT_FORMAT_HTML or _html_export_options_match(
+            output_file, html_level, HTML_SPLIT_SESSION
         )
         markdown_options_match = (
             output_format != EXPORT_FORMAT_MARKDOWN
@@ -16296,9 +16291,7 @@ def _export_sessions_to_workspace_html(sessions: list, args, output_dir: Path):
     groups = _html_group_sessions_by_output(sessions, output_dir, args)
     stats = {"exported": 0, "skipped": 0, "failed": 0}
     if not getattr(args, "quiet", False):
-        sys.stderr.write(
-            f"Exporting {len(sessions)} sessions to {len(groups)} HTML bundle(s)...\n"
-        )
+        sys.stderr.write(f"Exporting {len(sessions)} sessions to {len(groups)} HTML bundle(s)...\n")
     for output_file, group_sessions in groups.items():
         _export_one_workspace_html(output_file, group_sessions, args, stats)
     if stats["failed"] and not getattr(args, "quiet", False):
@@ -16454,7 +16447,9 @@ def _collect_windows_sessions_from_wsl(
     results = []
     try:
         windows_users = get_windows_users_with_claude()
-        agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+        agents_to_scan = (
+            [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+        )
         for user in windows_users:
             try:
                 all_sessions = []
@@ -16505,7 +16500,9 @@ def _collect_wsl_sessions_from_windows(
     try:
         wsl_distros = get_wsl_distributions()
         filtered_distros = _filter_wsl_distros_for_agent(wsl_distros, agent)
-        agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+        agents_to_scan = (
+            [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+        )
         unknown_agent = agent not in ("auto", AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI)
         skip_counts = workspaces_only or not wsl_counts
         for distro in filtered_distros:
@@ -16668,7 +16665,9 @@ def _collect_remote_sessions(remote, patterns, since_date, until_date, agent: st
     hostname = get_remote_hostname(remote)
     all_sessions = []
 
-    agents_to_scan = [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
+    agents_to_scan = (
+        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_GEMINI, AGENT_CODEX, AGENT_PI]
+    )
 
     for scan_agent in agents_to_scan:
         if scan_agent == AGENT_CLAUDE:
@@ -17353,7 +17352,9 @@ def _export_wsl_from_windows(args, output_dir: Path, patterns: list) -> dict:
                 try:
                     distro_name = distro["name"]
                     agents_to_scan = (
-                        [agent] if agent != "auto" else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
+                        [agent]
+                        if agent != "auto"
+                        else [AGENT_CLAUDE, AGENT_CODEX, AGENT_GEMINI, AGENT_PI]
                     )
 
                     wsl_sessions = []
@@ -19245,9 +19246,8 @@ def _route_export(args, output_dir: Union[str, Path], final_patterns: list, fina
 
 def _dispatch_export(args):
     """Dispatch export command."""
-    if (
-        getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN) == EXPORT_FORMAT_HTML
-        and getattr(args, "split", None)
+    if getattr(args, "output_format", EXPORT_FORMAT_MARKDOWN) == EXPORT_FORMAT_HTML and getattr(
+        args, "split", None
     ):
         exit_with_error("HTML export does not support --split; use --html-split instead.")
     if (
