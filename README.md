@@ -1,5 +1,9 @@
 # agent-history
 
+<p align="center">
+  <img src="docs/images/agent-history-hero.jpg" alt="A scribe binds palm-leaf manuscripts in a library, beside an oil lamp and an hourglass" width="50%" />
+</p>
+
 A CLI tool to browse and export AI coding assistant conversation history with multi-environment support.
 
 > **Note:** This tool was previously named `claude-history`. A wrapper script `claude-history` is provided for backward compatibility.
