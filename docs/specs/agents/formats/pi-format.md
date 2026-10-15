@@ -11,8 +11,7 @@ canonicality: primary
 
 > **Status**: Refreshed 2026-06-04 from current public Pi docs/source. Pi
 > sessions are versioned tree JSONL; this page describes the supported current
-> shape plus compatibility behavior. See
-> [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
+> shape plus compatibility behavior.
 
 Pi stores coding-agent sessions as JSONL under:
 

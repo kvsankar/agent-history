@@ -10,8 +10,7 @@ canonicality: primary
 -->
 
 > **Status**: Initial support target based on local inspection and public
-> third-party parsers. See
-> [copilot-local-formats-2026-06-19.md](../../../research/copilot-local-formats-2026-06-19.md).
+> third-party parsers.
 
 VS Code Copilot stores extension state under VS Code workspace storage:
 

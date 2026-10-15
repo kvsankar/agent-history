@@ -176,7 +176,7 @@ Before writing tests, these conflicts must be resolved:
 
 ### 2. Web Sessions Scope
 
-**Status:** Undecided whether to include (see `docs/specs/todo.md`)
+**Status:** Undecided whether to include
 
 **Current state:**
 - `web list`, `web export` commands exist

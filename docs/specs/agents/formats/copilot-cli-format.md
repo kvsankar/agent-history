@@ -10,8 +10,7 @@ canonicality: primary
 -->
 
 > **Status**: Initial support target based on local inspection and the public
-> Copilot CLI package schema. See
-> [copilot-local-formats-2026-06-19.md](../../../research/copilot-local-formats-2026-06-19.md).
+> Copilot CLI package schema.
 
 Copilot CLI stores terminal-agent sessions under:
 

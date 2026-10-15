@@ -9,8 +9,7 @@ surface: public
 canonicality: index
 -->
 
-Canonical map for the documentation under `docs/`. This index follows the
-seven-topic IA from [docs-consolidation-ia-2026-06-05.md](analysis/docs-consolidation-ia-2026-06-05.md).
+Canonical map for the documentation under `docs/`.
 
 ## Agent Support Status
 
@@ -34,10 +33,9 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 |-------|----------------|------|
 | User workflows | [usage.md](user/usage.md), [cookbook.md](user/cookbook.md), [troubleshooting.md](user/troubleshooting.md) | Command lookup, recipes, export/stat workflows, common recovery. |
 | Session discovery and access | [workspace-scope-hub.md](design-v2/workspace-scope-hub.md), [cagelens-spec.md](specs/cagelens-spec.md), [scope-resolution-v2.md](design-v2/scope-resolution-v2.md), [docker-e2e.md](testing/docker-e2e.md) | Storage locations, workspace matching, scope resolution, local/remote/Windows/WSL access. |
-| Agent formats and normalization | [specs/agents/formats/](specs/agents/formats/), [unified-json-schema.md](specs/schema/unified-json-schema.md), [schema-refresh-2026-06-04.md](analysis/schema-refresh-2026-06-04.md) | Concrete agent formats, message/tool/token fields, unified NDJSON schema, schema drift notes. |
+| Agent formats and normalization | [specs/agents/formats/](specs/agents/formats/), [unified-json-schema.md](specs/schema/unified-json-schema.md) | Concrete agent formats, message/tool/token fields, unified NDJSON schema. |
 | Architecture and implementation | [DESIGN.md](design/DESIGN.md), [pipeline-architecture.md](design-v2/pipeline-architecture.md), [scope-resolution-v2.md](design-v2/scope-resolution-v2.md) | Current architecture, v2 pipeline design, and scope model. |
-| Validation and release readiness | [testing-strategy.md](testing/testing-strategy.md), [docker-e2e.md](testing/docker-e2e.md), [specs/todo.md](specs/todo.md) | Unit/E2E/real-agent validation, fixture strategy, release follow-ups. |
-| Research and collaboration | [research/](research/), [analysis/](analysis/), [other/](other/) | Ecosystem research, historical CLI research, collaboration notes, retrospectives. |
+| Validation and release readiness | [testing-strategy.md](testing/testing-strategy.md), [docker-e2e.md](testing/docker-e2e.md) | Unit/E2E/real-agent validation, fixture strategy. |
 | Navigation and indexes | [docs/README.md](README.md), [specs/README.md](specs/README.md) | Entry points and doc discovery. |
 
 ## User Documentation
@@ -58,21 +56,6 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | [scope-resolution-v2.md](design-v2/scope-resolution-v2.md) | Scope resolution model for homes, workspaces, sessions, and agents. |
 | [code-reuse-mapping.md](design-v2/code-reuse-mapping.md) | Planning map from legacy code to pipeline entities. |
 
-## Analysis
-
-| Document | Purpose |
-|----------|---------|
-| [cli-command-patterns.md](analysis/cli-command-patterns.md) | CLI patterns research (industry tools analysis). |
-| [competitive-analysis.md](analysis/competitive-analysis.md) | Historical market analysis and pre-rename roadmap context. |
-| [schema-refresh-2026-06-04.md](analysis/schema-refresh-2026-06-04.md) | Release schema-refresh evidence and parser impact notes. |
-| [docs-consolidation-ia-2026-06-05.md](analysis/docs-consolidation-ia-2026-06-05.md) | Dryscope docs IA findings and consolidation plan. |
-
-## Research
-
-| Document | Purpose |
-|----------|---------|
-| [copilot-local-formats-2026-06-19.md](research/copilot-local-formats-2026-06-19.md) | Copilot CLI and VS Code Copilot local-format findings. |
-
 ## Specifications
 
 | Document | Purpose |
@@ -81,7 +64,6 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 | [cagelens-spec.md](specs/cagelens-spec.md) | Main specification: purpose, supported agents, source model, data model, operations. |
 | [cli-spec.md](specs/cli-spec.md) | CLI commands, flags, and expected output. |
 | [unified-json-schema.md](specs/schema/unified-json-schema.md) | Normalized NDJSON export schema. |
-| [todo.md](specs/todo.md) | Open release/spec follow-ups. |
 
 ## Testing
 
@@ -89,15 +71,5 @@ See [AGENTS.md](../AGENTS.md) for a detailed comparison of how each agent works 
 |----------|---------|
 | [testing-strategy.md](testing/testing-strategy.md) | Default, Docker, and opt-in real-agent testing strategy. |
 | [docker-e2e.md](testing/docker-e2e.md) | Docker E2E testing infrastructure for SSH operations. |
-
-## Other
-
-| Document | Purpose |
-|----------|---------|
-| [exploration-log.md](other/exploration-log.md) | Exploratory test runs log. |
-| [retrospective.md](other/retrospective.md) | Collaboration retrospective. |
-| [claude-collaboration-playbook.md](other/claude-collaboration-playbook.md) | Behavioral playbook for Claude collaborations. |
-| [context-cli-test-restoration.md](other/context-cli-test-restoration.md) | Context for CLI test restoration work. |
-| [docs-governance.md](other/docs-governance.md) | Documentation ownership, metadata, generated output, and promotion rules. |
 
 If you add new docs, update this index so contributors can discover them quickly.

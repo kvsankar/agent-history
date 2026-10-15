@@ -17,7 +17,6 @@ Technical specifications for `cagelens`.
 |----------|-------------|
 | [cagelens-spec.md](cagelens-spec.md) | Main specification: purpose, agents, data model, operations |
 | [cli-spec.md](cli-spec.md) | CLI commands, flags, and expected output |
-| [todo.md](todo.md) | Release/spec follow-up items that are not yet part of the durable spec |
 
 ## Local Agent Session Formats
 
@@ -62,10 +61,3 @@ How agents handle specific features.
 
 Keep cross-agent field mapping in the unified schema. Agent format specs should
 stay focused on the concrete files each upstream tool writes.
-
-## Refresh Notes
-
-| Document | Description |
-|----------|-------------|
-| [schema-refresh-2026-06-04.md](../analysis/schema-refresh-2026-06-04.md) | Current upstream schema drift review and parser impact |
-| [docs-consolidation-ia-2026-06-05.md](../analysis/docs-consolidation-ia-2026-06-05.md) | Documentation IA findings from Dryscope |

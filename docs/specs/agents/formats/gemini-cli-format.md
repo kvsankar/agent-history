@@ -13,8 +13,7 @@ This document describes the session storage format used by Google's Gemini CLI.
 
 > **Status**: Refreshed 2026-06-04 from current public
 > `google-gemini/gemini-cli` source and docs. Current persistence is JSONL;
-> older single-JSON sessions can still exist. See
-> [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
+> older single-JSON sessions can still exist.
 
 ## Table of Contents
 

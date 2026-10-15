@@ -12,8 +12,7 @@ canonicality: primary
 This document describes the session storage format used by OpenAI's Codex CLI.
 
 > **Status**: Refreshed 2026-06-04 from current public `openai/codex`
-> source. The format is not guaranteed stable; see
-> [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
+> source. The format is not guaranteed stable.
 > `cagelens` supports the older direct `CODEX_SESSIONS_DIR` override and
 > the upstream `CODEX_HOME` layout.
 

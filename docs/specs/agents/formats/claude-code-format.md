@@ -16,7 +16,6 @@ This document captures our understanding of the `.jsonl` files created by Claude
 > **Refresh 2026-06-04**: Official Claude Code docs describe session storage
 > location and SDK session APIs, but not a stable raw JSONL schema. Treat
 > unknown top-level records and unknown fields as expected compatibility data.
-> See [schema-refresh-2026-06-04.md](../../../analysis/schema-refresh-2026-06-04.md).
 
 ## Table of Contents
 
