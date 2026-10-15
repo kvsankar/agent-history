@@ -101,6 +101,11 @@ The design is [`../design-v2/archive-library.md`](../design-v2/archive-library.m
       names differ only in case cannot both be archived; the second is
       reported as an error on every run. Decide whether to store it under
       another name.
+- [ ] Codex now stores rollouts compressed (`rollout-*.jsonl.zst`). The
+      collector compresses them again, at level 19, into `*.jsonl.zst.zst`:
+      no size gain, and much processor time on a first run. Decide whether to
+      store files that are already zstd as they are. Check that the catalog
+      and an archive home read the doubly compressed files.
 - [ ] Some catalogued sessions have no working folder (a few hundred Claude
       sessions) or no model (Codex sessions without assistant messages, and
       Copilot in VS Code, which records none). Check whether the readers can
