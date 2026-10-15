@@ -60,3 +60,6 @@ scripts/poc/
 
 # Test temp root created by scripts/run_tests.py
 .tmp/
+
+# Engineering notes, kept outside this repo
+/engineering/
